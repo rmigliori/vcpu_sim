@@ -85,12 +85,13 @@ Regole:
 
 ## 4. Tipi di rilocazione
 
-Solo due, che si distinguono per **quale campo** dell'istruzione patchano:
+Tre, che si distinguono per **quale campo** dell'istruzione patchano:
 
-| Tipo      | Campo patchato    | Uso tipico                              |
-|-----------|-------------------|-----------------------------------------|
-| `R_CODE`  | `Instr.target`    | `beq/bne/blt/j <label>` (indice istr.)  |
-| `R_DATA`  | `Instr.imm`       | `li rX, <dataLabel>` (indirizzo in byte) |
+| Tipo      | Campo patchato    | Uso tipico                                  |
+|-----------|-------------------|---------------------------------------------|
+| `R_CODE`  | `Instr.target`    | `beq/bne/blt/j <label>` (indice istr.)      |
+| `R_DATA`  | `Instr.imm`       | simbolo dato come operando (displacement)    |
+| `R_ADDR`  | `Instr.imm`       | `li rX, <label>` (indirizzo-di: codice o dato) |
 
 Formula di patch applicata dal linker:
 
@@ -103,10 +104,13 @@ L'`addend` (di solito 0) serve per riferimenti tipo `li rX, arr+8`. La sintassi
 dati l'offset è in **byte**, per il codice in **indici di istruzione**. Vale sia
 in compilazione separata sia in modo legacy.
 
-> `R_CODE` combacia con `is_code == 1`, `R_DATA` con `is_code == 0`. Il linker
-> **verifica la coerenza**: un `R_DATA` che punta a un simbolo di codice (o
-> viceversa) è un errore, così si intercettano i bug tipo "ho usato una label di
-> codice come indirizzo dati".
+> `R_CODE` richiede `is_code == 1` (saltare a un dato è un errore), `R_DATA`
+> richiede `is_code == 0`. `R_ADDR` invece è **polimorfo**: `li rX, sym` prende
+> l'indirizzo di `sym` qualunque sia la sua natura e il linker sceglie il valore
+> in base a `is_code` — indice di istruzione per il codice (puntatore a
+> funzione), indirizzo in byte per i dati. Il linker verifica comunque la
+> coerenza di `R_CODE`/`R_DATA` per intercettare bug tipo "label di codice usata
+> come displacement dati".
 
 ---
 
@@ -138,7 +142,7 @@ arr      data  0       local    0
 printf   ----  -       extern   -        ; indefinito: sez/offset non significativi
 
 .reloc 2                         ; tipo   site_idx  simbolo  addend
-R_DATA   0        arr      0               ; patch prog[0].imm  = addr(arr)+0
+R_ADDR   0        arr      0               ; patch prog[0].imm  = addr(arr)+0
 R_CODE   2        loop     0               ; patch prog[2].target = idx(loop)+0
 
 .end
@@ -276,8 +280,8 @@ out:   .space 5
 .extern saxpy
 .global main
 main:
-    li   r1, arr        ; R_DATA su 'arr'
-    li   r2, out        ; R_DATA su 'out'
+    li   r1, arr        ; R_ADDR su 'arr' (indirizzo dato)
+    li   r2, out        ; R_ADDR su 'out'
     j    saxpy          ; R_CODE su 'saxpy' (extern)
 ```
 
@@ -310,8 +314,8 @@ Patch delle rilocazioni di `main.vo`:
 
 | Reloc   | site (istr) | campo   | = valore(sym)+addend |
 |---------|-------------|---------|----------------------|
-| R_DATA  | 0 (`li r1`) | imm     | 0                    |
-| R_DATA  | 1 (`li r2`) | imm     | 20                   |
+| R_ADDR  | 0 (`li r1`) | imm     | 0                    |
+| R_ADDR  | 1 (`li r2`) | imm     | 20                   |
 | R_CODE  | 2 (`j`)     | target  | 3                    |
 
 `.entry` = valore(`main`) = 0.
@@ -328,7 +332,8 @@ Patch delle rilocazioni di `main.vo`:
    rilocazioni + symtab + immagine dati in buffer proprio, non in `cpu->mem`).
    - `parse_int()` per un simbolo **non** risolve più: emette segnaposto +
      registra la rilocazione, con `field` dedotto dall'istruzione
-     (`target` per branch/jump → `R_CODE`; `imm` per `li` → `R_DATA`).
+     (`target` per branch/jump → `R_CODE`; `imm` per `li` → `R_ADDR`;
+     simbolo dato come operando → `R_DATA`).
    - Nuove direttive `.global` / `.extern`.
 3. **Emitter `.vo`**: serializza la struttura oggetto nel formato §5.
 4. **Linker**: legge N `.vo`, assegna `text_base`/`data_base`, costruisce la

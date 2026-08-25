@@ -155,7 +155,9 @@ int vo_write(const char* path, const VObject* obj, char* err, size_t errsz)
     for (int i = 0; i < obj->reloc_count; ++i)
     {
         const ObjReloc* r = &obj->relocs[i];
-        fprintf(fp, "%s %d %s %lld\n", r->type == R_CODE ? "R_CODE" : "R_DATA",
+        const char* tn = r->type == R_CODE ? "R_CODE"
+                       : (r->type == R_ADDR ? "R_ADDR" : "R_DATA");
+        fprintf(fp, "%s %d %s %lld\n", tn,
                 r->site, r->sym, (long long) r->addend);
     }
 
@@ -233,7 +235,8 @@ static int vo_read_stream(FILE* fp, VObject* obj, const char* path, char* err, s
                 if (sscanf(line, "%15s %d %63s %lld", type, &site, sym, &addend) != 4)
                 { snprintf(err, errsz, "'%s': bad reloc row %d", path, i); goto fail; }
                 ObjReloc* r = &obj->relocs[obj->reloc_count++];
-                r->type   = strcmp(type, "R_CODE") == 0 ? R_CODE : R_DATA;
+                r->type   = strcmp(type, "R_CODE") == 0 ? R_CODE
+                          : (strcmp(type, "R_ADDR") == 0 ? R_ADDR : R_DATA);
                 r->site   = site;
                 r->addend = addend;
                 snprintf(r->sym, sizeof(r->sym), "%s", sym);
@@ -417,6 +420,8 @@ int link_objects(const VObject* const* objs, int nobj, VImage* img,
             { snprintf(err, errsz, "R_CODE relocation on non-code symbol '%s'", r->sym); goto fail; }
             if (r->type == R_DATA && is_code != 0)
             { snprintf(err, errsz, "R_DATA relocation on non-data symbol '%s'", r->sym); goto fail; }
+            // R_ADDR (address-of): value already holds the linear address for
+            // either kind (instruction index for code, byte address for data).
 
             int site = (int) (text_base[m] + r->site);
             if (r->type == R_CODE) img->text[site].target = (int) value;

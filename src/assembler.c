@@ -1004,7 +1004,8 @@ int assemble_object(const char* path, VObject* obj, char* err, size_t errsz)
         if (g_pending_hit)
         {
             ObjReloc* r = &obj->relocs[obj->reloc_count++];
-            r->type   = is_branch_op(obj->text[i].op) ? R_CODE : R_DATA;
+            r->type   = is_branch_op(obj->text[i].op) ? R_CODE
+                      : (obj->text[i].op == OP_LI ? R_ADDR : R_DATA);
             r->site   = i;
             r->addend = g_pending_addend;
             snprintf(r->sym, sizeof(r->sym), "%s", g_pending_sym);

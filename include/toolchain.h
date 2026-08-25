@@ -12,7 +12,9 @@
 
 typedef enum { BIND_LOCAL, BIND_GLOBAL, BIND_EXTERN } Binding;
 typedef enum { RSEC_TEXT = 0, RSEC_DATA = 1, RSEC_NONE = -1 } RSection;
-typedef enum { R_CODE, R_DATA } RelocType;
+// R_ADDR: address-of a symbol into imm; the linker picks the value by is_code
+// (instruction index for code, byte address for data) -> works for both kinds.
+typedef enum { R_CODE, R_DATA, R_ADDR } RelocType;
 
 // A symbol as it appears in an object's symbol table.
 typedef struct
@@ -27,7 +29,7 @@ typedef struct
 // A relocation: patch prog[site].<field> with value(sym)+addend at link time.
 typedef struct
 {
-    int     type;      // RelocType: R_CODE -> target, R_DATA -> imm
+    int     type;      // RelocType: R_CODE -> target, R_DATA/R_ADDR -> imm
     int     site;      // instruction index within this object
     char    sym[64];
     int64_t addend;
