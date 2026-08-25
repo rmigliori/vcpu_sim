@@ -1,0 +1,10 @@
+; Oggetto "morto": esporta 'dead' ma nessuno lo referenzia.
+; Serve a verificare l'inclusione selettiva del linker (non deve entrare nel .vx).
+;
+; Prototipo:
+;   dead(void)   ; nessun argomento, termina con 'halt'
+.text
+.global dead
+dead:
+  li    r7, 999
+  halt

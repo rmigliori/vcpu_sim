@@ -1,0 +1,38 @@
+; ---------------------------------------------------------------------------
+;  Esecuzione predicata (masking) sulle operazioni aritmetiche e di memoria.
+;
+;  Le versioni mascherate aggiornano SOLO le corsie in cui il bit di `vmask`
+;  vale 1; le altre restano invariate. Qui: aggiungi 100 ai soli elementi > 10
+;  e memorizza solo quelli (store mascherato).
+;
+;    vaddm  vd, vs1, vs2   ->  vd[i] = mask[i] ? vs1[i]+vs2[i] : vd[i]
+;    vstorem vs, rbase     ->  scrive mem_float[rbase + i*4] solo se mask[i]
+; ---------------------------------------------------------------------------
+.data
+x:   .float 3, 12, 7, 20, 1, 15, 8, 2
+out: .space 32                       ; 8 float azzerati
+
+.text
+  li    r1, 8
+  setvl r2, r1
+
+  li    r3, x
+  vload v0, r3              ; x
+
+  fli   f0, 10.0
+  vsplat v1, f0            ; soglia = [10 x8]
+  vmsgt v0, v1             ; mask = (x > 10)
+  dumpmask                 ; = 0 1 0 1 0 1 0 0
+
+  fli   f1, 100.0
+  vsplat v2, f1           ; [100 x8]
+
+  fli   f2, 0.0
+  vadds v3, v0, f2        ; v3 = copia di x
+  vaddm v3, v0, v2        ; +100 solo dove mask=1
+  dumpv v3                ; = 3 112 7 120 1 115 8 2
+
+  li    r4, out
+  vstorem v3, r4          ; scrive solo le corsie attive
+  dumpm r4, 8             ; = 0 112 0 120 0 115 0 0
+  halt

@@ -1,0 +1,25 @@
+; Modulo 2: routine 'saxpy' esportata. Usa 'y' importato per la stampa finale.
+;
+; Prototipo (convenzione a registri; nessuna ABI formale in questa ISA):
+;   saxpy(r1 = &x, r2 = &y, r3 = n, f0 = alpha)
+;     effetto:  y[i] = alpha * x[i] + y[i]   per i in [0, n)
+;     clobber:  r1..r6, v0, v1, VL
+;     ritorno:  nessuno (termina con 'halt')
+.text
+.global saxpy
+.extern y
+saxpy:
+loop:
+  setvl r4, r3
+  vload v0, r1
+  vload v1, r2
+  vmacc v1, f0, v0
+  vstore v1, r2
+  slli  r5, r4, 2
+  add   r1, r1, r5
+  add   r2, r2, r5
+  sub   r3, r3, r4
+  bne   r3, r0, loop   ; R_CODE -> loop (locale)
+  li    r6, y          ; R_DATA -> y (extern)
+  dumpm r6, 10
+  halt

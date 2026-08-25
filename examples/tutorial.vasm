@@ -1,0 +1,22 @@
+; ---------------------------------------------------------------------------
+;  Tutorial: somma vettoriale elemento-per-elemento   C = A + B
+; ---------------------------------------------------------------------------
+.data
+A:  .float 1, 2, 3, 4, 5
+B:  .float 10, 20, 30, 40, 50
+C:  .space 5                 ; riserva 5 elementi (20 byte) per il risultato
+
+.text
+  li    r1, A          ; &A
+  li    r2, B          ; &B
+  li    r3, C          ; &C
+  li    r4, 5          ; numero di elementi
+
+  setvl r5, r4         ; VL = min(5, VLMAX) = 5
+  vload v0, r1         ; v0 = A
+  vload v1, r2         ; v1 = B
+  vadd  v2, v0, v1     ; v2 = A + B
+  vstore v2, r3        ; C = v2
+
+  dumpm r3, 5          ; atteso: 11 22 33 44 55
+  halt

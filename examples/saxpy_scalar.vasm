@@ -1,0 +1,28 @@
+; ---------------------------------------------------------------------------
+;  SAXPY, SCALAR version (one element per loop iteration).
+;  Same computation as saxpy.vasm, to compare cycle counts scalar vs vector.
+;    y[i] = a * x[i] + y[i]
+; ---------------------------------------------------------------------------
+.data
+x:  .float 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+y:  .float 10, 20, 30, 40, 50, 60, 70, 80, 90, 100
+
+.text
+  li    r1, x          ; &x
+  li    r2, y          ; &y
+  li    r3, 10         ; n
+  fli   f0, 2.5        ; a
+
+loop:
+  flw   f1, r1         ; f1 = x[i]
+  flw   f2, r2         ; f2 = y[i]
+  fmacc f2, f0, f1     ; f2 += a * x[i]
+  fsw   f2, r2         ; y[i] = f2
+  addi  r1, r1, 4      ; ++&x
+  addi  r2, r2, 4      ; ++&y
+  addi  r3, r3, -1     ; --n
+  bne   r3, r0, loop
+
+  li    r6, y
+  dumpm r6, 10         ; expected: 12.5 25 37.5 50 62.5 75 87.5 100 112.5 125
+  halt

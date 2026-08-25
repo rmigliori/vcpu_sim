@@ -1,0 +1,36 @@
+; ---------------------------------------------------------------------------
+;  Gather / scatter con indici vettoriali (vloadx / vstorex).
+;
+;  A differenza di `vload` (unit-stride) e `vloads` (stride costante), qui gli
+;  indici sono ARBITRARI: presi da un vettore di indici interi (uno per corsia).
+;  Uso tipico: permutazioni, tabelle di lookup, matrici sparse.
+;
+;    vloadx  vd, rbase, vidx   ->  vd[i]      = mem_float[rbase + vidx[i]*4]
+;    vstorex vs, rbase, vidx   ->  mem_float[rbase + vidx[i]*4] = vs[i]
+;
+;  Gli indici sono in ELEMENTI (la CPU li moltiplica per 4 = dimensione float).
+; ---------------------------------------------------------------------------
+.data
+src:  .float 10, 11, 12, 13, 14, 15, 16, 17   ; sorgente da cui leggere
+gidx: .float 7, 0, 3, 5                        ; indici di gather (in elementi)
+sidx: .float 3, 2, 1, 0                        ; indici di scatter (invertono)
+dst:  .space 32                                ; 8 float azzerati
+
+.text
+  li    r1, 4
+  setvl r2, r1          ; VL = 4
+
+  li    r3, gidx
+  vload v1, r3          ; v1 = [7, 0, 3, 5]
+
+  li    r4, src
+  vloadx v0, r4, v1     ; gather: v0 = [src[7], src[0], src[3], src[5]]
+  dumpv v0              ;         = [17, 10, 13, 15]
+
+  li    r5, sidx
+  vload v2, r5          ; v2 = [3, 2, 1, 0]
+
+  li    r6, dst
+  vstorex v0, r6, v2    ; scatter: dst[3]=17 dst[2]=10 dst[1]=13 dst[0]=15
+  dumpm r6, 4           ; = 15 13 10 17  (ordine invertito)
+  halt

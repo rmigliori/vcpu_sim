@@ -1,0 +1,11 @@
+; ---------------------------------------------------------------------------
+;  vsplat: replica (broadcast) uno scalare float in tutte le corsie di un
+;  vettore. Utile per inizializzare accumulatori o costanti vettoriali.
+; ---------------------------------------------------------------------------
+.text
+  li    r1, 5
+  setvl r2, r1          ; VL = 5
+  fli   f0, 3.5
+  vsplat v0, f0         ; v0 = [3.5, 3.5, 3.5, 3.5, 3.5]
+  dumpv v0
+  halt

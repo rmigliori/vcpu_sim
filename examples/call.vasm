@@ -1,0 +1,35 @@
+; call.vasm — call / ret (jal / jalr) con registro di link ra = r15.
+; Convenzione: ra=r15 (indirizzo di ritorno), sp=r14 (stack, cresce verso il basso).
+;
+;   call target  ==  jal  r15, target   (r15 <- pc successivo; pc <- target)
+;   ret          ==  jalr r0,  r15       (pc <- r15; scrittura in r0 scartata)
+;
+; square(r1) -> r2 = r1*r1            foglia: non chiama nulla, ra intatto.
+; sumsq(r1=x, r3=y) -> r2 = x*x+y*y   non foglia: chiama square due volte,
+;   quindi DEVE salvare ra sullo stack (la seconda call lo sovrascriverebbe).
+
+  .text
+  .global main
+main:
+  li r14, 4096        ; sp: base dello stack
+  li r1, 3            ; x
+  li r3, 4            ; y
+  call sumsq
+  dumps r2            ; atteso 3*3 + 4*4 = 25
+  halt
+
+sumsq:
+  addi r14, r14, -4   ; alloca una word sullo stack
+  sw r15, 0(r14)      ; salva ra (le call annidate lo distruggono)
+  call square         ; r1=x -> r2 = x*x
+  mov r5, r2          ; conserva x*x
+  mov r1, r3          ; r1 = y
+  call square         ; r2 = y*y
+  add r2, r5, r2      ; r2 = x*x + y*y
+  lw r15, 0(r14)      ; ripristina ra
+  addi r14, r14, 4    ; libera lo stack
+  ret
+
+square:
+  mul r2, r1, r1
+  ret

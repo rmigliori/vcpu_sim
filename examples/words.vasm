@@ -1,0 +1,29 @@
+; ---------------------------------------------------------------------------
+;  Array di interi in memoria:  direttiva .word + load/store interi (lw/sw).
+;
+;  A differenza di .float / flw / fsw (float 32 bit), qui i dati sono interi
+;  con segno a 32 bit. `lw` estende il segno, `sw` tronca a 32 bit.
+;  Calcoliamo la somma di un array di word e scriviamo il risultato in memoria.
+; ---------------------------------------------------------------------------
+.data
+a:   .word 5, -3, 100, 42, -7   ; somma = 137
+out: .space 4                   ; una word di destinazione
+
+.text
+  li    r1, a
+  li    r2, 5             ; n
+  li    r3, 0             ; accumulatore
+  li    r4, 0             ; indice
+
+loop:
+  lw    r5, r1            ; carica a[i] (con segno)
+  add   r3, r3, r5        ; acc += a[i]
+  addi  r1, r1, 4         ; avanza il puntatore di una word
+  addi  r4, r4, 1
+  blt   r4, r2, loop      ; continua finché i < n
+
+  li    r6, out
+  sw    r3, r6            ; salva la somma in memoria
+  lw    r7, r6            ; rileggila per verifica
+  dumps r7                ; 137
+  halt

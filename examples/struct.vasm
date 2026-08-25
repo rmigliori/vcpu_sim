@@ -1,0 +1,38 @@
+; struct.vasm — accesso ai campi di una "struct" via puntatore base
+; Mostra l'indirizzamento base+displacement: disp(rs1).
+;
+; Layout della struttura "punto" (12 byte), base in r1:
+;   offset 0 : int   x
+;   offset 4 : int   y
+;   offset 8 : float peso
+;
+; Calcola: somma = x + y (interi) e legge/riscrive il campo float.
+
+.data
+punto:  .word 30, 12        ; x=30, y=12
+        .float 2.5          ; peso=2.5
+
+.text
+main:
+  li   r1, punto            ; r1 = base della struct
+
+  lw   r2, 0(r1)            ; r2 = campo x   (disp 0)
+  lw   r3, 4(r1)            ; r3 = campo y   (base+displacement)
+  add  r4, r2, r3           ; r4 = x + y = 42
+  dumps r4
+
+  flw  f0, 8(r1)            ; f0 = peso = 2.5
+  dumpf f0
+
+  ; raddoppia il peso e riscrivilo nel campo
+  fadd f0, f0, f0           ; 5.0
+  fsw  f0, 8(r1)            ; scrive nel campo float via displacement
+  flw  f1, 8(r1)            ; rilettura -> 5.0
+  dumpf f1
+
+  ; aggiorna y = x + y direttamente in memoria
+  sw   r4, 4(r1)            ; campo y = 42
+  lw   r5, 4(r1)
+  dumps r5
+
+  halt

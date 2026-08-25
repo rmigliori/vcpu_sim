@@ -1,0 +1,7 @@
+# Artefatti di build: binario del simulatore e file scratch della toolchain
+build/
+
+# Oggetti/eseguibili/archivi della toolchain generati fuori da build/
+*.vo
+*.vx
+*.va

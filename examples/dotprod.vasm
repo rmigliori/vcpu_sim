@@ -1,0 +1,33 @@
+; ---------------------------------------------------------------------------
+;  Prodotto scalare:  r = sum_i x[i] * y[i]   (vettorizzato, strip-mined)
+;
+;  Mostra la riduzione vettoriale `vredsum`: `vmul` produce i prodotti
+;  elemento-per-elemento, `vredsum` collassa un blocco vettoriale in uno
+;  scalare, e `fadd` accumula il risultato tra i blocchi.
+; ---------------------------------------------------------------------------
+.data
+x:  .float 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+y:  .float 10, 9, 8, 7, 6, 5, 4, 3, 2, 1
+
+.text
+  li    r1, x           ; &x
+  li    r2, y           ; &y
+  li    r3, 10          ; n rimanenti
+  fli   f1, 0.0         ; accumulatore
+
+loop:
+  setvl r4, r3          ; VL = min(n_rimanenti, VLMAX)
+  vload v0, r1          ; blocco di x
+  vload v1, r2          ; blocco di y
+  vmul  v2, v0, v1      ; prodotti elemento-per-elemento
+  vredsum f2, v2        ; somma parziale del blocco
+  fadd  f1, f1, f2      ; totale corrente
+
+  slli  r5, r4, 2       ; byte elaborati = VL * 4
+  add   r1, r1, r5      ; avanza &x
+  add   r2, r2, r5      ; avanza &y
+  sub   r3, r3, r4      ; n_rimanenti -= VL
+  bne   r3, r0, loop    ; ripeti finché restano elementi
+
+  dumpf f1              ; atteso: 1*10+2*9+...+10*1 = 220
+  halt

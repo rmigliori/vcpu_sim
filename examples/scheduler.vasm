@@ -1,0 +1,270 @@
+; scheduler.vasm — scheduler round-robin preemptive con timer.
+;
+; Dimostra: coda circolare doppia con sentinella, TCB, context switch guidato
+; dal timer, separazione scheduler (POLITICA: chi gira) / dispatcher (MECCANISMO:
+; ripristina e cede il controllo) / ISR (salva il contesto uscente).
+;
+; Due task incrementano ciascuno il proprio contatore in un loop infinito; dopo
+; un numero fisso di tick lo scheduler ferma il sistema e stampa i due contatori:
+; entrambi cresciuti e vicini => i task si sono alternati.
+;
+; NOTA: esempio a FILE SINGOLO da eseguire in modalita' legacy:
+;   ./build/vcpu_sim examples/scheduler.vasm            (aggiungi --trace per vederlo)
+; Usa 'li rX, taskLabel' per caricare l'ENTRY di un task (un indice d'istruzione)
+; in un registro: e' un indirizzo di codice trattato come dato, cosa che la
+; pipeline asm->ld->vx rifiuta (R_DATA su simbolo di codice). Legacy lo risolve.
+;
+; --- Modello a 3 stati (una posizione fisica del TCB per ogni stato) ---
+;   READY(0)     : il TCB e' linkato nella ready queue.
+;   RUNNING(1)   : il TCB e' FUORI da ogni coda, puntato solo da 'current'.
+;   SUSPENDED(2) : il TCB e' in una coda di semaforo/mailbox (estensione futura).
+;
+; --- Frame di contesto (salvato sullo stack del task, sp = r14) ---
+;   Si salvano SOLO gli scalari: r1..r13, r15(ra), epc. r14(sp) finisce nel TCB.
+;   I registri VETTORIALI (v*, vl, vmask) sono VOLATILI attraverso la preemption:
+;   la trap arriva solo al confine d'istruzione, e per convenzione i vettori
+;   vivono solo dentro sequenze vload->calcola->vstore, gia' riversate in memoria.
+
+  .data
+
+_zero:   .word 0        ; guardia: nessun oggetto vive all'indirizzo 0 => 0 == null
+
+current: .word 0        ; &TCB del task RUNNING (0 = nessuno, boot)
+
+ready:   .space 3       ; ready queue (sentinella): +0 fwd  +4 bwd  +8 count
+
+tcbA:    .space 4       ; TCB task A: +0 fwd  +4 bwd  +8 sp_salvato  +12 stato
+tcbB:    .space 4       ; TCB task B
+
+tickA:   .word 0        ; contatore applicativo di A (FUORI dal TCB)
+tickB:   .word 0        ; contatore applicativo di B
+ticks:   .word 0        ; numero di tick timer avvenuti (lo tiene la ISR)
+
+stackA:  .space 64      ; stack task A (256 byte)
+stackA_top:
+stackB:  .space 64      ; stack task B
+stackB_top:
+
+  .text
+
+; ==========================================================================
+;  BOOT: costruisce le strutture, arma il timer e LANCIA il primo task
+;  saltando al suo entry (jr). Non e' un task: non ha TCB e non torna mai.
+;  Il primo task parte "a freddo" (registri 0, stack vuoto) senza reti: la
+;  psw si scrive con sti, quindi non serve seminare epsw. Solo i task che
+;  RIPARTONO dopo una preemption passano dal dispatcher (reti).
+; ==========================================================================
+main:
+  li r1, ready             ; ready queue vuota
+  call coda_init
+
+  ; --- priming del frame finto di B: riparte via reti al primo switch-in ---
+  li r1, stackB_top
+  addi r1, r1, -60         ; base del frame = sp iniziale (offset 0 = slot epc)
+  li r2, taskB
+  sw r2, 0(r1)             ; epc = entry di B (i registri restano 0: mem azzerata)
+  li r3, tcbB
+  sw r1, 8(r3)             ; tcbB.sp = base del frame
+  sw r0, 12(r3)            ; stato = READY
+  li r1, ready
+  li r2, tcbB
+  call enqueue_coda        ; B pronto in coda
+
+  ; --- A e' il primo a girare: RUNNING, puntato da current, FUORI dalla coda ---
+  li r1, current
+  li r2, tcbA
+  sw r2, 0(r1)             ; current = A
+  li r5, 1
+  sw r5, 12(r2)            ; tcbA.stato = RUNNING
+
+  sethandler isr           ; vettore di trap = ISR del timer
+  li r5, 500
+  settimer r5              ; un tick ogni 500 cicli
+  li r14, stackA_top       ; sp di A (stack vuoto) pronto prima di abilitare i trap
+  sti                      ; abilita gli interrupt
+  li r5, taskA
+  jr r5                    ; salta all'entry di A: primo task a freddo, senza reti
+
+; ==========================================================================
+;  I due task: loop infinito che incrementa il proprio contatore.
+;  r1,r2 sono privati di ciascun task: il context switch li preserva.
+; ==========================================================================
+taskA:
+  li r1, tickA
+loopA:
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  j loopA
+
+taskB:
+  li r1, tickB
+loopB:
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  j loopB
+
+; ==========================================================================
+;  ISR del timer: salva il contesto uscente, chiama scheduler + dispatcher.
+;  All'ingresso r14 = sp del task interrotto, IE=0, epc/epsw = stato del task.
+; ==========================================================================
+isr:
+  ; (A) salva r1..r13,r15 sullo stack del task corrente (r14), poi epc.
+  addi r14, r14, -4
+  sw r1, 0(r14)
+  addi r14, r14, -4
+  sw r2, 0(r14)
+  addi r14, r14, -4
+  sw r3, 0(r14)
+  addi r14, r14, -4
+  sw r4, 0(r14)
+  addi r14, r14, -4
+  sw r5, 0(r14)
+  addi r14, r14, -4
+  sw r6, 0(r14)
+  addi r14, r14, -4
+  sw r7, 0(r14)
+  addi r14, r14, -4
+  sw r8, 0(r14)
+  addi r14, r14, -4
+  sw r9, 0(r14)
+  addi r14, r14, -4
+  sw r10, 0(r14)
+  addi r14, r14, -4
+  sw r11, 0(r14)
+  addi r14, r14, -4
+  sw r12, 0(r14)
+  addi r14, r14, -4
+  sw r13, 0(r14)
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  mfepc r1                 ; r1 e' libero (gia' salvato sopra)
+  addi r14, r14, -4
+  sw r1, 0(r14)            ; in cima al frame: epc (sp punta qui)
+
+  ; (B) conteggio tick e condizione di stop.
+  li r1, ticks
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  li r3, 8                 ; ferma dopo 8 tick
+  blt r2, r3, isr_switch
+  li r1, tickA             ; stop: stampa i due contatori e termina
+  lw r5, 0(r1)
+  dumps r5
+  li r1, tickB
+  lw r5, 0(r1)
+  dumps r5
+  halt
+
+isr_switch:
+  ; (C) salva sp nel TCB uscente, stato READY, rimettilo in coda.
+  li r3, current
+  lw r4, 0(r3)            ; r4 = TCB del task uscente (sempre valido dopo il boot)
+  sw r14, 8(r4)          ; TCB.sp = sp del frame appena salvato
+  sw r0, 12(r4)          ; stato = READY
+  li r1, ready
+  mov r2, r4
+  call enqueue_coda       ; il task uscente torna in fondo alla ready queue
+
+isr_pick:
+  ; (D) SCHEDULER (politica): prende il prossimo dalla ready queue.
+  li r1, ready
+  call dequeue_testa      ; r2 = prossimo TCB
+  li r3, current
+  sw r2, 0(r3)           ; current = prossimo
+  li r5, 1
+  sw r5, 12(r2)          ; stato = RUNNING
+
+  ; (E) DISPATCHER (meccanismo): ripristina il contesto e cede il controllo.
+  lw r14, 8(r2)          ; sp = TCB.sp del task entrante
+  lw r1, 0(r14)          ; epc dal frame
+  addi r14, r14, 4
+  mtepc r1
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  lw r13, 0(r14)
+  addi r14, r14, 4
+  lw r12, 0(r14)
+  addi r14, r14, 4
+  lw r11, 0(r14)
+  addi r14, r14, 4
+  lw r10, 0(r14)
+  addi r14, r14, 4
+  lw r9, 0(r14)
+  addi r14, r14, 4
+  lw r8, 0(r14)
+  addi r14, r14, 4
+  lw r7, 0(r14)
+  addi r14, r14, 4
+  lw r6, 0(r14)
+  addi r14, r14, 4
+  lw r5, 0(r14)
+  addi r14, r14, 4
+  lw r4, 0(r14)
+  addi r14, r14, 4
+  lw r3, 0(r14)
+  addi r14, r14, 4
+  lw r2, 0(r14)
+  addi r14, r14, 4
+  lw r1, 0(r14)
+  addi r14, r14, 4
+  reti                    ; pc = epc; psw = epsw (IE=1) -> il task riparte
+
+; ==========================================================================
+;  Routine di coda: lista circolare doppia con sentinella, link a offset 0.
+;  Convenzione: r1/r2 argomenti, r4/r5/r6 scratch; non toccano r14(sp).
+;  Testa (12 byte): +0 fwd  +4 bwd  +8 count.  Vuota: fwd=bwd=&testa, count=0.
+; ==========================================================================
+coda_init:                ; coda_init(r1=&testa)
+  sw r1, 0(r1)            ; fwd = &testa
+  sw r1, 4(r1)            ; bwd = &testa
+  sw r0, 8(r1)            ; count = 0
+  ret
+
+enqueue_coda:             ; enqueue_coda(r1=&testa, r2=&nodo) -- in fondo (FIFO)
+  lw r4, 4(r1)            ; prev = testa.bwd (ultimo)
+  sw r1, 0(r2)            ; nodo.fwd = &testa
+  sw r4, 4(r2)            ; nodo.bwd = prev
+  sw r2, 0(r4)            ; prev.fwd = nodo
+  sw r2, 4(r1)            ; testa.bwd = nodo
+  lw r5, 8(r1)
+  addi r5, r5, 1
+  sw r5, 8(r1)           ; count++
+  ret
+
+enqueue_testa:            ; enqueue_testa(r1=&testa, r2=&nodo) -- in testa (LIFO)
+  lw r4, 0(r1)           ; next = testa.fwd
+  sw r4, 0(r2)           ; nodo.fwd = next
+  sw r1, 4(r2)           ; nodo.bwd = &testa
+  sw r2, 4(r4)           ; next.bwd = nodo
+  sw r2, 0(r1)           ; testa.fwd = nodo
+  lw r5, 8(r1)
+  addi r5, r5, 1
+  sw r5, 8(r1)          ; count++
+  ret
+
+dequeue_testa:            ; dequeue_testa(r1=&testa) -> r2 = nodo (0 se vuota)
+  lw r5, 8(r1)
+  beq r5, r0, deq_empty
+  lw r2, 0(r1)          ; nodo = testa.fwd
+  lw r4, 0(r2)          ; new = nodo.fwd
+  sw r4, 0(r1)          ; testa.fwd = new
+  sw r1, 4(r4)          ; new.bwd = &testa
+  addi r5, r5, -1
+  sw r5, 8(r1)         ; count--
+  ret
+deq_empty:
+  li r2, 0              ; coda vuota -> puntatore nullo
+  ret
+
+remove_buffer:            ; remove_buffer(r1=&nodo, r2=&testa) -- unlink O(1)
+  lw r4, 4(r1)          ; prev = nodo.bwd
+  lw r5, 0(r1)          ; next = nodo.fwd
+  sw r5, 0(r4)          ; prev.fwd = next
+  sw r4, 4(r5)          ; next.bwd = prev
+  lw r6, 8(r2)
+  addi r6, r6, -1
+  sw r6, 8(r2)         ; count-- (la testa la conosce il chiamante)
+  ret

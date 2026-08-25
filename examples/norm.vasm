@@ -1,0 +1,31 @@
+; ---------------------------------------------------------------------------
+;  Norma euclidea (L2):  ||x|| = sqrt( sum_i x[i]^2 )
+;
+;  Mostra il completamento dell'aritmetica float scalare: la riduzione
+;  `vredsum` accumula i quadrati e `fsqrt` estrae la radice. `fsub`/`fdiv`/`fneg`
+;  completano il set (add/sub/mul/div/neg/sqrt).
+; ---------------------------------------------------------------------------
+.data
+x:  .float 1, 2, 3, 4, 5, 6, 7, 8, 9, 10   ; sum di quadrati = 385
+
+.text
+  li    r1, x
+  li    r3, 10           ; n rimanenti
+  fli   f1, 0.0          ; accumulatore dei quadrati
+
+loop:
+  setvl r4, r3
+  vload v0, r1
+  vmul  v1, v0, v0       ; quadrati elemento-per-elemento
+  vredsum f2, v1         ; somma del blocco
+  fadd  f1, f1, f2       ; totale
+
+  slli  r5, r4, 2
+  add   r1, r1, r5
+  sub   r3, r3, r4
+  bne   r3, r0, loop
+
+  dumpf f1               ; 385  (somma dei quadrati)
+  fsqrt f3, f1
+  dumpf f3               ; 19.6214 = sqrt(385)
+  halt

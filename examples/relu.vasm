@@ -1,0 +1,34 @@
+; ---------------------------------------------------------------------------
+;  ReLU vettoriale con predicazione (masking):  y[i] = max(x[i], 0)
+;
+;  Mostra il gruppo di istruzioni di confronto/maschera:
+;    vmsgt v1, v2   ->  vmask bit i = (v1[i] > v2[i])   [scrive la maschera]
+;    vmerge vd, va, vb -> vd[i] = mask[i] ? va[i] : vb[i]  [select per corsia]
+;
+;  Idea: costruiamo un vettore di zeri, confrontiamo x>0 e poi fondiamo:
+;  dove la maschera e' 1 teniamo x, altrove prendiamo 0.
+;  (In pratica basterebbe `vmax v, x, zero`, mostrato in coda per confronto.)
+; ---------------------------------------------------------------------------
+.data
+x:  .float -3, 2, -1, 5, 0, -4, 7, -2
+
+.text
+  li    r1, 8
+  setvl r2, r1          ; VL = 8
+
+  li    r3, x
+  vload v0, r3          ; v0 = x
+
+  fli   f0, 0.0
+  vsplat v1, f0         ; v1 = [0, 0, ...]  (vettore di zeri)
+
+  vmsgt v0, v1          ; vmask bit i = (x[i] > 0)
+  dumpmask              ; = 0 1 0 1 0 0 1 0
+
+  vmerge v2, v0, v1     ; v2[i] = mask ? x[i] : 0
+  dumpv v2              ; = 0 2 0 5 0 0 7 0
+
+  ; variante diretta equivalente con vmax
+  vmax  v3, v0, v1
+  dumpv v3              ; = 0 2 0 5 0 0 7 0
+  halt
