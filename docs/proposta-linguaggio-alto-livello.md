@@ -25,7 +25,7 @@ questo. L'idea è rendere il **vettore un tipo di prima classe**: si scrive la
 matematica su interi array e il compilatore genera da solo il ciclo
 `setvl`/`vload`/.../`bne` che oggi si scrive a mano.
 
-È esattamente il salto da `examples/saxpy_scalar.vasm` a `examples/saxpy.vasm`, ma
+È esattamente il salto da `standalone/saxpy_scalar.vasm` a `standalone/saxpy.vasm`, ma
 automatico.
 
 L'ispirazione "array-first" viene dal **Fortran 90/NumPy**: operazioni su interi
@@ -202,7 +202,7 @@ linker):
    memoria se servono più temporanei) e **generazione del codice** che stampa
    `.vasm`.
 5. (Opzionale) **convenzione di chiamata** formalizzata — di fatto è il
-   "prototipo" già documentato negli esempi in `examples/multi/`: argomenti in
+   "prototipo" già documentato negli esempi in `linked/multi/`: argomenti in
    `r1..`, valore di ritorno in `r0`/`f0`.
 
 Il compilatore produce `.vasm`, che poi passa per la toolchain esistente:

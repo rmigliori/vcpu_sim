@@ -9,7 +9,7 @@
 ; entrambi cresciuti e vicini => i task si sono alternati.
 ;
 ; NOTA: esempio a FILE SINGOLO da eseguire in modalita' legacy:
-;   ./build/vcpu_sim examples/scheduler.vasm            (aggiungi --trace per vederlo)
+;   ./build/vcpu_sim standalone/scheduler.vasm           (aggiungi --trace per vederlo)
 ; Usa 'li rX, taskLabel' per caricare l'ENTRY di un task (un indice d'istruzione)
 ; in un registro: e' un indirizzo di codice trattato come dato, cosa che la
 ; pipeline asm->ld->vx rifiuta (R_DATA su simbolo di codice). Legacy lo risolve.

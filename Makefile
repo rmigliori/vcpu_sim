@@ -20,7 +20,7 @@ $(BUILD):
 	mkdir -p $(BUILD)
 
 run: $(BIN)
-	./$(BIN) examples/saxpy.vasm
+	./$(BIN) standalone/saxpy.vasm
 
 clean:
 	rm -rf $(BUILD)

@@ -39,7 +39,7 @@ Il progetto si trova in `vcpu_sim/` ed è composto da:
 | `include/toolchain.h` | Modello oggetti/eseguibili/archivi (`.vo`/`.vx`/`.va`) |
 | `src/toolchain.c` | Formati, linker e loader della compilazione separata (§2.5) |
 | `src/main.c` | Driver da riga di comando |
-| `examples/*.vasm` | Programmi di esempio |
+| `standalone/*.vasm`, `linked/**/*.vasm` | Programmi di esempio |
 | `Makefile` | Build |
 
 Flusso di esecuzione:
@@ -82,7 +82,7 @@ Target utili del `Makefile`:
 | Comando | Effetto |
 |---|---|
 | `make` / `make all` | Compila `build/vcpu_sim` |
-| `make run` | Compila ed esegue `examples/saxpy.vasm` |
+| `make run` | Compila ed esegue `standalone/saxpy.vasm` |
 | `make clean` | Rimuove la cartella `build/` |
 
 ### 2.3 Eseguire un programma
@@ -97,7 +97,7 @@ in §2.4.
 Esempio:
 
 ```bash
-./build/vcpu_sim examples/saxpy.vasm
+./build/vcpu_sim standalone/saxpy.vasm
 ```
 
 Output tipico:
@@ -150,7 +150,7 @@ Stampa ogni istruzione **man mano che viene eseguita**, con il `pc` e i cicli
 accumulati fino a quel punto. Non richiede di modificare il sorgente:
 
 ```bash
-./build/vcpu_sim --trace examples/tutorial.vasm
+./build/vcpu_sim --trace standalone/tutorial.vasm
 ```
 
 ```
@@ -170,7 +170,7 @@ Avvia un debugger a riga di comando che si ferma sulle **righe del tuo
 assembly** (non sul C del simulatore):
 
 ```bash
-./build/vcpu_sim --debug examples/saxpy.vasm
+./build/vcpu_sim --debug standalone/saxpy.vasm
 ```
 
 All'avvio l'esecuzione è ferma sulla prima istruzione e compare il prompt
@@ -211,7 +211,7 @@ Ricompila con simboli e senza ottimizzazioni:
 
 ```bash
 gcc -std=gnu11 -Wall -Wextra -g -O0 -Iinclude src/*.c -o build/vcpu_sim_dbg -lm
-gdb --args build/vcpu_sim_dbg examples/saxpy.vasm
+gdb --args build/vcpu_sim_dbg standalone/saxpy.vasm
 ```
 
 Breakpoint utili:
@@ -305,9 +305,9 @@ I simboli senza direttiva sono **locali** al modulo.
 ### Esempio a due moduli
 
 Il modulo `main` prepara i dati e salta nella routine `saxpy`, definita in un
-secondo modulo (vedi `examples/multi/`):
+secondo modulo (vedi `linked/multi/`):
 
-`examples/multi/main.vasm`
+`linked/multi/main.vasm`
 ```asm
 .data
 .global x
@@ -325,7 +325,7 @@ main:
   j     saxpy        ; riferimento a codice esterno (rilocazione)
 ```
 
-`examples/multi/saxpy.vasm`
+`linked/multi/saxpy.vasm`
 ```asm
 .text
 .global saxpy
@@ -349,8 +349,8 @@ loop:   setvl r4, r3
 Assembla, linka ed esegui:
 
 ```bash
-./build/vcpu_sim asm examples/multi/main.vasm  -o build/main.vo
-./build/vcpu_sim asm examples/multi/saxpy.vasm -o build/saxpy.vo
+./build/vcpu_sim asm linked/multi/main.vasm  -o build/main.vo
+./build/vcpu_sim asm linked/multi/saxpy.vasm -o build/saxpy.vo
 ./build/vcpu_sim ld  build/main.vo build/saxpy.vo -o build/prog.vx
 ./build/vcpu_sim run build/prog.vx
 ```
@@ -483,6 +483,11 @@ loop:   setvl r4, r3      ; 'loop' = indice di questa istruzione
 | `.float` | `.float a, b, c, ...` | scrive i valori come float (4 byte l'uno) e avanza il puntatore dati |
 | `.word` | `.word a, b, c, ...` | scrive interi con segno a 32 bit (4 byte l'uno); accetta decimale o esadecimale (`0x...`) |
 | `.space` | `.space N` | riserva `N` elementi (`N*4` byte) senza inizializzarli |
+| `.equ` | `.equ NOME valore` | definisce una **costante** di compile-time (`.set` è sinonimo); il valore è un intero o una costante già definita |
+| `.struct` | `.struct NOME` … `.ends` | apre/chiude un blocco struttura: gli offset dei campi diventano costanti `NOME.campo` |
+| `.field` | `.field campo [dim]` | dentro `.struct`: definisce `NOME.campo` = offset corrente e avanza di `dim` byte (default 4) |
+| `.res` | `etichetta: .res TIPO` | nel segmento dati: riserva `TIPO.size` byte (come una `.space` *type-aware*); l'etichetta ne è l'indirizzo |
+| `.include` | `.include "file"` | inserisce testualmente `file` a quel punto; il path si risolve rispetto alla **cartella del file di primo livello** (o assoluto). Utile per condividere `.struct`/`.equ` fra più sorgenti |
 | `.global` | `.global sym ...` | **esporta** un simbolo definito qui (compilazione separata, §2.5) |
 | `.extern` | `.extern sym ...` | **importa** un simbolo definito in un altro modulo (§2.5) |
 
@@ -498,6 +503,45 @@ y:  .float 10, 20, 30, 40  ; y -> indirizzo 16
 buf: .space 64             ; buf -> indirizzo 32, riserva 256 byte
 n:   .word 5, -3, 0x10, 42 ; interi a 32 bit, letti con lw/scritti con sw
 ```
+
+**Costanti e strutture.** `.equ` e `.struct` producono **costanti simboliche** di
+compile-time: puri interi (offset di campo, dimensioni), risolti come letterali
+ovunque serva un intero — displacement di `lw`/`sw` e immediati di `li` — e **mai
+rilocati**. Servono a togliere i *magic number* dagli accessi ai campi di una
+struttura in memoria:
+
+```asm
+.equ VLMAX 64             ; costante semplice, poi usabile come `li r1, VLMAX`
+
+.struct TCB               ; layout di un descrittore di task
+  .field fwd              ; TCB.fwd   = 0
+  .field bwd              ; TCB.bwd   = 4
+  .field sp               ; TCB.sp    = 8
+  .field state            ; TCB.state = 12
+.ends                     ; definisce anche TCB.size = 16
+
+  lw r4, TCB.sp(r1)       ; invece di  lw r4, 8(r1)
+  li r2, TCB.size         ; la dimensione totale come immediato
+```
+
+Una variabile di quel tipo si alloca nel segmento dati con `.res`, che riserva
+`TIPO.size` byte (l'etichetta è il suo indirizzo, in stile C `TIPO nome;`):
+
+```asm
+.data
+tcbA: .res TCB            ; riserva 16 byte; &tcbA in `li r1, tcbA`
+```
+
+Le costanti sono locali al file; per condividerle basta un **header** incluso con
+`.include`, che dà una sola sorgente di verità: p.es. `linked/scheduler/include/types.vinc` con
+`.struct TCB` e gli stati, incluso sia dal kernel sia dall'app
+(`.include "../include/types.vinc"`, dal kernel; `.include "include/types.vinc"` dall'app, che sta
+allo stesso livello di `include/`). Il path è relativo alla cartella del file di
+primo livello; i `.include` annidati sono ammessi (profondità limitata).
+
+Le costanti sono **locali al file** (nessuna rilocazione) e vanno definite prima
+dell'uso in una direttiva `.equ`/`.field`; nel codice invece sono usabili anche
+in avanti. Un blocco `.struct` non chiuso da `.ends` è un errore.
 
 Un operando simbolico può avere un **offset**: `simbolo+N` o `simbolo-N` (N
 decimale o esadecimale). Per i dati l'offset è in **byte**, quindi `li r1, y+8`
@@ -600,7 +644,7 @@ poi salta a `label` (rilocabile, quindi le funzioni possono stare in un altro mo
 meccanismo del ritorno (`ret` = `jalr r0, r15`, con la scrittura in `r0` scartata).
 Con un solo registro di link, le **chiamate annidate** devono salvare `ra` prima di
 chiamare (tipicamente sullo stack, per convenzione `sp = r14`); una foglia che non
-chiama nulla può lasciare `ra` in `r15`. Vedi `examples/call.vasm`.
+chiama nulla può lasciare `ra` in `r15`. Vedi `standalone/call.vasm`.
 
 #### Interruzioni e parola di stato
 
@@ -811,7 +855,7 @@ da ~2,2× a ~4,2×.
 
 ## 7. Esempi completi
 
-### 7.1 SAXPY vettoriale con strip-mining (`examples/saxpy.vasm`)
+### 7.1 SAXPY vettoriale con strip-mining (`standalone/saxpy.vasm`)
 
 ```asm
 .data
@@ -842,24 +886,24 @@ loop:
 Esecuzione:
 
 ```bash
-./build/vcpu_sim examples/saxpy.vasm
+./build/vcpu_sim standalone/saxpy.vasm
 ```
 
 ### 7.2 Confronto scalare vs vettoriale
 
-La versione scalare equivalente è in `examples/saxpy_scalar.vasm` (un elemento
+La versione scalare equivalente è in `standalone/saxpy_scalar.vasm` (un elemento
 per iterazione, con `flw`/`fmacc`/`fsw`). Per confrontare i cicli:
 
 ```bash
 gcc -std=gnu11 -Wall -Wextra -O2 -Iinclude src/*.c -o build/vcpu_sim -lm
-echo "=== VECTOR ===" && ./build/vcpu_sim examples/saxpy.vasm
-echo "=== SCALAR ===" && ./build/vcpu_sim examples/saxpy_scalar.vasm
+echo "=== VECTOR ===" && ./build/vcpu_sim standalone/saxpy.vasm
+echo "=== SCALAR ===" && ./build/vcpu_sim standalone/saxpy_scalar.vasm
 ```
 
 Entrambe devono produrre lo stesso risultato numerico
 (`12.5 25 37.5 ... 125`), ma con conteggi di cicli diversi.
 
-### 7.3 Prodotto scalare con riduzione (`examples/dotprod.vasm`)
+### 7.3 Prodotto scalare con riduzione (`standalone/dotprod.vasm`)
 
 Il prodotto scalare `r = Σ x[i]·y[i]` mostra la riduzione `vredsum`: `vmul`
 calcola i prodotti elemento-per-elemento, `vredsum` collassa il blocco in uno
@@ -883,13 +927,13 @@ loop:
 ```
 
 ```bash
-./build/vcpu_sim examples/dotprod.vasm      # f1 = 220
+./build/vcpu_sim standalone/dotprod.vasm      # f1 = 220
 ```
 
 L'operazione complementare `vsplat` (broadcast di uno scalare in tutte le
-corsie) è in `examples/vsplat.vasm`.
+corsie) è in `standalone/vsplat.vasm`.
 
-### 7.4 Gather / scatter con indici (`examples/gather.vasm`)
+### 7.4 Gather / scatter con indici (`standalone/gather.vasm`)
 
 `vloadx`/`vstorex` accedono alla memoria con **indici arbitrari** presi da un
 vettore (uno per corsia, in elementi), non con uno stride costante. Servono per
@@ -912,10 +956,10 @@ permutazioni, lookup e dati sparsi.
 ```
 
 ```bash
-./build/vcpu_sim examples/gather.vasm
+./build/vcpu_sim standalone/gather.vasm
 ```
 
-### 7.5 ReLU con predicazione (`examples/relu.vasm`)
+### 7.5 ReLU con predicazione (`standalone/relu.vasm`)
 
 `y[i] = max(x[i], 0)`. Il confronto `vmsgt` scrive il registro di maschera
 `vmask`, e `vmerge` seleziona per corsia: dove la maschera è 1 tiene `x`, altrove
@@ -936,7 +980,7 @@ prende 0. È così che una macchina vettoriale realizza gli `if` per corsia.
 ```
 
 ```bash
-./build/vcpu_sim examples/relu.vasm
+./build/vcpu_sim standalone/relu.vasm
 ```
 
 La stessa ReLU si può ottenere direttamente con `vmax v2, v0, v1` (dove `v1` è
@@ -944,7 +988,7 @@ il vettore di zeri): `vmerge` è mostrato per illustrare le maschere.
 
 ---
 
-### 7.6 Norma euclidea con `fsqrt` (`examples/norm.vasm`)
+### 7.6 Norma euclidea con `fsqrt` (`standalone/norm.vasm`)
 
 `||x|| = sqrt( Σ x[i]² )`. La riduzione `vredsum` accumula i quadrati dei blocchi
 e `fsqrt` estrae la radice. È l'esempio che completa l'aritmetica float scalare
@@ -961,7 +1005,7 @@ e `fsqrt` estrae la radice. È l'esempio che completa l'aritmetica float scalare
 ```
 
 ```bash
-./build/vcpu_sim examples/norm.vasm
+./build/vcpu_sim standalone/norm.vasm
 ```
 
 > Nota: `fsqrt` usa `sqrt()` della libreria matematica, quindi il link richiede
@@ -969,7 +1013,7 @@ e `fsqrt` estrae la radice. È l'esempio che completa l'aritmetica float scalare
 
 ---
 
-### 7.7 Array di interi: `.word` + `lw`/`sw` (`examples/words.vasm`)
+### 7.7 Array di interi: `.word` + `lw`/`sw` (`standalone/words.vasm`)
 
 A differenza di `.float`/`flw`/`fsw`, i dati sono **interi con segno a 32 bit**.
 `.word` li inizializza, `lw` li carica estendendo il segno e `sw` li scrive
@@ -989,12 +1033,12 @@ out: .space 4
 ```
 
 ```bash
-./build/vcpu_sim examples/words.vasm
+./build/vcpu_sim standalone/words.vasm
 ```
 
 ---
 
-### 7.8 Aritmetica e store predicati (`examples/masked.vasm`)
+### 7.8 Aritmetica e store predicati (`standalone/masked.vasm`)
 
 Le versioni mascherate (`vaddm`/`vsubm`/`vmulm`/`vstorem`) aggiornano solo le
 corsie con `vmask[i] = 1`; le altre restano invariate. Qui si aggiunge `100` ai
@@ -1010,10 +1054,10 @@ soli elementi `> 10` e si memorizzano solo quelli.
 ```
 
 ```bash
-./build/vcpu_sim examples/masked.vasm
+./build/vcpu_sim standalone/masked.vasm
 ```
 
-### 7.9 Scheduler round-robin preemptive (`examples/scheduler.vasm`)
+### 7.9 Scheduler round-robin preemptive (`standalone/scheduler.vasm`)
 
 L'esempio più completo: uno **scheduler round-robin** con preemption guidata dal
 timer. Mostra come le interruzioni (§4.3, «Interruzioni e parola di stato») e
@@ -1060,16 +1104,96 @@ I due task incrementano ciascuno il proprio contatore in un loop infinito; dopo 
 tick lo scheduler stampa i contatori e ferma la macchina:
 
 ```bash
-./build/vcpu_sim examples/scheduler.vasm
+./build/vcpu_sim standalone/scheduler.vasm
 # r5 = 124   (tickA)
 # r5 = 99    (tickB)
 ```
 
 Entrambi i contatori sono cresciuti: i task si sono davvero alternati. Con
 `--trace` si vedono gli 8 `-- timer trap -> handler N` e il passaggio del controllo
-dall'uno all'altro. È un esempio a **file singolo**, da eseguire in modalità legacy:
-carica l'entry di un task con `li rX, taskLabel` (un indirizzo di codice usato come
-dato), cosa che la pipeline `asm → ld → vx` rifiuta di proposito.
+dall'uno all'altro. È un esempio a **file singolo** che tiene *tutto* insieme
+(kernel e applicazione) come riferimento didattico compatto; la versione §7.10 lo
+spezza in kernel riutilizzabile + demo e mostra un confine più realistico.
+
+### 7.10 HAL, kernel puro e preemption differita (`linked/scheduler/hal/` + `linked/scheduler/kernel/` + `linked/scheduler/scheduler_demo.vasm`)
+
+Il mini-kernel di §7.9 mescola software di base e applicazione in un solo file.
+Ora che i **puntatori a funzione** attraversano la toolchain (rilocazione
+`R_ADDR`, §2.5), possiamo **spezzarlo e linkarlo** in tre strati netti, come in un
+sistema reale (l'*arch/port* di Linux e FreeRTOS rispetto al core portabile):
+
+| File | Strato | Ruolo | Esporta |
+|------|--------|-------|---------|
+| `linked/scheduler/hal/machine.vasm` | **HAL** (hardware) | vettore di trap, save/restore contesto, timer, `sti`, sezioni critiche | `_trap_entry`, `ctx_init`, `timer_init`, `irq_arm`, `irq_enable`, `irq_save`, `irq_restore` |
+| `linked/scheduler/kernel/coda.vasm` | kernel | le 5 routine di coda (`list_head`) | `coda_init`, `enqueue_coda`, `enqueue_testa`, `dequeue_testa`, `remove_buffer` |
+| `linked/scheduler/kernel/scheduler.vasm` | **kernel puro** | politica RR + dispatch, **nessun CSR** | `sched_dispatch`, `irq_install`, `request_preempt`, `ready`, `current` |
+| `linked/scheduler/scheduler_demo.vasm` | applicazione | boot (`main`) + due task + `timer_isr` + dati | `main` |
+
+**HAL: l'unico strato che tocca l'hardware.** Il *vettore grezzo* di trap
+(`_trap_entry`), il salvataggio/ripristino dei registri, i CSR delle eccezioni
+(`mfepc`/`mtepc`/`reti`) e i primitivi del timer (`timer_init`, `irq_arm`,
+`irq_enable`) vivono qui. L'HAL conosce il file dei registri e il layout del
+frame; **non** conosce code, TCB né politica. Il contesto salvato di un task è per
+il kernel un **puntatore opaco** (`sp`): l'HAL lo salva sullo stack, lo passa al
+kernel e riceve indietro quello da riprendere.
+
+**Kernel puro.** `linked/scheduler/kernel/scheduler.vasm` non contiene **nessuna** istruzione
+hardware. `sched_dispatch(r1 = sp uscente) → r1 = sp entrante` registra lo `sp`
+uscente nel TCB, chiama l'**handler** dell'app (via `jalr` — un vero puntatore a
+funzione) e, all'uscita IRQ, applica la preemption differita. Cambiare politica
+(RR → priorità) significa riscrivere solo `ctx_pick`: HAL e `sched_dispatch`
+restano intatti.
+
+**Confine app.** L'applicazione possiede l'**handler** (`timer_isr`, registrato con
+`irq_install`) e la **decisione** di preemptare. L'handler non commuta il task: se
+vuole uno switch chiama `request_preempt`, che arma `g_resched` (il `need_resched`
+di Linux, lo `xHigherPriorityTaskWoken` di FreeRTOS). Solo all'uscita dall'IRQ il
+kernel guarda il flag: se è zero riprende lo *stesso* task, altrimenti chiama
+`ctx_pick` (RR: `enqueue_coda` dell'uscente, `dequeue_testa` del prossimo). Un
+handler che *non* chiama `request_preempt` non causa alcuno switch — è una scelta
+dell'architetto. Il `main` costruisce i contesti iniziali con `ctx_init` (l'HAL sa
+com'è fatto un frame) e arma l'hardware con `irq_arm`/`timer_init`/`irq_enable`,
+senza mai nominare un CSR o il vettore.
+
+La pipeline di compilazione separata (o, in alternativa, un archivio `libkernel.va`
+con inclusione selettiva):
+
+```bash
+./build/vcpu_sim asm linked/scheduler/hal/machine.vasm              -o build/machine.vo
+./build/vcpu_sim asm linked/scheduler/kernel/coda.vasm              -o build/coda.vo
+./build/vcpu_sim asm linked/scheduler/kernel/scheduler.vasm         -o build/scheduler.vo
+./build/vcpu_sim asm linked/scheduler/scheduler_demo.vasm  -o build/scheduler_demo.vo
+./build/vcpu_sim ld build/scheduler_demo.vo build/scheduler.vo build/coda.vo \
+                    build/machine.vo -o build/scheduler_demo.vx
+./build/vcpu_sim run build/scheduler_demo.vx
+# r5 = 102   (tickA)
+# r5 = 70    (tickB)
+```
+
+Gli 8 tick e i due contatori che crescono alternandosi sono le stesse invarianti
+*qualitative* di §7.9; i numeri assoluti cambiano (call e `jalr` in più per i
+confini tra gli strati). La separazione *hardware / kernel / applicazione* è il
+punto: ogni strato ignora i dettagli degli altri.
+
+**Sezioni critiche sulle code.** Le routine di coda fanno aggiornamenti
+multi-passo **non atomici**. Finché ogni chiamata avviene a interrupt disabilitati
+(il boot prima di `irq_enable`, l'ISR dentro la trap) non c'è corsa. Ma un *task*
+gira a `IE=1`: se il timer si interpone a metà di un `enqueue_coda`, la lista resta
+incoerente e `ctx_pick` la corrompe. Su un monoprocessore in-order la sezione
+critica è semplicemente **disabilitare gli interrupt** (una `fence` non darebbe
+atomicità: servirebbe con multicore + RMW atomica, che questa ISA non ha).
+
+Da qui il **pattern a due livelli** (lo `xQueueSend`/`xQueueSendFromISR` di
+FreeRTOS, `__list_add` di Linux): la primitiva **raw** manipola i dati, è
+lock-free e chiamabile da ISR (già a `IE=0`); un **wrapper protetto** col suffisso
+`_s` la racchiude in una sezione critica. L'HAL fornisce la coppia componibile
+`irq_save() → r5 = psw; IE=0` e `irq_restore(r5)`: usa **save/restore** e non
+`cli`/`sti` secco, così resta corretta anche annidata o con `IE` già a zero. I
+wrapper (`enqueue_coda_s`, `enqueue_testa_s`, `dequeue_testa_s`, `remove_buffer_s`)
+sono NON-FOGLIA: salvano `r15` e conservano la `psw` sullo stack attraverso la
+chiamata alla raw. `irq_save`/`irq_restore` usano `r5` e non toccano `r1`/`r2`,
+quindi gli argomenti (e il valore di ritorno di `dequeue_testa`) restano intatti.
+Le ISR e il boot usano le raw; il **task** usa i wrapper `_s`.
 
 ---
 
@@ -1078,7 +1202,7 @@ dato), cosa che la pipeline `asm → ld → vx` rifiuta di proposito.
 
 In questo tutorial costruiamo passo dopo passo una **somma vettoriale**
 elemento-per-elemento, `C = A + B`. Il programma finale è in
-`examples/tutorial.vasm`.
+`standalone/tutorial.vasm`.
 
 ### Passo 0 — l'obiettivo
 
@@ -1149,7 +1273,7 @@ risultato in memoria. Ogni istruzione tocca esattamente `VL` elementi.
 ### Passo 6 — eseguire
 
 ```bash
-./build/vcpu_sim examples/tutorial.vasm
+./build/vcpu_sim standalone/tutorial.vasm
 ```
 
 Output atteso:
@@ -1187,7 +1311,7 @@ loop:
   bne    r4, r0, loop   ; ripeti finché restano elementi
 ```
 
-È lo stesso schema usato in `examples/saxpy.vasm`: cambia solo l'operazione
+È lo stesso schema usato in `standalone/saxpy.vasm`: cambia solo l'operazione
 interna (`vadd` invece di `vmacc`).
 
 ### Esercizi
