@@ -80,6 +80,96 @@ static int find_symbol(const char* name, int64_t* out)
 }
 
 // ---------------------------------------------------------------------------
+//  Assembler-time integer constants (.equ, .struct/.field). Pure compile-time
+//  values (field offsets, sizes): resolved as literals wherever an integer is
+//  expected (displacements, immediates), never relocated. Separate namespace
+//  from labels so they cannot be mistaken for relocatable symbols.
+// ---------------------------------------------------------------------------
+typedef struct { char name[64]; int64_t value; } Const;
+static Const   g_consts[MAX_SYMBOLS];
+static int     g_const_count;
+
+// Active .struct block: field offsets accumulate here until .ends.
+static int     g_struct_active;
+static char    g_struct_name[48];
+static int64_t g_struct_off;
+
+static int find_const(const char* name, int64_t* out)
+{
+    for (int i = 0; i < g_const_count; ++i)
+        if (strcmp(g_consts[i].name, name) == 0) { *out = g_consts[i].value; return 1; }
+    return 0;
+}
+
+static int def_const(const char* name, int64_t value, char* err, size_t errsz)
+{
+    int64_t dummy;
+    if (find_const(name, &dummy)) { snprintf(err, errsz, "duplicate constant '%s'", name); return -1; }
+    if (g_const_count >= MAX_SYMBOLS) { snprintf(err, errsz, "too many constants"); return -1; }
+    snprintf(g_consts[g_const_count].name, sizeof g_consts[0].name, "%s", name);
+    g_consts[g_const_count].value = value;
+    g_const_count += 1;
+    return 0;
+}
+
+// Resolve an integer token: a known constant, or a decimal/hex literal.
+static int const_value(const char* tok, int64_t* out)
+{
+    if (find_const(tok, out)) return 0;
+    char* end = NULL;
+    *out = (int64_t) strtoll(tok, &end, 0);
+    if (end == tok || *end != '\0') return -1;
+    return 0;
+}
+
+// Compile-time directives (.equ/.struct/.field/.ends). Returns 1 if 'first' was
+// one of them (handled), 0 if not one of them, -1 on error (err filled). Struct
+// fields become qualified constants "NAME.field"; .ends also defines "NAME.size".
+static int handle_const_directive(const char* first, char** toks, int k, int n,
+                                  int lineno, char* err, size_t errsz)
+{
+    if (strcmp(first, ".equ") == 0 || strcmp(first, ".set") == 0)
+    {
+        if (n - k != 3) { snprintf(err, errsz, "line %d: .equ needs NAME VALUE", lineno); return -1; }
+        int64_t v;
+        if (const_value(toks[k + 2], &v) != 0) { snprintf(err, errsz, "line %d: invalid value '%s'", lineno, toks[k + 2]); return -1; }
+        if (def_const(toks[k + 1], v, err, errsz) != 0) return -1;
+        return 1;
+    }
+    if (strcmp(first, ".struct") == 0)
+    {
+        if (g_struct_active) { snprintf(err, errsz, "line %d: nested .struct", lineno); return -1; }
+        if (n - k != 2) { snprintf(err, errsz, "line %d: .struct needs a name", lineno); return -1; }
+        snprintf(g_struct_name, sizeof g_struct_name, "%s", toks[k + 1]);
+        g_struct_off    = 0;
+        g_struct_active = 1;
+        return 1;
+    }
+    if (strcmp(first, ".field") == 0)
+    {
+        if (!g_struct_active) { snprintf(err, errsz, "line %d: .field outside .struct", lineno); return -1; }
+        if (n - k < 2 || n - k > 3) { snprintf(err, errsz, "line %d: .field needs NAME [size]", lineno); return -1; }
+        int64_t size = 4;   // default: one word
+        if (n - k == 3 && const_value(toks[k + 2], &size) != 0) { snprintf(err, errsz, "line %d: invalid field size '%s'", lineno, toks[k + 2]); return -1; }
+        char fq[64];
+        snprintf(fq, sizeof fq, "%s.%s", g_struct_name, toks[k + 1]);
+        if (def_const(fq, g_struct_off, err, errsz) != 0) return -1;
+        g_struct_off += size;
+        return 1;
+    }
+    if (strcmp(first, ".ends") == 0)
+    {
+        if (!g_struct_active) { snprintf(err, errsz, "line %d: .ends without .struct", lineno); return -1; }
+        char fq[64];
+        snprintf(fq, sizeof fq, "%s.size", g_struct_name);
+        if (def_const(fq, g_struct_off, err, errsz) != 0) return -1;
+        g_struct_active = 0;
+        return 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
 //  Tokenizer: strips comments, treats commas as separators, splits on spaces.
 //  Mutates 'line'. Returns token count.
 // ---------------------------------------------------------------------------
@@ -123,6 +213,7 @@ static int parse_reg(const char* tok, char prefix, int count, char* err, size_t 
 // index for code. Decimal or hex.
 static int parse_int(const char* tok, int64_t* out, char* err, size_t errsz)
 {
+    if (find_const(tok, out)) return 0;   // assembler-time constant (.equ / struct field)
     if (isalpha((unsigned char) tok[0]) || tok[0] == '_')
     {
         // Split the identifier from an optional "+off"/"-off" suffix.
@@ -204,9 +295,7 @@ static int parse_mem(const char* tok, int64_t* disp, int* reg, char* err, size_t
     { snprintf(err, errsz, "invalid displacement in '%s'", tok); return -1; }
     memcpy(dbuf, tok, dlen);
     dbuf[dlen] = '\0';
-    char* dend;
-    *disp = (int64_t) strtoll(dbuf, &dend, 0);
-    if (*dend != '\0')
+    if (const_value(dbuf, disp) != 0)
     { snprintf(err, errsz, "invalid displacement in '%s'", tok); return -1; }
 
     const char* rp    = lp + 1;
@@ -678,10 +767,55 @@ static void join_tokens(char** toks, int start, int n, char* out, size_t outsz)
     }
 }
 
+// ---------------------------------------------------------------------------
+//  .include support: a small stack of open source files. The bottom of the
+//  stack is the top-level file (left open so the caller's fclose(fp) frees it);
+//  nested includes are closed on EOF. Include paths resolve against base_dir
+//  (the directory of the top-level file), or as-is when absolute.
+// ---------------------------------------------------------------------------
+#define MAX_INCLUDE 8
+
+static int inc_next_line(FILE** stk, int* sp, char* line, size_t sz)
+{
+    while (*sp > 0)
+    {
+        if (fgets(line, sz, stk[*sp - 1])) return 1;
+        if (*sp == 1) return 0;          // leave the top-level file open for the caller
+        fclose(stk[*sp - 1]);
+        *sp -= 1;
+    }
+    return 0;
+}
+
+static FILE* inc_open(const char* base_dir, const char* raw, char* err, size_t errsz)
+{
+    char name[400];
+    size_t L = strlen(raw);
+    if (L >= 2 && raw[0] == '"' && raw[L - 1] == '"')
+        snprintf(name, sizeof name, "%.*s", (int) (L - 2), raw + 1);
+    else
+        snprintf(name, sizeof name, "%s", raw);
+    char full[512];
+    if (name[0] == '/' || base_dir[0] == '\0') snprintf(full, sizeof full, "%s", name);
+    else snprintf(full, sizeof full, "%s/%s", base_dir, name);
+    FILE* f = fopen(full, "r");
+    if (!f) snprintf(err, errsz, "cannot open include '%s'", full);
+    return f;
+}
+
+static void base_dir_of(const char* path, char* out, size_t sz)
+{
+    const char* slash = strrchr(path, '/');
+    if (slash) snprintf(out, sz, "%.*s", (int) (slash - path), path);
+    else if (sz) out[0] = '\0';
+}
+
 int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
 {
     g_symbol_count = 0;
     g_code_count   = 0;
+    g_const_count   = 0;
+    g_struct_active = 0;
 
     FILE* fp = fopen(path, "r");
     if (!fp)
@@ -697,7 +831,14 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
     int64_t data_ptr = 0;
     int     lineno   = 0;
 
-    while (fgets(line, sizeof(line), fp))
+    // .include: file stack (bottom = top-level file, kept open for fclose(fp)).
+    FILE*   inc_stk[MAX_INCLUDE];
+    int     inc_sp = 0;
+    char    base_dir[400];
+    base_dir_of(path, base_dir, sizeof base_dir);
+    inc_stk[inc_sp++] = fp;
+
+    while (inc_next_line(inc_stk, &inc_sp, line, sizeof(line)))
     {
         lineno += 1;
         char work[512];
@@ -724,6 +865,14 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
         {
             if (strcmp(first, ".text") == 0) { section = SEC_TEXT; }
             else if (strcmp(first, ".data") == 0) { section = SEC_DATA; }
+            else if (strcmp(first, ".include") == 0)
+            {
+                if (k + 1 >= n) { snprintf(err, errsz, "line %d: .include needs a file", lineno); fclose(fp); return -1; }
+                if (inc_sp >= MAX_INCLUDE) { snprintf(err, errsz, "line %d: .include nested too deep", lineno); fclose(fp); return -1; }
+                FILE* inf = inc_open(base_dir, toks[k + 1], err, errsz);
+                if (!inf) { fclose(fp); return -1; }
+                inc_stk[inc_sp++] = inf;
+            }
             else if (strcmp(first, ".float") == 0)
             {
                 for (int i = k + 1; i < n; ++i)
@@ -757,6 +906,16 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
                 if (k + 1 >= n) { snprintf(err, errsz, "line %d: .space needs a count", lineno); fclose(fp); return -1; }
                 data_ptr += (int64_t) atoll(toks[k + 1]) * 4;
             }
+            else if (strcmp(first, ".res") == 0)
+            {
+                // .res TYPE : reserve TYPE.size bytes (size-aware .space); the label defines the symbol.
+                if (k + 1 >= n) { snprintf(err, errsz, "line %d: .res needs a type name", lineno); fclose(fp); return -1; }
+                char fq[80]; snprintf(fq, sizeof fq, "%s.size", toks[k + 1]);
+                int64_t sz;
+                if (!find_const(fq, &sz)) { snprintf(err, errsz, "line %d: unknown struct '%s'", lineno, toks[k + 1]); fclose(fp); return -1; }
+                if ((uint64_t) data_ptr + sz > MEM_SIZE) { snprintf(err, errsz, "line %d: data overflow", lineno); fclose(fp); return -1; }
+                data_ptr += sz;
+            }
             else if (strcmp(first, ".global") == 0 || strcmp(first, ".globl") == 0 ||
                      strcmp(first, ".extern") == 0)
             {
@@ -765,8 +924,13 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
             }
             else
             {
-                snprintf(err, errsz, "line %d: unknown directive '%s'", lineno, first);
-                fclose(fp); return -1;
+                int h = handle_const_directive(first, toks, k, n, lineno, err, errsz);
+                if (h < 0) { fclose(fp); return -1; }
+                if (h == 0)
+                {
+                    snprintf(err, errsz, "line %d: unknown directive '%s'", lineno, first);
+                    fclose(fp); return -1;
+                }
             }
             continue;
         }
@@ -782,6 +946,8 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
         g_code_lines[g_code_count] = strdup(joined);
         g_code_count += 1;
     }
+
+    if (g_struct_active) { snprintf(err, errsz, "unterminated .struct '%s'", g_struct_name); free_code_lines(); fclose(fp); return -1; }
 
     // ---- Pass 2: encode instructions with resolved symbols ----------------
     for (int i = 0; i < g_code_count; ++i)
@@ -852,6 +1018,8 @@ int assemble_object(const char* path, VObject* obj, char* err, size_t errsz)
     memset(obj, 0, sizeof(*obj));
     g_symbol_count = 0;
     g_code_count   = 0;
+    g_const_count   = 0;
+    g_struct_active = 0;
 
     FILE* fp = fopen(path, "r");
     if (!fp)
@@ -874,8 +1042,15 @@ int assemble_object(const char* path, VObject* obj, char* err, size_t errsz)
     int64_t data_ptr = 0;
     int     lineno   = 0;
 
+    // .include: file stack (bottom = top-level file, kept open for fclose(fp)).
+    FILE*   inc_stk[MAX_INCLUDE];
+    int     inc_sp = 0;
+    char    base_dir[400];
+    base_dir_of(path, base_dir, sizeof base_dir);
+    inc_stk[inc_sp++] = fp;
+
     // ---- Pass 1: symbols, data image, bindings, keep code lines -----------
-    while (fgets(line, sizeof(line), fp))
+    while (inc_next_line(inc_stk, &inc_sp, line, sizeof(line)))
     {
         lineno += 1;
         char work[512];
@@ -901,6 +1076,14 @@ int assemble_object(const char* path, VObject* obj, char* err, size_t errsz)
         {
             if (strcmp(first, ".text") == 0) { section = SEC_TEXT; }
             else if (strcmp(first, ".data") == 0) { section = SEC_DATA; }
+            else if (strcmp(first, ".include") == 0)
+            {
+                if (k + 1 >= n) { snprintf(err, errsz, "line %d: .include needs a file", lineno); goto fail; }
+                if (inc_sp >= MAX_INCLUDE) { snprintf(err, errsz, "line %d: .include nested too deep", lineno); goto fail; }
+                FILE* inf = inc_open(base_dir, toks[k + 1], err, errsz);
+                if (!inf) goto fail;
+                inc_stk[inc_sp++] = inf;
+            }
             else if (strcmp(first, ".global") == 0 || strcmp(first, ".globl") == 0)
             {
                 for (int i = k + 1; i < n && nglobal < MAX_SYMBOLS; ++i)
@@ -945,10 +1128,25 @@ int assemble_object(const char* path, VObject* obj, char* err, size_t errsz)
                 data_ptr += (int64_t) atoll(toks[k + 1]) * 4;
                 if ((uint64_t) data_ptr > MEM_SIZE) { snprintf(err, errsz, "line %d: data overflow", lineno); goto fail; }
             }
+            else if (strcmp(first, ".res") == 0)
+            {
+                // .res TYPE : reserve TYPE.size bytes (size-aware .space); the label defines the symbol.
+                if (k + 1 >= n) { snprintf(err, errsz, "line %d: .res needs a type name", lineno); goto fail; }
+                char fq[80]; snprintf(fq, sizeof fq, "%s.size", toks[k + 1]);
+                int64_t sz;
+                if (!find_const(fq, &sz)) { snprintf(err, errsz, "line %d: unknown struct '%s'", lineno, toks[k + 1]); goto fail; }
+                data_ptr += sz;
+                if ((uint64_t) data_ptr > MEM_SIZE) { snprintf(err, errsz, "line %d: data overflow", lineno); goto fail; }
+            }
             else
             {
-                snprintf(err, errsz, "line %d: unknown directive '%s'", lineno, first);
-                goto fail;
+                int h = handle_const_directive(first, toks, k, n, lineno, err, errsz);
+                if (h < 0) goto fail;
+                if (h == 0)
+                {
+                    snprintf(err, errsz, "line %d: unknown directive '%s'", lineno, first);
+                    goto fail;
+                }
             }
             continue;
         }
@@ -965,6 +1163,7 @@ int assemble_object(const char* path, VObject* obj, char* err, size_t errsz)
     }
 
     // ---- Apply .global / .extern to the symbol table ----------------------
+    if (g_struct_active) { snprintf(err, errsz, "unterminated .struct '%s'", g_struct_name); goto fail; }
     for (int i = 0; i < nglobal; ++i)
     {
         int idx = find_symbol_idx(globals[i]);
@@ -1026,12 +1225,17 @@ int assemble_object(const char* path, VObject* obj, char* err, size_t errsz)
         s->is_code = g_symbols[i].is_code;
     }
 
-    // Shrink the data image to its used size.
+    // Shrink the data image to its used size. Copy into an exact-size block
+    // rather than realloc(): the scratch buffer is a full MEM_SIZE, so keeping
+    // it on a failed shrink would retain 1 MiB per object, and reusing 'data'
+    // after realloc() consumed it is undefined behaviour.
     obj->data_count = data_ptr;
     if (data_ptr > 0)
     {
-        obj->data = realloc(data, (size_t) data_ptr);
-        if (!obj->data) obj->data = data;  // keep the oversized buffer on failure
+        obj->data = malloc((size_t) data_ptr);
+        if (!obj->data) { snprintf(err, errsz, "out of memory"); goto fail; }
+        memcpy(obj->data, data, (size_t) data_ptr);
+        free(data);
     }
     else
     {
