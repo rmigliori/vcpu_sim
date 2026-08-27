@@ -1,0 +1,159 @@
+; kernel/coda.vasm — code di scheduling: lista circolare doppia con sentinella.
+;
+; Pattern struct list_head del kernel Linux: la testa e il nodo condividono i
+; primi 8 byte (fwd,bwd) => lo stesso codice di insert/remove vale per entrambi.
+; Il link sta a offset 0 => il puntatore al link E' il puntatore al buffer
+; (niente container_of); i dati del nodo iniziano a +8.
+;
+; Testa (12 byte):  +0 fwd(void*)  +4 bwd(void*)  +8 count(word).
+; Nodo:             +0 fwd         +4 bwd         +8 data...
+; Vuota: fwd==bwd==&testa, count==0.
+;
+; Convenzione registri: r1/r2 argomenti, r4/r5/r6 scratch. Sono routine FOGLIA:
+; non toccano r14(sp) ne' r15(ra) -> chiamabili anche dentro l'ISR del kernel.
+;
+; Pattern a DUE LIVELLI (= xQueueSend/xQueueSendFromISR di FreeRTOS): le routine
+; qui sotto sono RAW (lock-free, aggiornamento multi-passo NON atomico) e vanno
+; chiamate solo dove gli interrupt sono gia' disabilitati (boot, ISR). Un TASK
+; (IE=1) deve invece usare i wrapper protetti col suffisso _s in fondo al file:
+; racchiudono la raw in una sezione critica (irq_save/irq_restore dell'HAL).
+
+; Layout come struttura: offset simbolici (TESTA.fwd/bwd/count) invece di 0/4/8.
+; La struct descrive la TESTA (sentinella); il nodo condivide i primi due campi
+; (fwd,bwd) -> stesso codice di insert/remove.
+.struct TESTA
+  .field fwd            ; +0  puntatore avanti (condiviso testa/nodo)
+  .field bwd            ; +4  puntatore indietro (condiviso testa/nodo)
+  .field count          ; +8  contatore, solo nella testa
+.ends
+
+  .text
+
+  .global coda_init
+  .global enqueue_coda
+  .global enqueue_testa
+  .global dequeue_testa
+  .global remove_buffer
+
+  .global enqueue_coda_s
+  .global enqueue_testa_s
+  .global dequeue_testa_s
+  .global remove_buffer_s
+  .extern irq_save
+  .extern irq_restore
+
+coda_init:                ; coda_init(r1=&testa)
+  sw r1, TESTA.fwd(r1)    ; fwd = &testa
+  sw r1, TESTA.bwd(r1)    ; bwd = &testa
+  sw r0, TESTA.count(r1)  ; count = 0
+  ret
+
+enqueue_coda:             ; enqueue_coda(r1=&testa, r2=&nodo) -- in fondo (FIFO)
+  lw r4, TESTA.bwd(r1)    ; prev = testa.bwd (ultimo)
+  sw r1, TESTA.fwd(r2)    ; nodo.fwd = &testa
+  sw r4, TESTA.bwd(r2)    ; nodo.bwd = prev
+  sw r2, TESTA.fwd(r4)    ; prev.fwd = nodo
+  sw r2, TESTA.bwd(r1)    ; testa.bwd = nodo
+  lw r5, TESTA.count(r1)
+  addi r5, r5, 1
+  sw r5, TESTA.count(r1) ; count++
+  ret
+
+enqueue_testa:            ; enqueue_testa(r1=&testa, r2=&nodo) -- in testa (LIFO)
+  lw r4, TESTA.fwd(r1)   ; next = testa.fwd
+  sw r4, TESTA.fwd(r2)   ; nodo.fwd = next
+  sw r1, TESTA.bwd(r2)   ; nodo.bwd = &testa
+  sw r2, TESTA.bwd(r4)   ; next.bwd = nodo
+  sw r2, TESTA.fwd(r1)   ; testa.fwd = nodo
+  lw r5, TESTA.count(r1)
+  addi r5, r5, 1
+  sw r5, TESTA.count(r1) ; count++
+  ret
+
+dequeue_testa:            ; dequeue_testa(r1=&testa) -> r2 = nodo (0 se vuota)
+  lw r5, TESTA.count(r1)
+  beq r5, r0, deq_empty
+  lw r2, TESTA.fwd(r1)   ; nodo = testa.fwd
+  lw r4, TESTA.fwd(r2)   ; new = nodo.fwd
+  sw r4, TESTA.fwd(r1)   ; testa.fwd = new
+  sw r1, TESTA.bwd(r4)   ; new.bwd = &testa
+  addi r5, r5, -1
+  sw r5, TESTA.count(r1) ; count--
+  ret
+deq_empty:
+  li r2, 0             ; coda vuota -> puntatore nullo
+  ret
+
+remove_buffer:            ; remove_buffer(r1=&nodo, r2=&testa) -- unlink O(1)
+  lw r4, TESTA.bwd(r1)   ; prev = nodo.bwd
+  lw r5, TESTA.fwd(r1)   ; next = nodo.fwd
+  sw r5, TESTA.fwd(r4)   ; prev.fwd = next
+  sw r4, TESTA.bwd(r5)   ; next.bwd = prev
+  lw r6, TESTA.count(r2)
+  addi r6, r6, -1
+  sw r6, TESTA.count(r2); count-- (la testa la conosce il chiamante)
+  ret
+
+; --------------------------------------------------------------------------
+;  Wrapper PROTETTI (_s): sezione critica intorno alla primitiva raw, per l'uso
+;  da TASK (IE=1). Senza protezione un tick del timer potrebbe interporsi a
+;  meta' di un aggiornamento multi-passo lasciando la lista incoerente e facendo
+;  corrompere ctx_pick. Sono NON-FOGLIA (salvano r15) e conservano la psw sullo
+;  stack attraverso la call. irq_save/irq_restore usano r5 e non toccano r1/r2,
+;  quindi gli argomenti della raw restano intatti.
+; --------------------------------------------------------------------------
+enqueue_coda_s:           ; enqueue_coda_s(r1=&testa, r2=&nodo) protetto
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  call irq_save           ; r5 = psw, IE=0 (r1/r2 intatti)
+  addi r14, r14, -4
+  sw r5, 0(r14)           ; la psw sopravvive alla call
+  call enqueue_coda
+  lw r5, 0(r14)
+  addi r14, r14, 4
+  call irq_restore        ; ripristina psw da r5
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+enqueue_testa_s:          ; enqueue_testa_s(r1=&testa, r2=&nodo) protetto
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  call irq_save
+  addi r14, r14, -4
+  sw r5, 0(r14)
+  call enqueue_testa
+  lw r5, 0(r14)
+  addi r14, r14, 4
+  call irq_restore
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+dequeue_testa_s:          ; dequeue_testa_s(r1=&testa) -> r2 = nodo (0 se vuota)
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  call irq_save
+  addi r14, r14, -4
+  sw r5, 0(r14)
+  call dequeue_testa      ; r2 = risultato (irq_restore non lo tocca -> preservato)
+  lw r5, 0(r14)
+  addi r14, r14, 4
+  call irq_restore
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+remove_buffer_s:          ; remove_buffer_s(r1=&nodo, r2=&testa) protetto
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  call irq_save
+  addi r14, r14, -4
+  sw r5, 0(r14)
+  call remove_buffer
+  lw r5, 0(r14)
+  addi r14, r14, 4
+  call irq_restore
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret

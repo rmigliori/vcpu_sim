@@ -1,0 +1,117 @@
+; kernel/scheduler.vasm — KERNEL PURO: politica round-robin + meccanismo di coda.
+; Nessun accesso all'hardware: i CSR delle eccezioni (mfepc/mtepc/reti), il
+; vettore di trap e il timer stanno nell'HAL (hal/machine.vasm). Il kernel vede
+; il contesto salvato di un task come un PUNTATORE OPACO (sp) e non lo interpreta.
+;
+; Modello IRQ-STUB a preemption DIFFERITA (need_resched di Linux /
+; xHigherPriorityTaskWoken di FreeRTOS): l'HAL salva il contesto e chiama
+; sched_dispatch; questo invoca l'HANDLER dell'app e, solo a uscita IRQ, decide
+; se commutare. L'app possiede l'handler e la decisione (request_preempt); il
+; kernel possiede code, current e politica.
+;
+; Separazione mechanism/policy: si cambia politica (RR -> priorita') riscrivendo
+; solo ctx_pick, senza toccare l'HAL ne' sched_dispatch.
+;
+; --- Modello a 3 stati (una posizione fisica del TCB per ogni stato) ---
+;   READY(0)     : il TCB e' linkato nella ready queue.
+;   RUNNING(1)   : il TCB e' FUORI da ogni coda, puntato solo da 'current'.
+;   SUSPENDED(2) : il TCB e' in una coda di semaforo/mailbox (estensione futura).
+;
+; --- TCB (16 byte):  +0 fwd  +4 bwd  +8 sp_salvato  +12 stato ---
+;   sp_salvato = il puntatore-a-contesto opaco fornito dall'HAL.
+
+; Tipi comuni (TESTA, TCB, stati) condivisi con l'app: single source of truth.
+.include "../include/types.vinc"
+
+  .data
+
+  .global ready
+  .global current
+
+ready:     .res TESTA     ; ready queue (sentinella): fwd/bwd/count
+current:   .word 0        ; &TCB del task RUNNING (0 = nessuno, boot)
+g_handler: .word 0        ; puntatore all'handler applicativo (indice istruzione)
+g_resched: .word 0        ; need_resched: !=0 => switch a uscita IRQ
+
+  .text
+
+  .global sched_dispatch
+  .global irq_install
+  .global request_preempt
+  .extern enqueue_coda
+  .extern dequeue_testa
+
+; ==========================================================================
+;  irq_install(r1 = puntatore all'handler applicativo): lo registra. L'app lo
+;  ottiene con `li rX, timer_isr` (R_ADDR -> indice d'istruzione = function ptr).
+; ==========================================================================
+irq_install:
+  li r2, g_handler
+  sw r1, 0(r2)
+  ret
+
+; ==========================================================================
+;  request_preempt: arma il need_resched. Chiamata dall'handler quando vuole uno
+;  switch; un handler che NON la chiama => nessuna preemption (scelta dell'app).
+;  Clobber: r1, r2.
+; ==========================================================================
+request_preempt:
+  li r1, g_resched
+  li r2, 1
+  sw r2, 0(r1)
+  ret
+
+; ==========================================================================
+;  sched_dispatch(r1 = sp uscente) -> r1 = sp entrante. Chiamato dall'HAL a
+;  contesto GIA' salvo. Registra lo sp uscente nel TCB corrente, invoca
+;  l'handler dell'app (call indiretto via puntatore a funzione) e, a uscita IRQ,
+;  applica la preemption DIFFERITA: se richiesta, sceglie un altro task. Torna
+;  all'HAL il puntatore-a-contesto da riprendere (vale con o senza switch).
+;  Non-foglia -> salva r15. Non tocca alcun CSR: il kernel resta puro.
+; ==========================================================================
+sched_dispatch:
+  addi r14, r14, -4
+  sw r15, 0(r14)         ; non-foglia: preserva il ritorno all'HAL
+  li r2, current
+  lw r3, 0(r2)
+  sw r1, TCB.sp(r3)      ; current.sp = sp uscente (contesto opaco)
+
+  li r5, g_handler       ; handler dell'app: funzione normale (contesto gia' salvo)
+  lw r5, 0(r5)
+  jalr r15, r5
+
+  li r1, g_resched       ; uscita IRQ: preemption differita
+  lw r2, 0(r1)
+  beq r2, r0, sd_done
+  sw r0, 0(r1)           ; consuma il need_resched
+  call ctx_pick          ; enqueue current, dequeue next, current = next
+sd_done:
+  li r2, current
+  lw r2, 0(r2)
+  lw r1, TCB.sp(r2)      ; r1 = sp entrante (invariato se non c'e' stato switch)
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; ==========================================================================
+;  ctx_pick (SCHEDULER/politica, interno): round-robin a coda singola. Rimette
+;  in coda il task uscente e ne sceglie il prossimo. Non-foglia -> salva r15.
+; ==========================================================================
+ctx_pick:
+  addi r14, r14, -4
+  sw r15, 0(r14)         ; non-foglia: preserva il ritorno
+  li r6, current
+  lw r4, 0(r6)           ; r4 = TCB uscente
+  sw r0, TCB.state(r4)   ; stato uscente = READY
+  li r1, ready
+  mov r2, r4
+  call enqueue_coda      ; uscente in fondo alla ready queue
+  li r1, ready
+  call dequeue_testa     ; r2 = prossimo TCB
+  li r6, current
+  sw r2, 0(r6)           ; current = prossimo
+  li r5, RUNNING
+  sw r5, TCB.state(r2)   ; stato prossimo = RUNNING
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret

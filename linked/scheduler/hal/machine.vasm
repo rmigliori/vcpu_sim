@@ -1,0 +1,152 @@
+; hal/machine.vasm — HAL (Hardware Abstraction Layer): l'UNICO codice che tocca
+; l'hardware di questa macchina. Isola il kernel dai dettagli della CPU e del
+; timer, cosi' il kernel resta puro (politica + code, nessun CSR).
+;
+; E' lo strato "port/arch" dei kernel reali: FreeRTOS portable/portASM, Linux
+; arch/*/entry.S. Sa: file dei registri, layout del frame di contesto, i CSR
+; delle eccezioni (mfepc/mtepc/reti), il vettore di trap, il timer. NON sa nulla
+; di ready queue, TCB, current, handler o politica di scheduling.
+;
+; Contratto col kernel: il contesto salvato di un task e' OPACO. L'HAL lo salva
+; sullo stack, ne passa il puntatore (sp) al kernel e riceve indietro il
+; puntatore del contesto da riprendere. Il kernel non interpreta mai il frame.
+;
+; --- Frame di contesto (sullo stack del task, sp = r14, 60 byte) ---
+;   Push: r1..r13, r15(ra), epc  -> epc finisce in cima (indirizzo piu' basso).
+;   r14(sp) NON e' nel frame: e' il puntatore-a-contesto stesso. epsw NON e' nel
+;   frame: non e' scrivibile e IE=1 e' uniforme (la trap mette IE=0, reti lo
+;   riporta a 1). I registri VETTORIALI (v*, vl, vmask) sono VOLATILI attraverso
+;   la preemption (la trap arriva solo al confine d'istruzione: nessuna corsia
+;   viva da salvare).
+
+  .text
+
+  .global _trap_entry
+  .global ctx_init
+  .global timer_init
+  .global irq_arm
+  .global irq_enable
+  .global irq_save
+  .global irq_restore
+  .extern sched_dispatch
+
+; ==========================================================================
+;  _trap_entry: VETTORE di trap del timer. All'ingresso r14 = sp del task
+;  interrotto, IE=0, epc = pc dell'istruzione interrotta. Salva il contesto
+;  (incluso r15, prima di qualunque call), lo consegna al kernel come puntatore
+;  opaco, poi ripristina il contesto scelto dal kernel e cede il controllo.
+; ==========================================================================
+_trap_entry:
+  ; (A) salva il contesto del task interrotto sul suo stack (r14).
+  addi r14, r14, -4
+  sw r1, 0(r14)
+  addi r14, r14, -4
+  sw r2, 0(r14)
+  addi r14, r14, -4
+  sw r3, 0(r14)
+  addi r14, r14, -4
+  sw r4, 0(r14)
+  addi r14, r14, -4
+  sw r5, 0(r14)
+  addi r14, r14, -4
+  sw r6, 0(r14)
+  addi r14, r14, -4
+  sw r7, 0(r14)
+  addi r14, r14, -4
+  sw r8, 0(r14)
+  addi r14, r14, -4
+  sw r9, 0(r14)
+  addi r14, r14, -4
+  sw r10, 0(r14)
+  addi r14, r14, -4
+  sw r11, 0(r14)
+  addi r14, r14, -4
+  sw r12, 0(r14)
+  addi r14, r14, -4
+  sw r13, 0(r14)
+  addi r14, r14, -4
+  sw r15, 0(r14)          ; link register incluso (jalr/call sotto lo distruggono)
+  mfepc r1                ; r1 e' libero (gia' salvato)
+  addi r14, r14, -4
+  sw r1, 0(r14)           ; epc in cima al frame; sp punta qui
+
+  ; (B) consegna il contesto opaco al kernel; riceve quello da riprendere.
+  mov r1, r14
+  call sched_dispatch     ; r1 (in) = sp uscente  ->  r1 (out) = sp entrante
+  mov r14, r1
+
+  ; (C) ripristina il contesto scelto e cede il controllo con reti.
+  lw r1, 0(r14)           ; epc dal frame
+  addi r14, r14, 4
+  mtepc r1
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  lw r13, 0(r14)
+  addi r14, r14, 4
+  lw r12, 0(r14)
+  addi r14, r14, 4
+  lw r11, 0(r14)
+  addi r14, r14, 4
+  lw r10, 0(r14)
+  addi r14, r14, 4
+  lw r9, 0(r14)
+  addi r14, r14, 4
+  lw r8, 0(r14)
+  addi r14, r14, 4
+  lw r7, 0(r14)
+  addi r14, r14, 4
+  lw r6, 0(r14)
+  addi r14, r14, 4
+  lw r5, 0(r14)
+  addi r14, r14, 4
+  lw r4, 0(r14)
+  addi r14, r14, 4
+  lw r3, 0(r14)
+  addi r14, r14, 4
+  lw r2, 0(r14)
+  addi r14, r14, 4
+  lw r1, 0(r14)
+  addi r14, r14, 4
+  reti                    ; pc = epc; psw = epsw (IE=1) -> il task riparte
+
+; ==========================================================================
+;  ctx_init(r1 = cima dello stack, r2 = entry del task) -> r1 = sp iniziale.
+;  Costruisce un frame FINTO col layout di _trap_entry: epc = entry, i registri
+;  restano 0 (lo stack e' memoria azzerata). Al primo switch-in il task parte via
+;  reti come se fosse stato preemptato. E' pxPortInitialiseStack di FreeRTOS.
+; ==========================================================================
+ctx_init:
+  addi r1, r1, -60        ; base del frame (offset 0 = slot epc)
+  sw r2, 0(r1)            ; epc = entry
+  ret
+
+; ==========================================================================
+;  Primitivi hardware del timer e degli interrupt, per il boot del sistema.
+; ==========================================================================
+timer_init:               ; timer_init(r1 = periodo in cicli): arma il tick
+  settimer r1
+  ret
+
+irq_arm:                  ; installa il vettore di trap dell'HAL
+  sethandler _trap_entry
+  ret
+
+irq_enable:               ; abilita gli interrupt (IE = 1)
+  sti
+  ret
+
+; ==========================================================================
+;  Sezione critica su monoprocessore = disabilitare gli interrupt. Coppia
+;  SAVE/RESTORE (non cli/sti secco) per COMPONIBILITA': ripristina lo stato
+;  PRECEDENTE, quindi resta corretta anche annidata o con IE gia' 0. La parola
+;  di stato viaggia in r5: l'HAL non tocca r1/r2, cosi' un wrapper puo'
+;  racchiudere una raw di coda senza disturbarne gli argomenti.
+; ==========================================================================
+irq_save:                 ; irq_save() -> r5 = psw precedente; poi IE = 0
+  mfpsw r5
+  cli
+  ret
+
+irq_restore:              ; irq_restore(r5 = psw da ripristinare)
+  mtpsw r5
+  ret

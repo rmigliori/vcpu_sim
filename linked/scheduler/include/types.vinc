@@ -1,0 +1,23 @@
+; include/types.vinc — tipi comuni di kernel e app, inclusi con `.include`.
+; Solo costanti di compile-time (offset simbolici + stati): niente magic number,
+; una sola sorgente di verita' condivisa da scheduler.vasm e dall'app.
+
+; Testa di coda (sentinella): condivide fwd/bwd con i nodi (idioma list_head).
+.struct TESTA
+  .field fwd              ; +0
+  .field bwd              ; +4
+  .field count            ; +8
+.ends
+
+; Descrittore di task.
+.struct TCB
+  .field fwd              ; +0
+  .field bwd              ; +4
+  .field sp               ; +8  contesto opaco salvato
+  .field state            ; +12 stato corrente
+.ends
+
+; Stati del task (campo TCB.state).
+.equ READY     0
+.equ RUNNING   1
+.equ SUSPENDED 2
