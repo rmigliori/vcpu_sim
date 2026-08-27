@@ -19,7 +19,7 @@ livello.
 | Assembler (2 passi, rilocazioni) | completo | [`src/assembler.c`](../src/assembler.c) |
 | Linker, archivi, loader | completo | [`src/toolchain.c`](../src/toolchain.c) |
 | CLI `asm/ld/run/nm/ar` | completo | [`src/main.c`](../src/main.c) |
-| HAL + kernel + scheduler RR | completo, **non committato** | [`linked/scheduler/`](../linked/scheduler/) |
+| HAL + kernel + scheduler RR | completo, committato | [`linked/scheduler/`](../linked/scheduler/) |
 | Linguaggio alto livello `vc` | **da fare** — solo progettato | [`docs/proposta-linguaggio-alto-livello.md`](proposta-linguaggio-alto-livello.md) |
 
 Macchina: 16 registri scalari `r0..r15` (`r0` = 0), 16 float `f0..f15`, 8
@@ -51,23 +51,17 @@ dopo lo spostamento e danno gli stessi numeri di prima.
 Branch `master`. Ultimo commit:
 
 ```
+c0dcd9a Riorganizza sorgenti .vasm: examples/ -> standalone/ + linked/, doc aggiornata
+7b6fdc6 HAL + kernel puro + demo scheduler a preemption differita
+fe7bb00 Assembler: direttive di compile-time (.equ/.struct/.field/.res/.include)
 007c933 Toolchain: reloc R_ADDR per puntatori a funzione (li di simbolo)
 10ae28a Snapshot iniziale: simulatore vCPU vettoriale + toolchain + scheduler RR
 ```
 
-**Lavoro non committato** (tutto funzionante e verificato):
+Working tree pulito, nessun lavoro in sospeso. Resta solo:
 
 ```
- M Makefile                        (target run: standalone/saxpy.vasm)
- M docs/manual.md                  (+129 righe: doc di .equ/.struct/.field/.res/.include, §7.10,
-                                     path aggiornati dopo la riorganizzazione examples/ -> linked/ e standalone/)
- M docs/proposta-linguaggio-alto-livello.md  (path aggiornati)
- M src/assembler.c                 (+228 righe: direttive di compile-time, .include, fix warning)
- R examples/*.vasm -> standalone/*.vasm       (12 file, rename puro)
- R examples/multi/*.vasm -> linked/multi/*.vasm (3 file, rename puro)
-?? linked/scheduler/               hal/, kernel/, include/types.vinc, scheduler_demo.vasm
-                                    (spostati da hal/, kernel/, include/, examples/ — mai committati)
-?? .vscode/              (probabilmente da mettere in .gitignore)
+?? .vscode/              (mai tracciato; da valutare se aggiungere a .gitignore)
 ```
 
 ---
@@ -174,20 +168,11 @@ più `asm` pulito su tutti i 20 sorgenti di `standalone/`, `linked/multi/`,
 
 ## 5. Prossimi passi possibili
 
-### Opzione A — committare il lavoro pendente
-È tutto completo, documentato e verificato, ma vive fuori da git (o non ancora
-staged). Da valutare se aggiungere `.vscode/` a `.gitignore`. Commit suggeriti
-(tre, separati per tema — in quest'ordine, perché il terzo dipende dai path
-introdotti dal secondo):
-1. assembler: direttive di compile-time (`.equ`/`.struct`/`.field`/`.res`/`.include`) + fix shrink immagine dati (`git add docs/manual.md src/assembler.c`)
-2. HAL + kernel puro + demo scheduler a preemption differita (`git add linked/scheduler/`)
-3. riorganizzazione sorgenti `.vasm`: `examples/` → `linked/`/`standalone/`, con
-   `Makefile`, `docs/manual.md` e `docs/proposta-linguaggio-alto-livello.md`
-   aggiornati di conseguenza — è un `git mv` puro (rename) più i fix di path,
-   nessuna modifica di contenuto ai singoli `.vasm` spostati (a parte il fix del
-   `.include` in `scheduler_demo.vasm` per la nuova profondità)
+Il lavoro pendente è stato committato il 27/08/2026 in tre commit separati per
+tema (assembler, HAL/kernel, riorganizzazione — vedi §2). L'unico pezzo che
+manca al disegno complessivo è il front-end `vc`.
 
-### Opzione B — front-end `vc` (il pezzo mancante)
+### Front-end `vc` (il pezzo mancante)
 Progetto già completo in
 [`docs/proposta-linguaggio-alto-livello.md`](proposta-linguaggio-alto-livello.md):
 linguaggio array-first alla Fortran 90/NumPy, EBNF, tabella di precedenze, 5 fasi.
@@ -219,11 +204,6 @@ Leggi docs/stato-lavori.md e docs/proposta-linguaggio-alto-livello.md.
 Implementa la fase 1 del front-end vc: lexer + parser + il costrutto
 a[:] = espr con + - * elementwise, che genera .vasm.
 Criterio di successo: saxpy in vc deve dare 17 istruzioni / 40 vec-elem-ops / 94 cicli.
-```
-
-**Per committare il lavoro pendente:**
-```
-Leggi docs/stato-lavori.md e fai i commit descritti nell'Opzione A della sezione 5.
 ```
 
 Utile da sapere: il modello si cambia con `/model` (questa sessione girava su
