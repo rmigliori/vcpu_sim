@@ -6,69 +6,51 @@
 
 ---
 
-## 0. IN CORSO ADESSO — auto-save registri in `.proc`/`.endproc` + `--emit-expanded`: VERIFICATO, da committare
+## 0. STATO ATTUALE — tutto committato, working tree pulito
 
 **Incidente tmpfs/quota (28/08/2026), RISOLTO:** una sessione precedente aveva
 fatto fallire `gcc` con `fatal error: error writing to /tmp/...: Quota disco
 superata` (`/tmp` è tmpfs con `usrquota`, quindi vive in RAM), dopodiché anche
 il tool Bash aveva smesso di rispondere (serve scratch su `/tmp` pure lui) e
-l'utente aveva dovuto riavviare la macchina. **Alla ripresa verificato `df -h
-/tmp`: 1% usato, 3.5G liberi, e Bash risponde normalmente.** Non si è più
-ripresentato durante questa sessione. La mitigazione proposta (TMPDIR dentro
-il progetto, su disco fisico) resta solo un'idea non applicata — non è servita,
-ma vale la pena riproporla se l'incidente si ripete.
+l'utente aveva dovuto riavviare la macchina. Verificato alla ripresa (`df -h
+/tmp`: 1% usato) e non più ripresentato in questa sessione. Nessuna mitigazione
+applicata (TMPDIR dentro il progetto): non è servita. Riproporla solo se
+l'incidente si ripete.
 
-**Checklist di verifica di §3.6 eseguita per intero, tutto torna:**
+**Auto-save registri in `.proc`/`.endproc` + `--emit-expanded` (§3.6):
+implementato, compilato, VERIFICATO, COMMITTATO** (commit `ae310d5` —
+`Ridisegno HAL/kernel a tre confini + auto-save registri in .proc/.endproc`,
+vedi §2). Checklist di verifica di §3.6 eseguita per intero, tutto torna:
 
 ```
 make                                             # pulito, zero warning — OK
 ./build/vcpu_sim standalone/saxpy.vasm           # 17/40/94 — invariata (1)
 asm+ld+run di linked/scheduler/*                 # r5 = 105 / r5 = 74 — invariata (2)
 asm di tutti i 20 sorgenti .vasm (standalone+linked) — tutti OK — invariata (3)
-tests/test_proc.vasm (NUOVO)                     # vedi sotto
---emit-expanded su tests/test_proc.vasm          # vedi sotto
+tests/test_proc.vasm (NUOVO, committato)         # r1=100/r7=200/r8=300 — OK
+--emit-expanded su tests/test_proc.vasm          # prologo/epilogo combaciano
 ```
 
-**`tests/test_proc.vasm` (nuovo file, non tracciato)**: `main` imposta
-r1=100/r7=200/r8=300, chiama `test_proc` (una `.proc`/`.endproc` che riscrive
-r1/r7/r8 con 11/22/33 e poi chiama `clobber`, che li sporca ulteriormente con
-999/888/777), poi fa `dumps` sui tre registri. Output:
+`tests/test_proc.vasm`: `main` imposta r1=100/r7=200/r8=300, chiama
+`test_proc` (una `.proc`/`.endproc` che riscrive r1/r7/r8 con 11/22/33 e poi
+chiama `clobber`, che li sporca ulteriormente con 999/888/777), poi fa
+`dumps` sui tre registri — conferma che l'auto-save preserva i valori del
+**chiamante** attraverso la call.
 
-```
-r1 = 100
-r7 = 200
-r8 = 300
-```
+**Rifinitura del listato `--emit-expanded`, su richiesta dell'utente**:
+`close_and_emit_proc()` (`src/assembler.c`) ora commenta la prima riga del
+prologo (`; .proc NOME: prologo auto (r15,rX,...)`) e l'ultima dell'epilogo
+(`; .proc NOME: fine epilogo auto (...)`), ciascuna con l'elenco registri
+nell'**ordine reale** di push/pop (crescente nel prologo, decrescente
+nell'epilogo — due liste separate, non la stessa riusata). Documentato in
+`docs/manual.md` §4.2.1. Nessun impatto sulla codifica (`tokenize()` scarta
+tutto da `;` in poi anche nel pass 2).
 
-Conferma che l'auto-save preserva i valori del **chiamante** attraverso la
-call a `test_proc`, nonostante sia il corpo di `test_proc` sia `clobber`
-(chiamata annidata) li riscrivano — esattamente il comportamento voluto.
-`--emit-expanded` sullo stesso file mostra il prologo/epilogo generato,
-combacia esattamente con la spec del manuale (§4.2.1): push r15, push r1,
-push r7, push r8 (crescente) — corpo — pop r8, pop r7, pop r1 (decrescente),
-pop r15, ret.
-
-**Rifinitura post-verifica, su richiesta dell'utente**: il listato di
-`--emit-expanded` non distingueva a colpo d'occhio le righe generate da
-`.proc`/`.endproc` dal corpo scritto a mano. Aggiunto in
-`close_and_emit_proc()` (`src/assembler.c`) un commento sulla prima riga del
-prologo (`; .proc NOME: prologo auto (r15,rX,...)`, coi registri
-effettivamente auto-salvati) e sull'ultima dell'epilogo (`; .proc NOME: fine
-epilogo auto (...)`). **Seconda correzione richiesta dall'utente**: l'elenco
-registri nell'epilogo deve rispecchiare l'ordine reale di ripristino
-(decrescente, r15 per ultimo — es. `r8,r7,r1,r15`), non lo stesso ordine
-crescente del prologo copiato per pigrizia — corretto costruendo due liste
-separate (`push_reglist` crescente, `pop_reglist` decrescente) invece di
-riusare la stessa stringa. Sicuro perché `tokenize()` scarta tutto da `;` in
-poi anche nel pass 2 di codifica (già usato per i commenti utente): zero
-impatto sulla codifica, solo leggibilità del dump. Documentato in
-`docs/manual.md` §4.2.1. Ricompilato e riverificate tutte e tre le invarianti
-di regressione + il test mirato dopo entrambe le modifiche — nessuna
-regressione, output invariato (100/200/300).
-
-**Stato del codice: implementato, compilato, VERIFICATO, NON committato**
-(vedi §2 — working tree sporco da tre sessioni, mai committato). Prossimo
-passo naturale: proporre il commit all'utente (§3.6 in fondo).
+**Working tree pulito** (verificato `git status --short`: solo `.vscode/` non
+tracciato, di proposito — vedi §2). Nessun lavoro pendente da riprendere sul
+codice: la prossima sessione può ripartire da zero sui prossimi passi (§5), a
+scelta dell'utente. Non è stato fatto `git push` — resta da chiedere
+esplicitamente se serve.
 
 ---
 
@@ -116,10 +98,11 @@ dopo lo spostamento e danno gli stessi numeri di prima.
 
 Branch `master`, pubblicato su `git@github.com:rmigliori/vcpu_sim.git` (remote
 `origin`, HTTPS + credential helper `git-credential-libsecret` configurato,
-push senza prompt). Ultimo commit pushato:
+push senza prompt).
 
 ```
-98a40a0 Aggiorna handoff: lavoro pendente committato
+ae310d5 Ridisegno HAL/kernel a tre confini + auto-save registri in .proc/.endproc  (locale, NON pushato)
+98a40a0 Aggiorna handoff: lavoro pendente committato                              <- ultimo pushato
 ef10e3b Riorganizza sorgenti .vasm: examples/ -> standalone/ + linked/, doc aggiornata
 3434b6d HAL + kernel puro + demo scheduler a preemption differita
 2111646 Assembler: direttive di compile-time (.equ/.struct/.field/.res/.include)
@@ -127,34 +110,15 @@ ef10e3b Riorganizza sorgenti .vasm: examples/ -> standalone/ + linked/, doc aggi
 55b638e Snapshot iniziale: simulatore vCPU vettoriale + toolchain + scheduler RR
 ```
 
-(Gli hash sono cambiati rispetto a versioni precedenti di questo documento:
-riscritta la history con `git filter-branch` per uniformare autore/email a
-`Migliori Roberto <roberto.migliori@yahoo.it>` su tutti i commit — dettagli
-non ripetuti qui, non più rilevanti per il lavoro futuro.)
+`ae310d5` contiene tutto il lavoro di §3.5 (ridisegno HAL/kernel a tre
+confini) e §3.6 (auto-save registri in `.proc`/`.endproc` + `--emit-expanded`
++ rifiniture ai commenti del listato espanso), rimasto non committato per tre
+sessioni — l'utente ha esplicitamente chiesto **di non pushare** dopo il
+commit, quindi il branch locale resta avanti di 1 commit rispetto a
+`origin/master` finché non verrà chiesto di nuovo.
 
-**Working tree NON pulito** — il ridisegno di §3.5 (HAL/kernel + prima
-versione di `.proc`/`.endproc`) era già completo e verificato ma non
-committato; questa sessione (§3.6) ha aggiunto altre modifiche SOPRA, non
-ancora compilate:
-
-```
- M docs/manual.md                          (§4.2.1 riscritta di nuovo: auto-save
-                                             registri; §7.10 per §3.5)
- M docs/stato-lavori.md                    (questo file)
- M include/toolchain.h                     (nuovo parametro expanded_out in
-                                             assemble_object, §3.6)
- M linked/scheduler/hal/machine.vasm       (ctx_save/ctx_restore come procedure HAL, §3.5)
- M linked/scheduler/kernel/coda.vasm       (le 4 routine _s con .proc/.endproc, §3.5)
- M linked/scheduler/kernel/scheduler.vasm  (sched_dispatch/scheduler/dispatcher, §3.5)
- M src/assembler.c                         (.proc/.endproc di §3.5, poi riscritto per
-                                             l'auto-save registri + dump_expanded, §3.6)
- M src/main.c                              (flag --emit-expanded su `asm`, §3.6)
-?? .vscode/              (mai tracciato; da valutare se aggiungere a .gitignore)
-```
-
-Nessun commit è stato fatto in nessuna delle sessioni recenti (né quella di
-§3.4/§3.5 né quella di §3.6): non c'è nulla da disfare a livello git, il
-working tree riflette solo lavoro non ancora verificato.
+**Working tree pulito** (a parte `.vscode/`, mai tracciato, di proposito — da
+valutare se aggiungere a `.gitignore` in futuro, non urgente).
 
 ---
 
