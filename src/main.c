@@ -37,19 +37,22 @@ static int cmd_asm(int argc, char** argv)
 {
     const char* in = NULL;
     const char* out = NULL;
+    const char* expanded = NULL;
     for (int i = 2; i < argc; ++i)
     {
         if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) out = argv[++i];
+        else if (strcmp(argv[i], "--emit-expanded") == 0 && i + 1 < argc) expanded = argv[++i];
         else in = argv[i];
     }
-    if (!in || !out) { fprintf(stderr, "usage: %s asm <in.vasm> -o <out.vo>\n", argv[0]); return 2; }
+    if (!in || !out)
+    { fprintf(stderr, "usage: %s asm <in.vasm> -o <out.vo> [--emit-expanded <file>]\n", argv[0]); return 2; }
 
     VObject* obj = calloc(1, sizeof(VObject));
     if (!obj) { fprintf(stderr, "out of memory\n"); return 1; }
     char err[256] = {0};
 
     int rc = 1;
-    if (assemble_object(in, obj, err, sizeof err) != 0)
+    if (assemble_object(in, obj, expanded, err, sizeof err) != 0)
         fprintf(stderr, "asm error: %s\n", err);
     else if (vo_write(out, obj, err, sizeof err) != 0)
         fprintf(stderr, "asm error: %s\n", err);

@@ -63,7 +63,11 @@ typedef struct
 // --- assembler.c -----------------------------------------------------------
 // Assemble a .vasm source into a relocatable object. Returns 0 on success,
 // -1 on error (message in 'err'). 'obj->data' is heap-allocated.
-int  assemble_object(const char* path, VObject* obj, char* err, size_t errsz);
+// 'expanded_out': if non-NULL, writes the fully macro-expanded text-section
+// listing there (see dump_expanded() in assembler.c) right after pass 1 —
+// even if pass 2 (encoding) later fails, so it stays useful for debugging.
+int  assemble_object(const char* path, VObject* obj, const char* expanded_out,
+                      char* err, size_t errsz);
 void vobject_free(VObject* obj);
 
 // --- toolchain.c -----------------------------------------------------------

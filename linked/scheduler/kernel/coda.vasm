@@ -98,13 +98,15 @@ remove_buffer:            ; remove_buffer(r1=&nodo, r2=&testa) -- unlink O(1)
 ;  Wrapper PROTETTI (_s): sezione critica intorno alla primitiva raw, per l'uso
 ;  da TASK (IE=1). Senza protezione un tick del timer potrebbe interporsi a
 ;  meta' di un aggiornamento multi-passo lasciando la lista incoerente e facendo
-;  corrompere ctx_pick. Sono NON-FOGLIA (salvano r15) e conservano la psw sullo
-;  stack attraverso la call. irq_save/irq_restore usano r5 e non toccano r1/r2,
+;  corrompere scheduler. Sono NON-FOGLIA, un solo ret, corpo lineare, API
+;  pubblica riusabile -> prologo/epilogo con .proc/.endproc (docs/manual.md
+;  §4.2.1) invece che a mano. ".proc NOME" definisce lei stessa l'etichetta
+;  (come "NOME:"): niente label separata prima. Conservano la psw sullo stack
+;  attraverso la call (quello resta scritto a mano: .proc genera solo il
+;  salvataggio di r15). irq_save/irq_restore usano r5 e non toccano r1/r2,
 ;  quindi gli argomenti della raw restano intatti.
 ; --------------------------------------------------------------------------
-enqueue_coda_s:           ; enqueue_coda_s(r1=&testa, r2=&nodo) protetto
-  addi r14, r14, -4
-  sw r15, 0(r14)
+  .proc enqueue_coda_s    ; enqueue_coda_s(r1=&testa, r2=&nodo) protetto
   call irq_save           ; r5 = psw, IE=0 (r1/r2 intatti)
   addi r14, r14, -4
   sw r5, 0(r14)           ; la psw sopravvive alla call
@@ -112,13 +114,9 @@ enqueue_coda_s:           ; enqueue_coda_s(r1=&testa, r2=&nodo) protetto
   lw r5, 0(r14)
   addi r14, r14, 4
   call irq_restore        ; ripristina psw da r5
-  lw r15, 0(r14)
-  addi r14, r14, 4
-  ret
+  .endproc enqueue_coda_s
 
-enqueue_testa_s:          ; enqueue_testa_s(r1=&testa, r2=&nodo) protetto
-  addi r14, r14, -4
-  sw r15, 0(r14)
+  .proc enqueue_testa_s   ; enqueue_testa_s(r1=&testa, r2=&nodo) protetto
   call irq_save
   addi r14, r14, -4
   sw r5, 0(r14)
@@ -126,13 +124,9 @@ enqueue_testa_s:          ; enqueue_testa_s(r1=&testa, r2=&nodo) protetto
   lw r5, 0(r14)
   addi r14, r14, 4
   call irq_restore
-  lw r15, 0(r14)
-  addi r14, r14, 4
-  ret
+  .endproc enqueue_testa_s
 
-dequeue_testa_s:          ; dequeue_testa_s(r1=&testa) -> r2 = nodo (0 se vuota)
-  addi r14, r14, -4
-  sw r15, 0(r14)
+  .proc dequeue_testa_s   ; dequeue_testa_s(r1=&testa) -> r2 = nodo (0 se vuota)
   call irq_save
   addi r14, r14, -4
   sw r5, 0(r14)
@@ -140,13 +134,9 @@ dequeue_testa_s:          ; dequeue_testa_s(r1=&testa) -> r2 = nodo (0 se vuota)
   lw r5, 0(r14)
   addi r14, r14, 4
   call irq_restore
-  lw r15, 0(r14)
-  addi r14, r14, 4
-  ret
+  .endproc dequeue_testa_s
 
-remove_buffer_s:          ; remove_buffer_s(r1=&nodo, r2=&testa) protetto
-  addi r14, r14, -4
-  sw r15, 0(r14)
+  .proc remove_buffer_s   ; remove_buffer_s(r1=&nodo, r2=&testa) protetto
   call irq_save
   addi r14, r14, -4
   sw r5, 0(r14)
@@ -154,6 +144,4 @@ remove_buffer_s:          ; remove_buffer_s(r1=&nodo, r2=&testa) protetto
   lw r5, 0(r14)
   addi r14, r14, 4
   call irq_restore
-  lw r15, 0(r14)
-  addi r14, r14, 4
-  ret
+  .endproc remove_buffer_s

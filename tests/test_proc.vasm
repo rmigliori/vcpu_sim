@@ -1,0 +1,33 @@
+; test_proc.vasm — test mirato: auto-save degli scalari usati in .proc/.endproc
+; (docs/stato-lavori.md §3.6). Verifica che r1/r7/r8, impostati dal chiamante
+; PRIMA della call, sopravvivano intatti a una .proc che li riscrive e poi
+; chiama una routine annidata che li sporca ulteriormente.
+
+  .text
+  .global main
+main:
+  li r14, 4096        ; sp: base dello stack
+
+  li r1, 100          ; valori del chiamante, devono sopravvivere alla call
+  li r7, 200
+  li r8, 300
+
+  call test_proc
+
+  dumps r1            ; atteso 100 (preservato)
+  dumps r7            ; atteso 200 (preservato)
+  dumps r8            ; atteso 300 (preservato)
+  halt
+
+  .proc test_proc     ; non-foglia, corpo lineare, un solo ret -> auto-save
+  li r1, 11           ; r1 scritto qui -> salvato/ripristinato
+  li r7, 22           ; r7 scritto qui -> salvato/ripristinato
+  li r8, 33           ; r8 scritto qui -> salvato/ripristinato
+  call clobber        ; sporca ulteriormente r1/r7/r8; r15 salvato comunque
+  .endproc test_proc
+
+clobber:
+  li r1, 999
+  li r7, 888
+  li r8, 777
+  ret

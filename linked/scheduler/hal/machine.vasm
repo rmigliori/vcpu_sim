@@ -12,16 +12,18 @@
 ; puntatore del contesto da riprendere. Il kernel non interpreta mai il frame.
 ;
 ; --- Frame di contesto (sullo stack del task, sp = r14, 60 byte) ---
-;   Push: r1..r13, r15(ra), epc  -> epc finisce in cima (indirizzo piu' basso).
-;   r14(sp) NON e' nel frame: e' il puntatore-a-contesto stesso. epsw NON e' nel
-;   frame: non e' scrivibile e IE=1 e' uniforme (la trap mette IE=0, reti lo
-;   riporta a 1). I registri VETTORIALI (v*, vl, vmask) sono VOLATILI attraverso
-;   la preemption (la trap arriva solo al confine d'istruzione: nessuna corsia
-;   viva da salvare).
+;   Push, in quest'ordine: r15(ra) [da _trap_entry, raw], poi r1..r13, poi epc
+;   [da ctx_save] -> epc finisce in cima (indirizzo piu' basso). r14(sp) NON e'
+;   nel frame: e' il puntatore-a-contesto stesso. epsw NON e' nel frame: non e'
+;   scrivibile e IE=1 e' uniforme (la trap mette IE=0, reti lo riporta a 1). I
+;   registri VETTORIALI (v*, vl, vmask) sono VOLATILI attraverso la preemption
+;   (la trap arriva solo al confine d'istruzione: nessuna corsia viva da
+;   salvare). Layout privato dell'HAL: il kernel vede solo un puntatore opaco.
 
   .text
 
   .global _trap_entry
+  .global ctx_restore
   .global ctx_init
   .global timer_init
   .global irq_arm
@@ -32,12 +34,31 @@
 
 ; ==========================================================================
 ;  _trap_entry: VETTORE di trap del timer. All'ingresso r14 = sp del task
-;  interrotto, IE=0, epc = pc dell'istruzione interrotta. Salva il contesto
-;  (incluso r15, prima di qualunque call), lo consegna al kernel come puntatore
-;  opaco, poi ripristina il contesto scelto dal kernel e cede il controllo.
+;  interrotto, IE=0, epc = pc dell'istruzione interrotta, r1..r15 sono ancora
+;  live (il task interrotto ce li teneva). Salva il contesto e chiama l'UNICO
+;  simbolo kernel fisso (sched_dispatch): l'HAL non sa cos'e' un'ISR ne' cosa
+;  sia lo scheduling, chiama solo quel nome. Non ritorna mai: la catena finisce
+;  dentro ctx_restore (HAL) con reti.
+;
+;  Il push raw di r15 qui sotto e' l'UNICA istruzione dell'intero HAL che deve
+;  restare a mano invece di stare dentro ctx_save: "call" e' sempre "jal r15,
+;  target" (r15 cablato come link register, vedi assembler), quindi qualunque
+;  call fatta prima di aver salvato r15 lo distruggerebbe mentre contiene
+;  ancora il valore live del task interrotto. Va salvato per primo, senza call.
 ; ==========================================================================
 _trap_entry:
-  ; (A) salva il contesto del task interrotto sul suo stack (r14).
+  addi r14, r14, -4
+  sw r15, 0(r14)          ; DEVE precedere ogni call: vedi nota sopra
+  call ctx_save           ; HAL: salva r1..r13 + epc; ritorna r1 = contesto opaco
+  call sched_dispatch     ; kernel, simbolo fisso; non ritorna mai
+
+; ==========================================================================
+;  ctx_save: seconda meta' del salvataggio contesto (la prima e' il push raw di
+;  r15 in _trap_entry, sopra). FOGLIA: non chiama nulla, quindi non tocca mai
+;  r15 -> nessun salvataggio necessario per se stessa. Ritorna r1 = puntatore
+;  al contesto opaco (la cima dell'intero frame di 60 byte).
+; ==========================================================================
+ctx_save:
   addi r14, r14, -4
   sw r1, 0(r14)
   addi r14, r14, -4
@@ -64,23 +85,22 @@ _trap_entry:
   sw r12, 0(r14)
   addi r14, r14, -4
   sw r13, 0(r14)
+  mfepc r1                ; r1 e' gia' in memoria: libero come scratch
   addi r14, r14, -4
-  sw r15, 0(r14)          ; link register incluso (jalr/call sotto lo distruggono)
-  mfepc r1                ; r1 e' libero (gia' salvato)
-  addi r14, r14, -4
-  sw r1, 0(r14)           ; epc in cima al frame; sp punta qui
+  sw r1, 0(r14)           ; epc in cima al frame
+  mov r1, r14             ; r1 = puntatore al contesto opaco (per il chiamante)
+  ret
 
-  ; (B) consegna il contesto opaco al kernel; riceve quello da riprendere.
-  mov r1, r14
-  call sched_dispatch     ; r1 (in) = sp uscente  ->  r1 (out) = sp entrante
+; ==========================================================================
+;  ctx_restore(r1 = puntatore al contesto da riprendere): ripristina i
+;  registri e cede il controllo con reti. Speculare a ctx_save + al push raw
+;  di r15 in _trap_entry. Non ritorna mai (nessun salvataggio di r15 propria).
+; ==========================================================================
+ctx_restore:
   mov r14, r1
-
-  ; (C) ripristina il contesto scelto e cede il controllo con reti.
   lw r1, 0(r14)           ; epc dal frame
   addi r14, r14, 4
   mtepc r1
-  lw r15, 0(r14)
-  addi r14, r14, 4
   lw r13, 0(r14)
   addi r14, r14, 4
   lw r12, 0(r14)
@@ -106,6 +126,8 @@ _trap_entry:
   lw r2, 0(r14)
   addi r14, r14, 4
   lw r1, 0(r14)
+  addi r14, r14, 4
+  lw r15, 0(r14)
   addi r14, r14, 4
   reti                    ; pc = epc; psw = epsw (IE=1) -> il task riparte
 

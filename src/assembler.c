@@ -757,6 +757,251 @@ static void free_code_lines(void)
     g_code_count = 0;
 }
 
+// Writes the fully-expanded text-section listing (post .include/.equ/.struct/
+// .proc expansion, pre pass-2 encoding) to PATH: one code label per line where
+// defined, then "<index>  <instruction>" for every entry in g_code_lines. Lets
+// you see exactly what .proc/.endproc (and the other compile-time directives)
+// generated, without having to reason about it by hand.
+static int dump_expanded(const char* path, char* err, size_t errsz)
+{
+    FILE* fp = fopen(path, "w");
+    if (!fp) { snprintf(err, errsz, "cannot write '%s'", path); return -1; }
+    for (int i = 0; i < g_code_count; ++i)
+    {
+        for (int s = 0; s < g_symbol_count; ++s)
+            if (g_symbols[s].is_code == 1 && g_symbols[s].value == i)
+                fprintf(fp, "%s:\n", g_symbols[s].name);
+        fprintf(fp, "%6d  %s\n", i, g_code_lines[i]);
+    }
+    fclose(fp);
+    return 0;
+}
+
+static void join_tokens(char** toks, int start, int n, char* out, size_t outsz);
+
+// ---------------------------------------------------------------------------
+//  .proc / .endproc: optional sugar for the common non-leaf procedure shape
+//  (single linear body, one exit). ".proc NAME" DEFINES the label NAME at
+//  this point (like "NAME:"); ".endproc NAME" checks the name matches the
+//  open .proc. A separate "NAME:" label before ".proc NAME" would just
+//  redefine the same symbol twice — an error, not a no-op — since .proc IS
+//  the label. Anything that does not fit this shape (branches to a shared
+//  exit, routines that never return, true leaves) is still written by hand.
+//
+//  The body between .proc/.endproc is buffered (not emitted) as it is read,
+//  because the prologue depends on the whole body: at .endproc it is scanned
+//  for scalar registers r1..r13 written by a plain destination-writing
+//  instruction (li/mov/add/sub/mul/addi/slli/srli/and/or/xor/div/rem/lw/
+//  setvl/mfpsw/mfepc), and only THOSE are pushed — plus r15 always, since
+//  "call" is always "jal r15, target" (link register cabled in the assembler)
+//  and must be saved before any call regardless of what the body computes.
+//  r15 is pushed first/popped last so it survives every call in the body;
+//  the detected registers are pushed/popped around it, ascending/descending,
+//  matching the LIFO push/pop-pair style used elsewhere (see ctx_save).
+//
+//  This is a static scan of the body's own instructions — it does NOT see
+//  what a callee clobbers. A register that only gets its value from a called
+//  routine (like the psw idiom in coda.vasm's *_s wrappers, set by
+//  irq_save/irq_restore) is invisible to it and must still be saved by hand
+//  around the call, exactly as before.
+//
+//  Because the prologue length isn't known until .endproc, the body may only
+//  contain plain instruction lines: labels and directives inside .proc/
+//  .endproc are rejected (kept consistent with the documented "linear body,
+//  one exit" shape).
+// ---------------------------------------------------------------------------
+static int    g_proc_active;
+static char   g_proc_name[64];
+static char*  g_proc_body[MAX_INSTR];
+static int    g_proc_body_count;
+
+static void free_proc_body(void)
+{
+    for (int i = 0; i < g_proc_body_count; ++i) free(g_proc_body[i]);
+    g_proc_body_count = 0;
+}
+
+static int emit_synth_line(const char* text, char* err, size_t errsz)
+{
+    if (g_code_count >= MAX_INSTR)
+    {
+        snprintf(err, errsz, "too many instructions");
+        return -1;
+    }
+    g_code_lines[g_code_count] = strdup(text);
+    g_code_count += 1;
+    return 0;
+}
+
+// Scalar destination register (1..13) written by TOKS, or -1 if TOKS does not
+// write one. Only plain, unambiguous "dest is the first operand" mnemonics
+// are recognized — see the block comment above for the rationale/limits.
+static int scalar_dest_reg(char** toks, int n)
+{
+    static const char* dest1[] = {
+        "li", "mov", "add", "sub", "mul", "addi", "slli", "srli",
+        "and", "or", "xor", "div", "rem", "lw", "setvl", "mfpsw", "mfepc", NULL
+    };
+    if (n < 2) return -1;
+    int match = 0;
+    for (int i = 0; dest1[i] != NULL; ++i)
+        if (strcmp(toks[0], dest1[i]) == 0) { match = 1; break; }
+    if (!match) return -1;
+    const char* t = toks[1];
+    if (t[0] != 'r') return -1;
+    char* endp;
+    long v = strtol(t + 1, &endp, 10);
+    if (*endp != '\0' || v < 1 || v > 13) return -1;
+    return (int) v;
+}
+
+// .endproc: scans the buffered body for clobbered scalars, then emits the
+// prologue, the body (verbatim), and the matching epilogue.
+static int close_and_emit_proc(char* err, size_t errsz)
+{
+    int used[14] = { 0 };
+    for (int i = 0; i < g_proc_body_count; ++i)
+    {
+        char buf[512];
+        snprintf(buf, sizeof buf, "%s", g_proc_body[i]);
+        char* etoks[64];
+        int en = tokenize(buf, etoks, 64);
+        if (en == 0) continue;
+        int r = scalar_dest_reg(etoks, en);
+        if (r >= 1 && r <= 13) used[r] = 1;
+    }
+
+    // Comment marking which .proc this block came from and which scalars got
+    // auto-saved, so an --emit-expanded listing shows where the prologue/
+    // epilogue idiom (manual.md §4.2.1) was generated instead of looking
+    // hand-written. Each list is in the actual push/pop order (r15 first/last,
+    // the rest ascending/descending around it) so it reads like a trace of the
+    // block below it. Trailing "; ..." is stripped by tokenize() in pass 2, so
+    // it has no effect on encoding.
+    char push_reglist[160] = "r15";
+    for (int r = 1; r <= 13; ++r)
+        if (used[r])
+        {
+            char tmp[8];
+            snprintf(tmp, sizeof tmp, ",r%d", r);
+            strncat(push_reglist, tmp, sizeof push_reglist - strlen(push_reglist) - 1);
+        }
+    char pop_reglist[160] = "";
+    for (int r = 13; r >= 1; --r)
+        if (used[r])
+        {
+            char tmp[8];
+            snprintf(tmp, sizeof tmp, "r%d,", r);
+            strncat(pop_reglist, tmp, sizeof pop_reglist - strlen(pop_reglist) - 1);
+        }
+    strncat(pop_reglist, "r15", sizeof pop_reglist - strlen(pop_reglist) - 1);
+    char prologue_line[192];
+    snprintf(prologue_line, sizeof prologue_line,
+             "addi r14, r14, -4  ; .proc %s: prologo auto (%s)", g_proc_name, push_reglist);
+    char epilogue_line[192];
+    snprintf(epilogue_line, sizeof epilogue_line,
+             "ret  ; .proc %s: fine epilogo auto (%s)", g_proc_name, pop_reglist);
+
+    if (emit_synth_line(prologue_line, err, errsz) != 0) return -1;
+    if (emit_synth_line("sw r15, 0(r14)", err, errsz) != 0) return -1;
+    for (int r = 1; r <= 13; ++r)
+    {
+        if (!used[r]) continue;
+        char line[32];
+        if (emit_synth_line("addi r14, r14, -4", err, errsz) != 0) return -1;
+        snprintf(line, sizeof line, "sw r%d, 0(r14)", r);
+        if (emit_synth_line(line, err, errsz) != 0) return -1;
+    }
+
+    for (int i = 0; i < g_proc_body_count; ++i)
+    {
+        char buf[512];
+        snprintf(buf, sizeof buf, "%s", g_proc_body[i]);
+        char* etoks[64];
+        int en = tokenize(buf, etoks, 64);
+        free(g_proc_body[i]);
+        if (en == 0) continue;
+        if (g_code_count >= MAX_INSTR)
+        {
+            snprintf(err, errsz, "too many instructions");
+            g_proc_body_count = 0;
+            return -1;
+        }
+        char joined[512];
+        join_tokens(etoks, 0, en, joined, sizeof joined);
+        g_code_lines[g_code_count] = strdup(joined);
+        g_code_count += 1;
+    }
+    g_proc_body_count = 0;
+
+    for (int r = 13; r >= 1; --r)
+    {
+        if (!used[r]) continue;
+        char line[32];
+        snprintf(line, sizeof line, "lw r%d, 0(r14)", r);
+        if (emit_synth_line(line, err, errsz) != 0) return -1;
+        if (emit_synth_line("addi r14, r14, 4", err, errsz) != 0) return -1;
+    }
+    if (emit_synth_line("lw r15, 0(r14)", err, errsz) != 0) return -1;
+    if (emit_synth_line("addi r14, r14, 4", err, errsz) != 0) return -1;
+    if (emit_synth_line(epilogue_line, err, errsz) != 0) return -1;
+
+    g_proc_active = 0;
+    return 1;
+}
+
+static int handle_proc_directive(const char* first, char** toks, int k, int n,
+                                  int section, int lineno, char* err, size_t errsz)
+{
+    if (strcmp(first, ".proc") == 0)
+    {
+        if (g_proc_active) { snprintf(err, errsz, "line %d: nested .proc (already inside '%s')", lineno, g_proc_name); return -1; }
+        if (n - k != 2) { snprintf(err, errsz, "line %d: .proc needs a name", lineno); return -1; }
+        if (section != SEC_TEXT) { snprintf(err, errsz, "line %d: .proc outside .text", lineno); return -1; }
+        snprintf(g_proc_name, sizeof g_proc_name, "%s", toks[k + 1]);
+        g_proc_active = 1;
+        if (add_symbol(g_proc_name, g_code_count, 1, err, errsz) != 0) return -1;
+        return 1;
+    }
+    if (strcmp(first, ".endproc") == 0)
+    {
+        // Reached only when no .proc is open: handle_proc_body_line() already
+        // intercepts ".endproc" while g_proc_active is true (see below).
+        snprintf(err, errsz, "line %d: .endproc without .proc", lineno);
+        return -1;
+    }
+    return 0;
+}
+
+// Called for every physical line while a .proc body is being buffered
+// (before the normal label/directive/instruction dispatch even looks at it).
+// Returns 1 if the line was consumed (caller should `continue`), 0 if no
+// .proc is open (caller proceeds as usual), -1 on error.
+static int handle_proc_body_line(const char* raw_line, char** toks, int n,
+                                  int lineno, char* err, size_t errsz)
+{
+    if (!g_proc_active) return 0;
+
+    int k0 = 0;
+    size_t len0 = strlen(toks[0]);
+    if (len0 > 1 && toks[0][len0 - 1] == ':') k0 = 1;
+
+    if (k0 < n && strcmp(toks[k0], ".endproc") == 0)
+    {
+        if (n - k0 != 2) { snprintf(err, errsz, "line %d: .endproc needs a name", lineno); return -1; }
+        if (strcmp(toks[k0 + 1], g_proc_name) != 0)
+        { snprintf(err, errsz, "line %d: .endproc '%s' does not match open .proc '%s'", lineno, toks[k0 + 1], g_proc_name); return -1; }
+        return close_and_emit_proc(err, errsz);
+    }
+
+    if (k0 != 0) { snprintf(err, errsz, "line %d: labels are not allowed inside .proc/.endproc", lineno); return -1; }
+    if (toks[0][0] == '.') { snprintf(err, errsz, "line %d: directives are not allowed inside .proc/.endproc", lineno); return -1; }
+
+    if (g_proc_body_count >= MAX_INSTR) { snprintf(err, errsz, "too many instructions"); return -1; }
+    g_proc_body[g_proc_body_count++] = strdup(raw_line);
+    return 1;
+}
+
 static void join_tokens(char** toks, int start, int n, char* out, size_t outsz)
 {
     out[0] = '\0';
@@ -816,6 +1061,8 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
     g_code_count   = 0;
     g_const_count   = 0;
     g_struct_active = 0;
+    g_proc_active   = 0;
+    g_proc_body_count = 0;
 
     FILE* fp = fopen(path, "r");
     if (!fp)
@@ -846,6 +1093,10 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
 
         int n = tokenize(work, toks, 64);
         if (n == 0) continue;
+
+        int hb = handle_proc_body_line(line, toks, n, lineno, err, errsz);
+        if (hb < 0) { fclose(fp); return -1; }
+        if (hb == 1) continue;
 
         int k = 0;
         // Optional leading label "name:"
@@ -924,12 +1175,17 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
             }
             else
             {
-                int h = handle_const_directive(first, toks, k, n, lineno, err, errsz);
-                if (h < 0) { fclose(fp); return -1; }
-                if (h == 0)
+                int hp = handle_proc_directive(first, toks, k, n, section, lineno, err, errsz);
+                if (hp < 0) { fclose(fp); return -1; }
+                if (hp == 0)
                 {
-                    snprintf(err, errsz, "line %d: unknown directive '%s'", lineno, first);
-                    fclose(fp); return -1;
+                    int h = handle_const_directive(first, toks, k, n, lineno, err, errsz);
+                    if (h < 0) { fclose(fp); return -1; }
+                    if (h == 0)
+                    {
+                        snprintf(err, errsz, "line %d: unknown directive '%s'", lineno, first);
+                        fclose(fp); return -1;
+                    }
                 }
             }
             continue;
@@ -948,6 +1204,7 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
     }
 
     if (g_struct_active) { snprintf(err, errsz, "unterminated .struct '%s'", g_struct_name); free_code_lines(); fclose(fp); return -1; }
+    if (g_proc_active) { snprintf(err, errsz, "unterminated .proc '%s'", g_proc_name); free_proc_body(); free_code_lines(); fclose(fp); return -1; }
 
     // ---- Pass 2: encode instructions with resolved symbols ----------------
     for (int i = 0; i < g_code_count; ++i)
@@ -1013,13 +1270,16 @@ static int is_branch_op(OpCode op)
            op == OP_JAL || op == OP_SETHANDLER;
 }
 
-int assemble_object(const char* path, VObject* obj, char* err, size_t errsz)
+int assemble_object(const char* path, VObject* obj, const char* expanded_out,
+                     char* err, size_t errsz)
 {
     memset(obj, 0, sizeof(*obj));
     g_symbol_count = 0;
     g_code_count   = 0;
     g_const_count   = 0;
     g_struct_active = 0;
+    g_proc_active   = 0;
+    g_proc_body_count = 0;
 
     FILE* fp = fopen(path, "r");
     if (!fp)
@@ -1058,6 +1318,10 @@ int assemble_object(const char* path, VObject* obj, char* err, size_t errsz)
 
         int n = tokenize(work, toks, 64);
         if (n == 0) continue;
+
+        int hb = handle_proc_body_line(line, toks, n, lineno, err, errsz);
+        if (hb < 0) goto fail;
+        if (hb == 1) continue;
 
         int k = 0;
         size_t len = strlen(toks[0]);
@@ -1140,12 +1404,17 @@ int assemble_object(const char* path, VObject* obj, char* err, size_t errsz)
             }
             else
             {
-                int h = handle_const_directive(first, toks, k, n, lineno, err, errsz);
-                if (h < 0) goto fail;
-                if (h == 0)
+                int hp = handle_proc_directive(first, toks, k, n, section, lineno, err, errsz);
+                if (hp < 0) goto fail;
+                if (hp == 0)
                 {
-                    snprintf(err, errsz, "line %d: unknown directive '%s'", lineno, first);
-                    goto fail;
+                    int h = handle_const_directive(first, toks, k, n, lineno, err, errsz);
+                    if (h < 0) goto fail;
+                    if (h == 0)
+                    {
+                        snprintf(err, errsz, "line %d: unknown directive '%s'", lineno, first);
+                        goto fail;
+                    }
                 }
             }
             continue;
@@ -1164,6 +1433,7 @@ int assemble_object(const char* path, VObject* obj, char* err, size_t errsz)
 
     // ---- Apply .global / .extern to the symbol table ----------------------
     if (g_struct_active) { snprintf(err, errsz, "unterminated .struct '%s'", g_struct_name); goto fail; }
+    if (g_proc_active) { snprintf(err, errsz, "unterminated .proc '%s'", g_proc_name); goto fail; }
     for (int i = 0; i < nglobal; ++i)
     {
         int idx = find_symbol_idx(globals[i]);
@@ -1180,6 +1450,8 @@ int assemble_object(const char* path, VObject* obj, char* err, size_t errsz)
         g_symbols[idx].binding = BIND_EXTERN;
         g_symbols[idx].is_code = -1;
     }
+
+    if (expanded_out != NULL && dump_expanded(expanded_out, err, errsz) != 0) goto fail;
 
     // ---- Pass 2: encode with placeholders, record relocations -------------
     g_obj_mode = 1;
@@ -1249,6 +1521,7 @@ int assemble_object(const char* path, VObject* obj, char* err, size_t errsz)
 
 fail:
     free(data);
+    free_proc_body();
     free_code_lines();
     fclose(fp);
     return -1;

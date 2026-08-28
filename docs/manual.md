@@ -488,6 +488,7 @@ loop:   setvl r4, r3      ; 'loop' = indice di questa istruzione
 | `.field` | `.field campo [dim]` | dentro `.struct`: definisce `NOME.campo` = offset corrente e avanza di `dim` byte (default 4) |
 | `.res` | `etichetta: .res TIPO` | nel segmento dati: riserva `TIPO.size` byte (come una `.space` *type-aware*); l'etichetta ne è l'indirizzo |
 | `.include` | `.include "file"` | inserisce testualmente `file` a quel punto; il path si risolve rispetto alla **cartella del file di primo livello** (o assoluto). Utile per condividere `.struct`/`.equ` fra più sorgenti |
+| `.proc` / `.endproc` | `.proc NOME` … `.endproc NOME` | prologo/epilogo automatico per procedure non-foglia a corpo lineare (§4.2.1) |
 | `.global` | `.global sym ...` | **esporta** un simbolo definito qui (compilazione separata, §2.5) |
 | `.extern` | `.extern sym ...` | **importa** un simbolo definito in un altro modulo (§2.5) |
 
@@ -547,6 +548,103 @@ Un operando simbolico può avere un **offset**: `simbolo+N` o `simbolo-N` (N
 decimale o esadecimale). Per i dati l'offset è in **byte**, quindi `li r1, y+8`
 punta a `y[2]`. Funziona sia in un singolo file sia in compilazione separata
 (l'offset diventa l'*addend* della rilocazione, §2.5).
+
+#### 4.2.1 `.proc` / `.endproc`: prologo/epilogo per procedure non-foglia
+
+`call` è sempre `jal r15, target` (il link register è cablato nell'assembler,
+non è un operando scelto dal chiamante): una procedura che a sua volta chiama
+qualcos'altro (**non-foglia**) deve salvare r15 prima di farlo, altrimenti perde
+il proprio indirizzo di ritorno. La convenzione manuale, già usata ovunque nel
+kernel, è:
+
+```asm
+mia_proc:
+  addi r14, r14, -4
+  sw r15, 0(r14)      ; prologo: salva il ritorno
+  call altra_cosa
+  lw r15, 0(r14)
+  addi r14, r14, 4    ; epilogo: ripristina il ritorno
+  ret
+```
+
+`.proc NOME` / `.endproc NOME` genera questo prologo/epilogo per il caso
+comune — corpo **lineare**, **un solo** punto d'uscita. `.proc NOME`
+**definisce lei stessa l'etichetta** `NOME` nel punto in cui compare
+(esattamente come `NOME:`): non va ripetuta una label separata prima, sarebbe
+una doppia definizione dello stesso simbolo (errore di assemblaggio, non un
+no-op):
+
+```asm
+  .proc mia_proc
+  call altra_cosa
+  .endproc mia_proc
+```
+
+`.endproc` verifica che il nome combaci con l'ultimo `.proc` aperto (un `.proc`
+senza `.endproc`, o annidato, è un errore di assemblaggio; così come `.proc`
+usato fuori dalla sezione `.text`). Non c'è alcuna analisi automatica
+leaf/non-foglia: r15 viene sempre salvato, incondizionatamente.
+
+**Salvataggio automatico degli scalari usati.** Oltre a r15, il prologo salva
+— e l'epilogo ripristina — solo gli scalari **r1..r13 che il corpo scrive
+davvero**, cioè quelli che compaiono come destinazione di un'istruzione
+"semplice" (`li`, `mov`, `add`, `sub`, `mul`, `addi`, `slli`, `srli`, `and`,
+`or`, `xor`, `div`, `rem`, `lw`, `setvl`, `mfpsw`, `mfepc`). `.endproc`
+scansiona l'intero corpo prima di generare il prologo — per questo il corpo
+tra `.proc` e `.endproc` non può contenere etichette né direttive, solo
+istruzioni semplici (coerente con la forma "corpo lineare" già richiesta):
+
+```asm
+  .proc clobber
+  li r7, 111          ; r7 scritto qui -> salvato/ripristinato
+  add r8, r7, r7       ; r8 scritto qui -> salvato/ripristinato
+  call altra_cosa      ; r15 salvato comunque, sempre
+  .endproc clobber
+```
+
+genera: push r15, push r7, push r8, corpo, pop r8, pop r7, pop r15, `ret` (r15
+per primo/ultimo perché deve sopravvivere a **ogni** `call` nel corpo; gli
+altri intorno, in ordine crescente/decrescente). In un listato prodotto con
+`--emit-expanded` (vedi `vcpu_sim asm`) la prima riga del prologo e l'ultima
+dell'epilogo portano un commento che nomina la `.proc` di origine e i
+registri auto-salvati/ripristinati, **ciascuno nell'ordine reale delle
+`sw`/`lw` sottostanti** (crescente nel prologo, decrescente nell'epilogo, r15
+sempre agli estremi), cosi' si distinguono a colpo d'occhio dal corpo scritto
+a mano e il commento fa da traccia leggibile del blocco:
+
+```
+  addi r14, r14, -4  ; .proc clobber: prologo auto (r15,r7,r8)
+  sw r15, 0(r14)
+  ...
+  ret  ; .proc clobber: fine epilogo auto (r8,r7,r15)
+```
+
+**Limite importante**: è un'analisi statica delle sole istruzioni scritte nel
+corpo, **non** vede cosa sporca una routine chiamata. Un registro il cui
+valore arriva da una `call` (come la `psw` nell'idioma `irq_save`/
+`irq_restore` in `linked/scheduler/kernel/coda.vasm`, dove la routine
+chiamata scrive `r5` ma il corpo della `.proc` lo tratta solo in memoria) resta
+invisibile allo scanner e va ancora salvato a mano intorno alla `call`,
+esattamente come prima.
+
+Questa sugar **non copre** i casi che non hanno la forma "corpo lineare, un
+solo esit" — e nel kernel/HAL sono la maggioranza:
+
+- procedure **foglia** (non chiamano nulla): non serve salvare r15 affatto —
+  vedi `ctx_save` in `linked/scheduler/hal/machine.vasm`;
+- procedure che **non ritornano mai** (finiscono in `reti`, o incatenano una
+  `call` finale che a sua volta non ritorna): non c'è un epilogo da generare —
+  vedi `_trap_entry`, `ctx_restore`, `sched_dispatch`, `dispatcher`;
+- corpi con **uscite anticipate** verso un epilogo condiviso (un branch a
+  un'etichetta a metà procedura): l'epilogo va scritto a mano perché non c'è un
+  singolo punto in cui inserirlo automaticamente;
+- procedure con **un solo chiamante per costruzione**, non un'API generica
+  riusabile (es. `scheduler` in `linked/scheduler/kernel/scheduler.vasm`): anche
+  quando la forma sarebbe lineare, restano scritte a mano per scelta, riservando
+  `.proc` a contratti stabili e pensati per essere richiamati da più punti.
+
+In questi casi si scrive a mano, esattamente come prima che la direttiva
+esistesse.
 
 ### 4.3 Manuale delle istruzioni
 
@@ -1124,36 +1222,62 @@ sistema reale (l'*arch/port* di Linux e FreeRTOS rispetto al core portabile):
 
 | File | Strato | Ruolo | Esporta |
 |------|--------|-------|---------|
-| `linked/scheduler/hal/machine.vasm` | **HAL** (hardware) | vettore di trap, save/restore contesto, timer, `sti`, sezioni critiche | `_trap_entry`, `ctx_init`, `timer_init`, `irq_arm`, `irq_enable`, `irq_save`, `irq_restore` |
+| `linked/scheduler/hal/machine.vasm` | **HAL** (hardware) | vettore di trap, save/restore contesto (`ctx_save`/`ctx_restore`), timer, `sti`, sezioni critiche | `_trap_entry`, `ctx_restore`, `ctx_init`, `timer_init`, `irq_arm`, `irq_enable`, `irq_save`, `irq_restore` |
 | `linked/scheduler/kernel/coda.vasm` | kernel | le 5 routine di coda (`list_head`) | `coda_init`, `enqueue_coda`, `enqueue_testa`, `dequeue_testa`, `remove_buffer` |
-| `linked/scheduler/kernel/scheduler.vasm` | **kernel puro** | politica RR + dispatch, **nessun CSR** | `sched_dispatch`, `irq_install`, `request_preempt`, `ready`, `current` |
+| `linked/scheduler/kernel/scheduler.vasm` | **kernel puro** | orchestrazione + politica RR + dispatch, **nessun CSR** | `sched_dispatch`, `irq_install`, `request_preempt`, `ready`, `current` |
 | `linked/scheduler/scheduler_demo.vasm` | applicazione | boot (`main`) + due task + `timer_isr` + dati | `main` |
 
 **HAL: l'unico strato che tocca l'hardware.** Il *vettore grezzo* di trap
-(`_trap_entry`), il salvataggio/ripristino dei registri, i CSR delle eccezioni
-(`mfepc`/`mtepc`/`reti`) e i primitivi del timer (`timer_init`, `irq_arm`,
-`irq_enable`) vivono qui. L'HAL conosce il file dei registri e il layout del
-frame; **non** conosce code, TCB né politica. Il contesto salvato di un task è per
-il kernel un **puntatore opaco** (`sp`): l'HAL lo salva sullo stack, lo passa al
-kernel e riceve indietro quello da riprendere.
+(`_trap_entry`), il salvataggio/ripristino dei registri (`ctx_save`/
+`ctx_restore`), i CSR delle eccezioni (`mfepc`/`mtepc`/`reti`) e i primitivi del
+timer (`timer_init`, `irq_arm`, `irq_enable`) vivono qui. L'HAL conosce il file
+dei registri e il layout del frame; **non** conosce code, TCB, ISR né politica —
+chiama sempre e solo un unico simbolo kernel fisso (`sched_dispatch`), senza
+sapere cosa fa. Il contesto salvato di un task è per il kernel un **puntatore
+opaco** (`sp`): l'HAL lo costruisce (`ctx_save`), lo passa al kernel e riceve
+indietro quello da riprendere (`ctx_restore`, che non torna mai: chiude con
+`reti`).
 
-**Kernel puro.** `linked/scheduler/kernel/scheduler.vasm` non contiene **nessuna** istruzione
-hardware. `sched_dispatch(r1 = sp uscente) → r1 = sp entrante` registra lo `sp`
-uscente nel TCB, chiama l'**handler** dell'app (via `jalr` — un vero puntatore a
-funzione) e, all'uscita IRQ, applica la preemption differita. Cambiare politica
-(RR → priorità) significa riscrivere solo `ctx_pick`: HAL e `sched_dispatch`
-restano intatti.
+`_trap_entry` contiene una sola istruzione scritta a mano invece che dentro
+`ctx_save`: il push di r15 **prima** di qualunque `call`. `call` è sempre
+`jal r15, target` (link register cablato nell'assembler): alla primissima
+chiamata di un trap handler, r15 contiene ancora il valore *live* del task
+interrotto, non ancora salvato — se la call lo sovrascrivesse per prima, quel
+valore andrebbe perso. È un vincolo strutturale della ISA (qualunque registro
+si scegliesse come link register avrebbe lo stesso problema), non un'eccezione
+di stile: per questo resta l'unico frammento non delegato a `ctx_save`.
+
+**Kernel puro, tre responsabilità nette.** `linked/scheduler/kernel/scheduler.vasm`
+non contiene **nessuna** istruzione hardware, ed è a sua volta stratificato in tre
+routine che non si mischiano:
+
+- **`sched_dispatch`** (orchestratore — meccanismo puro): unico punto di
+  contatto con l'HAL. Registra lo `sp` uscente nel TCB, chiama l'**handler**
+  dell'app (via `jalr` — un vero puntatore a funzione), e **solo se è stata
+  richiesta** una preemption consulta `scheduler`. Chiama **sempre** `dispatcher`
+  per rimettere in esecuzione `current` — con o senza switch è l'unico modo di
+  uscire dalla trap.
+- **`scheduler`** (chi è il prossimo — la politica): round-robin a coda
+  singola (`enqueue_coda` dell'uscente, `dequeue_testa` del prossimo). Cambiare
+  politica (RR → priorità) significa riscrivere **solo `scheduler`**: HAL,
+  `sched_dispatch` e `dispatcher` restano intatti.
+- **`dispatcher`** (mette in esecuzione — meccanismo puro): chiama l'HAL
+  (`ctx_restore`) sullo `sp` corrente di `current` e non ritorna mai.
+
+`sched_dispatch`, `scheduler` e `dispatcher` non sono API generiche — hanno un
+solo chiamante per costruzione — quindi restano scritte a mano invece che con
+la sugar `.proc`/`.endproc` (§4.2), riservata a procedure con un contratto
+stabile e riusabile.
 
 **Confine app.** L'applicazione possiede l'**handler** (`timer_isr`, registrato con
 `irq_install`) e la **decisione** di preemptare. L'handler non commuta il task: se
 vuole uno switch chiama `request_preempt`, che arma `g_resched` (il `need_resched`
-di Linux, lo `xHigherPriorityTaskWoken` di FreeRTOS). Solo all'uscita dall'IRQ il
-kernel guarda il flag: se è zero riprende lo *stesso* task, altrimenti chiama
-`ctx_pick` (RR: `enqueue_coda` dell'uscente, `dequeue_testa` del prossimo). Un
-handler che *non* chiama `request_preempt` non causa alcuno switch — è una scelta
-dell'architetto. Il `main` costruisce i contesti iniziali con `ctx_init` (l'HAL sa
-com'è fatto un frame) e arma l'hardware con `irq_arm`/`timer_init`/`irq_enable`,
-senza mai nominare un CSR o il vettore.
+di Linux, lo `xHigherPriorityTaskWoken` di FreeRTOS). Solo `sched_dispatch`, a
+uscita IRQ, guarda il flag: se è zero riprende lo *stesso* task, altrimenti chiama
+`scheduler`. Un handler che *non* chiama `request_preempt` non causa alcuno
+switch — è una scelta dell'architetto. Il `main` costruisce i contesti iniziali
+con `ctx_init` (l'HAL sa com'è fatto un frame) e arma l'hardware con
+`irq_arm`/`timer_init`/`irq_enable`, senza mai nominare un CSR o il vettore.
 
 La pipeline di compilazione separata (o, in alternativa, un archivio `libkernel.va`
 con inclusione selettiva):
@@ -1166,8 +1290,8 @@ con inclusione selettiva):
 ./build/vcpu_sim ld build/scheduler_demo.vo build/scheduler.vo build/coda.vo \
                     build/machine.vo -o build/scheduler_demo.vx
 ./build/vcpu_sim run build/scheduler_demo.vx
-# r5 = 102   (tickA)
-# r5 = 70    (tickB)
+# r5 = 105   (tickA)
+# r5 = 74    (tickB)
 ```
 
 Gli 8 tick e i due contatori che crescono alternandosi sono le stesse invarianti
@@ -1179,7 +1303,7 @@ punto: ogni strato ignora i dettagli degli altri.
 multi-passo **non atomici**. Finché ogni chiamata avviene a interrupt disabilitati
 (il boot prima di `irq_enable`, l'ISR dentro la trap) non c'è corsa. Ma un *task*
 gira a `IE=1`: se il timer si interpone a metà di un `enqueue_coda`, la lista resta
-incoerente e `ctx_pick` la corrompe. Su un monoprocessore in-order la sezione
+incoerente e `scheduler` la corrompe. Su un monoprocessore in-order la sezione
 critica è semplicemente **disabilitare gli interrupt** (una `fence` non darebbe
 atomicità: servirebbe con multicore + RMW atomica, che questa ISA non ha).
 

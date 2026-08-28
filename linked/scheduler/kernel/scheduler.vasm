@@ -1,16 +1,30 @@
 ; kernel/scheduler.vasm — KERNEL PURO: politica round-robin + meccanismo di coda.
 ; Nessun accesso all'hardware: i CSR delle eccezioni (mfepc/mtepc/reti), il
-; vettore di trap e il timer stanno nell'HAL (hal/machine.vasm). Il kernel vede
-; il contesto salvato di un task come un PUNTATORE OPACO (sp) e non lo interpreta.
+; vettore di trap, ctx_save/ctx_restore e il timer stanno nell'HAL
+; (hal/machine.vasm). Il kernel vede il contesto salvato di un task come un
+; PUNTATORE OPACO (sp) e non lo interpreta mai.
 ;
 ; Modello IRQ-STUB a preemption DIFFERITA (need_resched di Linux /
-; xHigherPriorityTaskWoken di FreeRTOS): l'HAL salva il contesto e chiama
-; sched_dispatch; questo invoca l'HANDLER dell'app e, solo a uscita IRQ, decide
-; se commutare. L'app possiede l'handler e la decisione (request_preempt); il
-; kernel possiede code, current e politica.
+; xHigherPriorityTaskWoken di FreeRTOS): l'HAL salva il contesto (ctx_save) e
+; chiama SEMPRE lo stesso simbolo kernel (sched_dispatch) — e' l'unico punto di
+; contatto tra i due strati, per costruzione: l'HAL non sa cos'e' un'ISR ne'
+; cosa sia lo scheduling, il kernel non sa quanti o quali registri esistano.
+;
+; Tre routine, tre responsabilita' nette (nessuna mischia le altre due):
+;   sched_dispatch  orchestratore  meccanismo: registra lo sp uscente, invoca
+;                                  l'handler applicativo, decide se consultare
+;                                  lo scheduler, chiama SEMPRE il dispatcher
+;   scheduler       POLITICA       chi e' il prossimo: round-robin
+;   dispatcher      DISPATCHER     mette in esecuzione 'current': chiama l'HAL
+;                                  (ctx_restore) e non ritorna mai
+;
+; sched_dispatch e scheduler non sono API generiche (non le chiama "chiunque"):
+; hanno un solo chiamante per costruzione, quindi restano scritte a mano invece
+; che con la sugar .proc/.endproc — riservata a procedure con un contratto
+; stabile e riusabile.
 ;
 ; Separazione mechanism/policy: si cambia politica (RR -> priorita') riscrivendo
-; solo ctx_pick, senza toccare l'HAL ne' sched_dispatch.
+; solo scheduler, senza toccare l'HAL, sched_dispatch ne' dispatcher.
 ;
 ; --- Modello a 3 stati (una posizione fisica del TCB per ogni stato) ---
 ;   READY(0)     : il TCB e' linkato nella ready queue.
@@ -40,6 +54,7 @@ g_resched: .word 0        ; need_resched: !=0 => switch a uscita IRQ
   .global request_preempt
   .extern enqueue_coda
   .extern dequeue_testa
+  .extern ctx_restore
 
 ; ==========================================================================
 ;  irq_install(r1 = puntatore all'handler applicativo): lo registra. L'app lo
@@ -62,16 +77,21 @@ request_preempt:
   ret
 
 ; ==========================================================================
-;  sched_dispatch(r1 = sp uscente) -> r1 = sp entrante. Chiamato dall'HAL a
-;  contesto GIA' salvo. Registra lo sp uscente nel TCB corrente, invoca
-;  l'handler dell'app (call indiretto via puntatore a funzione) e, a uscita IRQ,
-;  applica la preemption DIFFERITA: se richiesta, sceglie un altro task. Torna
-;  all'HAL il puntatore-a-contesto da riprendere (vale con o senza switch).
-;  Non-foglia -> salva r15. Non tocca alcun CSR: il kernel resta puro.
+;  sched_dispatch(r1 = sp uscente): orchestratore, UNICO simbolo che l'HAL
+;  chiama (da _trap_entry, a contesto gia' salvo da ctx_save). Registra lo sp
+;  uscente nel TCB corrente, invoca l'handler applicativo (chiamata indiretta
+;  via puntatore a funzione — l'ISR e' codice applicativo, non HAL: e' lei che
+;  decide se chiedere una preemption, non il kernel) e, solo se e' stata
+;  richiesta, consulta lo scheduler (politica). Chiama SEMPRE il dispatcher
+;  (meccanismo) per rimettere in esecuzione 'current' — con o senza switch e'
+;  l'unico modo di uscire dalla trap.
+;
+;  Non ha un ritorno proprio (il dispatcher, in coda, chiude nell'HAL con
+;  ctx_restore/reti): niente da salvare per se stessa, anche se non-foglia.
+;  Non e' un'API generica (un solo chiamante per costruzione: l'HAL) -> scritta
+;  a mano. Non tocca alcun CSR: il kernel resta puro.
 ; ==========================================================================
 sched_dispatch:
-  addi r14, r14, -4
-  sw r15, 0(r14)         ; non-foglia: preserva il ritorno all'HAL
   li r2, current
   lw r3, 0(r2)
   sw r1, TCB.sp(r3)      ; current.sp = sp uscente (contesto opaco)
@@ -80,26 +100,24 @@ sched_dispatch:
   lw r5, 0(r5)
   jalr r15, r5
 
-  li r1, g_resched       ; uscita IRQ: preemption differita
+  li r1, g_resched
   lw r2, 0(r1)
-  beq r2, r0, sd_done
+  beq r2, r0, sched_dispatch_done
   sw r0, 0(r1)           ; consuma il need_resched
-  call ctx_pick          ; enqueue current, dequeue next, current = next
-sd_done:
-  li r2, current
-  lw r2, 0(r2)
-  lw r1, TCB.sp(r2)      ; r1 = sp entrante (invariato se non c'e' stato switch)
-  lw r15, 0(r14)
-  addi r14, r14, 4
-  ret
+  call scheduler         ; POLITICA: sceglie il prossimo, current = next
+sched_dispatch_done:
+  call dispatcher        ; MECCANISMO: mette in esecuzione current, SEMPRE
 
 ; ==========================================================================
-;  ctx_pick (SCHEDULER/politica, interno): round-robin a coda singola. Rimette
-;  in coda il task uscente e ne sceglie il prossimo. Non-foglia -> salva r15.
+;  scheduler (POLITICA, interno): round-robin a coda singola. Rimette in coda
+;  il task uscente e sceglie il prossimo current. E' la SOLA cosa da riscrivere
+;  per cambiare politica (RR -> priorita'): HAL, sched_dispatch e dispatcher
+;  restano intatti. Non e' un'API generica (un solo chiamante: sched_dispatch)
+;  -> scritta a mano, non .proc. Non-foglia -> salva r15.
 ; ==========================================================================
-ctx_pick:
+scheduler:
   addi r14, r14, -4
-  sw r15, 0(r14)         ; non-foglia: preserva il ritorno
+  sw r15, 0(r14)         ; non-foglia: preserva il ritorno a sched_dispatch
   li r6, current
   lw r4, 0(r6)           ; r4 = TCB uscente
   sw r0, TCB.state(r4)   ; stato uscente = READY
@@ -115,3 +133,16 @@ ctx_pick:
   lw r15, 0(r14)
   addi r14, r14, 4
   ret
+
+; ==========================================================================
+;  dispatcher (MECCANISMO puro, interno): mette in esecuzione il task
+;  puntato da 'current', switch o no — chiama l'HAL (ctx_restore) e non sa
+;  ne' vuole sapere come sono fatti i registri. Non ritorna mai (ctx_restore
+;  chiude con reti): niente da salvare. Non e' un'API generica (un solo
+;  chiamante: sched_dispatch) -> scritta a mano.
+; ==========================================================================
+dispatcher:
+  li r2, current
+  lw r2, 0(r2)
+  lw r1, TCB.sp(r2)      ; r1 = sp di current (invariato se non c'e' stato switch)
+  call ctx_restore       ; HAL: ripristina i registri e cede il controllo
