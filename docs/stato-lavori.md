@@ -1,12 +1,18 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **28 agosto 2026**
+> Ultimo aggiornamento: **29 agosto 2026**
 > Scopo: fotografia dello stato per riprendere il lavoro a distanza di giorni
 > senza dover ricostruire il contesto.
 
 ---
 
 ## 0. STATO ATTUALE — tutto committato, working tree pulito
+
+**Reindentazione a 2 spazi (29/08/2026), FATTA E COMMITTATA** (`ae29292`,
+vedi §3.7): `src/*.c` e `include/*.h` sono passati da 4 a 2 spazi, per
+allinearsi ai `.vasm` che erano già a 2. Cambiamento puramente cosmetico,
+verificato con `git diff -w` vuoto e checksum identici degli artefatti
+generati. **Da qui in avanti il codice C si scrive a 2 spazi.**
 
 **Incidente tmpfs/quota (28/08/2026), RISOLTO:** una sessione precedente aveva
 fatto fallire `gcc` con `fatal error: error writing to /tmp/...: Quota disco
@@ -67,7 +73,7 @@ livello.
 | Assembler (2 passi, rilocazioni) | completo | [`src/assembler.c`](../src/assembler.c) |
 | Linker, archivi, loader | completo | [`src/toolchain.c`](../src/toolchain.c) |
 | CLI `asm/ld/run/nm/ar` | completo | [`src/main.c`](../src/main.c) |
-| HAL + kernel + scheduler RR | completo, ridisegnato (§3.5), NON committato | [`linked/scheduler/`](../linked/scheduler/) |
+| HAL + kernel + scheduler RR | completo, ridisegnato (§3.5), committato in `ae310d5` | [`linked/scheduler/`](../linked/scheduler/) |
 | Linguaggio alto livello `vc` | **da fare** — solo progettato | [`docs/proposta-linguaggio-alto-livello.md`](proposta-linguaggio-alto-livello.md) |
 
 Macchina: 16 registri scalari `r0..r15` (`r0` = 0), 16 float `f0..f15`, 8
@@ -101,8 +107,10 @@ Branch `master`, pubblicato su `git@github.com:rmigliori/vcpu_sim.git` (remote
 push senza prompt).
 
 ```
+ae29292 Reindenta i sorgenti C da 4 a 2 spazi (solo spaziatura)               (locale, NON pushato)
+b0b4f28 Aggiorna handoff: lavoro committato, working tree pulito              (locale, NON pushato)
 ae310d5 Ridisegno HAL/kernel a tre confini + auto-save registri in .proc/.endproc  (locale, NON pushato)
-98a40a0 Aggiorna handoff: lavoro pendente committato                              <- ultimo pushato
+98a40a0 Aggiorna handoff: lavoro pendente committato                          <- ultimo pushato
 ef10e3b Riorganizza sorgenti .vasm: examples/ -> standalone/ + linked/, doc aggiornata
 3434b6d HAL + kernel puro + demo scheduler a preemption differita
 2111646 Assembler: direttive di compile-time (.equ/.struct/.field/.res/.include)
@@ -112,10 +120,18 @@ ef10e3b Riorganizza sorgenti .vasm: examples/ -> standalone/ + linked/, doc aggi
 
 `ae310d5` contiene tutto il lavoro di §3.5 (ridisegno HAL/kernel a tre
 confini) e §3.6 (auto-save registri in `.proc`/`.endproc` + `--emit-expanded`
-+ rifiniture ai commenti del listato espanso), rimasto non committato per tre
-sessioni — l'utente ha esplicitamente chiesto **di non pushare** dopo il
-commit, quindi il branch locale resta avanti di 1 commit rispetto a
-`origin/master` finché non verrà chiesto di nuovo.
++ rifiniture ai commenti del listato espanso).
+
+**Il branch locale è avanti di 4 commit su `origin/master` e non è mai stato
+pushato**: l'utente ha chiesto esplicitamente di non farlo, quindi va chiesto
+di nuovo prima di procedere.
+
+**`.git-blame-ignore-revs` (nuovo, 29/08/2026):** elenca i commit puramente
+cosmetici che `git blame` deve saltare — al momento solo `ae29292`, la
+reindentazione. È già attivo in questo clone
+(`git config blame.ignoreRevsFile .git-blame-ignore-revs`), ma la config di
+git **non è versionata**: dopo un clone nuovo va rieseguita a mano, altrimenti
+il file c'è ma non viene consultato.
 
 **Working tree pulito** (a parte `.vscode/`, mai tracciato, di proposito — da
 valutare se aggiungere a `.gitignore` in futuro, non urgente).
@@ -452,11 +468,70 @@ make                                    # pulito, zero warning — OK
 #   la spec del manuale (§4.2.1) — OK
 ```
 
-**Prossimo passo:** proporre all'utente il commit — working tree sporco da tre
-sessioni (§3.4/§3.5/§3.6), mai committato, ora tutto verificato (vedi §2). Il
-nuovo `tests/test_proc.vasm` è il primo file sotto una directory `tests/`, mai
-esistita prima in questo repo: da valutare con l'utente se diventa la sede
-stabile per test mirati futuri o se va spostato/rinominato.
+**Committato** in `ae310d5` (§2). Resta una domanda aperta:
+`tests/test_proc.vasm` è il primo file sotto una directory `tests/`, mai
+esistita prima in questo repo — da decidere con l'utente se diventa la sede
+stabile per i test mirati futuri o se va spostato/rinominato.
+
+### 3.7 Reindentazione dei sorgenti C da 4 a 2 spazi (29/08/2026)
+
+Commit `ae29292`. Nasce da una richiesta collaterale: impostare `tab = 2` come
+default in VS Code. Controllando i sorgenti prima di applicare è emerso che il
+progetto era già **diviso a metà** — i `.vasm`/`.vinc` a 2 spazi (705 righe su
+706, zero tab), i `.c`/`.h` a 4 (zero tab) — quindi il default globale avrebbe
+fatto litigare il nuovo codice C con quello esistente. Da qui la decisione di
+uniformare tutto a 2.
+
+Impostazioni VS Code messe in `~/.config/Code/User/settings.json` (fuori dal
+repo): `editor.tabSize: 2`, `editor.insertSpaces: true` e soprattutto
+**`editor.detectIndentation: false`** — senza quest'ultima VS Code indovina
+l'indentazione dal contenuto del file a ogni apertura e sovrascrive
+silenziosamente `tabSize`. Gli override `"[c]"`/`"[cpp]"` a 4 spazi, aggiunti
+inizialmente per proteggere questo progetto, sono stati **rimossi** dopo la
+reindentazione: non servono più.
+
+**Il punto tecnico interessante.** L'indentazione in C esprime due cose
+diverse, che una sostituzione "4 spazi → 2" tratterebbe allo stesso modo
+sbagliando:
+
+- **strutturale** (annidamento di blocco) → si dimezza. È una regola
+  *model-free*: non richiede di conoscere la profondità di annidamento, quindi
+  non può sbagliare la nidificazione nemmeno con un parser impreciso.
+- **allineamento** (continuation allineata a una colonna di una riga
+  precedente) → va spostata a sinistra **esattamente quanto si è spostato il
+  suo riferimento**, che nel frattempo è migrato pure lui. 132 righe su 3581.
+
+Sono continuation sia le righe dentro una `(` o `[` ancora aperta, sia quelle
+la cui riga precedente lascia l'istruzione aperta (ternari a catena, operatori
+o virgole a fine riga, concatenazione di stringhe letterali). Una riga che
+inizia con `}` chiude un blocco ed è **sempre** strutturale, anche dentro il
+corpo di una macro multiriga.
+
+**Due difetti trovati guardando il risultato, non dai test** — entrambi
+passavano `git diff -w` e tutte le invarianti, perché erano puramente
+cosmetici:
+
+1. La prima versione riconosceva solo le continuation *da parentesi aperta* e
+   ha sfalsato i ternari a catena di `assembler.c:393-396`, dove la riga
+   prosegue per via dell'espressione (finisce con `:`), non di una parentesi.
+2. Aggiunta quella regola, il `} while (0)` della macro `R()` finiva a colonna
+   0. Da lì la regola sul `}`. I 4 backslash di quella macro (l'unica
+   multiriga del codebase) sono stati riallineati a mano.
+
+**Verifica** — il criterio forte è `git diff -w` **vuoto**: significa che
+nessuna riga differisce per qualcosa che non sia spaziatura.
+
+| Controllo | Esito |
+|---|---|
+| `git diff -w` su `src/` e `include/` | vuoto |
+| inserzioni / cancellazioni | 2711 / 2711 (nessuna riga aggiunta o persa) |
+| `make clean && make` | zero warning |
+| output dei programmi vs baseline | identico riga per riga |
+| md5 dei 10 artefatti rigenerati (`.vo`, `.vx`, `.s`) | identici |
+| invarianti (1)(2)(3) + `test_proc` | 17/40/94 · 105/74 · 18/40/95 · 100/200/300 |
+
+Gli script usati (`analyze.py`, `reindent2.py`) erano in scratchpad, non nel
+repo: la trasformazione è fatta e non va rieseguita.
 
 ---
 
@@ -500,9 +575,9 @@ stessa alternanza dei task. `asm` pulito su tutti i 20 sorgenti di
 
 ## 5. Prossimi passi possibili
 
-Il ridisegno di §3.5 è nel working tree, non ancora committato (§2) — prima
-rifinire `.proc`/`.endproc` (§0), poi valutare il commit. A parte questo,
-l'unico pezzo che manca al disegno complessivo è il front-end `vc`.
+Il ridisegno di §3.5 e le rifiniture di §3.6 sono committati e verificati
+(§0, §2): non c'è lavoro pendente sul codice. L'unico pezzo che manca al
+disegno complessivo è il front-end `vc`.
 
 ### Front-end `vc` (il pezzo mancante)
 Progetto già completo in

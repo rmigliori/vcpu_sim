@@ -1,0 +1,9 @@
+# Commit puramente cosmetici, che git blame deve saltare per non attribuire
+# a essi righe scritte altrove.
+#
+# Attivato in questo repo con:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# (gia' fatto localmente; va rifatto dopo un clone, non e' un dato versionato)
+
+# Reindenta i sorgenti C da 4 a 2 spazi (solo spaziatura)
+ae29292aed50b8a9ef227b8476d093e3be2f63bf
