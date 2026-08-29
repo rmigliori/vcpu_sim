@@ -19,45 +19,45 @@ typedef enum { R_CODE, R_DATA, R_ADDR } RelocType;
 // A symbol as it appears in an object's symbol table.
 typedef struct
 {
-    char    name[64];
-    int     section;   // RSection; RSEC_NONE for undefined (extern)
-    int64_t offset;    // instruction index (text) or byte offset (data)
-    int     binding;   // Binding
-    int     is_code;   // 1 code, 0 data, -1 unknown (extern)
+  char    name[64];
+  int     section;   // RSection; RSEC_NONE for undefined (extern)
+  int64_t offset;    // instruction index (text) or byte offset (data)
+  int     binding;   // Binding
+  int     is_code;   // 1 code, 0 data, -1 unknown (extern)
 } ObjSym;
 
 // A relocation: patch prog[site].<field> with value(sym)+addend at link time.
 typedef struct
 {
-    int     type;      // RelocType: R_CODE -> target, R_DATA/R_ADDR -> imm
-    int     site;      // instruction index within this object
-    char    sym[64];
-    int64_t addend;
+  int     type;      // RelocType: R_CODE -> target, R_DATA/R_ADDR -> imm
+  int     site;      // instruction index within this object
+  char    sym[64];
+  int64_t addend;
 } ObjReloc;
 
 // A relocatable object produced by the assembler.
 typedef struct
 {
-    Instr    text[MAX_INSTR];
-    int      text_count;
-    uint8_t* data;         // heap; size == data_count (NULL if empty)
-    int64_t  data_count;
-    ObjSym   syms[MAX_SYMBOLS];
-    int      sym_count;
-    ObjReloc relocs[MAX_INSTR];
-    int      reloc_count;
+  Instr    text[MAX_INSTR];
+  int      text_count;
+  uint8_t* data;         // heap; size == data_count (NULL if empty)
+  int64_t  data_count;
+  ObjSym   syms[MAX_SYMBOLS];
+  int      sym_count;
+  ObjReloc relocs[MAX_INSTR];
+  int      reloc_count;
 } VObject;
 
 // A fully linked executable image.
 typedef struct
 {
-    Instr    text[MAX_INSTR];
-    int      text_count;
-    uint8_t* data;         // heap; size == data_count (NULL if empty)
-    int64_t  data_count;
-    ObjSym   symmap[MAX_SYMBOLS];  // globals only, resolved (value in .offset)
-    int      sym_count;
-    int64_t  entry;        // entry instruction index
+  Instr    text[MAX_INSTR];
+  int      text_count;
+  uint8_t* data;         // heap; size == data_count (NULL if empty)
+  int64_t  data_count;
+  ObjSym   symmap[MAX_SYMBOLS];  // globals only, resolved (value in .offset)
+  int      sym_count;
+  int64_t  entry;        // entry instruction index
 } VImage;
 
 // --- assembler.c -----------------------------------------------------------
