@@ -8,6 +8,13 @@
 
 ## 0. STATO ATTUALE — tutto committato, working tree pulito
 
+**RIPRENDI DA QUI:** il fronte attivo è la **riscrittura dello scheduler a
+priorità statiche** (§5). Il modello è definito e verbalizzato in
+[`docs/proposta-kernel-realtime.md`](proposta-kernel-realtime.md); tre decisioni
+sono prese, **una è aperta** ed è il primo punto da chiudere: §7.4 della
+proposta, ereditarietà di priorità contro priority ceiling per i mutex. Nessun
+codice va scritto prima, perché la scelta cambia il layout di strutture statiche.
+
 **Reindentazione a 2 spazi (29/08/2026), FATTA E COMMITTATA** (`ae29292`,
 vedi §3.7): `src/*.c` e `include/*.h` sono passati da 4 a 2 spazi, per
 allinearsi ai `.vasm` che erano già a 2. Cambiamento puramente cosmetico,
@@ -107,6 +114,7 @@ Branch `master`, pubblicato su `git@github.com:rmigliori/vcpu_sim.git` (remote
 push senza prompt).
 
 ```
+b342e83 Aggiorna handoff: reindentazione a 2 spazi + .git-blame-ignore-revs    (locale, NON pushato)
 ae29292 Reindenta i sorgenti C da 4 a 2 spazi (solo spaziatura)               (locale, NON pushato)
 b0b4f28 Aggiorna handoff: lavoro committato, working tree pulito              (locale, NON pushato)
 ae310d5 Ridisegno HAL/kernel a tre confini + auto-save registri in .proc/.endproc  (locale, NON pushato)
@@ -535,6 +543,24 @@ repo: la trasformazione è fatta e non va rieseguita.
 
 ---
 
+### 3.8 Bocciatura del disegno scheduler/dispatcher e nuovo modello a PCB (29/08/2026)
+
+Sessione di sola progettazione, **nessun codice scritto o modificato**. Partita
+dall'utente: «secondo me stiamo facendo degli errori architetturali su scheduler
+e dispatcher». Analisi del codice esistente, individuazione dei difetti, e
+specifica di un modello sostitutivo a priorità statiche.
+
+Tutto il contenuto sta in
+[`docs/proposta-kernel-realtime.md`](proposta-kernel-realtime.md) — è quello il
+documento da leggere, non questo. Qui basti: **tre decisioni prese, una
+aperta**, riassunte in §5.
+
+> Prodotto anche un artifact web con gli stessi diagrammi, pubblicato **per
+> errore** (l'utente lo voleva locale) e subito sostituito dal documento
+> markdown. Se compare in `/artifacts`, è quello: si può cancellare.
+
+---
+
 ## 4. Invarianti di regressione — come verificare che nulla si sia rotto
 
 ```bash
@@ -576,10 +602,55 @@ stessa alternanza dei task. `asm` pulito su tutti i 20 sorgenti di
 ## 5. Prossimi passi possibili
 
 Il ridisegno di §3.5 e le rifiniture di §3.6 sono committati e verificati
-(§0, §2): non c'è lavoro pendente sul codice. L'unico pezzo che manca al
-disegno complessivo è il front-end `vc`.
+(§0, §2): non c'è lavoro pendente sul codice. Ci sono due fronti aperti, uno
+appena aperto e uno di vecchia data.
 
-### Front-end `vc` (il pezzo mancante)
+### Riscrittura dello scheduler a priorità statiche (FRONTE ATTIVO)
+
+**È qui che riprende il lavoro.** Discussione del 29/08/2026, verbalizzata per
+intero in [`docs/proposta-kernel-realtime.md`](proposta-kernel-realtime.md)
+(diagrammi Mermaid inclusi): l'utente ha bocciato il disegno attuale a coda
+singola e ha specificato un modello a **priorità statiche con un PCB per
+livello**, dove il TCB preemptato viene tenuto in un campo dedicato del PCB
+invece di tornare in fondo alla coda.
+
+Il difetto che ha innescato tutto: l'attuale `scheduler`
+([`kernel/scheduler.vasm:118-135`](../linked/scheduler/kernel/scheduler.vasm#L118-L135))
+riaccoda **sempre** il task uscente, il che rende il blocking su semaforo
+inesprimibile — pur essendo promesso dal modello a 3 stati dichiarato
+nell'intestazione dello stesso file. Inoltre ciò che si chiama "politica"
+contiene in realtà transizioni di stato, manipolazione di code e commit di
+`current`: cambiare politica non richiederebbe di riscrivere solo quella.
+
+**Decisioni già prese** (§7.1–7.3 della proposta):
+
+1. `current` sopravvive → lo slot si riempie **nell'istante** della preemption,
+   non mentre il task gira.
+2. `TCB.state` **resta** — serve al debug e serve a sapere in quale coda il TCB
+   si trova adesso, che `TCB.pcb` da solo non dice. Ma i valori diventano
+   **quattro**: aggiunto `PREEMPTED`.
+3. Il campo di priorità nel TCB contiene **l'indirizzo del PCB**, non il numero
+   di livello (si chiamerà `pcb`). Porta con sé un invariante da non perdere di
+   vista: la tabella dei PCB va disposta in memoria **in ordine di priorità**,
+   altrimenti i confronti fra puntatori — che servono per decidere la preemption
+   al risveglio di un task — smettono di essere confronti fra priorità, in
+   silenzio.
+
+**Decisione aperta, da riprendere per prima** (§7.4): per l'inversione di
+priorità sui **mutex** (non sui semafori: senza proprietario non c'è nessuno da
+promuovere), si va di **ereditarietà** o di **priority ceiling**? Cambia cosa va
+dichiarato staticamente — l'ereditarietà vuole una `TESTA` in più nel TCB per la
+lista dei mutex posseduti, il ceiling vuole un campo nel mutex e nient'altro. La
+proposta raccomanda il ceiling, perché con tutto statico il ceiling è calcolabile
+a compile-time; l'utente non ha ancora deciso.
+
+**Non si scrive codice finché §7.4 non è chiusa**: tocca il layout di strutture
+statiche.
+
+`hal/machine.vasm` e `kernel/coda.vasm` sopravvivono intatti al ridisegno.
+
+### Front-end `vc` (il pezzo mancante di vecchia data)
+
 Progetto già completo in
 [`docs/proposta-linguaggio-alto-livello.md`](proposta-linguaggio-alto-livello.md):
 linguaggio array-first alla Fortran 90/NumPy, EBNF, tabella di precedenze, 5 fasi.
@@ -605,6 +676,13 @@ Aprire Claude Code nella cartella del progetto e scrivere una di queste:
 Leggi docs/stato-lavori.md e riprendi da lì.
 ```
 
+**Per riprendere il fronte attivo (scheduler realtime) — CONSIGLIATA:**
+```
+Leggi docs/stato-lavori.md e docs/proposta-kernel-realtime.md.
+Riprendiamo dalla decisione aperta §7.4: ereditarieta' di priorita' o
+priority ceiling per i mutex.
+```
+
 **Per andare sul linguaggio ad alto livello:**
 ```
 Leggi docs/stato-lavori.md e docs/proposta-linguaggio-alto-livello.md.
@@ -613,6 +691,12 @@ a[:] = espr con + - * elementwise, che genera .vasm.
 Criterio di successo: saxpy in vc deve dare 17 istruzioni / 40 vec-elem-ops / 94 cicli.
 ```
 
-Utile da sapere: il modello si cambia con `/model` (questa sessione girava su
-Opus 5). Il contesto del progetto si ricostruisce in fretta perché il repo è
-piccolo (~6.500 righe totali) e i tre documenti in `docs/` sono aggiornati.
+Utile da sapere: il modello si cambia con `/model`, ed è ora impostato su Opus
+come default in `~/.claude/settings.json`. Il contesto del progetto si
+ricostruisce in fretta perché il repo è piccolo (~6.500 righe totali) e i
+**quattro** documenti in `docs/` sono aggiornati: `stato-lavori.md` (questo),
+`manual.md`, `proposta-kernel-realtime.md` (fronte attivo) e
+`proposta-linguaggio-alto-livello.md`.
+
+I sorgenti C sono a **2 spazi** dal 29/08/2026 (§3.7): scrivere nuovo codice
+con la stessa convenzione.
