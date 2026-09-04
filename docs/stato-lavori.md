@@ -115,9 +115,9 @@ tutto da `;` in poi anche nel pass 2).
 > tenuti perché contengono convenzioni ancora valide. Lo stato corrente è quello
 > dei paragrafi in cima alla sezione.
 
-**Working tree PULITO** (§2). Il branch locale è avanti di **10 commit** su
-`origin/master` e **non è mai stato pushato**, per richiesta esplicita
-dell'utente: va chiesto di nuovo prima di procedere.
+**Working tree PULITO** (§2). Il branch **è stato pushato** il 04/09/2026 —
+`origin/master` è a `20ae071` — e resta locale il solo commit successivo,
+`099454b`. Il push non è arrivato da una sessione di lavoro: vedi §2.
 
 ---
 
@@ -168,16 +168,18 @@ Branch `master`, pubblicato su `git@github.com:rmigliori/vcpu_sim.git` (remote
 push senza prompt).
 
 ```
-dbf869c Pool di buffer a blocchi fissi, sei classi per potenze di due     (locale, NON pushato)
-d2c2527 Gestore dei timeout: vettore di descrittori, arm e cancel         (locale, NON pushato)
-ada7b4c Mailbox, strato _nc e invariante dei link nelle code              (locale, NON pushato)
-6efd08b Toolchain: riserva l'indirizzo 0 come puntatore nullo             (locale, NON pushato)
-79138ca Proposta di riscrittura dello scheduler: priorita' statiche + PCB (locale, NON pushato)
-b342e83 Aggiorna handoff: reindentazione a 2 spazi + .git-blame-ignore-revs   (locale, NON pushato)
-ae29292 Reindenta i sorgenti C da 4 a 2 spazi (solo spaziatura)              (locale, NON pushato)
-b0b4f28 Aggiorna handoff: lavoro committato, working tree pulito             (locale, NON pushato)
-ae310d5 Ridisegno HAL/kernel a tre confini + auto-save registri in .proc/.endproc  (locale, NON pushato)
-98a40a0 Aggiorna handoff: lavoro pendente committato                         <- ultimo pushato
+099454b Handoff: il piano per il build in target CMake                   <- LOCALE, non pushato
+20ae071 Aggiorna i documenti: pool (§10 della proposta) e handoff        <- ultimo pushato
+dbf869c Pool di buffer a blocchi fissi, sei classi per potenze di due
+d2c2527 Gestore dei timeout: vettore di descrittori, arm e cancel
+ada7b4c Mailbox, strato _nc e invariante dei link nelle code
+6efd08b Toolchain: riserva l'indirizzo 0 come puntatore nullo
+79138ca Proposta di riscrittura dello scheduler: priorita' statiche + PCB
+b342e83 Aggiorna handoff: reindentazione a 2 spazi + .git-blame-ignore-revs
+ae29292 Reindenta i sorgenti C da 4 a 2 spazi (solo spaziatura)
+b0b4f28 Aggiorna handoff: lavoro committato, working tree pulito
+ae310d5 Ridisegno HAL/kernel a tre confini + auto-save registri in .proc/.endproc
+98a40a0 Aggiorna handoff: lavoro pendente committato
 ef10e3b Riorganizza sorgenti .vasm: examples/ -> standalone/ + linked/, doc aggiornata
 3434b6d HAL + kernel puro + demo scheduler a preemption differita
 2111646 Assembler: direttive di compile-time (.equ/.struct/.field/.res/.include)
@@ -193,12 +195,20 @@ I quattro commit del **04/09/2026** sono in ordine di dipendenza, e va tenuto:
 `6efd08b` (il puntatore nullo) **deve** precedere `ada7b4c`, perche' senza
 l'indirizzo 0 riservato il test dell'invariante dei link non passa.
 
-> ### ⚠ Working tree PULITO, ma il branch non è mai stato pushato
+> ### Il branch È STATO PUSHATO il 04/09/2026
 >
-> Il lavoro del 30/08 e del 04/09 è tutto committato. **Il branch locale è avanti
-> di 10 commit su `origin/master` e non è mai stato pushato**: l'utente ha
-> chiesto esplicitamente di non farlo, quindi **va chiesto di nuovo prima di
-> procedere**.
+> Fino a quel giorno il branch locale non era mai stato pubblicato, per richiesta
+> esplicita dell'utente. Alle **20:35 del 04/09/2026** un push ha portato
+> `origin/master` da `98a40a0` a `20ae071`, cioè **dieci commit in una volta**:
+> tutto il lavoro del 30/08 e del 04/09 più i quattro commit locali di fine
+> agosto. Il push **non è stato fatto da questa sessione** (nessun `git push` fra
+> i comandi eseguiti, nessun hook in `.git/hooks/`, nessuna config di push
+> automatico): è arrivato dall'esterno, presumibilmente dall'IDE o da un
+> terminale.
+>
+> Resta locale il solo `099454b`. **La vecchia regola «non pushare, chiedere
+> prima» va considerata superata dai fatti**: se vale ancora per i commit futuri,
+> va riconfermata dall'utente.
 >
 > `.vscode/` resta l'unica cosa non tracciata, di proposito.
 
