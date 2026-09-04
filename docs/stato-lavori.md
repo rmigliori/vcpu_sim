@@ -195,20 +195,20 @@ I quattro commit del **04/09/2026** sono in ordine di dipendenza, e va tenuto:
 `6efd08b` (il puntatore nullo) **deve** precedere `ada7b4c`, perche' senza
 l'indirizzo 0 riservato il test dell'invariante dei link non passa.
 
-> ### Il branch È STATO PUSHATO il 04/09/2026
+> ### Il branch è stato pubblicato il 04/09/2026 — ma la regola sul push resta
 >
-> Fino a quel giorno il branch locale non era mai stato pubblicato, per richiesta
-> esplicita dell'utente. Alle **20:35 del 04/09/2026** un push ha portato
-> `origin/master` da `98a40a0` a `20ae071`, cioè **dieci commit in una volta**:
-> tutto il lavoro del 30/08 e del 04/09 più i quattro commit locali di fine
-> agosto. Il push **non è stato fatto da questa sessione** (nessun `git push` fra
-> i comandi eseguiti, nessun hook in `.git/hooks/`, nessuna config di push
-> automatico): è arrivato dall'esterno, presumibilmente dall'IDE o da un
-> terminale.
+> Fino a quel giorno il branch locale non era mai stato pubblicato. Alle **20:35
+> del 04/09/2026 l'utente ha fatto un push**, portando `origin/master` da
+> `98a40a0` a `20ae071`: **dieci commit in una volta**, tutto il lavoro del 30/08
+> e del 04/09 più i quattro commit locali di fine agosto. Scelta sua e
+> deliberata, confermata a voce.
 >
-> Resta locale il solo `099454b`. **La vecchia regola «non pushare, chiedere
-> prima» va considerata superata dai fatti**: se vale ancora per i commit futuri,
-> va riconfermata dall'utente.
+> **La regola «non pushare, chiedere prima» vale ancora**, e l'utente l'ha
+> riconfermata esplicitamente dopo quel push. Non è un vincolo sul repo: è
+> **un'istruzione alla sessione**. L'utente pubblica quando vuole; Claude no, mai,
+> nemmeno adesso che il branch è pubblicato — il fatto che `origin/master`
+> esista non rende il push un'operazione di routine. Committare in locale sì,
+> quando richiesto; pubblicare mai senza che sia chiesto in quel momento.
 >
 > `.vscode/` resta l'unica cosa non tracciata, di proposito.
 
