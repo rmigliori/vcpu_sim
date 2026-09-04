@@ -1,0 +1,129 @@
+; tests/test_timeout.vasm — test mirato del vettore di descrittori di
+; kernel/timeout.vasm: timeout_arm e timeout_cancel.
+;
+; Non c'e' nessuno scheduler e nessun timer armato: il tempo lo muove il test
+; scrivendo tmo_now, che e' proprio il motivo per cui la base dei tempi e' una
+; variabile del gestore e non qualcosa che si legge dall'hardware.
+;
+; Le "mailbox" del test sono solo INDIRIZZI: qui una mailbox non viene mai usata
+; come coda, serve unicamente come meta' dell'identita' (§8.6, la mailbox E' il
+; task). Nessuna send, nessuna receive: la consegna alla scadenza non e' ancora
+; scritta perche' aspetta il pool.
+;
+; machine.vasm entra nel link per irq_save/irq_restore, e si tira dietro
+; _trap_entry che referenzia sched_dispatch: da li' scheduler.vasm, e da li'
+; coda.vasm. Nessuno dei tre gira.
+;
+; Pipeline:
+;   ./build/vcpu_sim asm linked/scheduler/hal/machine.vasm      -o build/machine.vo
+;   ./build/vcpu_sim asm linked/scheduler/kernel/coda.vasm      -o build/coda.vo
+;   ./build/vcpu_sim asm linked/scheduler/kernel/scheduler.vasm -o build/scheduler.vo
+;   ./build/vcpu_sim asm linked/scheduler/kernel/timeout.vasm   -o build/timeout.vo
+;   ./build/vcpu_sim asm tests/test_timeout.vasm                -o build/test_timeout.vo
+;   ./build/vcpu_sim ld build/test_timeout.vo build/timeout.vo build/coda.vo \
+;                       build/scheduler.vo build/machine.vo -o build/test_timeout.vx
+;   ./build/vcpu_sim run build/test_timeout.vx
+;
+; Atteso, in ordine:  3  0  150  1  2  0  0  0  3  0  1
+
+.include "../linked/scheduler/include/timeout.vinc"
+
+  .data
+
+mbox_a:  .space 3       ; mai usate come code: sono identita', cioe' indirizzi
+mbox_b:  .space 3
+stack:   .space 64
+stack_top:
+
+  .text
+
+  .global main
+  .extern timeout_arm
+  .extern timeout_cancel
+  .extern tmo_now
+  .extern tmo_vettore
+
+main:
+  li r14, stack_top
+
+  ; --- (1) vettore appena nato: e' tutto libero, nessuna identita' armata ---
+  li r1, mbox_a
+  li r2, 7
+  call timeout_cancel
+  dumps r2                ; 3 = TMO_NONE
+
+  ; --- (2) arm: il ritardo diventa una scadenza ASSOLUTA su tmo_now ---
+  li r1, tmo_now
+  li r2, 100
+  sw r2, 0(r1)            ; "adesso" = 100
+
+  li r1, 50               ; fra 50 tick
+  li r2, 7                ; clientTag
+  li r3, 55               ; messageCode
+  li r4, mbox_a
+  call timeout_arm
+  dumps r2                ; 0 = TMO_OK
+
+  li r5, tmo_vettore      ; primo slot libero = il primo del vettore
+  lw r6, DESCRITTORE.scadenza(r5)
+  dumps r6                ; 150 = 100 + 50
+  lw r6, DESCRITTORE.stato(r5)
+  dumps r6                ; 1 = TMO_ARMED
+
+  ; --- (3) stessa identita' due volte: errore, non un secondo timeout ---
+  li r1, 50
+  li r2, 7
+  li r3, 55
+  li r4, mbox_a
+  call timeout_arm
+  dumps r2                ; 2 = TMO_DUP
+
+  ; --- (4) stessa mailbox, clientTag diverso: e' un'ALTRA identita' ---
+  li r1, 10
+  li r2, 8
+  li r3, 66
+  li r4, mbox_a
+  call timeout_arm
+  dumps r2                ; 0 = TMO_OK (va nel secondo slot)
+
+  ; --- (5) cancel: la prima volta trova, la seconda no ---
+  li r1, mbox_a
+  li r2, 7
+  call timeout_cancel
+  dumps r2                ; 0 = TMO_OK
+  li r5, tmo_vettore
+  lw r6, DESCRITTORE.stato(r5)
+  dumps r6                ; 0 = TMO_FREE: la casella e' tornata libera
+
+  li r1, mbox_a
+  li r2, 7
+  call timeout_cancel
+  dumps r2                ; 3 = TMO_NONE: gia' cancellato (o, a regime, gia'
+                          ;     scattato: il messaggio sarebbe in mailbox)
+
+  ; --- (6) il vettore si riempie: restano 9 slot liberi, poi TMO_FULL ---
+  ;     r9/r10/r11 attraversano le call: timeout_arm non tocca r9..r13.
+  li r9, 9                ; quante armarne
+  li r10, 100             ; clientTag di partenza
+  li r11, 0               ; somma degli esiti: deve restare 0
+fill:
+  beq r9, r0, fill_fine
+  li r1, 5
+  mov r2, r10
+  li r3, 77
+  li r4, mbox_b
+  call timeout_arm
+  add r11, r11, r2
+  addi r10, r10, 1
+  addi r9, r9, -1
+  j fill
+fill_fine:
+  dumps r11               ; 0 = tutte e nove armate
+
+  li r1, 5
+  mov r2, r10
+  li r3, 77
+  li r4, mbox_b
+  call timeout_arm
+  dumps r2                ; 1 = TMO_FULL: non c'e' piu' una casella libera
+  halt

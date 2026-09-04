@@ -1,0 +1,210 @@
+; kernel/timeout.vasm — gestore dei timeout: il vettore di descrittori e le due
+; primitive con cui un cliente arma e cancella un'attesa a tempo (§9 della
+; proposta).
+;
+; Un timeout e' UNA CONSEGNA IN MAILBOX CHE AVVIENE PIU' TARDI: chi vuole un
+; tempo massimo chiede qui che gli venga recapitato un messaggio a una certa
+; scadenza, poi si blocca sulla propria mailbox come si bloccherebbe comunque, e
+; al risveglio distingue l'evento vero dalla scadenza guardando cosa ha
+; ricevuto. L'interfaccia e' PROCEDURALE (due call, non due messaggi) e il
+; cliente non fornisce nessun buffer: alla scadenza il buffer lo prende il
+; gestore da un pool.
+;
+; --- Identita', non handle ---
+; timeout_arm non restituisce nessun handle e timeout_cancel non ne chiede uno:
+; si cancella per IDENTITA', la coppia (replyMailbox, clientTag). Le due parole
+; sono gia' nel descrittore perche' servono comunque a formattare il messaggio,
+; e il cliente le ha gia' entrambe — la mailbox e' la sua identita' (§8.6) e il
+; clientTag lo tiene comunque per riconoscere il messaggio stantio (§9.4).
+; Un handle nominerebbe lo SLOT, non il timeout: lo slot sopravvive al timeout e
+; viene riciclato, quindi il nome resta valido mentre punta a un'altra cosa e una
+; cancel stantia colpirebbe il timeout di un terzo che non ha sbagliato niente.
+; Validarlo richiederebbe esattamente il confronto di identita' che facciamo qui.
+;
+; --- Un vettore, non una lista ---
+; Il descrittore non entra mai in una lista (§9.3): niente fwd/bwd, niente
+; remove_buffer, niente campo che dica da quale testa sganciare. Il costo e'
+; scandire N caselle invece dei soli armati; con N nell'ordine della decina e'
+; rumore, e la delta list resta l'evoluzione nota se N cresce.
+;
+; --- Sezione critica ---
+; arm e cancel girano nei TASK e toccano lo stesso vettore che il gestore
+; scandira' a ogni tick: la sezione critica e' obbligatoria e sta DENTRO le due
+; routine, non in un wrapper _s. Stesso argomento della receive (§8.5): la
+; protezione deve comprendere la scansione E la decisione E la scrittura, che
+; qui sono un atto solo. Proteggere solo una parte sarebbe attivamente dannoso.
+; irq_save/irq_restore sono componibili, quindi le due chiamate sono corrette
+; anche da IE=0 (boot).
+;
+; --- Cosa NON c'e' ancora in questo file ---
+; La scansione delle scadenze e la consegna: hanno bisogno di buf_alloc, cioe'
+; del pool, che e' ancora in discussione. Il ciclo del task-gestore ha in piu'
+; bisogno della commutazione volontaria (§8.7) e dello scheduler a priorita'
+; (§7.4). Quando arriveranno, la transizione ARMED -> FREE della scadenza dovra'
+; stare NELLA STESSA sezione critica in cui si decide di consegnare: leggere i
+; campi, uscire, mandare e solo dopo liberare riaprirebbe qui dentro esattamente
+; il bug del riciclo dell'handle.
+;
+; Convenzione registri: r1..r4 argomenti, r2 esito, r5..r8 scratch. NON tocca
+; r9..r13, cosi' un chiamante che scandisce o accumula puo' tenerci il proprio
+; stato attraverso la call.
+
+.include "../include/timeout.vinc"
+
+  .data
+
+  .global tmo_now
+  .global tmo_vettore
+
+; Base dei tempi: contatore ASSOLUTO dei tick. Sta qui perche' e' lo stato del
+; gestore, ma l'incremento appartiene al percorso del tick, che non e' ancora
+; scritto: il test lo muove a mano, ed e' esattamente cosi' che si simula il
+; tempo che passa senza avere un timer armato.
+tmo_now:      .word 0
+
+; Il vettore. La sua taglia e' "quante righe .res ci sono": per cambiarla si
+; aggiunge o si toglie una riga, e tmo_fine la segue da sola — nessuna costante
+; da tenere allineata a mano con l'allocazione. Nasce tutto TMO_FREE perche'
+; l'immagine dati e' azzerata e TMO_FREE vale 0.
+tmo_vettore:  .res DESCRITTORE
+              .res DESCRITTORE
+              .res DESCRITTORE
+              .res DESCRITTORE
+              .res DESCRITTORE
+              .res DESCRITTORE
+              .res DESCRITTORE
+              .res DESCRITTORE
+              .res DESCRITTORE
+              .res DESCRITTORE
+tmo_fine:
+
+  .text
+
+  .global timeout_arm
+  .global timeout_cancel
+  .extern irq_save
+  .extern irq_restore
+
+; ==========================================================================
+;  timeout_arm(r1 = ritardo in tick, r2 = clientTag, r3 = messageCode,
+;              r4 = replyMailbox) -> r2 = TMO_OK | TMO_FULL | TMO_DUP
+;
+;  UNA SOLA passata fa due lavori: cerca il primo slot libero e, sugli armati,
+;  controlla che l'identita' non ci sia gia'. L'invariante che ne esce —
+;  "al piu' un timeout armato per (replyMailbox, clientTag)" — e' quello che
+;  permette alla cancel di fermarsi al primo match. Regge da se' finche' il
+;  clientTag e' monotono per attesa (§9.4); se un task vuole due timeout in
+;  volo deve usare due tag, cosa che gli serve comunque per distinguerli al
+;  risveglio.
+;
+;  Il ritardo diventa subito una scadenza ASSOLUTA: e' il gestore a possedere la
+;  base dei tempi, il cliente ragiona in "fra quanto".
+;
+;  Non-foglia, con salti -> prologo/epilogo a mano (dentro .proc non sono
+;  ammesse etichette, docs/manual.md §4.2.1).
+;  Clobber: r1 (diventa la scadenza), r2 (esito), r5, r6, r7, r8. r3/r4 intatti.
+; ==========================================================================
+timeout_arm:
+  addi r14, r14, -4
+  sw r15, 0(r14)          ; non-foglia: preserva il ritorno
+  call irq_save           ; r5 = psw del chiamante, IE = 0
+  addi r14, r14, -4
+  sw r5, 0(r14)           ; la psw sopravvive alle call seguenti
+
+  li r5, tmo_now
+  lw r5, 0(r5)
+  add r1, r1, r5          ; r1 = adesso + ritardo = scadenza assoluta
+
+  li r5, tmo_vettore      ; r5 = cursore
+  li r7, tmo_fine         ; r7 = sentinella di fine vettore
+  li r6, 0                ; r6 = primo slot libero visto (0 = ancora nessuno)
+
+arm_scan:
+  beq r5, r7, arm_esito
+  lw r8, DESCRITTORE.stato(r5)
+  beq r8, r0, arm_libero        ; TMO_FREE == 0
+  lw r8, DESCRITTORE.replyMailbox(r5)
+  bne r8, r4, arm_avanti        ; armato ma di un altro task
+  lw r8, DESCRITTORE.clientTag(r5)
+  beq r8, r2, arm_dup           ; stessa mailbox E stesso tag: stessa identita'
+  j arm_avanti
+arm_libero:
+  bne r6, r0, arm_avanti        ; ne ho gia' uno: tengo il PRIMO
+  mov r6, r5
+arm_avanti:
+  addi r5, r5, DESCRITTORE.size
+  j arm_scan
+
+arm_esito:
+  beq r6, r0, arm_full
+  sw r1, DESCRITTORE.scadenza(r6)
+  sw r4, DESCRITTORE.replyMailbox(r6)
+  sw r2, DESCRITTORE.clientTag(r6)
+  sw r3, DESCRITTORE.messageCode(r6)
+  li r8, TMO_ARMED
+  sw r8, DESCRITTORE.stato(r6)  ; lo stato per ULTIMO, dopo i dati: qui dentro la
+                                ; sezione critica rende l'ordine indifferente, ma
+                                ; e' l'ordine giusto e non costa niente
+  li r2, TMO_OK
+  j arm_uscita
+arm_full:
+  li r2, TMO_FULL
+  j arm_uscita
+arm_dup:
+  li r2, TMO_DUP
+
+arm_uscita:
+  lw r5, 0(r14)
+  addi r14, r14, 4
+  call irq_restore        ; psw del chiamante (r2 = esito, non toccato)
+  lw r15, 0(r14)          ; dopo la call: irq_restore passa da r15
+  addi r14, r14, 4
+  ret
+
+; ==========================================================================
+;  timeout_cancel(r1 = replyMailbox, r2 = clientTag) -> r2 = TMO_OK | TMO_NONE
+;
+;  Cancellare e' riportare la casella a TMO_FREE. Gli altri campi restano
+;  scritti: la scansione salta le caselle non armate PRIMA di guardare
+;  l'identita', quindi non ingannano nessuno, e in un dump raccontano cosa
+;  c'era.
+;
+;  TMO_NONE non e' un fallimento: il timeout puo' aver vinto la corsa, e allora
+;  il messaggio e' gia' in mailbox. Quello e' del ricevente (§9.4).
+;
+;  Clobber: r2 (esito), r5, r6, r7, r8. r1/r3/r4 intatti.
+; ==========================================================================
+timeout_cancel:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  call irq_save
+  addi r14, r14, -4
+  sw r5, 0(r14)
+
+  li r5, tmo_vettore
+  li r7, tmo_fine
+  li r6, TMO_NONE         ; esito finche' non si trova
+
+can_scan:
+  beq r5, r7, can_uscita
+  lw r8, DESCRITTORE.stato(r5)
+  beq r8, r0, can_avanti        ; libera: l'identita' non si guarda nemmeno
+  lw r8, DESCRITTORE.replyMailbox(r5)
+  bne r8, r1, can_avanti
+  lw r8, DESCRITTORE.clientTag(r5)
+  bne r8, r2, can_avanti
+  sw r0, DESCRITTORE.stato(r5)  ; TMO_FREE: la casella torna libera
+  li r6, TMO_OK
+  j can_uscita                  ; identita' unica: si ferma al primo match
+can_avanti:
+  addi r5, r5, DESCRITTORE.size
+  j can_scan
+
+can_uscita:
+  mov r2, r6
+  lw r5, 0(r14)
+  addi r14, r14, 4
+  call irq_restore
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret

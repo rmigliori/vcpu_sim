@@ -1,0 +1,70 @@
+; include/timeout.vinc — interfaccia del gestore dei timeout (§9 della proposta).
+;
+; Primo caso concreto del modello di §8.6: ogni FORNITORE DI SERVIZI pubblica la
+; propria interfaccia in un .vinc suo. Qui il fornitore e' un'API, non un task,
+; quindi non c'e' una mailbox da pubblicare: ci sono due entry point
+; (timeout_arm/timeout_cancel) e i codici con cui rispondono.
+;
+; NON include types.vinc di proposito: .include non e' idempotente in questo
+; assembler (includere due volte lo stesso file da' "duplicate constant"), quindi
+; un .vinc che ne includa un altro esplode appena un chiamante include entrambi.
+; Finche' non e' resa idempotente, la regola e' che i .vinc sono FOGLIA.
+
+; --------------------------------------------------------------------------
+;  Il descrittore: una casella del vettore, cioe' UN timeout armato.
+;
+;  Il descrittore non entra MAI in una lista (§9.3): niente fwd/bwd, niente
+;  campo che dica da quale testa sganciarlo. Un timeout si arma scrivendo una
+;  casella e si cancella riportandola a TMO_FREE.
+;
+;  replyMailbox e clientTag sono adiacenti e in quest'ordine perche' insieme
+;  sono l'IDENTITA' del timeout — quel task, in quella attesa — e sono anche
+;  gli argomenti di timeout_cancel: la chiave di ricerca si legge accanto alla
+;  firma della chiamata. Non c'e' nessun handle da conservare, e non ci deve
+;  essere: uno slot si ricicla, quindi un handle stantio cancellerebbe in
+;  silenzio il timeout di un altro task (§9.5).
+;
+;  Il layout e' pubblicato per l'ispezione e per i test, non perche' un cliente
+;  debba toccarlo: al cliente bastano le due call e i TMO_* qui sotto.
+; --------------------------------------------------------------------------
+.struct DESCRITTORE
+  .field stato          ; +0  TMO_FREE / TMO_ARMED
+  .field scadenza       ; +4  tick ASSOLUTO; i confronti vanno fatti sulla
+                        ;     differenza (scadenza - adesso), mai sui valori:
+                        ;     al wrap del contatore l'ordine si inverte (§9.3)
+  .field replyMailbox   ; +8  \ identita': la mailbox E' il task (§8.6)
+  .field clientTag      ; +12 / e il tag e' la singola attesa (§9.4)
+  .field messageCode    ; +16 cosa consegnare alla scadenza
+.ends
+
+; Stato della casella. Esplicito e non dedotto da "replyMailbox == 0" come
+; diceva la prima stesura di §9.1: e' lo stesso argomento con cui §7.2 tiene
+; TCB.state invece di dedurre dov'e' il task da TCB.pcb — uno stato scritto si
+; legge in un dump e si controlla, una convenzione no. In piu' toglie il vincolo
+; "nessuna mailbox all'indirizzo 0" e fa si' che una cancel con identita'
+; spazzatura non combaci con niente invece di combaciare con tutti i liberi.
+;
+; TMO_FREE = 0 NON e' un dettaglio: il vettore in .data nasce azzerato, quindi
+; nasce tutto libero e non serve nessuna timeout_init. Il codice si appoggia a
+; questo (beq contro r0, sw di r0).
+.equ TMO_FREE   0
+.equ TMO_ARMED  1
+
+; Esito delle due chiamate.
+;   timeout_arm    -> TMO_OK | TMO_FULL | TMO_DUP
+;   timeout_cancel -> TMO_OK | TMO_NONE
+;
+; TMO_NONE non e' un errore: e' l'informazione che serve al cliente. Vuol dire
+; "il timeout e' gia' scattato, il messaggio e' nella tua mailbox o ci sta
+; arrivando" — cioe' il messaggio stantio di §9.4, che il ricevente riconosce
+; dal clientTag e butta. La cancel non insegue un messaggio gia' consegnato.
+;
+; TMO_DUP e' invece un errore di costruzione: due timeout armati con la stessa
+; identita' renderebbero ambigua sia la cancel sia la discriminazione al
+; risveglio. Si segnala al chiamante e basta: fermare la macchina sarebbe una
+; politica, e deciderla non e' di questo modulo (e' il difetto gia' aperto
+; sull'halt di receive, §8.7 — non lo ripetiamo qui).
+.equ TMO_OK     0
+.equ TMO_FULL   1     ; nessuno slot libero
+.equ TMO_DUP    2     ; (replyMailbox, clientTag) gia' armata
+.equ TMO_NONE   3     ; nessun timeout armato con quell'identita'
