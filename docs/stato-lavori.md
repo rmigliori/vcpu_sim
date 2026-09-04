@@ -1,19 +1,64 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **29 agosto 2026**
+> Ultimo aggiornamento: **4 settembre 2026**
 > Scopo: fotografia dello stato per riprendere il lavoro a distanza di giorni
 > senza dover ricostruire il contesto.
 
 ---
 
-## 0. STATO ATTUALE — tutto committato, working tree pulito
+## 0. STATO ATTUALE — LAVORO NON COMMITTATO NEL WORKING TREE
 
-**RIPRENDI DA QUI:** il fronte attivo è la **riscrittura dello scheduler a
-priorità statiche** (§5). Il modello è definito e verbalizzato in
-[`docs/proposta-kernel-realtime.md`](proposta-kernel-realtime.md); tre decisioni
-sono prese, **una è aperta** ed è il primo punto da chiudere: §7.4 della
-proposta, ereditarietà di priorità contro priority ceiling per i mutex. Nessun
-codice va scritto prima, perché la scelta cambia il layout di strutture statiche.
+**RIPRENDI DA QUI.** Il **30/08/2026** ci sono state **tre sessioni**, non una:
+§3.9 (il TCB e i timeout), §3.10 (la mailbox, progettata e implementata) e §3.11
+(il gestore dei timeout, riprogettato da capo). Il documento da leggere resta
+[`docs/proposta-kernel-realtime.md`](proposta-kernel-realtime.md), ora coerente:
+§8 per la mailbox, **§9 per il gestore dei timeout**.
+
+> ### ⚠ La §9 è andata quasi persa, e la lezione vale più del testo
+>
+> La sessione di §3.11 aveva scritto la nuova §9 in un file di **scratchpad** e
+> l'aveva innestata nel documento con uno script. Il documento era però aperto
+> nell'IDE, e un salvataggio successivo ha rimesso sul disco il **buffer
+> precedente**: la §9 vecchia è tornata, lo scratchpad è stato cancellato con la
+> sessione, e la sessione dopo ha riproposto all'utente il modello già bocciato.
+> Il testo è stato **recuperato dalla trascrizione** in
+> `~/.claude/projects/-home-roberto-migliori-sandBox-vcpu-sim/*.jsonl`, che
+> conserva per intero i `tool_use` di ogni sessione.
+>
+> **Regola operativa: non tenere aperto nell'editor un file che la sessione sta
+> modificando**, e a fine sessione verificare con `git diff --stat` che le
+> modifiche annunciate siano davvero sul disco.
+
+**Stato del codice: tutto scritto, verificato e COMMITTATO** (§2), working tree
+pulito. Quattro pezzi, nell'ordine in cui sono nati:
+
+| Pezzo | Dove | §  |
+|---|---|---|
+| Mailbox: `send`/`send_s`/`receive`, contatore con segno, strato `_nc` | `kernel/messageHandling.vasm`, `kernel/coda.vasm` | §3.10 |
+| Gestore dei timeout: vettore di descrittori, `timeout_arm`/`timeout_cancel` | `kernel/timeout.vasm`, `include/timeout.vinc` | §3.13 |
+| Invariante dei link nelle code + esito in `r3`, e il puntatore nullo imposto dalla toolchain | `kernel/coda.vasm`, `include/vcpu.h`, `src/` | §3.14 |
+| Pool di buffer, sei classi dimensionate 10/4/0/0/0/0 | `kernel/pool.vasm`, `include/pool.vinc` | §3.15 |
+
+Quattro test mirati in `tests/`, tutti verdi, elencati in §4.
+
+**Da qui in avanti si è bloccati sulla decisione §7.4.** Tutto quello che non
+dipendeva dallo scheduler è fatto: mailbox, vettore di descrittori, invariante
+dei link, pool. Quello che resta — la scansione delle scadenze e il ciclo del
+task-gestore — vuole la commutazione volontaria (§8.7) e lo scheduler a priorità
+(§7.4). **Il prossimo passo è quindi §7.4: ereditarietà di priorità o priority
+ceiling per i mutex.**
+
+> Le due domande che questo paragrafo poneva prima di §3.11 — se la risposta
+> riusa lo stesso buffer, e dove sta il modulo di protocollo — restano
+> **superate, non risolte**: nel modello nuovo il cliente non fornisce nessun
+> buffer e non c'è nessuna risposta da girare. Il modulo di protocollo generico
+> serve quando ci sarà un fornitore vero a richiesta/risposta.
+
+Sullo **scheduler** invece non è cambiato nulla e non si scrive codice: **quattro
+decisioni prese** (§7.1–7.3 e §7.5), **una aperta**, §7.4 — ereditarietà di
+priorità contro priority ceiling per i mutex — che cambia il layout di strutture
+statiche. Restano le due domande minori sul TCB elencate in §5, ma una si è
+chiusa da sé: `ctx_init` **non** è eliminabile (§8.7 della proposta).
 
 **Reindentazione a 2 spazi (29/08/2026), FATTA E COMMITTATA** (`ae29292`,
 vedi §3.7): `src/*.c` e `include/*.h` sono passati da 4 a 2 spazi, per
@@ -59,11 +104,13 @@ nell'epilogo — due liste separate, non la stessa riusata). Documentato in
 `docs/manual.md` §4.2.1. Nessun impatto sulla codifica (`tokenize()` scarta
 tutto da `;` in poi anche nel pass 2).
 
-**Working tree pulito** (verificato `git status --short`: solo `.vscode/` non
-tracciato, di proposito — vedi §2). Nessun lavoro pendente da riprendere sul
-codice: la prossima sessione può ripartire da zero sui prossimi passi (§5), a
-scelta dell'utente. Non è stato fatto `git push` — resta da chiedere
-esplicitamente se serve.
+> I quattro paragrafi qui sopra sono **cronaca di sessioni chiuse** (28-29/08),
+> tenuti perché contengono convenzioni ancora valide. Lo stato corrente è quello
+> dei paragrafi in cima alla sezione.
+
+**Working tree PULITO** (§2). Il branch locale è avanti di **10 commit** su
+`origin/master` e **non è mai stato pushato**, per richiesta esplicita
+dell'utente: va chiesto di nuovo prima di procedere.
 
 ---
 
@@ -114,11 +161,16 @@ Branch `master`, pubblicato su `git@github.com:rmigliori/vcpu_sim.git` (remote
 push senza prompt).
 
 ```
-b342e83 Aggiorna handoff: reindentazione a 2 spazi + .git-blame-ignore-revs    (locale, NON pushato)
-ae29292 Reindenta i sorgenti C da 4 a 2 spazi (solo spaziatura)               (locale, NON pushato)
-b0b4f28 Aggiorna handoff: lavoro committato, working tree pulito              (locale, NON pushato)
+dbf869c Pool di buffer a blocchi fissi, sei classi per potenze di due     (locale, NON pushato)
+d2c2527 Gestore dei timeout: vettore di descrittori, arm e cancel         (locale, NON pushato)
+ada7b4c Mailbox, strato _nc e invariante dei link nelle code              (locale, NON pushato)
+6efd08b Toolchain: riserva l'indirizzo 0 come puntatore nullo             (locale, NON pushato)
+79138ca Proposta di riscrittura dello scheduler: priorita' statiche + PCB (locale, NON pushato)
+b342e83 Aggiorna handoff: reindentazione a 2 spazi + .git-blame-ignore-revs   (locale, NON pushato)
+ae29292 Reindenta i sorgenti C da 4 a 2 spazi (solo spaziatura)              (locale, NON pushato)
+b0b4f28 Aggiorna handoff: lavoro committato, working tree pulito             (locale, NON pushato)
 ae310d5 Ridisegno HAL/kernel a tre confini + auto-save registri in .proc/.endproc  (locale, NON pushato)
-98a40a0 Aggiorna handoff: lavoro pendente committato                          <- ultimo pushato
+98a40a0 Aggiorna handoff: lavoro pendente committato                         <- ultimo pushato
 ef10e3b Riorganizza sorgenti .vasm: examples/ -> standalone/ + linked/, doc aggiornata
 3434b6d HAL + kernel puro + demo scheduler a preemption differita
 2111646 Assembler: direttive di compile-time (.equ/.struct/.field/.res/.include)
@@ -130,9 +182,18 @@ ef10e3b Riorganizza sorgenti .vasm: examples/ -> standalone/ + linked/, doc aggi
 confini) e §3.6 (auto-save registri in `.proc`/`.endproc` + `--emit-expanded`
 + rifiniture ai commenti del listato espanso).
 
-**Il branch locale è avanti di 4 commit su `origin/master` e non è mai stato
-pushato**: l'utente ha chiesto esplicitamente di non farlo, quindi va chiesto
-di nuovo prima di procedere.
+I quattro commit del **04/09/2026** sono in ordine di dipendenza, e va tenuto:
+`6efd08b` (il puntatore nullo) **deve** precedere `ada7b4c`, perche' senza
+l'indirizzo 0 riservato il test dell'invariante dei link non passa.
+
+> ### ⚠ Working tree PULITO, ma il branch non è mai stato pushato
+>
+> Il lavoro del 30/08 e del 04/09 è tutto committato. **Il branch locale è avanti
+> di 10 commit su `origin/master` e non è mai stato pushato**: l'utente ha
+> chiesto esplicitamente di non farlo, quindi **va chiesto di nuovo prima di
+> procedere**.
+>
+> `.vscode/` resta l'unica cosa non tracciata, di proposito.
 
 **`.git-blame-ignore-revs` (nuovo, 29/08/2026):** elenca i commit puramente
 cosmetici che `git blame` deve saltare — al momento solo `ae29292`, la
@@ -141,8 +202,8 @@ reindentazione. È già attivo in questo clone
 git **non è versionata**: dopo un clone nuovo va rieseguita a mano, altrimenti
 il file c'è ma non viene consultato.
 
-**Working tree pulito** (a parte `.vscode/`, mai tracciato, di proposito — da
-valutare se aggiungere a `.gitignore` in futuro, non urgente).
+`.vscode/` non è mai stato tracciato, di proposito — da valutare se aggiungerlo a
+`.gitignore` in futuro, non urgente.
 
 ---
 
@@ -559,6 +620,373 @@ aperta**, riassunte in §5.
 > errore** (l'utente lo voleva locale) e subito sostituito dal documento
 > markdown. Se compare in `/artifacts`, è quello: si può cancellare.
 
+### 3.9 Il TCB e i timeout a messaggio (30/08/2026)
+
+Sessione di sola progettazione, **nessun codice scritto o modificato**. Ripresa
+da §7.4, ma l'utente ha chiesto di ragionare **prima** sul TCB — ordine giusto,
+perché §7.4 è l'unica decisione che *aggiunge* un campo al TCB.
+
+Tre questioni sollevate sul TCB, in ordine di quanto costa sbagliarle: (1) la
+coppia di link unica contro le attese a tempo, (2) chi costruisce il primo frame
+di contesto, (3) `entry`/`stack_top` nel TCB o in una tabella di boot separata.
+
+**Chiusa la (1)**, ed è l'utente ad aver proposto il modello che la risolve:
+niente seconda coppia di link, perché il timeout non è uno stato del task ma un
+**oggetto** — si chiede a un gestore di consegnare un messaggio scelto dal
+richiedente alla sua mailbox a una certa scadenza. Verbalizzata nella proposta
+come **§7.5** (decisione) più la nuova **§9** (il meccanismo: descrittore =
+messaggio, gestore nella ISR del tick, lista non ordinata come primo passo,
+cancellazione con il campo `dove`). Aggiornati anche §1, §3 (diagramma delle
+classi + layout MESSAGGIO), §8 e §10 della proposta; le vecchie §8/§9 sono
+diventate §9/§10.
+
+Le questioni (2) e (3) restano aperte, riassunte in §5.
+
+> **Superata da §3.11 per la parte sul meccanismo.** La §9 descritta qui —
+> descrittore = messaggio, gestore nella ISR del tick, campo `dove` per la
+> cancellazione — è stata riscritta da capo la sera stessa. La decisione sul TCB
+> (§7.5) resta; il meccanismo dei timeout no.
+
+### 3.10 La mailbox: progettata e IMPLEMENTATA (30/08/2026)
+
+Partita da «manca tutto il ragionamento sulle mailbox»: §8 della proposta era
+rimasta quella di prima — quindici righe sul vincolo di layout — mentre §7.5
+aveva promosso la mailbox a *unico punto di blocco di un task*. Il ragionamento
+completo è ora in [§8 della proposta](proposta-kernel-realtime.md), riscritta da
+capo in sette sottosezioni. **Non ripeterlo qui**: qui solo cosa è successo e cosa
+è stato scritto.
+
+**Il percorso, perché conta più del risultato.** Ho proposto il contatore
+contabile alla Dijkstra (*disponibili meno in attesa*), che lasciava lo zero
+ambiguo in una finestra. L'utente ha proposto modulo-e-segno, cioè un contatore
+**descrittivo**, che l'ambiguità la toglie; ho verificato sulla macchina che il
+bit di tipo a bit 31 litiga con l'estensione di segno di `lw` e che senza `andi`
+la maschera costa, e il compromesso è il **complemento a due con semantica
+descrittiva**: stessa idea dell'utente, encoding che la macchina regala. Poi
+l'utente ha bocciato il mio `MESSAGGIO` con header di kernel da 20 byte
+(`scadenza`/`mailbox`/`dove`): il messaggio è **solo** `fwd`/`bwd`/`payload`, e
+quei campi vanno nel payload del servizio che li usa. Da lì è nato tutto il
+modello a interfacce di §8.6.
+
+**Scritto e verificato:**
+
+| File | Cosa |
+|---|---|
+| `kernel/messageHandling.vasm` | **nuovo**: `send` (raw), `send_s` (`.proc`), `receive` |
+| `kernel/coda.vasm` | strato `_nc` (4 primitive), che è il **corpo** di quelle contate: cadono in sequenza, niente `call`, niente splicing duplicato |
+| `include/types.vinc` | `MESSAGGIO` (fwd/bwd/payload), `PAYLOAD` (messageType/clientTag/messageCode/replyMailbox/specifiche), `MSG_REQUEST`/`MSG_REPLY` |
+| `tests/test_mailbox.vasm` | **nuovo**, dà `0 1 2 11 22 0 33 0 0` |
+
+Il test esercita anche la **consegna diretta** senza avere uno scheduler, con un
+trucco che vale la pena ricordare: in un sistema a un flusso solo «bloccarsi»
+equivale a «far girare adesso la controparte», quindi lo stub di `task_block`
+esegue la `send` che sveglierà il chiamante e ritorna.
+
+**Prova oggettiva che il confine è al posto giusto:** `messageHandling.vasm` non
+referenzia **nessun** campo di `MESSAGGIO` (grep a zero) — usa solo `TESTA` per
+la mailbox e `TCB.state` per il ricevente.
+
+**Invariante (2) cambiata: 105/74 → 104/73.** `dequeue_testa` ha una `beq` in
+più sul percorso non vuoto (il test strutturale del corpo condiviso). È lo stesso
+effetto già visto in §3.4 e §3.5, non una regressione: stesso numero di tick, che
+è 8 per costruzione. Una prima stesura usava un `j` e costava due istruzioni
+(103/72); sostituito con la caduta in sequenza.
+
+**Errori strutturali riconosciuti e non ancora sanati** (elenco completo in §8.7
+della proposta): `task_ready`/`task_block` inventate per aggirare la decisione
+aperta sulla commutazione volontaria, `receive` che legge `current`, l'`halt` sul
+secondo ricevente, `send_s` che promette una preservazione di registri che non
+dà. Tutti dipendono da decisioni non ancora prese.
+
+**Scoperto per strada, non risolto:** `.include` **non è idempotente** — includere
+due volte lo stesso `.vinc` dà `asm error: duplicate constant`. Col modello «un
+`.vinc` per fornitore» diventa un problema appena i file di interfaccia sono due.
+
+### 3.11 Il gestore dei timeout, riprogettato da capo (30/08/2026, terza sessione)
+
+Sessione di sola progettazione, **nessun codice scritto**. Il ragionamento intero
+sta in [§9 della proposta](proposta-kernel-realtime.md), riscritta in sei
+sottosezioni; qui solo il percorso, perché è quello che spiega perché il modello
+precedente non va riproposto.
+
+Partita da «spiegami bene questo `MSG_FUORI`», e subito dopo da **«secondo me ti
+stai complicando la vita»**. L'utente ha proposto un modello completamente
+diverso e più semplice, ed è quello adottato:
+
+- **interfaccia procedurale**: `timeout_arm(tick, clientTag, messageCode,
+  replyMailbox)`, `timeout_cancel`. Il cliente non fornisce nessun buffer, solo
+  quattro parole;
+- **vettore statico di descrittori**, non una lista — «quanti timeout
+  contemporanei avremo? 10?». Il descrittore non entra mai in una lista, quindi
+  sparisce per intero la casistica della cancellazione;
+- **pool di buffer**: alla scadenza il gestore ne preleva uno, ci formatta il
+  messaggio e lo manda; il ricevente copia ciò che gli serve e lo rilascia il
+  prima possibile;
+- **il gestore è un task ad altissima priorità**, non l'ISR: l'ISR manda solo un
+  messaggio di tick. Così la scansione O(N) esce dal tempo a interrupt
+  disabilitati, e il pool vuoto diventa «il timeout arriva tardi» invece di «non
+  arriva mai»;
+- **il messaggio stantìo è del ricevente**: il gestore non insegue un messaggio
+  già consegnato. «Uno sviluppatore sw dovrebbe essere in grado di scrivere una
+  macchina a stati in grado di gestire un tale evento» — e lo strumento è il
+  `clientTag`, monotono per attesa.
+
+**Il modello precedente non era solo più complicato: era rotto.** La
+dimostrazione è in §9.6 della proposta e vale la pena averla in mente, perché è
+il tipo di difetto che i test non trovano: `dequeue_testa` non azzera i link del
+nodo che sfila, quindi una `timeout_cancel` con `dove == MSG_MAILBOX` su un
+messaggio già consumato riscrive `mbox.fwd` e porta `count` a `-1` — che nella
+convenzione con segno significa *c'è un TCB in attesa*. La `send` successiva
+prende il ramo della consegna diretta, sfila un messaggio credendolo un TCB, gli
+scrive dentro `TCB.state` e lo passa a `task_ready`.
+
+**Aperto in §9.5**: se `timeout_arm` restituisce un handle (col rischio del
+riciclo dello slot) o se si cancella per identità `(replyMailbox, clientTag)`; la
+taglia dei buffer del pool; dove collocare il gestore, che formatta il payload e
+quindi per §8.4 **non è kernel**.
+
+### 3.12 Recupero della §9 e allineamento dei documenti (30/08/2026, quarta sessione)
+
+Sessione di sola manutenzione documentale, **nessun sorgente toccato**. Partita
+da «rileggi la proposta per capire dove eravamo»: ho riassunto lo stato leggendo
+i documenti, e ho proposto per il gestore dei timeout **il modello che l'utente
+aveva già bocciato la sera prima**, perché la §9 nuova non era sul disco.
+
+L'utente ha detto «ci siamo persi delle discussioni». Confronto fra i `mtime` dei
+file e le trascrizioni: il 30/08 ci sono state tre sessioni ma i documenti ne
+raccontavano una sola, e `stato-lavori.md` era fermo alle 19:09, cioè a **prima**
+della sessione di §3.11. La §9 nuova esisteva solo nella trascrizione. Recuperata
+da lì e reinnestata; il dettaglio del come e la regola operativa che ne discende
+stanno in §0.
+
+Poi allineati i punti del documento che raccontavano ancora il modello caduto:
+
+| Dove | Cosa diceva |
+|---|---|
+| §1 | «Nessun pool: i buffer sono statici e li possiede chi li manda» |
+| §3 | classe `TIMEOUT` con `attesa : TESTA` e `timeout_tick()`, relazione `TIMEOUT o-- MESSAGGIO` |
+| §3 e §7.5 | il TCB ha una coppia di link sola «perché in lista ci va il messaggio, non il TCB» |
+| §8.2 | `coda.vasm` serve anche «alla lista dei timeout» |
+| §8.5 | la `send` è raw «perché il gestore gira nella ISR del tick» |
+| §10 | `kernel/timeout.vasm`, «gestore dei timeout a messaggio» |
+
+Aggiunte al diagramma di §3 le classi `DESCRITTORE` e `POOL`. Normalizzate le
+date: quello che i documenti chiamavano 31/08 era in realtà il 30/08 — tre
+sessioni in un giorno solo, non due giorni.
+
+**La cosa tecnica emersa strada facendo**, ed è l'unico contenuto nuovo di questa
+sessione: §5 affermava che il gestore dei timeout «non è bloccato da niente di
+architetturale». Vero finché girava nell'ISR; **falso da quando è un task**
+(§9.2), perché fa `receive` e quindi dipende dalla commutazione volontaria che
+manca, e «a priorità massima» presuppone lo scheduler a priorità, fermo su §7.4.
+La decisione resta giusta — la scansione O(N) fuori dal tempo a interrupt
+disabilitati vale il prezzo — ma il prezzo va scritto. Restano scrivibili subito
+il pool e il vettore di descrittori (§5).
+
+### 3.13 Il vettore di descrittori: DECISO e SCRITTO (04/09/2026)
+
+Chiusa la prima delle tre domande di §9.5 e scritto il codice che ne dipendeva.
+Il ragionamento sta in [§9.5 della proposta](proposta-kernel-realtime.md), qui
+solo l'esito e cosa c'è sul disco.
+
+**Decisione: nessun handle, si cancella per identità `(replyMailbox,
+clientTag)`.** L'argomento non è il costo della scansione: è che l'handle non si
+può validare se non con l'identità stessa. Il `lw` + `bne` sulla `replyMailbox`
+che sembrava bastare intercetta il riciclo dello slot da parte di *un altro*
+task e lascia passare quello comune — stesso task che riarma e si riprende lo
+stesso slot, cancel stantìa che uccide l'attesa successiva. Aggiunto il
+confronto sul `clientTag` per chiudere il buco, l'handle resta solo una
+scorciatoia per non scandire, pagata con una parola in più nella macchina a
+stati del cliente e con la disciplina di invalidarla dopo ogni `receive`.
+
+**Seconda decisione, dell'utente: libero/occupato esplicito.** §9.1 deduceva lo
+slot libero da `replyMailbox == 0`; ora il descrittore ha un campo `stato`
+(`TMO_FREE`/`TMO_ARMED`). È lo stesso argomento di §7.2 su `TCB.state`: uno
+stato scritto si legge in un dump e si controlla, una convenzione no. Toglie
+anche il vincolo implicito «nessuna mailbox all'indirizzo 0» e fa sì che una
+cancel con identità spazzatura non combaci con niente invece di combaciare con
+**tutti** gli slot liberi. Due valori bastano: «scaduto ma pool vuoto» non è un
+terzo stato, perché lasciando la casella armata il ritentativo al tick dopo è
+automatico. `TMO_FREE = 0` fa nascere il vettore libero dall'immagine dati
+azzerata, quindi non serve nessuna `timeout_init`.
+
+**Scritto e verificato:**
+
+| File | Cosa |
+|---|---|
+| `include/timeout.vinc` | **nuovo**: `DESCRITTORE` (stato/scadenza/replyMailbox/clientTag/messageCode), `TMO_FREE`/`TMO_ARMED`, esiti `TMO_OK`/`TMO_FULL`/`TMO_DUP`/`TMO_NONE` |
+| `kernel/timeout.vasm` | **nuovo**: `tmo_now`, il vettore (10 caselle), `timeout_arm`, `timeout_cancel` |
+| `tests/test_timeout.vasm` | **nuovo**, dà `3 0 150 1 2 0 0 0 3 0 1` |
+
+Primo `.vinc` per fornitore del modello di §8.6, e **deliberatamente foglia**:
+non include `types.vinc`, perché `.include` non è idempotente e un `.vinc` che
+ne includa un altro esplode appena un chiamante include entrambi. Regola
+provvisoria finché non è resa idempotente: **i `.vinc` non si annidano**.
+
+Tre cose da non perdere di vista, tutte già nei commenti del sorgente:
+
+- **`arm` e `cancel` non hanno una variante `_s`**, la sezione critica sta
+  dentro. Stesso argomento della `receive` (§8.5): la protezione deve
+  comprendere la scansione, la decisione e la scrittura, che qui sono un atto
+  solo. Da IE=0 restano corrette perché `irq_save`/`irq_restore` sono
+  componibili.
+- **Una sola passata di `arm` fa due lavori**: cerca il primo slot libero e, sugli
+  armati, controlla che l'identità non ci sia già (`TMO_DUP`). L'invariante «al
+  più un timeout armato per identità» è quello che permette a `cancel` di
+  fermarsi al primo match.
+- **`TMO_DUP` non ferma la macchina.** Sarebbe stato il posto naturale per un
+  `halt`, ma è il difetto già aperto sulla `receive` (§8.7): fermare la macchina
+  è una politica e non è di questo modulo deciderla. Si risponde al chiamante.
+
+**Non scritto, di proposito**: la scansione delle scadenze e la consegna. Vogliono
+`buf_alloc`, cioè il pool, ancora in discussione — e nessuno `.extern` di comodo
+per aggirarla. Quando arriverà, la transizione `ARMED → FREE` della scadenza
+dovrà stare **nella stessa sezione critica in cui si decide di consegnare**:
+leggere i campi, uscire, mandare e liberare solo dopo riaprirebbe dentro il
+gestore esattamente il bug del riciclo dell'handle.
+
+**Invarianti (1)(2)(3) e il test della mailbox: invariati** — nessun file
+esistente è stato toccato.
+
+### 3.14 Il pool: progettato per intero, e le tre cose che vengono prima (04/09/2026)
+
+Sessione lunga, guidata dall'utente, partita da una posizione netta: **per
+requisiti di safety un RTOS non deve avere allocazione dinamica**, solo statica.
+Il disegno che ne è uscito sta tutto in [§10 della proposta](proposta-kernel-realtime.md)
+— sei classi per potenze di due, l'interfaccia, l'invariante dei link — e **non
+va ripetuto qui**. Qui il percorso, che è la parte che spiega perché le decisioni
+sono quelle.
+
+**Il pool non è scritto**: manca solo il dimensionamento per classe. Sono invece
+scritte e verificate le tre cose che vengono prima.
+
+**Il percorso, per approssimazioni successive.** Avevo proposto la parola di
+provenienza **prima** dei link, con `buf_free` che la leggeva a `-4`. L'utente
+l'ha bocciata («non metterei un campo prima dei link nemmeno se avessi una
+pistola puntata alla tempia») e ha ragione con un argomento più forte del gusto:
+in questo progetto ogni struttura si sovrappone a offset 0 andando avanti, e un
+campo negativo significa che il puntatore consegnato non è la base
+dell'allocazione — cioè il `container_of` che `coda.vasm` si vanta di non avere.
+Ho allora proposto di mettere la parola dentro `MESSAGGIO`; l'utente l'ha spinta
+un livello più su ancora, **dentro il payload**, e anche lì aveva ragione: così
+il pool è un *cliente* del messaggio invece che comproprietario del tipo, che è
+la stessa regola con cui era stato bocciato l'header di kernel da 20 byte
+(§8.4). L'unica cosa che ho aggiunto io è che la parola non può stare **solo**
+sui buffer del pool: una mailbox riceve sia il messaggio di scadenza (dal pool)
+sia la risposta a una richiesta (il buffer statico del cliente girato), e con due
+layout diversi il ricevente non saprebbe nemmeno dove leggere `messageType`.
+Quindi sta nella testa comune, `PAYLOAD.pool`, e i buffer statici portano 0
+gratis perché il `.data` nasce azzerato.
+
+**Il doppio rilascio, e chi ha vinto la discussione.** Avevo proposto di
+riconoscerlo con il **segno** della taglia (dentro/fuori dal pool), sulla scia
+del contatore con segno della mailbox. L'utente ha proposto invece di guardare i
+**link**: `buf_alloc` li azzera, `buf_free` pretende che siano nulli. È meglio,
+per una ragione che il segno non copriva — prende anche il rilascio di un buffer
+**ancora accodato in una mailbox**, che il segno avrebbe accettato perché quel
+buffer è legittimamente «fuori dal pool». Ma così com'era non funzionava:
+`dequeue_testa` **non azzera i link del nodo che sfila**, quindi un buffer che
+ha attraversato una mailbox arriva a `buf_free` con i link sporchi e verrebbe
+rifiutato pur essendo legittimo. È la stessa identica riga su cui è caduto il
+modello dei timeout di §9.6. Da qui l'azzeramento è sceso dentro `coda.vasm`, ed
+è diventata un'invariante generale.
+
+**L'ultimo giro, sull'errore.** Avevo proposto un hook fatale raggiunto con `j`
+(niente r15, la foglia resta foglia, la politica esce dal modulo più basso).
+L'utente l'ha respinto: «l'applicativo non sa che si è verificato un errore e
+quindi non può produrre diagnostica». Ha ragione due volte — con un salto nudo il
+gestore non riceve nessun contesto, e soprattutto un salto che non ritorna
+**toglie all'applicativo la decisione di continuare**, lasciandogli solo il come
+morire. Quindi esito di ritorno in `r3`. La diagnostica resta sufficiente perché
+**il chiamante ha già tutto il contesto: testa e nodo li ha passati lui.**
+
+**Il puntatore nullo, trovato dal test e non dal ragionamento.** Il primo giro di
+`tests/test_coda.vasm` non rifiutava il doppio accodamento: `testa` finiva
+all'**indirizzo 0** (primo oggetto del primo modulo nel link), quindi i link di
+un nodo accodato valevano 0 ed erano indistinguibili da «non in lista». Non era
+un difetto nuovo: il codice **assumeva già** che 0 fosse nullo in tre punti
+(`dequeue_testa` che restituisce 0 per coda vuota, `current == 0` = nessun task,
+`buf_alloc` che restituirà 0 per «nessun blocco»), semplicemente nessuno l'aveva
+mai imposto e nessun oggetto ci era mai finito sopra. Ora il segmento dati parte
+da 4 — `NULL_GUARD` in `include/vcpu.h`, applicato dal linker e dal percorso a
+file singolo — e l'immagine dati del linker viene azzerata prima di essere
+riempita, così la parola di guardia è zero e non memoria di scarto.
+
+**Scritto e verificato:**
+
+| File | Cosa |
+|---|---|
+| `kernel/coda.vasm` | azzeramento dei link sulla rimozione, controllo sull'inserimento, esito in `r3`; il controllo sta **prima** del contatore, se no un rifiuto lascerebbe la testa incoerente |
+| `kernel/messageHandling.vasm` | `send` controlla in cima e restituisce l'esito; il controllo non è delegato all'enqueue perché sul percorso della consegna diretta arriverebbe a TCB già sfilato |
+| `include/types.vinc` | `CODA_OK`/`CODA_LINKED`/`CODA_UNLINKED`, `PAYLOAD.pool` come primo campo |
+| `include/vcpu.h`, `src/assembler.c`, `src/toolchain.c` | `NULL_GUARD`: i dati partono da 4 |
+| `docs/manual.md` §3 | l'indirizzo 0 è riservato — la prima etichetta in `.data` vale 4 |
+| `tests/test_coda.vasm` | **nuovo**, dà `0 1 1 1 0 0 0 2 1 0 0 0 0` |
+
+**Due punti dove l'esito è ignorato di proposito, e non è una svista**:
+`receive` quando accoda il proprio TCB (sta per bloccarsi, non ha nessuno a cui
+tornare) e `scheduler` quando riaccoda il task uscente (gira dentro la trap). È
+lo stesso nodo aperto dell'`halt` di §8.7 — come un task entra nel kernel — e va
+sciolto lì, non inventando qui una via d'uscita. In `scheduler` il controllo non
+può comunque scattare: il TCB uscente è `RUNNING`, cioè fuori da ogni coda, e da
+oggi quella dichiarazione è vera nei fatti e non solo nel commento.
+
+
+**Invariante (2): 104/73 → 98/65**, con gli stessi **8 tick** (7 `reti` + 1
+`halt`, verificato con `--trace`). È il costo del controllo e dell'azzeramento su
+un percorso che gira a ogni switch: stesso tipo di effetto di §3.4, §3.5 e
+§3.10, non una regressione. `NULL_GUARD` non ha spostato niente — nessun codice
+dipende da un indirizzo dati assoluto. (1) e (3) invariate, tutti i 13
+`standalone/` girano ancora da soli.
+
+### 3.15 Il pool di buffer: SCRITTO (04/09/2026)
+
+Stessa sessione di §3.14, subito dopo. Il disegno era chiuso, mancavano i sei
+conteggi; il resto è stato scrittura.
+
+**Dimensionamento: 10 blocchi da 16, 4 da 32, zero le altre quattro.** Il 10 non
+è arbitrario — sono gli slot del vettore dei descrittori, cioè il massimo di
+scadenze che possono cadere sullo stesso tick: così il pool non può mai essere
+*lui* la ragione per cui un timeout arriva tardi. I 4 da 32 servono al primo
+servizio che avrà delle specifiche, e intanto al test per dimostrare
+l'arrotondamento e il non-ripiego. 456 byte di blocchi più 72 di teste.
+
+| File | Cosa |
+|---|---|
+| `include/pool.vinc` | **nuovo**: le sei taglie, la vista `BLOCCO`, le sei `BLOCCOnn` per `.res`, gli esiti `POOL_*` |
+| `kernel/pool.vasm` | **nuovo**: le sei teste, i blocchi, `pool_init`, `buf_alloc`, `buf_free`, più le due mappature taglia→classe |
+| `tests/test_pool.vasm` | **nuovo**, dà `10 4 0 0 9 0 32 3 2 0 0 4 4 4 3 0 0 1 4` |
+
+Quattro cose da non perdere di vista, tutte nei commenti del sorgente:
+
+- **Le mappature taglia→classe sono due, non una.** `buf_alloc` arrotonda per
+  eccesso una *richiesta* (20 byte → classe 32); `buf_free` pretende una
+  corrispondenza *esatta* con una delle sei taglie, perché lì non legge una
+  richiesta ma una **capacità** che ha scritto il pool. È quell'asimmetria a
+  rendere riconoscibile un puntatore estraneo invece di lasciarlo sfasciare una
+  lista.
+- **`buf_free` non ha parametri oltre al buffer**, e i suoi tre rifiuti sono
+  esattamente quelli che servono: `POOL_LINKED` (il blocco sta ancora in una
+  lista — prende il doppio rilascio *e* il rilascio di un buffer ancora accodato
+  in una mailbox) e `POOL_ESTRANEO` (taglia non valida, quindi anche un buffer
+  statico del cliente, che ha `pool == 0`). Il primo esiste solo grazie
+  all'invariante dei link di §3.14.
+- **Nessuna delle due routine ha una sezione critica propria**: la catena
+  taglia→classe è aritmetica sull'argomento, e l'unico atto sullo stato è un
+  `dequeue_testa_s`/`enqueue_coda_s` che si protegge da sé.
+- **`pool_riempi` salva `r10..r13`.** Gli argomenti devono migrare fuori da
+  `r1..r6` perché `enqueue_coda` usa `r3` per l'esito e `r4`/`r5` come scratch;
+  salvarli tiene il contratto di `pool_init` pulito invece di lasciare una
+  trappola per un chiamante futuro.
+
+**Primo modulo che include due `.vinc`** (`pool.vinc` per sé, `types.vinc` per
+`TESTA`), e funziona proprio perché sono foglia: se uno dei due includesse
+l'altro darebbe `duplicate constant`. È la conferma pratica della regola presa
+in §3.13.
+
+**Nessuna invariante si è mossa**: `pool.vasm` è tutto codice nuovo e non tocca
+nessun file esistente.
+
 ---
 
 ## 4. Invarianti di regressione — come verificare che nulla si sia rotto
@@ -569,7 +997,8 @@ make                                    # deve compilare SENZA warning
 # (1) invariante saxpy: 17 istruzioni / 40 vec-elem-ops / 94 cicli
 ./build/vcpu_sim standalone/saxpy.vasm
 
-# (2) demo HAL+kernel: deve stampare r5 = 105 e r5 = 74
+# (2) demo HAL+kernel: deve stampare r5 = 98 e r5 = 65 (era 104/73 prima
+#     dell'invariante dei link in coda.vasm — vedi §3.14, non e' una regressione)
 ./build/vcpu_sim asm linked/scheduler/hal/machine.vasm      -o build/machine.vo
 ./build/vcpu_sim asm linked/scheduler/kernel/coda.vasm      -o build/coda.vo
 ./build/vcpu_sim asm linked/scheduler/kernel/scheduler.vasm -o build/scheduler.vo
@@ -585,9 +1014,37 @@ make                                    # deve compilare SENZA warning
 ./build/vcpu_sim run build/multi.vx
 ```
 
-Stato verificato il 27/08/2026: (1) e (3) danno gli stessi identici numeri di
-prima; (2) dà 105/74 dopo il ridisegno di §3.5 (era 99/66 dopo quello di §3.4,
-102/70 prima ancora — vedi §3.5 per il perché), stesso numero di tick (8) e
+Quarta verifica, dal 30/08/2026: il test della mailbox (§3.10), che ha bisogno
+del link con `messageHandling` e `scheduler` — la pipeline completa sta
+nell'intestazione di [`tests/test_mailbox.vasm`](../tests/test_mailbox.vasm).
+Deve stampare `0 1 2 11 22 0 33 0 0`.
+
+Settima verifica, dal 04/09/2026: il test del pool (§3.15), che si linka con
+`pool` piu' `coda`/`machine`/`scheduler`. Pipeline nell'intestazione di
+[`tests/test_pool.vasm`](../tests/test_pool.vasm). Deve stampare
+`10 4 0 0 9 0 32 3 2 0 0 4 4 4 3 0 0 1 4`.
+
+Sesta verifica, dal 04/09/2026: il test dell'invariante dei link (§3.14), che si
+linka con `coda` piu' `machine`/`scheduler`. Pipeline nell'intestazione di
+[`tests/test_coda.vasm`](../tests/test_coda.vasm). Deve stampare
+`0 1 1 1 0 0 0 2 1 0 0 0 0`.
+
+Quinta verifica, dal 04/09/2026: il test del vettore di descrittori (§3.13), che
+si linka con `timeout.vasm` più `machine`/`scheduler`/`coda` (nessuno dei tre
+gira: `machine.vasm` entra solo per `irq_save`/`irq_restore` e si tira dietro il
+resto). Pipeline nell'intestazione di
+[`tests/test_timeout.vasm`](../tests/test_timeout.vasm). Deve stampare
+`3 0 150 1 2 0 0 0 3 0 1`.
+
+Stato verificato il 04/09/2026 (dopo §3.15): (1) 17/40/94, **(2) 98/65 con 8
+tick**, (3) 18/40/95, `test_proc` 100/200/300, e i quattro test di `tests/` con
+le sequenze attese. `asm` pulito su tutti i 28 sorgenti di `standalone/`,
+`linked/` e `tests/`, e tutti i 13 programmi di `standalone/` girano ancora da
+soli.
+
+Stato verificato il 30/08/2026: (1) e (3) danno gli stessi identici numeri di
+sempre; (2) dà 104/73 (era 105/74 dopo §3.5, 99/66 dopo §3.4, 102/70 prima
+ancora — vedi §3.10 e §3.5 per il perché), stesso numero di tick (8) e
 stessa alternanza dei task. `asm` pulito su tutti i 20 sorgenti di
 `standalone/`, `linked/multi/`, `linked/scheduler/`, inclusi i test mirati di
 `.proc`/`.endproc` (casi validi ed errore, sia a file singolo sia via
@@ -601,11 +1058,57 @@ stessa alternanza dei task. `asm` pulito su tutti i 20 sorgenti di
 
 ## 5. Prossimi passi possibili
 
-Il ridisegno di §3.5 e le rifiniture di §3.6 sono committati e verificati
-(§0, §2): non c'è lavoro pendente sul codice. Ci sono due fronti aperti, uno
-appena aperto e uno di vecchia data.
+Ci sono tre fronti: quello su cui si sta lavorando adesso, quello fermo in attesa
+di una decisione, e quello di vecchia data.
 
-### Riscrittura dello scheduler a priorità statiche (FRONTE ATTIVO)
+### Messaggi e interfacce dei servizi (FRONTE ATTIVO)
+
+**Questo fronte è arrivato in fondo a ciò che si poteva scrivere.** Sono fatti e
+testati: la mailbox (§3.10), il vettore di descrittori con
+`timeout_arm`/`timeout_cancel` (§3.13), l'invariante dei link con il puntatore
+nullo (§3.14) e il **pool di buffer** (§3.15). Quello che resta — la scansione
+delle scadenze e il ciclo del task-gestore — dipende da §8.7 e da §7.4, quindi il
+lavoro passa all'altro fronte.
+
+> ### ⚠ La scelta «gestore = task» ha spostato le dipendenze
+>
+> Finché il gestore girava **dentro l'ISR del tick**, questa sezione poteva dire
+> che non era bloccato da niente: contesto già salvo, interrupt già disabilitati,
+> unico atto una `send` raw. Come **task** (§9.2) non è più vero, ed è il prezzo
+> consapevole della decisione — la scansione O(N) esce dal tempo a interrupt
+> disabilitati, ma il gestore diventa un cliente dello scheduler:
+>
+> - fa `receive` sulla propria mailbox, quindi ha bisogno della **commutazione
+>   volontaria** che manca (§8.7: nell'ISA non c'è trap software, serve una
+>   routine HAL che fabbrichi un frame di trap finto — è anche il motivo per cui
+>   `ctx_init` non è eliminabile);
+> - «a priorità massima» ha senso solo con lo **scheduler a priorità**, che è
+>   fermo su §7.4.
+>
+> Erano scrivibili subito due pezzi. Il **vettore di descrittori** con
+> `timeout_arm`/`timeout_cancel` è fatto (§3.13): sono manipolazioni in sezione
+> critica e non toccano nessuna mailbox, tanto che il suo test non ne usa
+> nessuna. Resta il **pool** — una `TESTA` con i buffer come nodi, quindi
+> `buf_alloc`/`buf_free` sono `dequeue_testa_s`/`enqueue_coda_s` e non c'è
+> meccanismo nuovo — verificabile con lo stesso trucco di
+> `tests/test_mailbox.vasm` (in un sistema a un flusso solo, «bloccarsi» equivale
+> a «far girare adesso la controparte»).
+
+Le domande di §9.5 sono **chiuse tutte e tre**: nessun handle e cancellazione per
+identità (§3.13); la taglia dei buffer, che non è una ma sei classi per potenze di
+due (§3.14, §10 della proposta); e il pool in `kernel/`, perché non legge ciò che
+distribuisce. Resta aperto:
+
+1. **Dove collocare il gestore dei timeout.** La parte scritta (vettore, `arm`,
+   `cancel`) non legge nessun payload, quindi sta legittimamente in
+   `kernel/timeout.vasm`. La parte che formatta il payload — scansione e consegna
+   — per §8.4 non è `kernel/`: quando si scriverà, o il file si sposta o si
+   divide.
+
+Poi, quando i file di interfaccia diventano due, va resa idempotente `.include`
+(§3.10).
+
+### Riscrittura dello scheduler a priorità statiche (FERMO SU §7.4)
 
 **È qui che riprende il lavoro.** Discussione del 29/08/2026, verbalizzata per
 intero in [`docs/proposta-kernel-realtime.md`](proposta-kernel-realtime.md)
@@ -622,7 +1125,7 @@ nell'intestazione dello stesso file. Inoltre ciò che si chiama "politica"
 contiene in realtà transizioni di stato, manipolazione di code e commit di
 `current`: cambiare politica non richiederebbe di riscrivere solo quella.
 
-**Decisioni già prese** (§7.1–7.3 della proposta):
+**Decisioni già prese** (§7.1–7.3 e §7.5 della proposta):
 
 1. `current` sopravvive → lo slot si riempie **nell'istante** della preemption,
    non mentre il task gira.
@@ -636,6 +1139,18 @@ contiene in realtà transizioni di stato, manipolazione di code e commit di
    al risveglio di un task — smettono di essere confronti fra priorità, in
    silenzio.
 
+4. **Il TCB ha una sola coppia di link** (§7.5, decisa il 30/08/2026), quindi
+   `coda.vasm` resta intatta e il suo contratto «il puntatore al link È il
+   puntatore al buffer» pure. La decisione regge, ma **l'argomento che la
+   sostiene è cambiato** con la riprogettazione dei timeout (§3.11): non più
+   «in lista ci va il messaggio invece del TCB», bensì — più semplicemente —
+   che un timeout armato **non è in nessuna lista**, è una casella di un vettore
+   statico (§9.3 della proposta). Il task aspetta in un posto solo, la propria
+   mailbox. Conseguenze da non perdere di vista, invariate: **la mailbox è
+   l'unico punto di blocco di un task** e **`sem_wait` non ha timeout, per
+   costruzione**; inoltre il secondo argomento tecnico di §7.2 si indebolisce
+   (da rivedere).
+
 **Decisione aperta, da riprendere per prima** (§7.4): per l'inversione di
 priorità sui **mutex** (non sui semafori: senza proprietario non c'è nessuno da
 promuovere), si va di **ereditarietà** o di **priority ceiling**? Cambia cosa va
@@ -643,6 +1158,40 @@ dichiarato staticamente — l'ereditarietà vuole una `TESTA` in più nel TCB pe
 lista dei mutex posseduti, il ceiling vuole un campo nel mutex e nient'altro. La
 proposta raccomanda il ceiling, perché con tutto statico il ceiling è calcolabile
 a compile-time; l'utente non ha ancora deciso.
+
+Argomento aggiuntivo emerso il 30/08/2026 a favore del ceiling, **non ancora
+verbalizzato nella proposta perché la decisione resta dell'utente**: è più forte
+di quello sulla calcolabilità a compile-time. L'ereditarietà promuove il
+**possessore** del mutex, che per definizione non sta girando — quindi sta
+dentro la coda del suo livello o nello slot `preemptato`, e la promozione deve
+**spostarlo fisicamente** fra i livelli. Se lo slot del livello di destinazione è
+già occupato, il promosso finisce nella coda e viene scavalcato, il che
+contraddice le premesse dell'argomento di §4 per cui «un solo campo `preemptato`
+basta». Col ceiling la promozione tocca **solo `current`**, che per §7.1 è fuori
+da ogni coda e da ogni slot: zero chirurgia sulle liste. Invariante che ne
+discende: **`TCB.pcb` cambia solo per il task puntato da `current`**. In più,
+sotto ICPP su monoprocessore la coda d'attesa del mutex non viene mai usata
+(nessuno che voglia il mutex può preemptare chi lo tiene), quindi non serve
+l'inserimento ordinato per priorità che `coda.vasm` non ha. Il rischio del
+ceiling («il ceiling dichiarato male salta in silenzio») si toglie con **una
+`blt`** in `mutex_lock`: se `current.pcb` è più prioritario di `mutex.ceiling`,
+errore rumoroso.
+
+**Due domande minori ancora aperte sul TCB** (la prima delle tre, i link, è
+chiusa in §7.5):
+
+- **Chi costruisce il primo frame di contesto.** §11 della proposta dice che
+  `ctx_init` è «probabilmente eliminabile» con l'init statica. Obiezione
+  sollevata il 30/08/2026: il layout del frame (60 byte) è conoscenza dell'HAL,
+  e scriverlo a mano in `.data` lo duplica fuori da `machine.vasm` — il giorno
+  che `ctx_save` cambia, i frame statici restano validi e sbagliati. In più «il
+  primo task parte come il millesimo switch» è vero solo se `ctx_init` resta.
+- **`entry` e `stack_top`: nel TCB o in una tabella di boot a parte.** Se
+  `ctx_init` resta, il ciclo di boot ha bisogno di entrambi per ogni task.
+  Metterli nel TCB tiene la descrizione statica di un task in un posto solo, dà
+  gratis un'**identità** al TCB per il debug (oggi si distingue solo per
+  indirizzo, e la catena degli slot occupati vale meno se stampa indirizzi), e
+  `stack_top` serve comunque per un controllo di overflow.
 
 **Non si scrive codice finché §7.4 non è chiusa**: tocca il layout di strutture
 statiche.
@@ -676,7 +1225,16 @@ Aprire Claude Code nella cartella del progetto e scrivere una di queste:
 Leggi docs/stato-lavori.md e riprendi da lì.
 ```
 
-**Per riprendere il fronte attivo (scheduler realtime) — CONSIGLIATA:**
+**Per riprendere — CONSIGLIATA (e' l'unica strada che resta aperta):**
+```
+Leggi docs/stato-lavori.md e docs/proposta-kernel-realtime.md.
+Mailbox, vettore di descrittori, invariante dei link e pool di buffer sono
+scritti e testati: tutto cio' che non dipende dallo scheduler e' fatto.
+Riprendiamo dalla decisione aperta §7.4: ereditarieta' di priorita' o
+priority ceiling per i mutex.
+```
+
+**Per andare invece sullo scheduler (fermo su una decisione):**
 ```
 Leggi docs/stato-lavori.md e docs/proposta-kernel-realtime.md.
 Riprendiamo dalla decisione aperta §7.4: ereditarieta' di priorita' o
