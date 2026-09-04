@@ -9,23 +9,52 @@
 ; Nodo:             +0 fwd         +4 bwd         +8 data...
 ; Vuota: fwd==bwd==&testa, count==0.
 ;
-; Convenzione registri: r1/r2 argomenti, r4/r5/r6 scratch. Sono routine FOGLIA:
-; non toccano r14(sp) ne' r15(ra) -> chiamabili anche dentro l'ISR del kernel.
+; --- L'INVARIANTE DEI LINK ---
+;   UN NODO CHE NON STA IN NESSUNA LISTA HA fwd == bwd == 0.
+; La mantiene chi RIMUOVE (azzera i link del nodo che sfila, come list_del_init
+; di Linux) e la verifica chi INSERISCE (link non nulli => il nodo sta gia' in
+; una lista, cioe' doppio accodamento). Prima esisteva solo come commento —
+; "RUNNING = il TCB e' fuori da ogni coda" — e nessuno la scriveva: dequeue
+; restituiva un nodo che continuava a dichiarare di stare in una lista. Non era
+; un bug finche' nessuno ci credeva; il modello dei timeout che ci ha creduto e'
+; caduto proprio li' (§9.6 della proposta).
+;
+; L'inserimento e la rimozione RESTITUISCONO UN ESITO in r3 (CODA_OK /
+; CODA_LINKED / CODA_UNLINKED, in include/types.vinc) e non fermano la macchina:
+; questo e' il modulo piu' basso del sistema, e decidere cosa fare di un errore
+; e' dell'applicativo. Il chiamante ha comunque tutto il contesto per una
+; diagnostica — testa e nodo li ha passati lui.
+;
+; Convenzione registri: r1/r2 argomenti, r3 esito, r4/r5/r6 scratch. Sono routine
+; FOGLIA: non toccano r14(sp) ne' r15(ra) -> chiamabili anche dentro l'ISR.
 ;
 ; Pattern a DUE LIVELLI (= xQueueSend/xQueueSendFromISR di FreeRTOS): le routine
 ; qui sotto sono RAW (lock-free, aggiornamento multi-passo NON atomico) e vanno
 ; chiamate solo dove gli interrupt sono gia' disabilitati (boot, ISR). Un TASK
 ; (IE=1) deve invece usare i wrapper protetti col suffisso _s in fondo al file:
 ; racchiudono la raw in una sezione critica (irq_save/irq_restore dell'HAL).
+;
+; SECONDO ASSE, ortogonale al primo (_s = protetta): il suffisso _nc marca le
+; primitive che manipolano i link e NON toccano il contatore, lasciandone la
+; contabilita' al chiamante. Servono a chi da' al contatore un significato
+; proprio — la mailbox lo usa CON SEGNO per dire cosa c'e' accodato, vedi
+; kernel/messageHandling.vasm. Le versioni contate qui sopra sono le stesse
+; routine con l'aggiornamento del contatore davanti: una sola copia della
+; manipolazione dei link, nessun codice duplicato che possa divergere.
+;
+; I due assi non si moltiplicano: le _nc non avranno mai una variante _s, perche'
+; la sezione critica deve comprendere anche l'aritmetica del contatore e quindi
+; appartiene per forza al chiamante.
+;
+; REGOLA: una sola disciplina per testa. Una testa gestita con le contate ha
+; count >= 0 = numero di nodi; una gestita con le _nc ha la convenzione che
+; decide il suo proprietario. Mescolarle sulla stessa testa fa derivare il
+; contatore in silenzio.
 
 ; Layout come struttura: offset simbolici (TESTA.fwd/bwd/count) invece di 0/4/8.
 ; La struct descrive la TESTA (sentinella); il nodo condivide i primi due campi
-; (fwd,bwd) -> stesso codice di insert/remove.
-.struct TESTA
-  .field fwd            ; +0  puntatore avanti (condiviso testa/nodo)
-  .field bwd            ; +4  puntatore indietro (condiviso testa/nodo)
-  .field count          ; +8  contatore, solo nella testa
-.ends
+; (fwd,bwd) -> stesso codice di insert/remove. Da qui arrivano anche i CODA_*.
+.include "../include/types.vinc"
 
   .text
 
@@ -34,6 +63,11 @@
   .global enqueue_testa
   .global dequeue_testa
   .global remove_buffer
+
+  .global enqueue_coda_nc
+  .global enqueue_testa_nc
+  .global dequeue_testa_nc
+  .global remove_buffer_nc
 
   .global enqueue_coda_s
   .global enqueue_testa_s
@@ -48,50 +82,118 @@ coda_init:                ; coda_init(r1=&testa)
   sw r0, TESTA.count(r1)  ; count = 0
   ret
 
+; Ogni primitiva contata verifica l'invariante, aggiorna il contatore e salta
+; allo splice del corpo _nc — oltre il controllo che il corpo fa per i propri
+; chiamanti diretti, cosi' nessun percorso lo esegue due volte. Il controllo sta
+; PRIMA del contatore di proposito: se scattasse dopo, il chiamante riceverebbe
+; l'errore con la testa gia' incoerente, e da li' non si torna indietro. Nessuna
+; call in nessuno dei due percorsi: restano FOGLIA.
+
 enqueue_coda:             ; enqueue_coda(r1=&testa, r2=&nodo) -- in fondo (FIFO)
+  lw r3, TESTA.fwd(r2)
+  lw r4, TESTA.bwd(r2)
+  or r3, r3, r4
+  bne r3, r0, enq_linked  ; link non nulli: il nodo sta gia' in una lista
+  lw r5, TESTA.count(r1)
+  addi r5, r5, 1
+  sw r5, TESTA.count(r1)  ; count++
+  j enq_coda_splice
+enqueue_coda_nc:          ; enqueue_coda_nc(r1=&testa, r2=&nodo) -- senza contatore
+  lw r3, TESTA.fwd(r2)
+  lw r4, TESTA.bwd(r2)
+  or r3, r3, r4
+  bne r3, r0, enq_linked
+enq_coda_splice:
   lw r4, TESTA.bwd(r1)    ; prev = testa.bwd (ultimo)
   sw r1, TESTA.fwd(r2)    ; nodo.fwd = &testa
   sw r4, TESTA.bwd(r2)    ; nodo.bwd = prev
   sw r2, TESTA.fwd(r4)    ; prev.fwd = nodo
   sw r2, TESTA.bwd(r1)    ; testa.bwd = nodo
-  lw r5, TESTA.count(r1)
-  addi r5, r5, 1
-  sw r5, TESTA.count(r1) ; count++
+  li r3, CODA_OK
   ret
 
 enqueue_testa:            ; enqueue_testa(r1=&testa, r2=&nodo) -- in testa (LIFO)
-  lw r4, TESTA.fwd(r1)   ; next = testa.fwd
-  sw r4, TESTA.fwd(r2)   ; nodo.fwd = next
-  sw r1, TESTA.bwd(r2)   ; nodo.bwd = &testa
-  sw r2, TESTA.bwd(r4)   ; next.bwd = nodo
-  sw r2, TESTA.fwd(r1)   ; testa.fwd = nodo
+  lw r3, TESTA.fwd(r2)
+  lw r4, TESTA.bwd(r2)
+  or r3, r3, r4
+  bne r3, r0, enq_linked
   lw r5, TESTA.count(r1)
   addi r5, r5, 1
-  sw r5, TESTA.count(r1) ; count++
+  sw r5, TESTA.count(r1)  ; count++
+  j enq_testa_splice
+enqueue_testa_nc:         ; enqueue_testa_nc(r1=&testa, r2=&nodo) -- senza contatore
+  lw r3, TESTA.fwd(r2)
+  lw r4, TESTA.bwd(r2)
+  or r3, r3, r4
+  bne r3, r0, enq_linked
+enq_testa_splice:
+  lw r4, TESTA.fwd(r1)    ; next = testa.fwd
+  sw r4, TESTA.fwd(r2)    ; nodo.fwd = next
+  sw r1, TESTA.bwd(r2)    ; nodo.bwd = &testa
+  sw r2, TESTA.bwd(r4)    ; next.bwd = nodo
+  sw r2, TESTA.fwd(r1)    ; testa.fwd = nodo
+  li r3, CODA_OK
   ret
 
+; Uscita d'errore condivisa dalle quattro enqueue: non si e' toccato niente,
+; ne' i link ne' il contatore.
+enq_linked:
+  li r3, CODA_LINKED
+  ret
+
+; La contata interroga il CONTATORE per la vacuita' (count == 0), com'e' sempre
+; stato: sulle sue teste il contatore descrive la lista. La _nc non puo' fidarsi
+; del contatore — e' la primitiva che per definizione lo ignora — e interroga la
+; STRUTTURA: testa.fwd == &testa e' il list_empty() canonico dell'idioma.
+;
+; La coda vuota non e' un errore ma un esito normale (r2 = 0), quindi qui non
+; c'e' nessun CODA_*: il valore di ritorno e' il nodo.
 dequeue_testa:            ; dequeue_testa(r1=&testa) -> r2 = nodo (0 se vuota)
   lw r5, TESTA.count(r1)
   beq r5, r0, deq_empty
+  addi r5, r5, -1
+  sw r5, TESTA.count(r1) ; count--, poi cade nel corpo
+dequeue_testa_nc:         ; dequeue_testa_nc(r1=&testa) -> r2 = nodo (0 se vuota)
   lw r2, TESTA.fwd(r1)   ; nodo = testa.fwd
+  beq r2, r1, deq_empty  ; fwd == &testa -> lista vuota (uscita condivisa)
   lw r4, TESTA.fwd(r2)   ; new = nodo.fwd
   sw r4, TESTA.fwd(r1)   ; testa.fwd = new
   sw r1, TESTA.bwd(r4)   ; new.bwd = &testa
-  addi r5, r5, -1
-  sw r5, TESTA.count(r1) ; count--
+  sw r0, TESTA.fwd(r2)   ; il nodo e' uscito: glielo diciamo (invariante dei link)
+  sw r0, TESTA.bwd(r2)
   ret
 deq_empty:
   li r2, 0             ; coda vuota -> puntatore nullo
   ret
 
+; Simmetrica dell'inserimento: sfilare un nodo che non sta in nessuna lista
+; scriverebbe su 0(r0) attraverso i link nulli, quindi il controllo qui pretende
+; l'opposto — link NON nulli.
 remove_buffer:            ; remove_buffer(r1=&nodo, r2=&testa) -- unlink O(1)
+  lw r3, TESTA.fwd(r1)
+  lw r4, TESTA.bwd(r1)
+  or r3, r3, r4
+  beq r3, r0, rem_unlinked
+  lw r6, TESTA.count(r2)
+  addi r6, r6, -1
+  sw r6, TESTA.count(r2) ; count-- (la testa la conosce il chiamante)
+  j rem_splice
+remove_buffer_nc:         ; remove_buffer_nc(r1=&nodo) -- senza contatore
+  lw r3, TESTA.fwd(r1)
+  lw r4, TESTA.bwd(r1)
+  or r3, r3, r4
+  beq r3, r0, rem_unlinked
+rem_splice:
   lw r4, TESTA.bwd(r1)   ; prev = nodo.bwd
   lw r5, TESTA.fwd(r1)   ; next = nodo.fwd
   sw r5, TESTA.fwd(r4)   ; prev.fwd = next
   sw r4, TESTA.bwd(r5)   ; next.bwd = prev
-  lw r6, TESTA.count(r2)
-  addi r6, r6, -1
-  sw r6, TESTA.count(r2); count-- (la testa la conosce il chiamante)
+  sw r0, TESTA.fwd(r1)   ; il nodo e' uscito
+  sw r0, TESTA.bwd(r1)
+  li r3, CODA_OK
+  ret
+rem_unlinked:
+  li r3, CODA_UNLINKED
   ret
 
 ; --------------------------------------------------------------------------
@@ -104,9 +206,10 @@ remove_buffer:            ; remove_buffer(r1=&nodo, r2=&testa) -- unlink O(1)
 ;  (come "NOME:"): niente label separata prima. Conservano la psw sullo stack
 ;  attraverso la call (quello resta scritto a mano: .proc genera solo il
 ;  salvataggio di r15). irq_save/irq_restore usano r5 e non toccano r1/r2,
-;  quindi gli argomenti della raw restano intatti.
+;  quindi gli argomenti della raw restano intatti — ne' r3, quindi l'esito della
+;  raw arriva intatto al chiamante del wrapper.
 ; --------------------------------------------------------------------------
-  .proc enqueue_coda_s    ; enqueue_coda_s(r1=&testa, r2=&nodo) protetto
+  .proc enqueue_coda_s    ; enqueue_coda_s(r1=&testa, r2=&nodo) -> r3 = esito
   call irq_save           ; r5 = psw, IE=0 (r1/r2 intatti)
   addi r14, r14, -4
   sw r5, 0(r14)           ; la psw sopravvive alla call
@@ -116,7 +219,7 @@ remove_buffer:            ; remove_buffer(r1=&nodo, r2=&testa) -- unlink O(1)
   call irq_restore        ; ripristina psw da r5
   .endproc enqueue_coda_s
 
-  .proc enqueue_testa_s   ; enqueue_testa_s(r1=&testa, r2=&nodo) protetto
+  .proc enqueue_testa_s   ; enqueue_testa_s(r1=&testa, r2=&nodo) -> r3 = esito
   call irq_save
   addi r14, r14, -4
   sw r5, 0(r14)
@@ -136,7 +239,7 @@ remove_buffer:            ; remove_buffer(r1=&nodo, r2=&testa) -- unlink O(1)
   call irq_restore
   .endproc dequeue_testa_s
 
-  .proc remove_buffer_s   ; remove_buffer_s(r1=&nodo, r2=&testa) protetto
+  .proc remove_buffer_s   ; remove_buffer_s(r1=&nodo, r2=&testa) -> r3 = esito
   call irq_save
   addi r14, r14, -4
   sw r5, 0(r14)

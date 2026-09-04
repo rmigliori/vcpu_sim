@@ -1,0 +1,226 @@
+; kernel/messageHandling.vasm — mailbox: send e receive.
+;
+; Una MAILBOX *e'* una testa di coda (kernel/coda.vasm): stesso layout, stesse
+; primitive. Cambia solo la convenzione del contatore, ed e' li' che sta tutto
+; il disegno.
+;
+; --- Il contatore con segno, DESCRITTIVO ---
+;   count > 0 : in lista ci sono count MESSAGGI, nessuno in attesa
+;   count < 0 : in lista ci sono -count TCB in attesa, nessun messaggio
+;   count == 0: lista vuota
+; Non e' il contatore contabile di un semaforo ("disponibili meno in attesa"):
+; quello lascerebbe una finestra in cui il conto e' pari mentre in lista c'e' un
+; messaggio. Qui il contatore descrive la lista in ogni istante, e la receive non
+; ha il ramo asimmetrico "al risveglio non pagare perche' avevi gia' pagato".
+;
+; UNA lista sola per due popolazioni. Regge perche' sono mutuamente esclusive per
+; costruzione: un ricevente si accoda solo se non ci sono messaggi, un messaggio
+; si accoda solo se non c'e' un ricevente (altrimenti si fa la consegna diretta).
+; Il segno dice quale delle due c'e', e va interrogato PRIMA di toccare la lista:
+; accodare un messaggio con un TCB dentro porterebbe il contatore a 0 con due
+; nodi di tipo diverso in lista, e da li' non si torna indietro.
+;
+; UNA MAILBOX PER TASK: chi deve ricevere ha la sua. Quindi il negativo vale solo
+; -1, e non serve l'inserimento ordinato per priorita' che coda.vasm non ha —
+; con piu' riceventi svegliare in ordine FIFO sarebbe un'inversione di priorita'
+; silenziosa. Ne discende anche che nessuno puo' rubare il messaggio al
+; risvegliato: la receive NON ha bisogno del ciclo di ricontrollo che un semaforo
+; generico richiede, il percorso di ripresa e' una linea retta.
+;
+; Perche' non serve un campo "owner" nella mailbox: il TCB in attesa e' DENTRO la
+; lista, quindi la send se lo trova sfilandolo. La mailbox resta 12 byte e il TCB
+; non cambia layout.
+;
+; IL MESSAGGIO E' OPACO come lo e' il contesto per il kernel: qui dentro un
+; messaggio e' solo un nodo di lista (fwd/bwd), e nessuna riga di questo file
+; legge o scrive il suo payload. Comporlo correttamente e' di chi lo manda,
+; interpretarlo di chi lo riceve; a chi serve un header proprio — il gestore dei
+; timeout, per esempio — se lo dichiara dentro il payload, e resta affare suo.
+;
+; Contabilita' in mano a noi => si usa SOLO lo strato _nc di coda.vasm (una sola
+; disciplina per testa, vedi la regola in coda.vasm). Mai enqueue_coda/
+; dequeue_testa su una mailbox: decrementerebbero un contatore che qui significa
+; un'altra cosa.
+;
+; --- Due simboli che il kernel deve fornire ---
+;   task_ready(r1 = &TCB)  rende eseguibile il TCB e valuta la preemption. Oggi
+;                          e' "in fondo alla ready queue + request_preempt"; nel
+;                          modello a PCB e' "in fondo a TCB.pcb->coda, poi
+;                          confronto fra TCB.pcb e current.pcb". La mailbox non
+;                          deve saperlo: e' la stessa separazione politica/
+;                          meccanismo del resto del kernel.
+;   task_block()           cede la CPU: il chiamante e' gia' accodato dove verra'
+;                          ritrovato. Ritorna quando task_ready viene chiamata su
+;                          di lui. Non facciamo ipotesi su come lasci IE: la
+;                          receive ristabilisce la sezione critica da sola.
+
+.include "../include/types.vinc"
+
+  .text
+
+  .global send
+  .global send_s
+  .global receive
+
+  .extern enqueue_coda_nc
+  .extern dequeue_testa_nc
+  .extern irq_save
+  .extern irq_restore
+  .extern task_ready
+  .extern task_block
+  .extern current
+
+; ==========================================================================
+;  send(r1 = &mailbox, r2 = &messaggio) -- RAW: chiamare a IE gia' 0 (boot, ISR).
+;  Il gestore dei timeout e' un mittente e gira dentro l'ISR del tick: e' per
+;  questo che il nucleo e' raw e la protezione sta nel wrapper send_s.
+;
+;  Due casi, decisi dal SEGNO del contatore prima di toccare la lista:
+;    count >= 0  nessuno in attesa -> il messaggio si accoda, count++
+;    count <  0  c'e' un ricevente -> consegna diretta: si sfila il TCB, il
+;                messaggio prende il suo posto (count: -1 -> +1) e il ricevente
+;                torna eseguibile. In lista non convivono mai i due tipi.
+;
+;  Del messaggio tocca solo i link: nessun campo di stato da aggiornare, perche'
+;  il kernel non ha campi dentro il messaggio.
+;
+;  ESITO in r3 (CODA_OK / CODA_LINKED). Il controllo dell'invariante dei link sta
+;  QUI, in cima, e non ci si affida a quello che l'enqueue fa comunque: sul
+;  percorso della consegna diretta l'enqueue arriva quando il TCB e' gia' stato
+;  sfilato, e un rifiuto a quel punto lascerebbe la mailbox a meta' — TCB fuori,
+;  messaggio non dentro, contatore a -1. Controllando prima, il contratto e'
+;  netto: o il messaggio e' accodato, o non e' stato toccato niente.
+;  I link si leggono con gli offset di TESTA, come fa coda.vasm sui nodi: sono la
+;  parte del messaggio che appartiene al kernel, e cosi' resta vero che qui
+;  dentro non si referenzia nessun campo di MESSAGGIO.
+;
+;  Non-foglia, due uscite (un ret per ramo) -> prologo/epilogo a mano, non .proc.
+;  Clobber: r3 (esito), r4, r5.
+; ==========================================================================
+send:
+  addi r14, r14, -4
+  sw r15, 0(r14)          ; non-foglia: preserva il ritorno
+
+  lw r3, TESTA.fwd(r2)
+  lw r4, TESTA.bwd(r2)
+  or r3, r3, r4
+  bne r3, r0, send_linked       ; il messaggio sta gia' in una lista
+
+  lw r4, TESTA.count(r1)
+  blt r4, r0, send_consegna     ; count < 0: c'e' un TCB in attesa
+
+  addi r4, r4, 1
+  sw r4, TESTA.count(r1)        ; un messaggio in piu' in lista
+  call enqueue_coda_nc          ; (r1 = mailbox, r2 = messaggio) FIFO
+  li r3, CODA_OK
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; Niente e' stato toccato: ne' i link, ne' il contatore.
+send_linked:
+  li r3, CODA_LINKED
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+send_consegna:
+  mov r3, r2              ; il messaggio: dequeue_testa_nc restituisce in r2
+  call dequeue_testa_nc   ; r2 = TCB in attesa (unico nodo, count == -1)
+  addi r14, r14, -4
+  sw r2, 0(r14)           ; il TCB deve sopravvivere alle call seguenti
+  mov r2, r3              ; r2 = messaggio
+  call enqueue_coda_nc    ; prende il posto lasciato dal TCB
+  li r4, 1
+  sw r4, TESTA.count(r1)  ; -1 (un TCB) -> +1 (un messaggio)
+  lw r1, 0(r14)
+  addi r14, r14, 4        ; r1 = TCB da risvegliare
+  call task_ready         ; kernel: eseguibile + valuta la preemption
+  li r3, CODA_OK          ; dopo task_ready: e' un .extern, r3 non sopravvive
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; ==========================================================================
+;  receive(r1 = &mailbox) -> r2 = &messaggio. Solo da TASK: puo' bloccare.
+;
+;  Non ha una variante _s e non deve averla: la sezione critica deve comprendere
+;  il test del contatore, l'accodamento del proprio TCB e il blocco. Proteggere
+;  solo la lettura e lasciare fuori la decisione sarebbe attivamente dannoso —
+;  un tick fra il test e l'accodamento e il messaggio arriverebbe a un ricevente
+;  che non e' ancora in lista.
+;
+;  Frame (dopo il prologo):  +0 psw del chiamante   +4 &mailbox   +8 r15
+;  La mailbox va sullo stack perche' r1 non sopravvive a task_block.
+;
+;  Non-foglia, con salti -> prologo/epilogo a mano (dentro .proc non sono
+;  ammesse etichette, docs/manual.md §4.2.1).
+;  Clobber: r4, r5.
+; ==========================================================================
+receive:
+  addi r14, r14, -4
+  sw r15, 0(r14)          ; +8
+  addi r14, r14, -4
+  sw r1, 0(r14)           ; +4: &mailbox
+  call irq_save           ; r5 = psw del chiamante, IE = 0
+  addi r14, r14, -4
+  sw r5, 0(r14)           ; +0: psw, ripristinata all'uscita
+
+  lw r4, TESTA.count(r1)
+  blt r4, r0, receive_doppio  ; count < 0: c'e' gia' un ricevente in attesa
+  bne r4, r0, receive_preleva ; count > 0: c'e' almeno un messaggio
+
+  ; --- lista vuota: mi accodo nella mia mailbox e cedo la CPU ---
+  li r4, current
+  lw r2, 0(r4)            ; r2 = TCB del chiamante
+  li r4, SUSPENDED
+  sw r4, TCB.state(r2)
+  call enqueue_coda_nc    ; (r1 = mailbox, r2 = TCB): unico nodo in lista
+                          ; L'esito in r3 e' IGNORATO, e non e' una svista: qui
+                          ; non c'e' nessuno a cui restituirlo — la receive sta
+                          ; per bloccarsi e non tornera' al chiamante finche' non
+                          ; e' stata svegliata. E' lo stesso nodo aperto
+                          ; dell'halt sul secondo ricevente (§8.7): va sciolto
+                          ; li', decidendo come un task entra nel kernel, non
+                          ; inventando qui una via d'uscita.
+  li r4, -1
+  sw r4, TESTA.count(r1)  ; il segno dice che in lista c'e' un TCB
+  call task_block         ; si torna qui quando la send ha consegnato
+  call irq_save           ; ristabilisce IE=0 (la psw d'ingresso e' sullo stack)
+  lw r1, 4(r14)           ; &mailbox
+
+  ; --- prelievo: identico sul percorso veloce e su quello di risveglio ---
+receive_preleva:
+  call dequeue_testa_nc   ; r2 = messaggio (FIFO)
+  lw r4, TESTA.count(r1)
+  addi r4, r4, -1
+  sw r4, TESTA.count(r1)  ; un messaggio in meno in lista
+  lw r5, 0(r14)
+  addi r14, r14, 8        ; scarta psw e &mailbox
+  call irq_restore        ; psw del chiamante (r2 = risultato, non toccato)
+  lw r15, 0(r14)          ; dopo la call: irq_restore passa da r15
+  addi r14, r14, 4
+  ret
+
+; Un secondo ricevente sulla stessa mailbox viola "una mailbox per task": non e'
+; uno stato da gestire, e' un errore di costruzione del sistema. Meglio fermarsi
+; qui che sfilare un TCB scambiandolo per un messaggio.
+receive_doppio:
+  halt
+
+; ==========================================================================
+;  send_s(r1 = &mailbox, r2 = &messaggio): la send in sezione critica, per l'uso
+;  da TASK (IE=1). Stessa forma dei wrapper _s di coda.vasm — non-foglia, corpo
+;  lineare, un solo ret, API pubblica -> .proc/.endproc. La psw viaggia in r5 e
+;  va conservata attraverso la call; irq_save/irq_restore non toccano r1/r2,
+;  quindi gli argomenti della send restano intatti.
+; ==========================================================================
+  .proc send_s
+  call irq_save
+  addi r14, r14, -4
+  sw r5, 0(r14)
+  call send
+  lw r5, 0(r14)
+  addi r14, r14, 4
+  call irq_restore
+  .endproc send_s

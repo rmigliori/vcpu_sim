@@ -123,9 +123,16 @@ scheduler:
   sw r0, TCB.state(r4)   ; stato uscente = READY
   li r1, ready
   mov r2, r4
-  call enqueue_coda      ; uscente in fondo alla ready queue
+  call enqueue_coda      ; uscente in fondo alla ready queue. L'esito in r3 e'
+                         ; IGNORATO: giriamo dentro la trap, non c'e' nessun
+                         ; chiamante a cui restituirlo (sched_dispatch non ha un
+                         ; ritorno proprio). Stesso nodo aperto della receive,
+                         ; §8.7. Qui il controllo non puo' comunque scattare: il
+                         ; TCB uscente e' RUNNING, cioe' fuori da ogni coda, e da
+                         ; quando la rimozione azzera i link quella dichiarazione
+                         ; e' vera nei fatti e non solo nel commento sopra.
   li r1, ready
-  call dequeue_testa     ; r2 = prossimo TCB
+  call dequeue_testa     ; r2 = prossimo TCB (esce con i link azzerati)
   li r6, current
   sw r2, 0(r6)           ; current = prossimo
   li r5, RUNNING

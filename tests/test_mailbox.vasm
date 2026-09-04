@@ -1,0 +1,141 @@
+; tests/test_mailbox.vasm — test mirato di kernel/messageHandling.vasm.
+;
+; Verifica la convenzione del contatore con segno e i due percorsi della send,
+; SENZA scheduler: il test fornisce lui i due simboli che il kernel dovra' dare
+; (task_ready, task_block) piu' la variabile current.
+;
+; Il trucco che rende testabile il blocco senza context switch: in un sistema a
+; un solo flusso "bloccarsi" equivale a "far girare adesso la controparte",
+; quindi lo stub di task_block esegue la send che ci svegliera' e poi ritorna.
+; Il percorso di CONSEGNA DIRETTA (send che trova un TCB accodato, lo sfila, mette
+; il messaggio al suo posto e chiama task_ready) viene cosi' esercitato davvero.
+;
+; scheduler.vasm entra nel link solo per due ragioni meccaniche: e' lui a definire
+; current, e machine.vasm tira dentro _trap_entry che referenzia sched_dispatch.
+; Nel test non gira: nessun timer viene armato.
+;
+; Pipeline:
+;   ./build/vcpu_sim asm linked/scheduler/hal/machine.vasm            -o build/machine.vo
+;   ./build/vcpu_sim asm linked/scheduler/kernel/coda.vasm            -o build/coda.vo
+;   ./build/vcpu_sim asm linked/scheduler/kernel/scheduler.vasm       -o build/scheduler.vo
+;   ./build/vcpu_sim asm linked/scheduler/kernel/messageHandling.vasm -o build/msg.vo
+;   ./build/vcpu_sim asm tests/test_mailbox.vasm                      -o build/test_mailbox.vo
+;   ./build/vcpu_sim ld build/test_mailbox.vo build/msg.vo build/coda.vo \
+;                       build/scheduler.vo build/machine.vo -o build/test_mailbox.vx
+;   ./build/vcpu_sim run build/test_mailbox.vx
+;
+; Atteso, in ordine:  0  1  2  11  22  0  33  0  0
+
+.include "../linked/scheduler/include/types.vinc"
+
+  .data
+
+mbox:      .res TESTA     ; la mailbox E' una testa di coda
+svegliato: .word 0        ; ultimo TCB passato a task_ready
+tcb0:      .res TCB       ; unico task del test
+msg1:      .space 3       ; fwd, bwd, payload[0..3]: la taglia la decide chi lo
+msg2:      .space 3       ; compone, non MESSAGGIO.size (payload e' un indirizzo)
+msg3:      .space 3
+stack:     .space 64
+stack_top:
+
+  .text
+
+  .global main
+  .global task_ready
+  .global task_block
+  .extern coda_init
+  .extern send
+  .extern receive
+  .extern current         ; la vera variabile del kernel (kernel/scheduler.vasm)
+
+main:
+  li r14, stack_top
+  li r1, current
+  li r2, tcb0
+  sw r2, 0(r1)            ; current = tcb0
+  li r1, mbox
+  call coda_init
+
+  li r1, msg1             ; payload distinti per riconoscere i messaggi
+  li r2, 11
+  sw r2, MESSAGGIO.payload(r1)
+  li r1, msg2
+  li r2, 22
+  sw r2, MESSAGGIO.payload(r1)
+  li r1, msg3
+  li r2, 33
+  sw r2, MESSAGGIO.payload(r1)
+
+  ; --- (1) mailbox vuota: contatore a 0 ---
+  li r1, mbox
+  lw r5, TESTA.count(r1)
+  dumps r5                ; 0
+
+  ; --- (2) due send senza riceventi: il contatore sale, segno positivo ---
+  li r1, mbox
+  li r2, msg1
+  call send
+  li r1, mbox
+  lw r5, TESTA.count(r1)
+  dumps r5                ; 1
+
+  li r1, mbox
+  li r2, msg2
+  call send
+  li r1, mbox
+  lw r5, TESTA.count(r1)
+  dumps r5                ; 2
+
+  ; --- (3) receive con messaggi disponibili: ordine FIFO ---
+  li r1, mbox
+  call receive
+  lw r5, MESSAGGIO.payload(r2)
+  dumps r5                ; 11 (il primo arrivato)
+
+  li r1, mbox
+  call receive
+  lw r5, MESSAGGIO.payload(r2)
+  dumps r5                ; 22
+
+  li r1, mbox
+  lw r5, TESTA.count(r1)
+  dumps r5                ; 0: lista di nuovo vuota
+
+  ; --- (4) receive su mailbox vuota: accoda il TCB (count = -1), cede la CPU;
+  ;         lo stub consegna msg3 per consegna diretta e la receive lo preleva ---
+  li r1, mbox
+  call receive
+  lw r5, MESSAGGIO.payload(r2)
+  dumps r5                ; 33
+  li r1, mbox
+  lw r5, TESTA.count(r1)
+  dumps r5                ; 0: il TCB e' uscito, il messaggio e' stato prelevato
+
+  li r1, svegliato        ; task_ready ha ricevuto proprio il TCB in attesa?
+  lw r5, 0(r1)
+  li r6, tcb0
+  sub r5, r5, r6
+  dumps r5                ; 0 = stesso indirizzo
+  halt
+
+; ==========================================================================
+;  Stub dei due simboli che il kernel dovra' fornire (vedi l'intestazione di
+;  kernel/messageHandling.vasm per il contratto).
+; ==========================================================================
+task_ready:               ; task_ready(r1 = &TCB): qui basta registrarlo
+  li r2, svegliato
+  sw r1, 0(r2)
+  li r2, READY
+  sw r2, TCB.state(r1)
+  ret
+
+task_block:               ; al posto del context switch: fa girare la controparte
+  addi r14, r14, -4
+  sw r15, 0(r14)          ; non-foglia
+  li r1, mbox
+  li r2, msg3
+  call send               ; trova il TCB accodato -> consegna diretta
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
