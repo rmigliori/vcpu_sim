@@ -13,6 +13,14 @@
 #define VLMAX      64   // elements per vector register
 #define MEM_SIZE   (1u << 20)  // 1 MiB byte-addressable memory
 
+// Guard word at the bottom of the data segment: no object is ever placed at
+// address 0, so 0 is a NULL pointer that cannot collide with a real datum.
+// The codebase already assumed this in several places before it was enforced --
+// dequeue_testa returns 0 for "empty queue", `current == 0` means "no running
+// task", buf_alloc returns 0 for "no block" -- and the queue link invariant
+// ("a node in no list has fwd == bwd == 0") makes the assumption load-bearing.
+#define NULL_GUARD 4
+
 #define MAX_INSTR   4096
 #define MAX_SYMBOLS 512
 

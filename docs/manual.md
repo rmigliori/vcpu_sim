@@ -448,6 +448,14 @@ breakpoint at 5
   `VL` elementi servono `VL * 4` byte (vedi `slli rX, rVL, 2`).
 - `setvl` satura a `VLMAX`: questo abilita lo **strip-mining** (elaborazione a
   blocchi di vettori più lunghi di `VLMAX`).
+- **L'indirizzo 0 è riservato: nessun dato ci viene mai collocato.** Il segmento
+  dati parte da 4, sia nel percorso a file singolo sia nel linker (`NULL_GUARD`
+  in [`include/vcpu.h`](../include/vcpu.h)), così **0 è un puntatore nullo** che
+  non può coincidere con nessun oggetto reale. Serve a tutto il codice che usa
+  0 come «niente»: `dequeue_testa` restituisce 0 per coda vuota, `current == 0`
+  significa «nessun task in esecuzione», e le liste del kernel riconoscono un
+  nodo fuori da ogni coda dai link nulli. Conseguenza pratica: la prima
+  etichetta dichiarata in `.data` vale 4, non 0.
 
 ---
 

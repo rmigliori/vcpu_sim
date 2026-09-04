@@ -341,7 +341,9 @@ int link_objects(const VObject* const* objs, int nobj, VImage* img,
   // 1. Assign per-module bases (command order).
   int64_t text_base[64], data_base[64];
   if (nobj > 64) { snprintf(err, errsz, "too many objects (max 64)"); return -1; }
-  int64_t tcur = 0, dcur = 0;
+  // Data starts above the guard word: address 0 must stay NULL, so that no
+  // object can ever be confused with a null pointer (see NULL_GUARD in vcpu.h).
+  int64_t tcur = 0, dcur = NULL_GUARD;
   for (int m = 0; m < nobj; ++m)
   {
     text_base[m] = tcur; tcur += objs[m]->text_count;
@@ -375,6 +377,9 @@ int link_objects(const VObject* const* objs, int nobj, VImage* img,
   {
     img->data = malloc((size_t) dcur);
     if (!img->data) { snprintf(err, errsz, "out of memory"); return -1; }
+    // Zero first: nothing is copied over the guard word, and a datum that lands
+    // there by accident would be indistinguishable from a null pointer.
+    memset(img->data, 0, (size_t) dcur);
   }
   for (int m = 0; m < nobj; ++m)
   {

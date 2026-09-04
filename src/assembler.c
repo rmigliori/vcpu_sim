@@ -1075,7 +1075,10 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
   char    line[512];
   char*   toks[64];
   int     section  = SEC_TEXT;
-  int64_t data_ptr = 0;
+  // Skip the guard word: address 0 must stay NULL (see NULL_GUARD in vcpu.h).
+  // In the linked path the same reservation is made once by link_objects();
+  // here there is no linker, so this single-file path makes it itself.
+  int64_t data_ptr = NULL_GUARD;
   int     lineno   = 0;
 
   // .include: file stack (bottom = top-level file, kept open for fclose(fp)).
