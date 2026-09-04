@@ -1,0 +1,124 @@
+; include/pool.vinc — interfaccia del pool di buffer (§10 della proposta).
+;
+; Allocazione STATICA, non dinamica. Quello che i requisiti di safety escludono
+; non e' "prendere un buffer a runtime", e' lo heap general-purpose: taglia
+; variabile da un'arena comune, che frammenta, non ha un tempo di risposta
+; limitabile e fallisce in funzione della STORIA delle allocazioni precedenti.
+; Qui niente di tutto questo, per una proprieta' sola: DENTRO UNA CLASSE TUTTI I
+; BLOCCHI SONO INTERCAMBIABILI. Da li' discende che non esiste frammentazione
+; (non esiste "il blocco sbagliato"), che alloc e free sono un dequeue e un
+; enqueue quindi O(1), e che il fallimento e' una condizione sola e limitata.
+;
+; NON include types.vinc: .include non e' idempotente in questo assembler, quindi
+; un .vinc che ne includa un altro esplode appena un chiamante include entrambi.
+; I .vinc sono FOGLIA finche' non e' resa idempotente.
+
+; --------------------------------------------------------------------------
+;  Le sei classi, per potenze di due sull'AREA DATI UTENTE.
+;
+;  La geometria e' interfaccia e non cambia piu'; quanti blocchi per classe e'
+;  dimensionamento del singolo sistema, e lo zero e' legale (costa una TESTA
+;  vuota). NIENTE RIPIEGO sulla classe superiore: servire una richiesta da 16 con
+;  un blocco da 32 renderebbe il fallimento dipendente dalla storia — una raffica
+;  di richieste piccole si mangia la lista grande e piu' tardi fallisce una
+;  richiesta da 512 che aveva il suo blocco garantito per costruzione.
+;
+;  La classe da 16 contiene esattamente una testa PAYLOAD senza specifiche: e'
+;  quella del gestore dei timeout.
+; --------------------------------------------------------------------------
+.equ POOL_D16   16
+.equ POOL_D32   32
+.equ POOL_D64   64
+.equ POOL_D128  128
+.equ POOL_D256  256
+.equ POOL_D512  512
+
+; --------------------------------------------------------------------------
+;  Il blocco, visto dal pool. Nessun campo prima dei link: l'indirizzo
+;  consegnato al cliente E' la base dell'allocazione, quindi niente offset
+;  negativi e la regola di coda.vasm ("il puntatore al link e' il puntatore al
+;  buffer") vale sia quando il blocco sta in una mailbox sia quando sta nella
+;  free-list, che lo lincia attraverso quegli stessi due campi.
+;
+;  Il buffer consegnato E' GIA' un MESSAGGIO: fwd, bwd, e da +8 il payload. La
+;  parola di provenienza non e' del kernel — e' il primo campo del PAYLOAD
+;  (PAYLOAD.pool in types.vinc), cioe' il pool e' un cliente del messaggio come
+;  tutti gli altri. Qui la si ridichiara con il nome che ha per noi, esattamente
+;  come TCB ridichiara i due link invece di annidare TESTA.
+;
+;  "dati" e' un indirizzo, non un campo: BLOCCO.size NON e' la taglia di un
+;  blocco e ".res BLOCCO" non va usata — si usano le BLOCCOnn qui sotto.
+; --------------------------------------------------------------------------
+.struct BLOCCO
+  .field fwd              ; +0  <- l'indirizzo consegnato
+  .field bwd              ; +4
+  .field pool             ; +8  taglia dell'area dati, scritta a pool_init e mai
+                          ;     piu' toccata: e' una proprieta' permanente del
+                          ;     blocco, non uno stato. Vale anche come stride
+                          ;     rispetto a BLOCCO.dati.
+  .field dati             ; +12 dati[0]
+.ends
+
+; Le sei taglie fisiche: 12 byte di testa piu' l'area dati.
+.struct BLOCCO16
+  .field fwd
+  .field bwd
+  .field pool
+  .field dati  POOL_D16
+.ends                     ; 28
+
+.struct BLOCCO32
+  .field fwd
+  .field bwd
+  .field pool
+  .field dati  POOL_D32
+.ends                     ; 44
+
+.struct BLOCCO64
+  .field fwd
+  .field bwd
+  .field pool
+  .field dati  POOL_D64
+.ends                     ; 76
+
+.struct BLOCCO128
+  .field fwd
+  .field bwd
+  .field pool
+  .field dati  POOL_D128
+.ends                     ; 140
+
+.struct BLOCCO256
+  .field fwd
+  .field bwd
+  .field pool
+  .field dati  POOL_D256
+.ends                     ; 268
+
+.struct BLOCCO512
+  .field fwd
+  .field bwd
+  .field pool
+  .field dati  POOL_D512
+.ends                     ; 524
+
+; --------------------------------------------------------------------------
+;  Esiti.
+;
+;  buf_alloc distingue DUE fallimenti di proposito: POOL_VUOTO e' una condizione
+;  di runtime da cui si riprova (il gestore dei timeout lascia il descrittore
+;  armato e ritenta al tick dopo, §9.2), POOL_ENORME e' un errore di costruzione
+;  che non passera' mai. Confonderli in un unico 0 farebbe ritentare per sempre
+;  un errore permanente.
+;
+;  buf_free non ha nessun parametro oltre al buffer: la classe se la legge
+;  dentro. Riconosce tre cose che non deve accettare — un buffer che non viene
+;  dal pool, un doppio rilascio, e il rilascio di un buffer ANCORA accodato in
+;  una mailbox. Le ultime due si vedono dai link, grazie all'invariante di
+;  coda.vasm (un nodo fuori da ogni lista ha fwd == bwd == 0).
+; --------------------------------------------------------------------------
+.equ POOL_OK        0
+.equ POOL_VUOTO     1   ; classe esaurita: riprovare piu' tardi
+.equ POOL_ENORME    2   ; richiesta oltre la classe piu' grande
+.equ POOL_ESTRANEO  3   ; il buffer non viene dal pool (taglia non valida, o 0)
+.equ POOL_LINKED    4   ; il buffer sta ancora in una lista: doppio rilascio

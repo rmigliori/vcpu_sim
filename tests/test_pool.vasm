@@ -1,0 +1,139 @@
+; tests/test_pool.vasm — test mirato di kernel/pool.vasm.
+;
+; Verifica le proprieta' che rendono questo pool ammissibile in un RTOS, non
+; solo che alloc e free funzionino:
+;   - l'arrotondamento per eccesso di una richiesta alla classe che la contiene;
+;   - il NON-RIPIEGO: classe 16 esaurita => POOL_VUOTO anche se la 32 e' piena;
+;   - i due fallimenti distinti (esaurita / oltre la classe piu' grande);
+;   - i tre rifiuti di buf_free: doppio rilascio, buffer estraneo, e (implicito
+;     nel primo) buffer ancora accodato.
+;
+; Il doppio rilascio si vede grazie all'invariante dei link di coda.vasm: dopo
+; il primo buf_free il blocco e' nella free-list, quindi ha i link non nulli.
+;
+; machine.vasm entra nel link per irq_save/irq_restore (li vogliono i wrapper _s
+; che pool.vasm usa) e si tira dietro _trap_entry -> sched_dispatch ->
+; scheduler.vasm. Nessuno dei due gira: nessun timer viene armato.
+;
+; Pipeline:
+;   ./build/vcpu_sim asm linked/scheduler/hal/machine.vasm      -o build/machine.vo
+;   ./build/vcpu_sim asm linked/scheduler/kernel/coda.vasm      -o build/coda.vo
+;   ./build/vcpu_sim asm linked/scheduler/kernel/scheduler.vasm -o build/scheduler.vo
+;   ./build/vcpu_sim asm linked/scheduler/kernel/pool.vasm      -o build/pool.vo
+;   ./build/vcpu_sim asm tests/test_pool.vasm                   -o build/test_pool.vo
+;   ./build/vcpu_sim ld build/test_pool.vo build/pool.vo build/coda.vo \
+;                       build/scheduler.vo build/machine.vo -o build/test_pool.vx
+;   ./build/vcpu_sim run build/test_pool.vx
+;
+; Atteso, in ordine:  10 4 0  0 9  0 32 3  2 0  0 4  4 4  3  0 0  1 4
+
+.include "../linked/scheduler/include/pool.vinc"
+.include "../linked/scheduler/include/types.vinc"
+
+  .data
+
+; Un buffer del cliente, statico: pool == 0 perche' il .data nasce azzerato.
+; E' esattamente cio' che buf_free deve rifiutare senza toccare niente.
+statico: .space 4         ; fwd, bwd, pool, dati[0]
+stack:   .space 64
+stack_top:
+
+  .text
+
+  .global main
+  .extern pool_init
+  .extern buf_alloc
+  .extern buf_free
+  .extern pool_c16
+  .extern pool_c32
+  .extern pool_c64
+
+main:
+  li r14, stack_top
+  call pool_init
+
+  ; --- (1) il dimensionamento: 10 / 4 / 0 ---
+  li r1, pool_c16
+  lw r5, TESTA.count(r1)
+  dumps r5                ; 10
+  li r1, pool_c32
+  lw r5, TESTA.count(r1)
+  dumps r5                ; 4
+  li r1, pool_c64
+  lw r5, TESTA.count(r1)
+  dumps r5                ; 0: classe dichiarata ma senza blocchi
+
+  ; --- (2) allocazione esatta sulla classe piu' piccola ---
+  li r1, POOL_D16
+  call buf_alloc
+  dumps r1                ; 0 = POOL_OK
+  mov r9, r2              ; il buffer sopravvive: buf_alloc non tocca r9..r13
+  li r1, pool_c16
+  lw r5, TESTA.count(r1)
+  dumps r5                ; 9
+
+  ; --- (3) 20 byte non sono una classe: si arrotonda per eccesso a 32 ---
+  li r1, 20
+  call buf_alloc
+  dumps r1                ; 0 = POOL_OK
+  mov r10, r2
+  lw r5, BLOCCO.pool(r10)
+  dumps r5                ; 32 = la capacita' vera del blocco, non i 20 chiesti
+  li r1, pool_c32
+  lw r5, TESTA.count(r1)
+  dumps r5                ; 3
+
+  ; --- (4) oltre la classe piu' grande: errore di costruzione, non "riprova" ---
+  li r1, 600
+  call buf_alloc
+  dumps r1                ; 2 = POOL_ENORME
+  dumps r2                ; 0 = nessun buffer
+
+  ; --- (5) rilascio: il blocco torna nella sua classe, non in un'altra ---
+  mov r2, r10
+  call buf_free
+  dumps r1                ; 0 = POOL_OK
+  li r1, pool_c32
+  lw r5, TESTA.count(r1)
+  dumps r5                ; 4
+
+  ; --- (6) doppio rilascio: il blocco e' gia' nella free-list, quindi ha i
+  ;         link non nulli. Rifiutato, e il contatore non si muove ---
+  mov r2, r10
+  call buf_free
+  dumps r1                ; 4 = POOL_LINKED
+  li r1, pool_c32
+  lw r5, TESTA.count(r1)
+  dumps r5                ; 4: intatto
+
+  ; --- (7) un buffer che non viene dal pool: pool == 0, nessuna classe ---
+  li r2, statico
+  call buf_free
+  dumps r1                ; 3 = POOL_ESTRANEO
+
+  ; --- (8) esaurimento della classe 16: ne ho gia' uno fuori (r9), ne prendo
+  ;         altri nove. r11 = quanti mancano, r12 = somma degli esiti ---
+  li r11, 9
+  li r12, 0
+svuota:
+  beq r11, r0, svuota_fine
+  li r1, POOL_D16
+  call buf_alloc
+  add r12, r12, r1
+  addi r11, r11, -1
+  j svuota
+svuota_fine:
+  dumps r12               ; 0 = tutte e nove riuscite
+  li r1, pool_c16
+  lw r5, TESTA.count(r1)
+  dumps r5                ; 0
+
+  ; --- (9) classe esaurita: POOL_VUOTO, ed e' un "riprova piu' tardi".
+  ;         E NIENTE RIPIEGO: la classe 32 e' piena e non viene toccata ---
+  li r1, POOL_D16
+  call buf_alloc
+  dumps r1                ; 1 = POOL_VUOTO
+  li r1, pool_c32
+  lw r5, TESTA.count(r1)
+  dumps r5                ; 4: la classe grande e' rimasta intera
+  halt

@@ -1,0 +1,364 @@
+; kernel/pool.vasm — pool di buffer a blocchi fissi, sei classi per potenze di
+; due sull'area dati utente (§10 della proposta).
+;
+; Serve a un caso solo, e vale la pena ricordarlo perche' delimita l'uso: un
+; timeout che scade deve consegnare un messaggio per conto di un cliente che in
+; quel momento sta dormendo, quindi il gestore non ha niente da prestargli.
+; NEL TRAFFICO RICHIESTA/RISPOSTA IL POOL NON C'ENTRA: li' il buffer e' del
+; cliente e la risposta e' lo stesso buffer girato (§8.6), quindi nessuna send
+; puo' fallire. La regola: il pool serve ai messaggi per cui nessuno puo'
+; prestare un buffer.
+;
+; --- Zero meccanismo nuovo ---
+; Una free-list di blocchi a taglia fissa E' una TESTA con i blocchi come nodi:
+;   buf_alloc  = catena taglia->classe, poi dequeue_testa_s
+;   buf_free   = controlli, poi enqueue_coda_s
+;   pool_init  = N x enqueue_coda (raw: al boot IE e' gia' 0)
+; Teste CONTATE normali: count >= 0 = blocchi liberi in quella classe, che e'
+; anche l'unica statistica utile per dimensionare. Niente segno, niente _nc:
+; quelle servono a chi da' al contatore un significato proprio.
+;
+; --- Nessuna sezione critica propria, e non e' una dimenticanza ---
+; In buf_alloc la catena taglia->classe e' aritmetica sull'argomento e non tocca
+; niente di condiviso; l'unico atto sullo stato e' il dequeue_testa_s, che si
+; protegge da se'. In buf_free la lettura della taglia e' una costante del
+; blocco. Sono due wrapper sottili sopra primitive gia' protette.
+;
+; --- Perche' sta in kernel/ ---
+; Non legge il contenuto di cio' che distribuisce: per il criterio di §8.4 e'
+; kernel a pieno titolo, a differenza del gestore dei timeout che il payload lo
+; formatta.
+;
+; --- buf_alloc NON azzera l'area dati ---
+; Sarebbero D/4 store, fino a 128 per la classe da 512: la routine smetterebbe
+; di essere O(1) proprio nel punto in cui l'essere O(1) e' cio' che la rende
+; ammissibile in un RTOS. Nessuno azzera uno stack a ogni chiamata, per lo stesso
+; motivo: riempire i campi e' di chi ci scrive dentro.
+;
+; Convenzione registri: r1 argomento ed esito, r2 buffer, r3..r6 scratch.
+
+; Due .vinc, non annidati: pool.vinc e' l'interfaccia del pool, types.vinc serve
+; per TESTA (le sei free-list). E' il primo caso del modello "un .vinc per
+; fornitore" con due fornitori nello stesso modulo, e funziona proprio perche' i
+; .vinc sono foglia — includerne uno che ne includesse un altro darebbe
+; "duplicate constant".
+.include "../include/pool.vinc"
+.include "../include/types.vinc"
+
+  .data
+
+  .global pool_c16
+  .global pool_c32
+  .global pool_c64
+  .global pool_c128
+  .global pool_c256
+  .global pool_c512
+
+; Le sei teste, contigue e in ordine di taglia crescente: se un giorno servisse
+; confrontare due classi, il confronto fra indirizzi E' il confronto fra taglie
+; (stessa disciplina di §7.3). Le classi vuote pagano solo la testa.
+pool_c16:   .res TESTA
+pool_c32:   .res TESTA
+pool_c64:   .res TESTA
+pool_c128:  .res TESTA
+pool_c256:  .res TESTA
+pool_c512:  .res TESTA
+
+; DIMENSIONAMENTO. Quante righe .res ci sono, tanti blocchi: per cambiarlo si
+; aggiunge o si toglie una riga e l'etichetta di fine segue da sola, senza
+; costanti da tenere allineate a mano con l'allocazione (.space prende solo
+; letterali, quindi una costante li' sarebbe una trappola silenziosa).
+;
+;   classe 16: DIECI, quanti sono gli slot del vettore dei descrittori dei
+;              timeout — il massimo di scadenze che possono cadere sullo stesso
+;              tick. Cosi' il pool non puo' mai essere LUI la ragione per cui un
+;              timeout arriva tardi.
+;   classe 32: QUATTRO, per il primo servizio che avra' delle specifiche.
+;   le altre quattro: ZERO. Costano dodici byte di testa l'una e ci sono gia',
+;              cosi' la geometria e' fissa e il dimensionamento resta libero.
+;
+; Totale: 10*28 + 4*44 = 456 byte di blocchi, piu' 72 di teste.
+pool_b16:   .res BLOCCO16
+            .res BLOCCO16
+            .res BLOCCO16
+            .res BLOCCO16
+            .res BLOCCO16
+            .res BLOCCO16
+            .res BLOCCO16
+            .res BLOCCO16
+            .res BLOCCO16
+            .res BLOCCO16
+pool_b16_fine:
+
+pool_b32:   .res BLOCCO32
+            .res BLOCCO32
+            .res BLOCCO32
+            .res BLOCCO32
+pool_b32_fine:
+
+  .text
+
+  .global pool_init
+  .global buf_alloc
+  .global buf_free
+  .extern coda_init
+  .extern enqueue_coda
+  .extern enqueue_coda_s
+  .extern dequeue_testa_s
+
+; ==========================================================================
+;  pool_init(): inizializza le sei teste e incatena i blocchi che esistono.
+;
+;  Va chiamata al boot, prima di qualsiasi buf_alloc, e non c'e' modo di
+;  imporlo. Degrada pero' in modo benigno: un pool non inizializzato ha le teste
+;  azzerate, dequeue_testa legge count == 0 e restituisce 0, quindi si presenta
+;  come "classe vuota" invece di corrompere qualcosa.
+;
+;  Clobber: r1..r6 (r10..r13 sono salvati dalla riempi).
+; ==========================================================================
+pool_init:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+
+  li r1, pool_c16
+  call coda_init          ; coda_init non tocca r1
+  li r2, pool_b16
+  li r3, pool_b16_fine
+  li r4, POOL_D16
+  call pool_riempi
+
+  li r1, pool_c32
+  call coda_init
+  li r2, pool_b32
+  li r3, pool_b32_fine
+  li r4, POOL_D32
+  call pool_riempi
+
+  li r1, pool_c64         ; classi senza blocchi: la testa esiste ed e' vuota,
+  call coda_init          ; cosi' una richiesta trova POOL_VUOTO e non un caso
+  li r1, pool_c128        ; speciale
+  call coda_init
+  li r1, pool_c256
+  call coda_init
+  li r1, pool_c512
+  call coda_init
+
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; ==========================================================================
+;  pool_riempi(r1=&testa, r2=base, r3=fine, r4=taglia) -- interna.
+;
+;  Scrive in ogni blocco la taglia della sua area dati e lo accoda alla testa
+;  della classe. Lo stride e' BLOCCO.dati + taglia, cioe' i dodici byte di testa
+;  piu' l'area: nessun numero magico.
+;
+;  Gli argomenti si spostano in r10..r13 perche' enqueue_coda usa r3 per l'esito
+;  e r4/r5 come scratch, quindi in r1..r6 non sopravvivrebbero al giro. Quei
+;  quattro registri vengono salvati: pool_init resta chiamabile da qualunque
+;  punto senza sorprese.
+; ==========================================================================
+pool_riempi:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  addi r14, r14, -16
+  sw r10, 0(r14)
+  sw r11, 4(r14)
+  sw r12, 8(r14)
+  sw r13, 12(r14)
+
+  mov r13, r1             ; testa
+  mov r10, r2             ; cursore
+  mov r11, r3             ; fine
+  mov r12, r4             ; taglia dell'area dati
+
+riempi_loop:
+  beq r10, r11, riempi_fine
+  sw r12, BLOCCO.pool(r10)   ; provenienza e capacita', scritte una volta sola
+  mov r1, r13
+  mov r2, r10
+  call enqueue_coda          ; raw: al boot IE e' gia' 0. I link del blocco sono
+                             ; nulli (.data azzerato), quindi il controllo passa
+  addi r10, r10, BLOCCO.dati ; stride = 12 + taglia
+  add r10, r10, r12
+  j riempi_loop
+
+riempi_fine:
+  lw r10, 0(r14)
+  lw r11, 4(r14)
+  lw r12, 8(r14)
+  lw r13, 12(r14)
+  addi r14, r14, 16
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; ==========================================================================
+;  buf_alloc(r1 = byte richiesti) -> r2 = buffer (0 se non c'e'), r1 = esito
+;
+;  Il cliente passa BYTE, non un indice di classe: cosi' la geometria resta
+;  interna e cambiarla non rompe nessun chiamante. Tipicamente scrivera'
+;  buf_alloc(RICHIESTA_X.size), il numero che ha gia' in mano da §8.6.
+;
+;  Clobber: r1 (esito), r2 (buffer), r3, r4, r5, r6.
+; ==========================================================================
+buf_alloc:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+
+  call pool_classe_su     ; r2 = testa della classe (0 se oltre la piu' grande)
+  beq r2, r0, alloc_enorme
+  mov r1, r2
+  call dequeue_testa_s    ; r2 = blocco, oppure 0 se la classe e' esaurita
+  beq r2, r0, alloc_vuoto
+  li r1, POOL_OK
+  j alloc_uscita
+
+alloc_enorme:
+  li r1, POOL_ENORME
+  li r2, 0
+  j alloc_uscita
+alloc_vuoto:
+  li r1, POOL_VUOTO       ; r2 e' gia' 0, lo ha messo la dequeue
+
+alloc_uscita:
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; ==========================================================================
+;  buf_free(r2 = buffer) -> r1 = esito
+;
+;  Nessun parametro oltre al buffer: la classe se la legge dentro. Serve perche'
+;  CHI LIBERA NON E' CHI ALLOCA — il gestore dei timeout alloca, formatta e
+;  manda; a rilasciare e' il ricevente, che il buffer se l'e' trovato in mailbox
+;  e non sa nulla di come e' stato allocato. Se la taglia dovesse viaggiare
+;  fuori banda, un valore sbagliato non darebbe un errore: rimetterebbe un
+;  blocco da 16 nella lista da 512.
+;
+;  Due controlli, in quest'ordine:
+;   1. i link: non nulli => il blocco sta ancora in una lista. Prende il doppio
+;      rilascio (dopo il primo e' nella free-list) E il rilascio di un buffer
+;      ancora accodato in una mailbox, che una verifica sulla sola taglia
+;      accetterebbe perche' quel buffer e' legittimamente "fuori dal pool".
+;   2. la taglia: corrispondenza ESATTA con una delle sei classi. buf_alloc
+;      arrotonda per eccesso una RICHIESTA, qui invece si legge una CAPACITA'
+;      che ha scritto il pool: pretendere l'esattezza e' cio' che rende
+;      riconoscibile un puntatore estraneo invece di lasciarlo sfasciare una
+;      lista. Un buffer statico del cliente ha pool == 0 e cade qui.
+;
+;  Clobber: r1 (esito), r3, r4, r5. r2 resta il buffer.
+; ==========================================================================
+buf_free:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+
+  lw r1, BLOCCO.fwd(r2)
+  lw r3, BLOCCO.bwd(r2)
+  or r1, r1, r3
+  bne r1, r0, free_linked
+
+  addi r14, r14, -4
+  sw r2, 0(r14)           ; il buffer deve sopravvivere alla call
+  lw r1, BLOCCO.pool(r2)
+  call pool_classe_esatta ; r2 = testa (0 = non e' una taglia del pool)
+  mov r1, r2
+  lw r2, 0(r14)
+  addi r14, r14, 4        ; r2 = buffer
+  beq r1, r0, free_estraneo
+
+  call enqueue_coda_s     ; (r1 = testa, r2 = nodo). Non puo' fallire: i link
+                          ; erano nulli, controllati due istruzioni fa
+  li r1, POOL_OK
+  j free_uscita
+
+free_linked:
+  li r1, POOL_LINKED
+  j free_uscita
+free_estraneo:
+  li r1, POOL_ESTRANEO
+
+free_uscita:
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; ==========================================================================
+;  Le due mappature sulla stessa geometria. Sono DUE e non una perche' fanno
+;  domande diverse: la prima arrotonda per eccesso una richiesta, la seconda
+;  pretende una corrispondenza esatta. Entrambe FOGLIA.
+;
+;  pool_classe_su(r1 = byte)    -> r2 = &testa (0 = oltre la classe piu' grande)
+;  pool_classe_esatta(r1 = tag) -> r2 = &testa (0 = non e' una taglia di classe)
+;
+;  "r1 <= D" si scrive "blt D, r1 -> prova la classe dopo": non c'e' un blt con
+;  immediato, quindi la taglia va comunque in un registro.
+; ==========================================================================
+pool_classe_su:
+  li r4, POOL_D16
+  blt r4, r1, su_32
+  li r2, pool_c16
+  ret
+su_32:
+  li r4, POOL_D32
+  blt r4, r1, su_64
+  li r2, pool_c32
+  ret
+su_64:
+  li r4, POOL_D64
+  blt r4, r1, su_128
+  li r2, pool_c64
+  ret
+su_128:
+  li r4, POOL_D128
+  blt r4, r1, su_256
+  li r2, pool_c128
+  ret
+su_256:
+  li r4, POOL_D256
+  blt r4, r1, su_512
+  li r2, pool_c256
+  ret
+su_512:
+  li r4, POOL_D512
+  blt r4, r1, su_oltre
+  li r2, pool_c512
+  ret
+su_oltre:
+  li r2, 0
+  ret
+
+pool_classe_esatta:
+  li r4, POOL_D16
+  beq r1, r4, es_16
+  li r4, POOL_D32
+  beq r1, r4, es_32
+  li r4, POOL_D64
+  beq r1, r4, es_64
+  li r4, POOL_D128
+  beq r1, r4, es_128
+  li r4, POOL_D256
+  beq r1, r4, es_256
+  li r4, POOL_D512
+  beq r1, r4, es_512
+  li r2, 0
+  ret
+es_16:
+  li r2, pool_c16
+  ret
+es_32:
+  li r2, pool_c32
+  ret
+es_64:
+  li r2, pool_c64
+  ret
+es_128:
+  li r2, pool_c128
+  ret
+es_256:
+  li r2, pool_c256
+  ret
+es_512:
+  li r2, pool_c512
+  ret
