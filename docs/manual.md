@@ -85,6 +85,23 @@ Target utili del `Makefile`:
 | `make run` | Compila ed esegue `standalone/saxpy.vasm` |
 | `make clean` | Rimuove la cartella `build/` |
 
+**Con CMake:** costruisce la stessa cosa *più* i programmi `.vasm` del repo, e
+rende eseguibile la suite di regressione.
+
+```bash
+cmake -B out -S .      # configura (out/ e' ignorato da git)
+cmake --build out -j   # vcpu_sim + tutti i .vo/.va/.vx del repo
+ctest --test-dir out   # le invarianti di regressione, §4 di docs/stato-lavori.md
+```
+
+I due build **convivono** e non si pestano i piedi finché stanno in cartelle
+diverse: il `Makefile` scrive in `build/`, CMake in quella passata a `-B` (nella
+documentazione `out/`). Il `Makefile` resta la via breve quando serve solo
+l'eseguibile C; CMake serve quando si vuole costruire o verificare anche il
+software scritto in `.vasm`, perché lì i `.vinc` sono librerie di interfaccia e
+le pipeline di `asm`/`ld` non sono più scritte a mano. I dettagli dei target
+stanno in [`cmake/vasm.cmake`](../cmake/vasm.cmake).
+
 ### 2.3 Eseguire un programma
 
 ```bash
@@ -1333,15 +1350,16 @@ La pipeline di compilazione separata (o, in alternativa, un archivio `libkernel.
 con inclusione selettiva):
 
 ```bash
-./build/vcpu_sim asm linked/scheduler/hal/machine.vasm              -o build/machine.vo
-./build/vcpu_sim asm linked/scheduler/kernel/coda.vasm              -o build/coda.vo
-./build/vcpu_sim asm linked/scheduler/kernel/scheduler.vasm         -o build/scheduler.vo
-./build/vcpu_sim asm linked/scheduler/scheduler_demo.vasm  -o build/scheduler_demo.vo
+I=-Ilinked/scheduler/include    # dove stanno i .vinc: serve a chi ha una .include
+./build/vcpu_sim asm    linked/scheduler/hal/machine.vasm      -o build/machine.vo
+./build/vcpu_sim asm $I linked/scheduler/kernel/coda.vasm      -o build/coda.vo
+./build/vcpu_sim asm $I linked/scheduler/kernel/scheduler.vasm -o build/scheduler.vo
+./build/vcpu_sim asm $I linked/scheduler/scheduler_demo.vasm   -o build/scheduler_demo.vo
 ./build/vcpu_sim ld build/scheduler_demo.vo build/scheduler.vo build/coda.vo \
                     build/machine.vo -o build/scheduler_demo.vx
 ./build/vcpu_sim run build/scheduler_demo.vx
-# r5 = 105   (tickA)
-# r5 = 74    (tickB)
+# r5 = 98    (tickA)
+# r5 = 65    (tickB)
 ```
 
 Gli 8 tick e i due contatori che crescono alternandosi sono le stesse invarianti

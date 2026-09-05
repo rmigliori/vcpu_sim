@@ -54,17 +54,31 @@ prima** (entrambe in §5):
 
 1. **§7.4**, la decisione ferma: ereditarietà di priorità o priority ceiling per
    i mutex. È quella che sblocca tutto il resto del kernel.
-2. **La ristrutturazione del build in target CMake**, cominciata il 05/09/2026: è
-   l'unico lavoro che *non* dipende da §7.4. Il **punto 1 è fatto** (§3.16) —
-   `-I` nell'assembler e `.include` idempotente, cioè quelli che rendono vero
-   tutto il resto. Il prossimo è il punto 2, le 12 `.include` a nome nudo.
+2. ~~La ristrutturazione del build in target CMake~~ — **FATTA il 05/09/2026**
+   salvo il punto 3, che non blocca niente. Vedi il riquadro qui sotto.
 
-> **05/09/2026 — punto 1 del build fatto, invarianti immobili.** `-I` e
-> l'idempotenza di `.include` sono in `src/assembler.c` (§3.16), con
-> `tests/test_include.vasm` a coprirli. **Nessun `.vasm` esistente è stato
-> toccato**, di proposito: tutte le invarianti di §4 danno gli stessi identici
-> numeri, confrontati riga per riga con una baseline presa prima di cominciare.
-> La regola provvisoria di §3.13, «i `.vinc` non si annidano», è caduta.
+> ### 05/09/2026 — il build è in target CMake, invarianti immobili
+>
+> Tre punti su quattro in una giornata: `-I` nell'assembler e `.include`
+> idempotente (**§3.16**), poi le 12 `.include` a nome nudo e i target CMake con
+> `ctest` (**§3.17**). Da ora:
+>
+> ```bash
+> cmake -B out -S . && cmake --build out -j && ctest --test-dir out
+> ```
+>
+> 22 test verdi. La suite di regressione non è più un commento e la disciplina di
+> chi lo esegue — **quello era il premio, più dei path**. Il `Makefile` è intatto
+> e i due build convivono; ritirarlo è una decisione a parte, non forzata da qui.
+>
+> Le invarianti di §4 danno gli **stessi identici numeri**, e la migrazione è
+> fedele fino agli artefatti: i `.vo` prodotti da CMake sono identici byte per
+> byte a quelli delle pipeline a mano. L'unica eccezione consapevole è il layout
+> di tre `.vx` che ora linkano l'archivio — stesse sequenze, ordine dei moduli
+> diverso: il riquadro in §3.17 dice quali e perché.
+>
+> Resta aperto il solo punto 3, `--emit-deps`: le dipendenze oggi sono
+> *dichiarate* nel `CMakeLists.txt`, non *scoperte* dall'assembler.
 
 > Le due domande che questo paragrafo poneva prima di §3.11 — se la risposta
 > riusa lo stesso buffer, e dove sta il modulo di protocollo — restano
@@ -126,9 +140,10 @@ tutto da `;` in poi anche nel pass 2).
 > tenuti perché contengono convenzioni ancora valide. Lo stato corrente è quello
 > dei paragrafi in cima alla sezione.
 
-**Working tree PULITO** (§2): il lavoro di §3.16 è committato in `21c9305`
-(codice) e `41e4565` (documenti). Il branch **è stato pushato** il 04/09/2026 —
-`origin/master` è a `20ae071` — e restano locali tutti i commit successivi. Il
+**Working tree: il lavoro di §3.17 è da committare** (§2) — le 12 `.include` a
+nome nudo, `CMakeLists.txt`, `cmake/`, i documenti. Il lavoro di §3.16 è già
+committato in `21c9305` e `41e4565`. Il branch **è stato pushato** il 04/09/2026
+— `origin/master` è a `20ae071` — e restano locali tutti i commit successivi. Il
 push non è arrivato da una sessione di lavoro: vedi §2.
 
 ---
@@ -1087,9 +1102,105 @@ più, `tests/test_pool.vasm` riscritto **provvisoriamente** a nome nudo, assembl
 con `-I` e linkato: dà la stessa identica sequenza. È l'anticipo del punto 2, e
 dice che sarà meccanico; il file è stato ripristinato subito.
 
+### 3.17 Le `.include` a nome nudo, e i `.vasm` in target CMake (05/09/2026)
+
+Punti 2 e 4 della ristrutturazione del build, fatti nella stessa sessione perché
+sono accoppiati: il 2 da solo peggiora le cose (ogni comando a mano cresce di un
+flag) e il 4 senza il 2 sposterebbe i path dentro il `CMakeLists.txt` invece di
+toglierli, che è il fallimento contro cui §5 metteva in guardia.
+
+**Punto 2 — le 12 `.include` a nome nudo.** `.include "types.vinc"` invece di
+`"../include/types.vinc"` o `"../linked/scheduler/include/types.vinc"`: lo stesso
+file di interfaccia ha ora **una sola grafia in tutto il progetto** invece di una
+per ogni cartella da cui viene incluso. Le pipeline scritte a mano hanno
+guadagnato `-I`, con una variabile `I=-Ilinked/scheduler/include` in testa per
+non farle diventare illeggibili. Unica eccezione voluta: `tests/test_include.vasm`
+tiene una grafia relativa, perché è esattamente ciò che testa.
+
+**`pool.vinc` ora include `types.vinc`**, ed è la modellazione che §5 indicava
+come giusta: `BLOCCO` *è* un nodo di lista, una free-list è una `TESTA` con i
+blocchi come nodi. `timeout.vinc` resta invece foglia, ma per una ragione sua e
+non per un limite della toolchain: il `DESCRITTORE` non entra mai in una lista
+(§9.3), quindi non ha niente da chiedere a `types.vinc`.
+
+**Punto 4 — CMake.** `CMakeLists.txt` più `cmake/vasm.cmake` (le funzioni) e
+`cmake/vasm_check.cmake` (il runner dei test). Cinque forme: `vasm_interface`
+per un `.vinc`, `vasm_object` per un `.vasm`→`.vo`, `vasm_archive` per un `.va`,
+`vasm_program` per un `.vx`, `vasm_check` per un'invariante.
+
+**Il Makefile non è stato toccato e i due build convivono**: `make` scrive in
+`build/`, CMake nella cartella passata a `-B` (`out/` nella documentazione, ora
+in `.gitignore`). Se un giorno il `Makefile` va ritirato è una decisione a parte
+— questa migrazione non la forza.
+
+**Le tre cose non ovvie di §5, come si sono rivelate nei fatti:**
+
+- **La propagazione dei `.vinc`.** Le `INTERFACE` library li modellano bene
+  (sono header-only per costruzione), ma `INTERFACE_INCLUDE_DIRECTORIES` non
+  arriva da sola a un `add_custom_command`, che non linka niente e non eredita
+  nulla. La chiusura transitiva la percorre `_vasm_closure` a mano, seguendo
+  `INTERFACE_LINK_LIBRARIES`, e ne esce sia la lista di `-I` sia quella dei file
+  per il `DEPENDS`. L'elenco dei file sta in una proprietà nostra
+  (`VASM_HEADERS`) perché CMake propaga da sé solo le `INTERFACE_*` che conosce.
+- **Le dipendenze restano DICHIARATE, non scoperte.** Se un `.vasm` include un
+  `.vinc` senza che `LIBS` lo dica, CMake non lo saprà mai e il rebuild non
+  scatterà. È il punto 3 (`--emit-deps`) e resta aperto — ma **non** era un
+  prerequisito, come §5 lasciava intendere: con la dipendenza dichiarata sul
+  target dell'interfaccia i path non tornano nel build, perché si scrive una
+  volta sola lì.
+- **L'archivio `.va` è stato usato davvero.** I quattro test linkano
+  `libkernel.va` invece di una lista di `.vo` ricopiata in ogni intestazione.
+
+**Un difetto trovato costruendo, non ipotetico:** col generatore Make un
+`add_custom_command` consumato da più target viene copiato in ognuno, e la prima
+versione assemblava `k_scheduler.vo` **tre volte** — con `-j` sono processi
+paralleli che scrivono lo stesso file. Risolto con una dipendenza fra *target*
+(`_vasm_order_after`) oltre a quella fra file. Con Ninja non sarebbe successo,
+ma il build non deve dipendere dal generatore scelto.
+
+**La verifica, in tre gradi.** Le invarianti danno gli stessi identici numeri
+(confronto riga per riga con la baseline). Gli artefatti prodotti da CMake sono
+**identici byte per byte** a quelli delle pipeline a mano — tutti i `.vo`, e i
+`.vx` finché il link usa la stessa lista. E i test di `ctest` sono **sensibili**:
+spostando di proposito un atteso da `98 65` a `98 66`, il test fallisce.
+
+> **Un punto da non lasciare implicito: con l'archivio, tre `.vx` cambiano.**
+> `test_mailbox`, `test_timeout` e `test_pool` non sono più identici byte per
+> byte, perché l'archivio include i membri nel **proprio** ordine e non in
+> quello della lista scritta a mano. Stesso numero di istruzioni, stesse
+> sequenze stampate — e le invarianti di §4 sono i **valori**, non i byte
+> dell'immagine. Ma è un cambiamento di layout reale e va saputo: se un giorno
+> un'invariante si sposta di poco su uno di questi tre, questo è il primo posto
+> dove guardare. `test_coda.vx` resta identico perché per lui l'ordine
+> dell'archivio coincide con quello della lista.
+
+**Trovato per strada e corretto**: §7.10 del manuale mostrava ancora `105/74` per
+la demo HAL+kernel, numeri fermi a §3.5 — l'invariante è `98/65` da §3.14. Il
+manuale non era stato riallineato dopo §3.10 e §3.14.
+
 ---
 
 ## 4. Invarianti di regressione — come verificare che nulla si sia rotto
+
+> ### Dal 05/09/2026 si fa con `ctest` (§3.17)
+>
+> ```bash
+> cmake -B out -S . && cmake --build out -j && ctest --test-dir out
+> ```
+>
+> 22 test: le tre invarianti storiche, i cinque test mirati di `tests/`, la demo
+> HAL+kernel, e i 13 programmi di `standalone/` che devono continuare a girare da
+> soli. I numeri attesi stanno nel `CMakeLists.txt`, in un posto solo.
+>
+> **Questo era il premio della migrazione**, più dei path: fino a ieri la suite
+> era un commento e la disciplina di chi lo eseguiva — quattro pipeline scritte a
+> mano nelle intestazioni dei test, ripetute qui sotto, e il confronto con le
+> sequenze attese fatto **a occhio**. Il confronto è di ciò che questa sezione
+> dichiara invariante — la sequenza dei `dumps`, o le tre statistiche — non di
+> tutto l'output, che renderebbe i test più fragili del contratto.
+>
+> Quello che segue resta valido e resta utile: è la stessa verifica fatta a mano,
+> ed è il modo di isolare un singolo passo quando qualcosa si muove.
 
 ```bash
 make                                    # deve compilare SENZA warning
@@ -1097,12 +1208,16 @@ make                                    # deve compilare SENZA warning
 # (1) invariante saxpy: 17 istruzioni / 40 vec-elem-ops / 94 cicli
 ./build/vcpu_sim standalone/saxpy.vasm
 
+# -I: dove stanno i .vinc. Serve a ogni sorgente che ha una .include (dal
+#     05/09/2026 i nomi sono nudi, §3.17); machine.vasm e linked/multi/ no.
+I=-Ilinked/scheduler/include
+
 # (2) demo HAL+kernel: deve stampare r5 = 98 e r5 = 65 (era 104/73 prima
 #     dell'invariante dei link in coda.vasm — vedi §3.14, non e' una regressione)
-./build/vcpu_sim asm linked/scheduler/hal/machine.vasm      -o build/machine.vo
-./build/vcpu_sim asm linked/scheduler/kernel/coda.vasm      -o build/coda.vo
-./build/vcpu_sim asm linked/scheduler/kernel/scheduler.vasm -o build/scheduler.vo
-./build/vcpu_sim asm linked/scheduler/scheduler_demo.vasm   -o build/scheduler_demo.vo
+./build/vcpu_sim asm    linked/scheduler/hal/machine.vasm      -o build/machine.vo
+./build/vcpu_sim asm $I linked/scheduler/kernel/coda.vasm      -o build/coda.vo
+./build/vcpu_sim asm $I linked/scheduler/kernel/scheduler.vasm -o build/scheduler.vo
+./build/vcpu_sim asm $I linked/scheduler/scheduler_demo.vasm   -o build/scheduler_demo.vo
 ./build/vcpu_sim ld build/scheduler_demo.vo build/scheduler.vo \
                     build/coda.vo build/machine.vo -o build/scheduler_demo.vx
 ./build/vcpu_sim run build/scheduler_demo.vx
@@ -1317,12 +1432,17 @@ statiche.
 
 `hal/machine.vasm` e `kernel/coda.vasm` sopravvivono intatti al ridisegno.
 
-### Ristrutturazione del build in target CMake (IN CORSO — punto 1 FATTO il 05/09/2026)
+### Ristrutturazione del build in target CMake (FATTA il 05/09/2026, salvo il punto 3)
 
-**RIPRENDI DA QUI SE SI CONTINUA SU QUESTO FRONTE.** L'utente vuole decomporre i
-**sorgenti `.vasm`** in target CMake — librerie e **librerie di interfaccia** —
-per togliere i path dai sorgenti. È l'**unico lavoro che si può fare senza aver
-deciso §7.4**.
+**Tre punti su quattro sono fatti**: `-I` e l'idempotenza (§3.16), le `.include`
+a nome nudo e i target CMake con `ctest` (§3.17). Resta il punto 3,
+`--emit-deps`, che non blocca niente. I `.vasm` sono decomposti in **librerie e
+librerie di interfaccia**, i path non stanno più nei sorgenti, e la suite di
+regressione è `ctest`. Era l'**unico lavoro che si potesse fare senza aver deciso
+§7.4**, quindi da qui il fronte torna a essere lo scheduler.
+
+Il testo che segue è la fotografia del problema com'era prima, tenuta perché
+spiega perché l'ordine di lavoro era quello.
 
 Qui i `.vinc` sono header-only *per costruzione* (solo costanti di compile-time,
 non emettono un byte), quindi la `INTERFACE` library li modella esattamente. Il
@@ -1346,16 +1466,20 @@ Stesso file, due grafie. Finché è così, migrare a CMake sposterebbe i path ne
    file sul disco (`realpath`), e la regola «i `.vinc` sono foglia» è caduta. Le
    invarianti danno gli stessi identici numeri. Le 12 `.include` **non sono state
    toccate**: continuano a risolversi come sempre, ed è il punto 2 a cambiarle.
-2. **Riscrivere le 12 `.include` a nome nudo** (`.include "pool.vinc"`) — il
-   passo successivo. Ogni pipeline scritta a mano che assembla quei file deve
-   guadagnare `-I linked/scheduler/include`: le quattro nelle intestazioni dei
-   test, quelle di §4 qui sopra, e i comandi `asm` che l'utente lancia a mano.
-   Provato su `tests/test_pool.vasm` e riportato indietro: è meccanico, ma
-   **finché il punto 4 non c'è, il costo è che ogni invocazione a mano cresce di
-   un flag** — è la ragione per cui i punti 2 e 4 conviene farli vicini.
-3. **`--emit-deps`** nell'assembler.
-4. CMake: `INTERFACE` per i `.vinc`, `vasm_library`/`vasm_program` sopra
-   `asm`/`ld`, archivio `.va` per il kernel, **`ctest` per le invarianti**.
+2. ~~**Riscrivere le 12 `.include` a nome nudo**~~ **FATTO** (§3.17), insieme al
+   punto 4 perché sono accoppiati: il 2 da solo fa crescere di un flag ogni
+   comando a mano, e il 4 senza il 2 sposta i path nel `CMakeLists.txt`.
+3. **`--emit-deps`** nell'assembler — **l'unico rimasto aperto**, e non è
+   urgente: oggi le dipendenze sono *dichiarate* nel `CMakeLists.txt` (`LIBS
+   vinc_pool`), il che basta a far scattare il rebuild e **non** riporta i path
+   nel build, perché si scrivono una volta sola sul target dell'interfaccia. Ciò
+   che manca è la dipendenza *scoperta*: se un `.vasm` include un `.vinc` che
+   `LIBS` non nomina, CMake non lo saprà mai e il rebuild incrementale mentirà.
+   Lo stack di include dell'assembler conosce già tutti i file che apre.
+4. ~~CMake: `INTERFACE` per i `.vinc`, `vasm_library`/`vasm_program` sopra
+   `asm`/`ld`, archivio `.va` per il kernel, **`ctest` per le invarianti**.~~
+   **FATTO** (§3.17). Il `Makefile` non è stato toccato: i due build convivono
+   in cartelle diverse, e ritirarlo è una decisione a parte.
 
 **Le tre cose non ovvie, da non riscoprire a metà migrazione:**
 
