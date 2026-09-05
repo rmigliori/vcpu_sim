@@ -1,6 +1,6 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **4 settembre 2026**
+> Ultimo aggiornamento: **5 settembre 2026**
 > Scopo: fotografia dello stato per riprendere il lavoro a distanza di giorni
 > senza dover ricostruire il contesto.
 
@@ -29,8 +29,8 @@
 > modificando**, e a fine sessione verificare con `git diff --stat` che le
 > modifiche annunciate siano davvero sul disco.
 
-**Stato del codice: tutto scritto, verificato e COMMITTATO** (§2), working tree
-pulito. Quattro pezzi, nell'ordine in cui sono nati:
+**Stato del codice del kernel: tutto scritto, verificato e COMMITTATO** (§2).
+Quattro pezzi, nell'ordine in cui sono nati:
 
 | Pezzo | Dove | §  |
 |---|---|---|
@@ -39,7 +39,10 @@ pulito. Quattro pezzi, nell'ordine in cui sono nati:
 | Invariante dei link nelle code + esito in `r3`, e il puntatore nullo imposto dalla toolchain | `kernel/coda.vasm`, `include/vcpu.h`, `src/` | §3.14 |
 | Pool di buffer, sei classi dimensionate 10/4/0/0/0/0 | `kernel/pool.vasm`, `include/pool.vinc` | §3.15 |
 
-Quattro test mirati in `tests/`, tutti verdi, elencati in §4.
+A cui si aggiunge, dal 05/09/2026 e su un fronte diverso (il build), `-I`
+nell'assembler e `.include` idempotente — §3.16, **da committare**.
+
+Cinque test mirati in `tests/`, tutti verdi, elencati in §4.
 
 **Tutto quello che non dipendeva dallo scheduler è fatto**: mailbox, vettore di
 descrittori, invariante dei link, pool. Quello che resta del gestore dei timeout
@@ -51,9 +54,17 @@ prima** (entrambe in §5):
 
 1. **§7.4**, la decisione ferma: ereditarietà di priorità o priority ceiling per
    i mutex. È quella che sblocca tutto il resto del kernel.
-2. **La ristrutturazione del build in target CMake**, discussa il 04/09/2026 e
-   da fare: è l'unico lavoro che *non* dipende da §7.4. Il primo passo è `-I`
-   nell'assembler, senza il quale CMake sposterebbe i path invece di toglierli.
+2. **La ristrutturazione del build in target CMake**, cominciata il 05/09/2026: è
+   l'unico lavoro che *non* dipende da §7.4. Il **punto 1 è fatto** (§3.16) —
+   `-I` nell'assembler e `.include` idempotente, cioè quelli che rendono vero
+   tutto il resto. Il prossimo è il punto 2, le 12 `.include` a nome nudo.
+
+> **05/09/2026 — punto 1 del build fatto, invarianti immobili.** `-I` e
+> l'idempotenza di `.include` sono in `src/assembler.c` (§3.16), con
+> `tests/test_include.vasm` a coprirli. **Nessun `.vasm` esistente è stato
+> toccato**, di proposito: tutte le invarianti di §4 danno gli stessi identici
+> numeri, confrontati riga per riga con una baseline presa prima di cominciare.
+> La regola provvisoria di §3.13, «i `.vinc` non si annidano», è caduta.
 
 > Le due domande che questo paragrafo poneva prima di §3.11 — se la risposta
 > riusa lo stesso buffer, e dove sta il modulo di protocollo — restano
@@ -115,9 +126,11 @@ tutto da `;` in poi anche nel pass 2).
 > tenuti perché contengono convenzioni ancora valide. Lo stato corrente è quello
 > dei paragrafi in cima alla sezione.
 
-**Working tree PULITO** (§2). Il branch **è stato pushato** il 04/09/2026 —
-`origin/master` è a `20ae071` — e resta locale il solo commit successivo,
-`099454b`. Il push non è arrivato da una sessione di lavoro: vedi §2.
+**Working tree: il lavoro di §3.16 è da committare** (§2) — `src/assembler.c`,
+`src/main.c`, `include/toolchain.h`, i due `.vinc`, i tre documenti e il nuovo
+`tests/test_include.vasm`. Il branch **è stato pushato** il 04/09/2026 —
+`origin/master` è a `20ae071` — e restano locali i commit successivi. Il push non
+è arrivato da una sessione di lavoro: vedi §2.
 
 ---
 
@@ -167,7 +180,12 @@ Branch `master`, pubblicato su `git@github.com:rmigliori/vcpu_sim.git` (remote
 `origin`, HTTPS + credential helper `git-credential-libsecret` configurato,
 push senza prompt).
 
+Il lavoro di §3.16 (`-I` e `.include` idempotente) è **nel working tree, non
+ancora committato**.
+
 ```
+99e82f9 Handoff: il push era dell'utente, e la regola sul push resta     <- LOCALE, non pushato
+3d46446 Handoff: correggi lo stato del push                             <- LOCALE, non pushato
 099454b Handoff: il piano per il build in target CMake                   <- LOCALE, non pushato
 20ae071 Aggiorna i documenti: pool (§10 della proposta) e handoff        <- ultimo pushato
 dbf869c Pool di buffer a blocchi fissi, sei classi per potenze di due
@@ -715,9 +733,10 @@ aperta sulla commutazione volontaria, `receive` che legge `current`, l'`halt` su
 secondo ricevente, `send_s` che promette una preservazione di registri che non
 dà. Tutti dipendono da decisioni non ancora prese.
 
-**Scoperto per strada, non risolto:** `.include` **non è idempotente** — includere
-due volte lo stesso `.vinc` dà `asm error: duplicate constant`. Col modello «un
-`.vinc` per fornitore» diventa un problema appena i file di interfaccia sono due.
+**Scoperto per strada:** `.include` **non è idempotente** — includere due volte
+lo stesso `.vinc` dà `asm error: duplicate constant`. Col modello «un `.vinc` per
+fornitore» diventa un problema appena i file di interfaccia sono due.
+**Risolto il 05/09/2026, §3.16.**
 
 ### 3.11 Il gestore dei timeout, riprogettato da capo (30/08/2026, terza sessione)
 
@@ -1004,6 +1023,72 @@ in §3.13.
 **Nessuna invariante si è mossa**: `pool.vasm` è tutto codice nuovo e non tocca
 nessun file esistente.
 
+### 3.16 `-I` nell'assembler e `.include` idempotente (05/09/2026)
+
+Primo punto della ristrutturazione del build (§5), e l'unico che si potesse fare
+per primo: sono le due cose che rendono vero tutto il resto. **Nessun `.vasm`
+esistente è stato toccato** — è deliberato, ed è quello che rende dimostrabile il
+vincolo non negoziabile: le invarianti danno gli **stessi identici numeri**,
+verificato riga per riga contro una baseline presa prima di cominciare.
+
+**`-I`, cioè la dipendenza scritta per nome invece che per posizione.** Un nome
+si cerca prima nella cartella del file di primo livello (comportamento di sempre,
+intatto: è per questo che le 12 `.include` esistenti non si sono accorte di
+niente) e poi nelle cartelle `-I`, in ordine. Il flag c'è sia su `asm` sia sul
+percorso a file singolo, nelle due forme `-I <dir>` e `-Idir`. Un `-I` di troppo
+è un errore fatale e non un avviso: scartato in silenzio, riemergerebbe più tardi
+come un `cannot open include` incomprensibile.
+
+**L'idempotenza, che era sulla lista degli aperti da §3.10.** Un file già entrato
+nell'unità di assemblaggio non rientra: `.include` diventa un no-op silenzioso,
+come `#pragma once`. L'identità è quella del **file sul disco** — path
+canonicalizzato con `realpath` — non della stringa scritta, e questo è il punto
+che conta: `"pool.vinc"` trovato via `-I` e `"../include/pool.vinc"` trovato
+accanto al sorgente sono lo stesso file e vengono riconosciuti tali. Se
+l'identità fosse la stringa, l'idempotenza non servirebbe proprio nel caso per
+cui esiste, cioè quando due percorsi diversi portano allo stesso `.vinc`.
+
+**Cosa si sblocca, concretamente:** la regola provvisoria presa in §3.13 — «i
+`.vinc` non si annidano» — **è caduta**, ed era il prerequisito segnalato in §5
+(«l'idempotenza smette di essere un accessorio»). Le note in testa a `pool.vinc`
+e `timeout.vinc` sono state riscritte di conseguenza: dicono ora che l'ostacolo
+non c'è più e cosa resta da fare perché `pool.vinc` possa includere `types.vinc`
+davvero — cioè il punto 2, le `.include` a nome nudo, perché **un nome si risolve
+rispetto al file di primo livello, non rispetto a chi include**. Quel dettaglio è
+la cosa da non riscoprire a metà migrazione: un `.vinc` può nominarne un altro
+**solo** per nome nudo, e chi assembla deve passare `-I`.
+
+| File | Cosa |
+|---|---|
+| `src/assembler.c` | `IncState` (stack dei file + insieme dei file già inclusi), `inc_push`/`inc_begin`/`inc_cleanup`, ricerca su `-I`, `asm_add_include_dir` |
+| `src/main.c` | `parse_include_flag`, agganciata a `cmd_asm` e al percorso legacy |
+| `include/toolchain.h` | `asm_add_include_dir`/`asm_clear_include_dirs` |
+| `linked/scheduler/include/pool.vinc`, `timeout.vinc` | le note sulla regola caduta |
+| `docs/manual.md` | §4.2.2 nuova, più la riga di `.include` e quella di `asm` nella tabella dei sottocomandi |
+| `tests/test_include.vasm` | **nuovo**, dà `16 12 16 512 1` |
+
+Due cose emerse scrivendo, e sono migliorie non richieste ma dovute:
+
+- **La logica di `.include` era duplicata** nei due loop di pass 1
+  (`assemble()` e `assemble_object()`), com'è duplicata la struttura del loop
+  stesso — lo stesso punto già annotato in §3.6 per il gancio di `.proc`. Ora la
+  parte di include sta in un posto solo e i due chiamanti la usano in due righe
+  identiche, se no la ricerca su `-I` e il set dei file visti sarebbero nati
+  duplicati e destinati a divergere.
+- **Gli include annidati restavano aperti sui percorsi d'errore.** Difetto
+  preesistente e innocuo in una CLI che esce subito, ma con `inc_cleanup` costava
+  una riga: aggiunto a `fail:` e ai punti di uscita del percorso a file singolo.
+
+**Verifica**, oltre alle invarianti: nome nudo che fallisce senza `-I` e passa
+con, nelle due forme del flag; lo stesso file incluso con **tre grafie diverse**
+(nudo, relativo, relativo con `..` di mezzo) che dà un solo insieme di costanti;
+un `.vinc` che ne include un altro già incluso dal chiamante — il caso che prima
+esplodeva; un file che include sé stesso, che è un no-op e non una ricorsione; e
+il messaggio d'errore di un file mancante, che elenca le cartelle cercate. In
+più, `tests/test_pool.vasm` riscritto **provvisoriamente** a nome nudo, assemblato
+con `-I` e linkato: dà la stessa identica sequenza. È l'anticipo del punto 2, e
+dice che sarà meccanico; il file è stato ripristinato subito.
+
 ---
 
 ## 4. Invarianti di regressione — come verificare che nulla si sia rotto
@@ -1052,6 +1137,23 @@ gira: `machine.vasm` entra solo per `irq_save`/`irq_restore` e si tira dietro il
 resto). Pipeline nell'intestazione di
 [`tests/test_timeout.vasm`](../tests/test_timeout.vasm). Deve stampare
 `3 0 150 1 2 0 0 0 3 0 1`.
+
+Ottava verifica, dal 05/09/2026: il test di `-I` e dell'idempotenza di
+`.include` (§3.16). Non ha bisogno del link e non usa la macchina se non per
+rendere osservabile l'esito. **È l'unica pipeline del repo che richiede `-I`**,
+quindi è anche l'unico sorgente che `asm` senza `-I` rifiuta di proposito:
+
+```bash
+./build/vcpu_sim -I linked/scheduler/include tests/test_include.vasm
+#   16 12 16 512 1
+```
+
+Stato verificato il 05/09/2026 (dopo §3.16): **tutti i numeri identici a prima**
+— (1) 17/40/94, **(2) 98/65 con 8 tick**, (3) 18/40/95, `test_proc` 100/200/300,
+e i cinque test di `tests/` con le sequenze attese. `asm` pulito su tutti i 29
+sorgenti di `standalone/`, `linked/` e `tests/` (passando `-I
+linked/scheduler/include`, innocuo per i 28 che non ne hanno bisogno), e tutti i
+13 programmi di `standalone/` girano ancora da soli.
 
 Stato verificato il 04/09/2026 (dopo §3.15): (1) 17/40/94, **(2) 98/65 con 8
 tick**, (3) 18/40/95, `test_proc` 100/200/300, e i quattro test di `tests/` con
@@ -1122,8 +1224,10 @@ distribuisce. Resta aperto:
    — per §8.4 non è `kernel/`: quando si scriverà, o il file si sposta o si
    divide.
 
-Poi, quando i file di interfaccia diventano due, va resa idempotente `.include`
-(§3.10).
+L'idempotenza di `.include`, che questo fronte aveva lasciato aperta (§3.10)
+perché col modello «un `.vinc` per fornitore» diventa un problema appena i file
+di interfaccia sono due, **è stata fatta il 05/09/2026** (§3.16) — dall'altro
+fronte, perché lì era un prerequisito.
 
 ### Riscrittura dello scheduler a priorità statiche (FERMO SU §7.4)
 
@@ -1215,19 +1319,19 @@ statiche.
 
 `hal/machine.vasm` e `kernel/coda.vasm` sopravvivono intatti al ridisegno.
 
-### Ristrutturazione del build in target CMake (DISCUSSO IL 04/09/2026, DA FARE)
+### Ristrutturazione del build in target CMake (IN CORSO — punto 1 FATTO il 05/09/2026)
 
-Discussione di fine sessione, **nessuna riga scritta**. L'utente vuole
-decomporre i **sorgenti `.vasm`** in target CMake — librerie e **librerie di
-interfaccia** — per togliere i path dai sorgenti. È l'**unico lavoro che si può
-fare senza aver deciso §7.4**.
+**RIPRENDI DA QUI SE SI CONTINUA SU QUESTO FRONTE.** L'utente vuole decomporre i
+**sorgenti `.vasm`** in target CMake — librerie e **librerie di interfaccia** —
+per togliere i path dai sorgenti. È l'**unico lavoro che si può fare senza aver
+deciso §7.4**.
 
 Qui i `.vinc` sono header-only *per costruzione* (solo costanti di compile-time,
-non emettono un byte), quindi la `INTERFACE` library li modella esattamente. Ma
-**il blocco non è in CMake**: una `INTERFACE` library può propagare una cartella
-di include solo se l'assembler è disposto a riceverla, e oggi **non c'è `-I`**.
-`.include` risolve rispetto alla cartella del file di *primo livello*, quindi il
-nome di una dipendenza dipende da chi la include:
+non emettono un byte), quindi la `INTERFACE` library li modella esattamente. Il
+blocco non era in CMake ma nell'assembler: una `INTERFACE` library può propagare
+una cartella di include solo se l'assembler è disposto a riceverla, e `-I` non
+c'era. `.include` risolve rispetto alla cartella del file di *primo livello*,
+quindi il nome di una dipendenza dipendeva da chi la include:
 
 ```
 linked/scheduler/kernel/pool.vasm    .include "../include/pool.vinc"
@@ -1239,23 +1343,35 @@ Stesso file, due grafie. Finché è così, migrare a CMake sposterebbe i path ne
 
 **Ordine di lavoro:**
 
-1. **`-I` nell'assembler** e **`.include` idempotente**. Stesso file, entrambi
-   già sulla lista degli aperti (§8.7 della proposta per l'idempotenza).
-2. Riscrivere le 12 `.include` a nome nudo (`.include "pool.vinc"`).
+1. ~~**`-I` nell'assembler** e **`.include` idempotente**.~~ **FATTO** (§3.16):
+   il flag c'è su `asm` e sul percorso legacy, l'idempotenza è per identità del
+   file sul disco (`realpath`), e la regola «i `.vinc` sono foglia» è caduta. Le
+   invarianti danno gli stessi identici numeri. Le 12 `.include` **non sono state
+   toccate**: continuano a risolversi come sempre, ed è il punto 2 a cambiarle.
+2. **Riscrivere le 12 `.include` a nome nudo** (`.include "pool.vinc"`) — il
+   passo successivo. Ogni pipeline scritta a mano che assembla quei file deve
+   guadagnare `-I linked/scheduler/include`: le quattro nelle intestazioni dei
+   test, quelle di §4 qui sopra, e i comandi `asm` che l'utente lancia a mano.
+   Provato su `tests/test_pool.vasm` e riportato indietro: è meccanico, ma
+   **finché il punto 4 non c'è, il costo è che ogni invocazione a mano cresce di
+   un flag** — è la ragione per cui i punti 2 e 4 conviene farli vicini.
 3. **`--emit-deps`** nell'assembler.
 4. CMake: `INTERFACE` per i `.vinc`, `vasm_library`/`vasm_program` sopra
    `asm`/`ld`, archivio `.va` per il kernel, **`ctest` per le invarianti**.
 
 **Le tre cose non ovvie, da non riscoprire a metà migrazione:**
 
-- **L'idempotenza di `.include` smette di essere un accessorio e diventa un
-  prerequisito.** La modellazione giusta è `vinc_pool` che dipende da
-  `vinc_types` (`BLOCCO` *è* un nodo di lista), ma oggi non si può scrivere: per
-  questo `pool.vinc` porta in testa «NON include types.vinc, i `.vinc` sono
-  foglia» e `pool.vasm` se li include tutti e due a mano. Con le `INTERFACE`
-  library quella disciplina **non è più applicabile**, perché la propagazione è
-  transitiva per definizione e nessuno può impedire che lo stesso `.vinc` arrivi
-  due volte.
+- ~~**L'idempotenza di `.include` smette di essere un accessorio e diventa un
+  prerequisito.**~~ **Risolta al punto 1.** Era questa: la modellazione giusta è
+  `vinc_pool` che dipende da `vinc_types` (`BLOCCO` *è* un nodo di lista), ma non
+  si poteva scrivere, e con le `INTERFACE` library la disciplina «i `.vinc` sono
+  foglia» non sarebbe stata più applicabile, perché la propagazione è transitiva
+  per definizione e nessuno può impedire che lo stesso `.vinc` arrivi due volte.
+  Ora arriva due volte e non succede niente. **Quello che resta** è che un nome
+  si risolve rispetto al file di **primo livello**, non rispetto a chi include:
+  quindi `pool.vinc` potrà includere `types.vinc` solo per **nome nudo**, e solo
+  una volta che chi lo assembla passa `-I`. È il punto 2, ed è il motivo per cui
+  i due `.vinc` sono ancora foglia nei fatti.
 - **CMake non traccia le dipendenze di un linguaggio custom.** Non saprà mai da
   solo che `test_pool.vasm` dipende da `pool.vinc`. O si elencano nei `DEPENDS`
   — e i path tornano, spostati nel build — oppure serve il depfile del punto 3.
@@ -1326,9 +1442,9 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 **Per il build in target CMake (non dipende da §7.4) — CONSIGLIATA:**
 ```
 Leggi docs/stato-lavori.md, la sezione di §5 sulla ristrutturazione del
-build. Vogliamo decomporre i sorgenti .vasm in target CMake, librerie e
-librerie di interfaccia. Comincia dal punto 1: -I nell'assembler e
-.include idempotente, che sono quelli che rendono vero tutto il resto.
+build. Il punto 1 e' fatto (§3.16): -I nell'assembler e .include
+idempotente. Continua dal punto 2: riscrivere le 12 .include a nome nudo
+e aggiungere -I a tutte le pipeline scritte a mano.
 Alla fine le invarianti di §4 devono dare gli stessi identici numeri.
 ```
 

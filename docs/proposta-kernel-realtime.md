@@ -718,10 +718,13 @@ specifiche di richiesta e di risposta.
   della mailbox deciderla.
 - **`send_s` promette più di quanto dia**: `.proc` salva solo r5, l'unico
   registro scritto nel corpo del wrapper, mentre la `send` sotto sporca r3 e r4.
-- **`.include` non è idempotente**: includere due volte lo stesso `.vinc` è un
-  errore secco (`duplicate constant`), e col modello «un `.vinc` per fornitore» i
-  file si moltiplicano. Renderla idempotente è una modifica piccola in
-  `assembler.c`.
+- ~~**`.include` non è idempotente**~~ — **CHIUSO il 05/09/2026.** Era: includere
+  due volte lo stesso `.vinc` è un errore secco (`duplicate constant`), e col
+  modello «un `.vinc` per fornitore» i file si moltiplicano. Ora una seconda
+  inclusione dello stesso file è un no-op, l'identità è il file sul disco e non
+  la stringa scritta, e c'è `-I` per nominare un `.vinc` senza il suo path.
+  Dettagli in §3.16 di [`docs/stato-lavori.md`](stato-lavori.md), uso in §4.2.2
+  del manuale.
 
 ---
 

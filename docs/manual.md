@@ -270,7 +270,7 @@ ispezionare con `cat`. I dettagli del formato sono in
 
 | Comando | Effetto |
 |---|---|
-| `vcpu_sim asm <in.vasm> -o <out.vo>` | assembla un modulo in un **oggetto rilocabile** |
+| `vcpu_sim asm <in.vasm> -o <out.vo> [-I <dir>]...` | assembla un modulo in un **oggetto rilocabile**; `-I` aggiunge una cartella alla ricerca di `.include` (§4.2.2) |
 | `vcpu_sim ar <lib.va> <o1.vo> ...` | raccoglie oggetti in una **libreria** |
 | `vcpu_sim ld <a.vo\|lib.va> ... [-e <sym>] -o <out.vx>` | **linka** oggetti e librerie in un eseguibile |
 | `vcpu_sim run <prog.vx> [--trace\|--debug]` | **carica ed esegue** un eseguibile |
@@ -495,7 +495,7 @@ loop:   setvl r4, r3      ; 'loop' = indice di questa istruzione
 | `.struct` | `.struct NOME` … `.ends` | apre/chiude un blocco struttura: gli offset dei campi diventano costanti `NOME.campo` |
 | `.field` | `.field campo [dim]` | dentro `.struct`: definisce `NOME.campo` = offset corrente e avanza di `dim` byte (default 4) |
 | `.res` | `etichetta: .res TIPO` | nel segmento dati: riserva `TIPO.size` byte (come una `.space` *type-aware*); l'etichetta ne è l'indirizzo |
-| `.include` | `.include "file"` | inserisce testualmente `file` a quel punto; il path si risolve rispetto alla **cartella del file di primo livello** (o assoluto). Utile per condividere `.struct`/`.equ` fra più sorgenti |
+| `.include` | `.include "file"` | inserisce testualmente `file` a quel punto, **una volta sola** (§4.2.2); il nome si cerca nella **cartella del file di primo livello** e poi nelle cartelle passate con `-I` (o si usa così com'è, se assoluto). Utile per condividere `.struct`/`.equ` fra più sorgenti |
 | `.proc` / `.endproc` | `.proc NOME` … `.endproc NOME` | prologo/epilogo automatico per procedure non-foglia a corpo lineare (§4.2.1) |
 | `.global` | `.global sym ...` | **esporta** un simbolo definito qui (compilazione separata, §2.5) |
 | `.extern` | `.extern sym ...` | **importa** un simbolo definito in un altro modulo (§2.5) |
@@ -545,8 +545,8 @@ Le costanti sono locali al file; per condividerle basta un **header** incluso co
 `.include`, che dà una sola sorgente di verità: p.es. `linked/scheduler/include/types.vinc` con
 `.struct TCB` e gli stati, incluso sia dal kernel sia dall'app
 (`.include "../include/types.vinc"`, dal kernel; `.include "include/types.vinc"` dall'app, che sta
-allo stesso livello di `include/`). Il path è relativo alla cartella del file di
-primo livello; i `.include` annidati sono ammessi (profondità limitata).
+allo stesso livello di `include/`). Come si risolve un nome, e perché una seconda
+inclusione dello stesso file non è un errore, sta in §4.2.2.
 
 Le costanti sono **locali al file** (nessuna rilocazione) e vanno definite prima
 dell'uso in una direttiva `.equ`/`.field`; nel codice invece sono usabili anche
@@ -653,6 +653,48 @@ solo esit" — e nel kernel/HAL sono la maggioranza:
 
 In questi casi si scrive a mano, esattamente come prima che la direttiva
 esistesse.
+
+#### 4.2.2 `.include`: dove si cerca un file, e perché includerlo due volte è lecito
+
+Il nome che segue `.include` viene cercato in quest'ordine:
+
+1. la cartella del file di **primo livello** — non quella del file che scrive la
+   `.include`, il che conta appena un `.vinc` ne nomina un altro;
+2. ogni cartella passata sulla riga di comando con **`-I`**, nell'ordine in cui è
+   stata data.
+
+Un nome assoluto (che comincia con `/`) è usato così com'è. Il flag `-I` sta sia
+sul percorso a file singolo sia su `asm`, nelle due forme abituali:
+
+```bash
+./build/vcpu_sim -I linked/scheduler/include tests/test_include.vasm
+./build/vcpu_sim asm -Ilinked/scheduler/include tests/test_pool.vasm -o build/test_pool.vo
+```
+
+Grazie a `-I` la **dipendenza si scrive per nome** (`.include "pool.vinc"`)
+invece che per posizione (`.include "../linked/scheduler/include/pool.vinc"`), e
+lo stesso file di interfaccia ha una sola grafia in tutto il progetto invece di
+una per ogni cartella da cui viene incluso.
+
+**`.include` è idempotente.** Un file già entrato in questa unità di
+assemblaggio non viene incluso una seconda volta: la direttiva è un no-op
+silenzioso, esattamente come `#pragma once` in C. L'identità è quella del file
+sul disco (path canonicalizzato), non della stringa scritta: `"pool.vinc"` e
+`"../include/pool.vinc"` sono lo stesso file e vengono riconosciuti tali.
+
+Non è un accessorio. I `.vinc` contengono **solo** costanti di compile-time,
+quindi una seconda inclusione fallirebbe con `duplicate constant`; è per questo
+che, finché l'idempotenza non c'era, valeva la regola «i `.vinc` sono foglia» —
+nessuno poteva includerne un altro, perché sarebbe esploso appena un chiamante
+avesse incluso entrambi. Con l'idempotenza un file di interfaccia può dichiarare
+le proprie dipendenze come farebbe un header C, e un sorgente può includere due
+fornitori senza sapere cosa hanno in comune.
+
+Restano un limite di profondità (8 file aperti insieme) e uno sul numero di file
+distinti per unità di assemblaggio. Un file che include sé stesso è un no-op, non
+una ricorsione.
+
+`tests/test_include.vasm` è il test mirato di entrambe le proprietà.
 
 ### 4.3 Manuale delle istruzioni
 
