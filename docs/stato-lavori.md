@@ -49,13 +49,21 @@ descrittori, invariante dei link, pool. Quello che resta del gestore dei timeout
 — la scansione delle scadenze e il ciclo del task — vuole la commutazione
 volontaria (§8.7) e lo scheduler a priorità (§7.4).
 
-**Restano quindi due strade, ed è una scelta dell'utente quale prendere per
-prima** (entrambe in §5):
+**RIPRENDI DA §12 DELLA PROPOSTA**, scritta il 05/09/2026 e non implementata: la
+revisione del confine HAL/ISR/kernel (§3.18). Non dipende da §7.4, e §12.6 dà
+l'ordine dei quattro passi — il primo, `mfepsw`/`mtepsw` nell'ISA, è isolato e
+deve lasciare le invarianti immobili.
+
+Le altre due strade, entrambe in §5:
 
 1. **§7.4**, la decisione ferma: ereditarietà di priorità o priority ceiling per
    i mutex. È quella che sblocca tutto il resto del kernel.
 2. ~~La ristrutturazione del build in target CMake~~ — **FATTA il 05/09/2026**
    salvo il punto 3, che non blocca niente. Vedi il riquadro qui sotto.
+3. **La revisione del confine HAL/ISR/kernel — §12 della proposta**, scritta il
+   05/09/2026 e **non implementata**: è da qui che riparte il codice. Non
+   dipende da §7.4, e il suo primo passo (`mfepsw`/`mtepsw` nell'ISA) è isolato
+   e a invarianti immobili. L'ordine dei quattro passi è in §12.6.
 
 > ### 05/09/2026 — il build è in target CMake, invarianti immobili
 >
@@ -374,11 +382,25 @@ successive, a un disegno con **tre confini** invece di due:
    lungo): l'utente ha ricordato una vecchia primitiva `.interrupt` (RTOS anni
    '80/'90) che faceva salvataggio contesto *e* salto condizionato allo
    scheduler **dentro l'HAL** — il che avrebbe richiesto all'HAL di leggere
-   `g_resched`, una variabile del kernel. Confrontate le due alternative
-   simmetria vs. fedeltà storica, l'utente ha scelto la **simmetria**: l'HAL
+   `g_resched`, una variabile del kernel. Ne è uscito il disegno in cui l'HAL
    chiama un **unico simbolo kernel fisso** (`sched_dispatch`) e non sa/non
    legge nient'altro; tutta la logica (ISR, flag, politica, dispatch) resta nel
    kernel.
+
+   > ### ⚠ Superato il 05/09/2026 — e l'attribuzione qui sopra era sbagliata
+   >
+   > Questo punto diceva che «confrontate le due alternative simmetria vs.
+   > fedeltà storica, **l'utente ha scelto la simmetria**». L'utente ha
+   > smentito: quel disegno non è suo, ed è una verbalizzazione errata di questa
+   > sessione — «non è assolutamente la mia idea di scheduler real time». La
+   > frase è stata tolta perché finché restava scritta ogni sessione futura
+   > sarebbe ripartita da una decisione che nessuno aveva preso.
+   >
+   > Il confine giusto è in **§12 della proposta**, scritta il 05/09/2026: le ISR
+   > sono applicative e sono *clienti* di HAL e kernel, quindi il vettore
+   > consegna il controllo all'ISR e **l'HAL non nomina il kernel affatto**.
+   > `sched_dispatch` non sopravvive. Gli altri due confini di questa sezione
+   > (registri, ISR applicativa) restano validi.
 
 **Il problema tecnico trovato durante la verifica** (non ipotetico, bloccante):
 `call` è sempre `jal r15, target` nell'assembler di questo progetto (link
@@ -1190,6 +1212,59 @@ spostando di proposito un atteso da `98 65` a `98 66`, il test fallisce.
 la demo HAL+kernel, numeri fermi a §3.5 — l'invariante è `98/65` da §3.14. Il
 manuale non era stato riallineato dopo §3.10 e §3.14.
 
+### 3.18 Il confine HAL/ISR/kernel, e una lacuna nell'ISA (05/09/2026)
+
+Sessione di sola progettazione, **nessuna riga di codice scritta**. Il contenuto
+sta in [§12 della proposta](proposta-kernel-realtime.md) e **non va ripetuto
+qui**: qui il percorso, perché è quello che spiega perché §3.5 va riletta con
+sospetto.
+
+**Partita da una correzione.** Discutendo la decomposizione in librerie
+continuavo a trovare un ciclo `hal → kernel → hal` e a trattarlo come una
+fatalità del percorso di trap, citando §3.5 e attribuendo all'utente la scelta
+del «simbolo kernel fisso». L'utente ha smentito: quel disegno non è suo, e la
+frase in §3.5 era una verbalizzazione errata di quella sessione. **La frase è
+stata tolta** — finché restava scritta, ogni sessione futura sarebbe ripartita da
+una decisione che nessuno aveva preso. È lo stesso tipo di danno di §3.11, dove
+una §9 persa fece riproporre un modello già bocciato.
+
+**Il chiarimento che ha sciolto tutto** è dell'utente: «le ISR sono applicative —
+una ISR usa libhal e libkernel». Il ciclo non è una fatalità: è il sintomo di un
+kernel che si è messo **in mezzo** fra il vettore e l'ISR. Oggi `_trap_entry`
+chiama `sched_dispatch`, e il kernel possiede il puntatore all'ISR
+(`g_handler`/`irq_install` stanno in `scheduler.vasm`). Spostando quell'indirezione
+nell'HAL — dove è coerente, installare un vettore è hardware — l'HAL non nomina
+più nessuno e il grafo diventa un DAG, senza costi nuovi: il `jalr` su puntatore
+c'è già, si sposta di un livello.
+
+**Il contributo tecnico della sessione, e non è di disegno: manca un'istruzione.**
+L'utente ha respinto come baco lo scheduler che gira a interrupt abilitati, e ha
+indicato la soluzione — abilitare `IE` nella copia in registro che va nel frame,
+non nella PSW attiva. Verificando sul simulatore è emerso che non è scrivibile:
+`reti` fa `pc = epc; psw = epsw`, ed `epsw` non ha né lettura né scrittura, a
+differenza di `epc` che ha `mfepc`/`mtepc`. Quindi **ogni `reti` riporta il
+regime del task**, e i ritorni verso il kernel arriverebbero con gli interrupt
+aperti. Si aggiungono `mfepsw`/`mtepsw` (§12.5), e il frame passa da 60 a 64 byte
+perché la parola di stato ci entra.
+
+**La prova che è una lacuna e non un'aggiunta**: `docs/manual.md` §4.3
+**descriveva già** un cambio di contesto che «riscrive la coppia `(epc, epsw)`
+con `mtepc`/`mtpsw`» — scorretto, perché `mtpsw` scrive la PSW attiva e `reti` la
+sovrascrive subito dopo. La possibilità era data per scontata da chi scrisse il
+manuale senza che l'istruzione esistesse. Corretto, con la spiegazione del
+perché.
+
+**Chiuso anche un punto vecchio:** `dispatcher` prende il TCB **in input**. §6
+della proposta lo diceva già («salto, TCB in input»); il codice no — `scheduler`
+ha il TCB in `r2` dopo `dequeue_testa`, lo scrive in `current`, e `dispatcher` lo
+rilegge da lì due istruzioni dopo. Con l'input esplicito il commit di `current`
+si sposta dalla politica al meccanismo, che è il difetto annotato in §5.
+
+**Non deciso, e resta il nodo di sempre:** come un task entra nel kernel *di sua
+volontà*. I tre ritorni riguardano le ISR, dove `epc`/`epsw` li ha scritti
+l'hardware; per un task che si blocca su `receive` non c'è nessuna trap in corso
+e nell'ISA non c'è trap software. È §8.7, ed è perché `task_block` è uno stub.
+
 ---
 
 ## 4. Invarianti di regressione — come verificare che nulla si sia rotto
@@ -1573,13 +1648,21 @@ Aprire Claude Code nella cartella del progetto e scrivere una di queste:
 Leggi docs/stato-lavori.md e riprendi da lì.
 ```
 
-**Per il build in target CMake (non dipende da §7.4) — CONSIGLIATA:**
+**Per il confine HAL/ISR/kernel (non dipende da §7.4) — CONSIGLIATA:**
+```
+Leggi docs/stato-lavori.md §3.18 e docs/proposta-kernel-realtime.md §12.
+Il disegno e' scritto e non implementato. Comincia dal passo 1 di §12.6:
+mfepsw/mtepsw nell'ISA. E' isolato, e le invarianti di §4 non devono
+spostarsi di un ciclo.
+```
+
+**Per il build in target CMake — quasi finito:**
 ```
 Leggi docs/stato-lavori.md, la sezione di §5 sulla ristrutturazione del
-build. Il punto 1 e' fatto (§3.16): -I nell'assembler e .include
-idempotente. Continua dal punto 2: riscrivere le 12 .include a nome nudo
-e aggiungere -I a tutte le pipeline scritte a mano.
-Alla fine le invarianti di §4 devono dare gli stessi identici numeri.
+build. Punti 1, 2 e 4 fatti (§3.16, §3.17): -I, .include idempotente,
+nomi nudi e target CMake con ctest. Resta il punto 3, --emit-deps
+nell'assembler, per avere le dipendenze scoperte invece che dichiarate.
+Alla fine `ctest --test-dir out` deve dare 22/22.
 ```
 
 **Per lo scheduler (la decisione che sblocca il kernel):**

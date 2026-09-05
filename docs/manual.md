@@ -838,9 +838,21 @@ raggiunge la scadenza, prima di eseguire l'istruzione successiva la macchina sal
 gestore gira quindi con le interruzioni disabilitate (niente annidamento con una
 sola coppia di registri ombra). `reti` ripristina in blocco `pc` e `psw`: è il
 modello "salva-stato / ripristina-stato" (analogo a `mepc`/`mret` di RISC-V o
-all'*exchange package* del Cray). Per un **cambio di contesto** il gestore riscrive
-la coppia `(epc, epsw)` con `mtepc`/`mtpsw` prima di `reti`, facendo ripartire un
-task diverso. Nel debugger `p psw` e `p epc` mostrano questi registri.
+all'*exchange package* del Cray). Per un **cambio di contesto** il gestore
+riscrive `epc` con `mtepc` prima di `reti`, facendo ripartire un task diverso.
+Nel debugger `p psw` e `p epc` mostrano questi registri.
+
+> **`epsw` non è scrivibile, e questo limita il cambio di contesto.** Fino al
+> 05/09/2026 questo paragrafo diceva che il gestore riscrive «la coppia
+> `(epc, epsw)` con `mtepc`/`mtpsw`»: è falso, perché `mtpsw` scrive la PSW
+> **attiva** e `reti` la sovrascrive un'istruzione dopo con `epsw`. Non esiste
+> nessuna istruzione che scriva `epsw`.
+>
+> Conseguenza pratica: **ogni `reti` ripristina il regime di interruzione del
+> task**, `IE` compreso. Va bene finché si torna sempre a un task; non va bene se
+> il ritorno deve puntare a codice di kernel, che si troverebbe a girare con gli
+> interrupt aperti. È la ragione per cui §12 della
+> [proposta](proposta-kernel-realtime.md) aggiunge `mfepsw`/`mtepsw`.
 
 #### Vettoriali
 

@@ -1,9 +1,15 @@
 # Proposta: kernel realtime a priorità statiche con PCB
 
 > Discussione del **29 agosto 2026**, proseguita il **30 agosto** in tre
-> sessioni successive.
+> sessioni successive e il **5 settembre** (§12).
 > Sostituirà il disegno a coda singola di
 > [`linked/scheduler/kernel/scheduler.vasm`](../linked/scheduler/kernel/scheduler.vasm).
+>
+> **§12 è la sezione da leggere per prima se si riprende da qui**: rivede il
+> confine HAL/ISR/kernel (l'HAL non nomina più il kernel), dà al dispatcher il
+> TCB in input, definisce i tre modi di ritornare da un'ISR e aggiunge due
+> istruzioni all'ISA. Rende superata la parte sull'orchestrazione dell'IRQ di
+> §3.5 di [`stato-lavori.md`](stato-lavori.md). Nulla di §12 è implementato.
 >
 > **Stato: quattro decisioni prese (§7.1–7.3, §7.5), una aperta (§7.4).**
 > Lo scheduler è ancora tutto da scrivere e non si scrive prima di §7.4. La
@@ -1158,3 +1164,246 @@ taglia trova `POOL_VUOTO` invece di un caso speciale.
 | gestore dei timeout | **nuovo** (§9). Il **vettore di descrittori** con `timeout_arm`/`timeout_cancel` è **scritto e testato** in [`kernel/timeout.vasm`](../linked/scheduler/kernel/timeout.vasm), interfaccia in [`include/timeout.vinc`](../linked/scheduler/include/timeout.vinc): non legge nessun payload, quindi per §8.4 sta legittimamente in `kernel/`. La **scansione delle scadenze e la consegna** non sono scritte — vogliono il pool (§9.5.1), la commutazione volontaria (§8.7) e lo scheduler a priorità (§7.4) — e sono la parte che formatta il payload, quindi per §8.4 **non è kernel**: quando arriva, o il file si sposta o si divide |
 | pool di buffer | **nuovo, scritto e testato** (§10): [`kernel/pool.vasm`](../linked/scheduler/kernel/pool.vasm) + [`include/pool.vinc`](../linked/scheduler/include/pool.vinc). Sei classi per potenze di due sull'area dati (16..512), free-list a taglia fissa cioè una `TESTA` con i blocchi come nodi — `buf_alloc` è `dequeue_testa_s`, `buf_free` è `enqueue_coda_s`. Non legge ciò che distribuisce, quindi sta in `kernel/` |
 | `MESSAGGIO.dove`, lista delle scadenze | **mai esistiti fuori dalla proposta**: caduti con il modello precedente (§9.6) |
+
+---
+
+## 12. Il confine HAL / ISR / kernel, e i tre ritorni da un'ISR
+
+> **Discussione del 5 settembre 2026.** Nasce da una constatazione dell'utente:
+> «le ISR sono applicative — una ISR usa libhal (gestione interruzioni e stack) e
+> libkernel (eventuale send di messaggio o post di semaforo)». Da lì il confine
+> HAL/kernel è stato rivisto, ed è emersa una lacuna nell'ISA.
+>
+> **Questa sezione rende superata la parte di orchestrazione dell'IRQ di §3.5 di
+> [`docs/stato-lavori.md`](stato-lavori.md)**, dove l'HAL chiama un unico simbolo
+> kernel fisso. Restano validi gli altri due confini di §3.5 (registri e ISR
+> applicativa), e resta valido tutto §6 di questa proposta: la sequenza di
+> *avvio* descriveva già `dispatcher` con il TCB in input.
+>
+> **Niente di questa sezione è implementato.** L'ordine di lavoro è in §12.6.
+
+### 12.1 Il difetto: il kernel sta in mezzo fra il vettore e l'ISR
+
+Nel codice attuale il percorso di trap è:
+
+```
+_trap_entry (HAL)  --call sched_dispatch-->  kernel  --jalr g_handler-->  ISR
+```
+
+L'HAL nomina il kernel (`.extern sched_dispatch` in
+[`hal/machine.vasm`](../linked/scheduler/hal/machine.vasm)), e il kernel chiama
+l'ISR applicativa attraverso un puntatore che possiede lui (`g_handler` e
+`irq_install` stanno in `kernel/scheduler.vasm`). L'ISR non è un cliente che
+chiama HAL e kernel: è **chiamata dal** kernel, che si è messo in mezzo.
+
+Due conseguenze, e la seconda è quella che conta:
+
+- `machine.vo` **non si chiude da solo** — `ld` di quel solo oggetto dà
+  `undefined reference to 'sched_dispatch'`. La libreria che dovrebbe rendere
+  tutto il resto indipendente dall'hardware dipende dal kernel.
+- il grafo delle librerie ha un **ciclo** `hal → kernel → hal`, che non è una
+  fatalità del percorso asincrono ma il sintomo di questo disegno.
+
+### 12.2 Il confine corretto: il vettore consegna all'ISR
+
+```
+_trap_entry (HAL)  --jalr handler registrato-->  ISR applicativa  -->  HAL, kernel
+```
+
+Il meccanismo necessario **esiste già**: l'indirezione `g_handler` +
+`irq_install`. Sta solo dal lato sbagliato del confine. Spostandola nell'HAL —
+dove è coerente, perché installare un vettore è hardware — si ottiene che:
+
+- **l'HAL non nomina nessuno**: zero `.extern`, e diventa la libreria
+  indipendente che deve essere;
+- l'ISR applicativa si registra con `irq_install` e chiama il kernel per quello
+  che le serve (`send`, `post`, richiesta di scheduling) e l'HAL per interruzioni
+  e stack — è il cliente che chiama entrambe;
+- il grafo diventa un **DAG**, senza indirezioni aggiunte e senza costi nuovi: il
+  `jalr` su puntatore c'è già oggi, si sposta di un livello.
+
+`sched_dispatch` non sopravvive a questo disegno: era l'orchestratore che
+invocava sempre l'ISR e chiamava sempre il dispatcher. Nel modello nuovo è l'ISR
+a decidere come si esce, e i modi sono tre (§12.4).
+
+### 12.3 Scheduler e dispatcher sono due algoritmi, e il dispatcher ha un input
+
+Sono due cose distinte e vanno tenute distinte:
+
+- lo **scheduler** applica la politica e produce un TCB, prelevandolo da una
+  ready queue;
+- il **dispatcher** riceve **in input** il TCB di un task e lo mette in
+  esecuzione.
+
+§6 lo diceva già («salto, TCB in input»); il codice no. Oggi `scheduler` ha il
+TCB scelto **già in un registro** dopo `dequeue_testa`, lo scrive in `current`, e
+due istruzioni dopo `dispatcher` fa `li r2, current` / `lw r2, 0(r2)` per
+rileggerlo. Il TCB passa fra i due algoritmi attraverso una variabile globale
+quando era già in un registro: il confine non è un'interfaccia, è una convenzione.
+
+`dispatcher(TCB)` con l'input esplicito risolve tre cose insieme:
+
+1. rende il confine un'API vera;
+2. sposta il **commit di `current`** dalla politica al meccanismo — che è
+   esattamente il difetto annotato in §5 di [`stato-lavori.md`](stato-lavori.md),
+   dove si dice che ciò che si chiama politica contiene in realtà transizioni di
+   stato, manipolazione di code e commit di `current`. Coerente con §7.1;
+3. rende esprimibile il terzo dei ritorni qui sotto, che senza input non si può
+   nemmeno scrivere.
+
+### 12.4 I tre modi di ritornare da un'ISR
+
+In un RTOS un'ISR può uscire in tre modi, e sono tre modi di preparare **la
+stessa `reti`** — l'ISR finisce sempre allo stesso modo e non sa dove va: lo
+decidono `epc` ed `epsw`.
+
+| # | Dove si va | Regime | Quando |
+|---|---|---|---|
+| 1 | all'istruzione interrotta | `IE = 1` (quello del task) | l'ISR non ha cambiato niente di rilevante |
+| 2 | allo **scheduler** | `IE = 0` | qualcosa è cambiato e la scelta va rifatta |
+| 3 | al **dispatcher** | `IE = 0` | la scelta è già stata fatta: c'è solo da mettere in esecuzione |
+
+Il caso 1 si ottiene non alterando il frame. I casi 2 e 3 riscrivono l'indirizzo
+di ritorno, e **devono anche riscrivere il regime**: senza, si arriva nel kernel
+con gli interrupt aperti — vedi §12.5, che è il punto tecnico di questa sezione.
+
+**Precondizione del caso 3, non negoziabile:** l'ISR **non sceglie** quale task
+deve girare. Il TCB passato al dispatcher dev'essere quello che lo scheduler
+avrebbe scelto — tipicamente un task appena risvegliato di priorità maggiore di
+`current`, condizione calcolabile con le priorità statiche e i PCB per livello
+(§4). Senza questa precondizione scritta nell'interfaccia, il caso 3 diventa la
+via comoda per bypassare lo scheduler, e un RTOS in cui le ISR scelgono chi gira
+non ha una politica: ne ha tante quante sono le ISR. Il controllo si fa come per
+il ceiling in `mutex_lock` (§7.4): un confronto che rende **rumoroso** un errore
+che altrimenti passerebbe in silenzio.
+
+### 12.5 La lacuna nell'ISA: manca `mtepsw`
+
+Alla trap l'hardware fa quattro cose
+([`src/vcpu.c`](../src/vcpu.c)): `epc = pc`, `epsw = psw`, `psw &= ~IE`,
+`pc = handler`. E `reti` fa **due** assegnamenti, non uno:
+`pc = epc; psw = epsw`. Ripristina cioè anche il **regime di interruzione**.
+
+Lo stato dei CSR, oggi:
+
+| CSR | Lettura | Scrittura |
+|---|---|---|
+| `psw` | `mfpsw` | `mtpsw` |
+| `epc` | `mfepc` | **`mtepc`** ← rende possibile «indirizzo di ritorno = scheduler» |
+| `epsw` | — | — |
+
+`epsw` non è raggiungibile dal software in nessun modo: la scrive l'hardware e la
+legge `reti`. Quindi **qualunque `reti` riporta la PSW del task**, `IE` compreso,
+e i casi 2 e 3 arriverebbero nel kernel a interrupt abilitati. Non è aggirabile
+con `cli`, che agisce sulla `psw` attiva: `reti` la sovrascrive un'istruzione
+dopo. L'asimmetria con `epc` è una lacuna, non una scelta — tanto che
+[`docs/manual.md`](manual.md) §4.3 **descrive già** un cambio di contesto che
+«riscrive la coppia `(epc, epsw)` con `mtepc`/`mtpsw`», che è scorretto perché
+`mtpsw` non tocca `epsw`: la possibilità era data per scontata senza che
+l'istruzione esistesse.
+
+**Si aggiungono due istruzioni**, simmetriche a `mfepc`/`mtepc`:
+
+| Istruzione | Formato | Semantica | Cicli |
+|---|---|---|---|
+| `mfepsw rd` | `a = rd` | `r[rd] = epsw` | 1 |
+| `mtepsw rs` | `b = rs` | `epsw = r[rs]` | 1 |
+
+Servono **entrambe**. `mfepsw` è quella che salva nel frame la parola di stato
+del task interrotto: alla trap `epsw` contiene già la PSW del task con `IE = 1`,
+e leggerla è più solido che ricostruirla forzando un bit, perché il giorno che la
+PSW avrà altri bit (modo, livello di interruzione) il salvataggio continua a
+funzionare senza sapere quali sono. `mtepsw` decide il regime del ritorno.
+
+Nessuna struttura si muove e il formato istruzione non cambia: usano i campi
+`a`/`b` esistenti. Si toccano l'enum in [`include/vcpu.h`](../include/vcpu.h),
+due `case` nell'esecuzione e due nel disassemblatore in
+[`src/vcpu.c`](../src/vcpu.c), due rami in `encode_instr` e una riga nella
+tabella dei mnemonici di `scalar_dest_reg` in
+[`src/assembler.c`](../src/assembler.c) — quest'ultima solo per `mfepsw`, perché
+scrive un registro e `.proc` deve saperlo salvare.
+
+**Conseguenza sul frame di contesto: la parola di stato ci entra**, e il frame
+passa da 60 a 64 byte. Oggi non c'è, e il commento in `machine.vasm` dice perché:
+«`epsw` NON è nel frame: non è scrivibile e IE=1 è uniforme». Quell'uniformità
+vale finché si torna *sempre a un task*; nel momento in cui il ritorno può
+puntare a codice kernel, salta.
+
+Il vettore diventa allora:
+
+```asm
+_trap_entry:
+  ; ... push r15, r1..r13 come oggi ...
+  mfepc  r1
+  sw     r1, ...(r14)      ; epc nel frame
+  mfepsw r1                ; PSW del task: IE=1, perche' il task girava abilitato
+  sw     r1, ...(r14)      ; parola di stato nel frame  <- il pezzo che manca
+```
+
+e le tre uscite:
+
+```asm
+; (1) all'istruzione interrotta: il frame e' gia' giusto
+  ...pop dei registri...
+  reti                     ; IE=1 dal frame
+
+; (2) allo scheduler, a interrupt DISABILITATI
+  li     r1, scheduler
+  mtepc  r1
+  li     r1, 0
+  mtepsw r1
+  reti
+
+; (3) al dispatcher, col TCB gia' scelto (vedi la precondizione di §12.4)
+  li     r1, dispatcher
+  mtepc  r1
+  li     r1, 0
+  mtepsw r1
+  reti
+```
+
+`hal.vinc` — l'interfaccia dell'HAL, che oggi non esiste — pubblica le due
+costanti che servono a scrivere questo codice senza numeri magici:
+`CTX_FRAME_SIZE` e `PSW_IE`. La prima chiude anche un pezzo della domanda aperta
+di §5 di [`stato-lavori.md`](stato-lavori.md) sull'inizializzazione statica dei
+frame: la taglia smette di essere duplicata fuori dall'HAL.
+
+**Assunzione da fissare:** nei casi 2 e 3 lo scheduler gira sullo stack del task
+interrotto, il cui contesto è già salvo nel frame. Va bene, ma il giorno in cui
+lo scheduler avrà uno stack proprio quel `reti` dovrà cambiare anche `r14`.
+
+### 12.6 Cosa resta aperto, e in che ordine si scrive
+
+**Resta aperto il percorso volontario, ed è ancora §8.7.** I tre ritorni
+risolvono l'uscita da un'**ISR**, dove il contesto è già salvo e `epc`/`epsw`
+esistono perché li ha scritti l'hardware. Ma quando un task chiama `receive` su
+una mailbox vuota e deve bloccarsi non c'è nessuna trap in corso: nell'ISA non
+c'è trap software, quindi serve una routine HAL che fabbrichi un frame come
+farebbe la trap — `ctx_init` fa già una cosa vicina per il primo avvio, ed è il
+motivo per cui non è eliminabile (§11). È lo stesso nodo per cui `task_block` è
+oggi uno stub.
+
+Nota che nel confine di §12.2 `task_ready`/`task_block` **cambiano natura**: §8.7
+le elencava come «inventate per aggirare la decisione sulla commutazione
+volontaria», mentre qui sono l'**interfaccia del kernel** che mailbox, semafori e
+mutex chiamano. Cambia cosa sono, non cosa manca dietro.
+
+L'ordine di lavoro, in passi che si verificano da soli:
+
+1. **`mfepsw`/`mtepsw` nell'ISA.** Isolato: nessuna struttura si muove e le
+   invarianti **non devono spostarsi di un ciclo** — è la verifica che il passo è
+   innocuo.
+2. **La parola di stato nel frame** (60 → 64 byte) e `hal.vinc` con
+   `CTX_FRAME_SIZE` e `PSW_IE`.
+3. **Il percorso di trap nuovo**: `g_handler`/`irq_install` passano nell'HAL, il
+   vettore consegna all'ISR, l'ISR esce con `reti`. **Qui l'invariante (2) si
+   sposta**, come già in §3.4, §3.5, §3.10 e §3.14 di
+   [`stato-lavori.md`](stato-lavori.md): cambia il codice eseguito a ogni tick.
+   L'invariante da tenere è quella qualitativa — 8 tick, i due contatori che
+   crescono alternandosi.
+4. **Le librerie e le interfacce**: `types.vinc` spezzato in `coda.vinc`,
+   `tcb.vinc` e `messaggio.vinc`, `libhal` senza `.extern`, il grafo che è un DAG.
+
+Il passo 4 è la ragione per cui questa revisione viene **prima** della
+decomposizione in librerie: farla adesso significherebbe dichiarare un ciclo per
+poi ritirarlo.
