@@ -11,14 +11,24 @@
 ; sullo stack, ne passa il puntatore (sp) al kernel e riceve indietro il
 ; puntatore del contesto da riprendere. Il kernel non interpreta mai il frame.
 ;
-; --- Frame di contesto (sullo stack del task, sp = r14, 60 byte) ---
-;   Push, in quest'ordine: r15(ra) [da _trap_entry, raw], poi r1..r13, poi epc
-;   [da ctx_save] -> epc finisce in cima (indirizzo piu' basso). r14(sp) NON e'
-;   nel frame: e' il puntatore-a-contesto stesso. epsw NON e' nel frame: non e'
-;   scrivibile e IE=1 e' uniforme (la trap mette IE=0, reti lo riporta a 1). I
-;   registri VETTORIALI (v*, vl, vmask) sono VOLATILI attraverso la preemption
-;   (la trap arriva solo al confine d'istruzione: nessuna corsia viva da
-;   salvare). Layout privato dell'HAL: il kernel vede solo un puntatore opaco.
+; --- Frame di contesto (sullo stack del task, sp = r14, CTX_FRAME_SIZE byte) ---
+;   Push, in quest'ordine: r15(ra) [da _trap_entry, raw], poi r1..r13, poi psw e
+;   epc [da ctx_save] -> epc finisce in cima (indirizzo piu' basso). r14(sp) NON
+;   e' nel frame: e' il puntatore-a-contesto stesso. I registri VETTORIALI (v*,
+;   vl, vmask) sono VOLATILI attraverso la preemption (la trap arriva solo al
+;   confine d'istruzione: nessuna corsia viva da salvare). Il layout resta
+;   privato dell'HAL: il kernel vede solo un puntatore opaco. La taglia sta in
+;   hal.vinc, perche' chi costruisce un frame senza passare da ctx_init non deve
+;   riscriverla a mano.
+;
+;   LA PAROLA DI STATO E' NEL FRAME dal 05/09/2026 (§12.5 della proposta).
+;   Prima non c'era, e il commento qui diceva perche': "epsw non e' scrivibile e
+;   IE=1 e' uniforme (la trap mette IE=0, reti lo riporta a 1)". Quell'uniformita'
+;   valeva finche' si torna SEMPRE a un task. Non vale piu' nel momento in cui il
+;   ritorno puo' puntare a codice di kernel, che si troverebbe a girare con gli
+;   interrupt aperti: da li' `mfepsw`/`mtepsw` nell'ISA e questa parola nel frame.
+
+.include "hal.vinc"
 
   .text
 
@@ -56,7 +66,7 @@ _trap_entry:
 ;  ctx_save: seconda meta' del salvataggio contesto (la prima e' il push raw di
 ;  r15 in _trap_entry, sopra). FOGLIA: non chiama nulla, quindi non tocca mai
 ;  r15 -> nessun salvataggio necessario per se stessa. Ritorna r1 = puntatore
-;  al contesto opaco (la cima dell'intero frame di 60 byte).
+;  al contesto opaco (la cima dell'intero frame).
 ; ==========================================================================
 ctx_save:
   addi r14, r14, -4
@@ -85,7 +95,10 @@ ctx_save:
   sw r12, 0(r14)
   addi r14, r14, -4
   sw r13, 0(r14)
-  mfepc r1                ; r1 e' gia' in memoria: libero come scratch
+  mfepsw r1               ; r1 e' gia' in memoria: libero come scratch
+  addi r14, r14, -4
+  sw r1, 0(r14)           ; psw del task (IE=1: girava abilitato)
+  mfepc r1
   addi r14, r14, -4
   sw r1, 0(r14)           ; epc in cima al frame
   mov r1, r14             ; r1 = puntatore al contesto opaco (per il chiamante)
@@ -101,6 +114,9 @@ ctx_restore:
   lw r1, 0(r14)           ; epc dal frame
   addi r14, r14, 4
   mtepc r1
+  lw r1, 0(r14)           ; psw dal frame: il regime in cui il task riprende
+  addi r14, r14, 4
+  mtepsw r1
   lw r13, 0(r14)
   addi r14, r14, 4
   lw r12, 0(r14)
@@ -129,17 +145,27 @@ ctx_restore:
   addi r14, r14, 4
   lw r15, 0(r14)
   addi r14, r14, 4
-  reti                    ; pc = epc; psw = epsw (IE=1) -> il task riparte
+  reti                    ; pc = epc; psw = quella del frame -> il task riparte
 
 ; ==========================================================================
 ;  ctx_init(r1 = cima dello stack, r2 = entry del task) -> r1 = sp iniziale.
-;  Costruisce un frame FINTO col layout di _trap_entry: epc = entry, i registri
-;  restano 0 (lo stack e' memoria azzerata). Al primo switch-in il task parte via
-;  reti come se fosse stato preemptato. E' pxPortInitialiseStack di FreeRTOS.
+;  Clobber: r3.
+;  Costruisce un frame FINTO col layout di _trap_entry: epc = entry, psw con
+;  IE=1, i registri restano 0 (lo stack e' memoria azzerata). Al primo switch-in
+;  il task parte via reti come se fosse stato preemptato. E'
+;  pxPortInitialiseStack di FreeRTOS.
+;
+;  LA psw VA SCRITTA ESPLICITAMENTE, e non e' un dettaglio: da quando
+;  ctx_restore la ripristina dal frame (mtepsw), uno slot lasciato a zero
+;  farebbe partire il task con IE=0 — e un task che gira a interrupt disabilitati
+;  non viene mai preemptato. Prima non serviva perche' il regime era uniforme e
+;  arrivava dalla epsw lasciata dalla trap precedente.
 ; ==========================================================================
 ctx_init:
-  addi r1, r1, -60        ; base del frame (offset 0 = slot epc)
+  addi r1, r1, -CTX_FRAME_SIZE  ; base del frame (offset 0 = slot epc)
   sw r2, 0(r1)            ; epc = entry
+  li r3, PSW_IE
+  sw r3, 4(r1)            ; psw = IE:1, il task parte interrompibile
   ret
 
 ; ==========================================================================

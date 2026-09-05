@@ -1180,9 +1180,10 @@ taglia trova `POOL_VUOTO` invece di un caso speciale.
 > applicativa), e resta valido tutto §6 di questa proposta: la sequenza di
 > *avvio* descriveva già `dispatcher` con il TCB in input.
 >
-> **Stato: il passo 1 di §12.6 è fatto** (`mfepsw`/`mtepsw` sono nell'ISA dal
-> 05/09/2026). Il resto — frame a 64 byte, percorso di trap, librerie — non è
-> implementato.
+> **Stato: i passi 1 e 2 di §12.6 sono fatti** (05/09/2026): `mfepsw`/`mtepsw`
+> nell'ISA, e la parola di stato nel frame con `hal.vinc`. Restano il **passo 3**
+> — il percorso di trap, cioè il cuore di questa sezione — e il **passo 4**, le
+> librerie.
 
 ### 12.1 Il difetto: il kernel sta in mezzo fra il vettore e l'ISR
 
@@ -1399,8 +1400,12 @@ L'ordine di lavoro, in passi che si verificano da soli:
    tutti quelli dopo. `tests/test_epsw.vasm` dimostra il caso 2 di §12.4 e non
    solo l'esistenza delle istruzioni: senza la `mtepsw` il test vede `IE=1` nel
    kernel, cioè il baco.
-2. **La parola di stato nel frame** (60 → 64 byte) e `hal.vinc` con
-   `CTX_FRAME_SIZE` e `PSW_IE`.
+2. ~~**La parola di stato nel frame** (60 → 64 byte) e `hal.vinc` con
+   `CTX_FRAME_SIZE` e `PSW_IE`.~~ **FATTO il 05/09/2026** (§3.20 dell'handoff).
+   Invariante (2) da 98/65 a **94/60**, stessi 8 tick. Il punto non ovvio è
+   `ctx_init`: da quando `ctx_restore` ripristina la `psw` dal frame, il frame
+   finto **deve** scrivere `PSW_IE`, se no il primo task parte a interrupt
+   disabilitati e non viene mai preemptato.
 3. **Il percorso di trap nuovo**: `g_handler`/`irq_install` passano nell'HAL, il
    vettore consegna all'ISR, l'ISR esce con `reti`. **Qui l'invariante (2) si
    sposta**, come già in §3.4, §3.5, §3.10 e §3.14 di

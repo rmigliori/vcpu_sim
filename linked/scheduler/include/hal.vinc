@@ -1,0 +1,48 @@
+; include/hal.vinc — interfaccia dell'HAL (§12 della proposta).
+;
+; L'HAL e' la libreria che rende tutto il resto indipendente dall'hardware,
+; quindi e' quella che PIU' di tutte deve pubblicare un'interfaccia. Fino al
+; 05/09/2026 era l'unico modulo senza .vinc, ed era una lacuna: il layout del
+; frame di contesto e i bit della parola di stato sono conoscenza dell'HAL, e
+; senza un posto dove pubblicarli finivano scritti come numeri magici — dentro
+; l'HAL stesso, o peggio duplicati fuori.
+;
+; Qui ci sono solo COSTANTI, come in ogni .vinc: le procedure dell'HAL si
+; importano con .extern, che e' un'altra cosa. E' un file FOGLIA (non include
+; niente) perche' non ha niente da chiedere a nessuno: sta al fondo del grafo.
+
+; --------------------------------------------------------------------------
+;  La parola di stato (PSW).
+;
+;  Un solo bit definito, ma va nominato: `li rX, 1` per abilitare gli interrupt
+;  e' il tipo di numero magico che smette di essere leggibile il giorno che la
+;  PSW acquista un secondo campo (modo, livello di interruzione).
+; --------------------------------------------------------------------------
+.equ PSW_IE     1         ; bit 0: interrupt enable
+
+; --------------------------------------------------------------------------
+;  Il frame di contesto: 16 parole, 64 byte.
+;
+;  Layout, dall'indirizzo piu' basso (= il puntatore opaco consegnato al
+;  kernel) verso l'alto:
+;
+;      +0   epc          dove riprende il task
+;      +4   psw          IN CHE REGIME riprende: e' questa la parola che
+;                        rende esprimibili i tre ritorni di §12.4
+;      +8   r13
+;      ...  r12..r2
+;      +56  r1
+;      +60  r15          salvato per primo, quindi il piu' in alto
+;
+;  r14 (sp) NON e' nel frame: e' il puntatore-a-contesto stesso. I registri
+;  VETTORIALI (v*, vl, vmask) sono VOLATILI attraverso la preemption — la trap
+;  arriva solo al confine d'istruzione, quindi non c'e' nessuna corsia viva da
+;  salvare.
+;
+;  La taglia si pubblica qui e non altrove per una ragione precisa, gia'
+;  annotata in §5 di stato-lavori.md: chi costruisce un frame senza passare da
+;  ctx_init duplicherebbe fuori dall'HAL una conoscenza dell'HAL, e il giorno
+;  che ctx_save cambia quei frame resterebbero validi e sbagliati. Con la
+;  taglia pubblicata la duplicazione si riduce a una costante sola.
+; --------------------------------------------------------------------------
+.equ CTX_FRAME_SIZE  64   ; 16 parole: epc, psw, r13..r1, r15

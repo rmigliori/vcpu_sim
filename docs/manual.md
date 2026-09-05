@@ -1375,8 +1375,8 @@ I=-Ilinked/scheduler/include    # dove stanno i .vinc: serve a chi ha una .inclu
 ./build/vcpu_sim ld build/scheduler_demo.vo build/scheduler.vo build/coda.vo \
                     build/machine.vo -o build/scheduler_demo.vx
 ./build/vcpu_sim run build/scheduler_demo.vx
-# r5 = 98    (tickA)
-# r5 = 65    (tickB)
+# r5 = 94    (tickA)
+# r5 = 60    (tickB)
 ```
 
 Gli 8 tick e i due contatori che crescono alternandosi sono le stesse invarianti

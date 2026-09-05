@@ -45,6 +45,9 @@ enable_testing()
 # ---------------------------------------------------------------------------
 set(VINC_DIR ${CMAKE_SOURCE_DIR}/linked/scheduler/include)
 
+# L'HAL pubblica la taglia del frame di contesto e i bit della parola di stato:
+# senza, finirebbero come numeri magici dentro l'HAL stesso o duplicati fuori.
+vasm_interface(vinc_hal     DIR ${VINC_DIR} HEADERS hal.vinc)
 vasm_interface(vinc_types   DIR ${VINC_DIR} HEADERS types.vinc)
 vasm_interface(vinc_timeout DIR ${VINC_DIR} HEADERS timeout.vinc)
 
@@ -59,8 +62,7 @@ vasm_interface(vinc_pool DIR ${VINC_DIR} HEADERS pool.vinc LINK vinc_types)
 # ---------------------------------------------------------------------------
 set(SCHED ${CMAKE_SOURCE_DIR}/linked/scheduler)
 
-# L'HAL non ha nessuna .include: e' l'unico modulo che non dipende da un .vinc.
-vasm_object(hal_machine  SOURCE ${SCHED}/hal/machine.vasm)
+vasm_object(hal_machine  SOURCE ${SCHED}/hal/machine.vasm            LIBS vinc_hal)
 
 vasm_object(k_coda       SOURCE ${SCHED}/kernel/coda.vasm            LIBS vinc_types)
 vasm_object(k_scheduler  SOURCE ${SCHED}/kernel/scheduler.vasm       LIBS vinc_types)
@@ -115,7 +117,7 @@ vasm_check(saxpy      MODE STATS EXPECT "17 40 94"
            SOURCE ${CMAKE_SOURCE_DIR}/standalone/saxpy.vasm)
 vasm_check(multi      MODE STATS EXPECT "18 40 95"  PROGRAM multi)
 
-vasm_check(scheduler_demo MODE DUMPS EXPECT "98 65" PROGRAM scheduler_demo)
+vasm_check(scheduler_demo MODE DUMPS EXPECT "94 60" PROGRAM scheduler_demo)
 
 vasm_check(proc       MODE DUMPS EXPECT "100 200 300"
            SOURCE ${TESTS}/test_proc.vasm)

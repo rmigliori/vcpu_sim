@@ -51,9 +51,11 @@ volontaria (§8.7) e lo scheduler a priorità (§7.4).
 
 **RIPRENDI DA §12 DELLA PROPOSTA**, la revisione del confine HAL/ISR/kernel
 (§3.18). Non dipende da §7.4. Il **passo 1 di §12.6 è fatto** — `mfepsw`/`mtepsw`
-sono nell'ISA (§3.19), invarianti immobili e `.vo` identici byte per byte. Il
-prossimo è il **passo 2**: la parola di stato nel frame (60 → 64 byte) e
-`hal.vinc` con `CTX_FRAME_SIZE` e `PSW_IE`.
+sono nell'ISA (§3.19) e il **passo 2 pure** — la parola di stato nel frame e
+`hal.vinc` (§3.20), che ha spostato l'invariante (2) a **94/60**, sempre 8 tick.
+Il prossimo è il **passo 3**: il percorso di trap nuovo, dove
+`g_handler`/`irq_install` passano nell'HAL e il vettore consegna all'ISR. Anche
+quello sposterà i numeri.
 
 Le altre due strade, entrambe in §5:
 
@@ -63,8 +65,8 @@ Le altre due strade, entrambe in §5:
    salvo il punto 3, che non blocca niente. Vedi il riquadro qui sotto.
 3. **La revisione del confine HAL/ISR/kernel — §12 della proposta**: è da qui
    che riparte il codice, e non dipende da §7.4. Il passo 1 di §12.6 è **fatto**
-   (§3.19); restano il frame a 64 byte con `hal.vinc`, il percorso di trap
-   nuovo — che **sposterà l'invariante (2)** — e le librerie.
+   (§3.19) e il passo 2 anche (§3.20); restano il percorso di trap nuovo — che
+   **sposterà l'invariante (2)** una seconda volta — e le librerie.
 
 > ### 05/09/2026 — il build è in target CMake, invarianti immobili
 >
@@ -1300,6 +1302,46 @@ parole distinte); poi dirotta il ritorno con `mtepc` e impone `IE=0` con
 togliendo la sola `mtepsw`, `r4` passa da 0 a **1** — si arriva nel kernel con
 gli interrupt aperti, cioè esattamente il baco che l'utente aveva indicato.
 
+### 3.20 La parola di stato nel frame, e `hal.vinc` (05/09/2026)
+
+Passo 2 di §12.6. Commit a sé su richiesta dell'utente, perché è il primo che
+**sposta un'invariante** e conviene poterlo misurare da solo.
+
+**`hal.vinc`, la prima interfaccia dell'HAL.** Era l'unico modulo senza `.vinc`,
+e in una discussione precedente avevo sostenuto che fosse un'eccezione legittima:
+sbagliato, come l'utente ha fatto notare — l'HAL è la libreria che rende tutto il
+resto indipendente dall'hardware, quindi è quella che *più* di tutte deve
+pubblicare un'interfaccia. Pubblica `PSW_IE` e `CTX_FRAME_SIZE`.
+
+**Il frame passa da 60 a 64 byte**: `ctx_save` salva anche la parola di stato
+(`mfepsw`), `ctx_restore` la ripristina (`mtepsw`). Il commento che diceva
+«`epsw` NON è nel frame: non è scrivibile e IE=1 è uniforme» è stato riscritto —
+quell'uniformità valeva finché si torna sempre a un task.
+
+**Il punto delicato è `ctx_init`, e non era ovvio.** Da quando `ctx_restore`
+ripristina la `psw` dal frame, uno slot lasciato a zero farebbe partire il task
+con `IE=0` — e un task che gira a interrupt disabilitati **non viene mai
+preemptato**. Il frame finto deve quindi scrivere `PSW_IE` esplicitamente. Prima
+non serviva perché il regime arrivava dalla `epsw` lasciata dalla trap
+precedente. Verificato togliendo quella sola `sw`: la demo **non termina più**,
+nessun tick, il primo task gira all'infinito. È il tipo di difetto che un test
+sulle sequenze non vedrebbe — semplicemente non finisce.
+
+**Trovato per strada: `-COSTANTE` non si poteva scrivere.** `addi r1, r1,
+-CTX_FRAME_SIZE` dava `invalid integer`, perché `parse_int` cercava la costante
+col segno attaccato. Due righe in `assembler.c`: negare una costante di
+compile-time è aritmetica, non rilocazione, e il valore è noto subito. I simboli
+rilocabili restano non-negabili, che è corretto — il negativo di un indirizzo non
+è un indirizzo. Senza questo avrei dovuto riscrivere `-64` a mano, cioè rimettere
+il numero magico che `hal.vinc` esiste per togliere.
+
+**Invariante (2): 98/65 → 94/60**, con gli stessi **8 tick**. Sono 6 istruzioni
+in più per switch (3 in `ctx_save`, 3 in `ctx_restore`), quindi meno lavoro utile
+per tick: è lo stesso effetto già visto in §3.4, §3.5, §3.10 e §3.14, non una
+regressione. Le altre invarianti **non si muovono**, e non è un caso: gli altri
+quattro test linkano l'HAL ma non armano nessun timer, quindi non fanno un solo
+context switch.
+
 ---
 
 ## 4. Invarianti di regressione — come verificare che nulla si sia rotto
@@ -1334,8 +1376,8 @@ make                                    # deve compilare SENZA warning
 #     05/09/2026 i nomi sono nudi, §3.17); machine.vasm e linked/multi/ no.
 I=-Ilinked/scheduler/include
 
-# (2) demo HAL+kernel: deve stampare r5 = 98 e r5 = 65 (era 104/73 prima
-#     dell'invariante dei link in coda.vasm — vedi §3.14, non e' una regressione)
+# (2) demo HAL+kernel: deve stampare r5 = 94 e r5 = 60 (era 98/65 prima della
+#     parola di stato nel frame — vedi §3.20, non e' una regressione)
 ./build/vcpu_sim asm    linked/scheduler/hal/machine.vasm      -o build/machine.vo
 ./build/vcpu_sim asm $I linked/scheduler/kernel/coda.vasm      -o build/coda.vo
 ./build/vcpu_sim asm $I linked/scheduler/kernel/scheduler.vasm -o build/scheduler.vo
@@ -1392,9 +1434,13 @@ ISR possa tornare verso il kernel a interrupt disabilitati:
 #   1 0 0 7
 ```
 
+Stato verificato il 05/09/2026 (dopo §3.20): (1) 17/40/94, **(2) 94/60 con 8
+tick** (era 98/65: la parola di stato nel frame costa 6 istruzioni per switch,
+§3.20), (3) 18/40/95, e i sei test mirati di `tests/`. `ctest` dà 23/23.
+
 Stato verificato il 05/09/2026 (dopo §3.19): **tutti i numeri identici a quelli
 di prima dell'aggiunta all'ISA**, nemmeno un ciclo di scarto, e i `.vo` identici
-byte per byte. `ctest` dà 23/23.
+byte per byte.
 
 Stato verificato il 05/09/2026 (dopo §3.16): **tutti i numeri identici a prima**
 — (1) 17/40/94, **(2) 98/65 con 8 tick**, (3) 18/40/95, `test_proc` 100/200/300,
@@ -1698,10 +1744,11 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 
 **Per il confine HAL/ISR/kernel (non dipende da §7.4) — CONSIGLIATA:**
 ```
-Leggi docs/stato-lavori.md §3.18/§3.19 e docs/proposta-kernel-realtime.md
-§12. Il passo 1 di §12.6 e' fatto: mfepsw/mtepsw sono nell'ISA.
-Continua dal passo 2: la parola di stato nel frame di contesto (60 -> 64
-byte) e hal.vinc con CTX_FRAME_SIZE e PSW_IE.
+Leggi docs/stato-lavori.md §3.18-§3.20 e docs/proposta-kernel-realtime.md
+§12. I passi 1 e 2 di §12.6 sono fatti: mfepsw/mtepsw nell'ISA, la parola
+di stato nel frame e hal.vinc. Continua dal passo 3: g_handler e
+irq_install passano nell'HAL, il vettore consegna all'ISR, l'ISR esce con
+reti. L'invariante (2) si spostera': tieni gli 8 tick e l'alternanza.
 ```
 
 **Per il build in target CMake — quasi finito:**

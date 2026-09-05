@@ -214,6 +214,15 @@ static int parse_reg(const char* tok, char prefix, int count, char* err, size_t 
 static int parse_int(const char* tok, int64_t* out, char* err, size_t errsz)
 {
   if (find_const(tok, out)) return 0;   // assembler-time constant (.equ / struct field)
+
+  // Negated constant: "-NOME". It belongs here and not in the symbol branch
+  // below, because a constant is not relocatable: its value is known now, so
+  // negating it is compile-time arithmetic. Without this, every immediate that
+  // allocates downwards has to spell the number out again -- "addi r1, r1, -64"
+  // next to a CTX_FRAME_SIZE that exists precisely to avoid saying 64 twice.
+  // Relocatable symbols stay non-negatable, which is correct: the linker patches
+  // an address, and the negative of an address is not one.
+  if (tok[0] == '-' && find_const(tok + 1, out)) { *out = -*out; return 0; }
   if (isalpha((unsigned char) tok[0]) || tok[0] == '_')
   {
     // Split the identifier from an optional "+off"/"-off" suffix.
