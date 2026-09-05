@@ -54,7 +54,7 @@
 ;                          di lui. Non facciamo ipotesi su come lasci IE: la
 ;                          receive ristabilisce la sezione critica da sola.
 
-.include "../include/types.vinc"
+.include "types.vinc"
 
   .text
 

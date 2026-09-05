@@ -18,18 +18,19 @@
 ; sched_dispatch -> scheduler.vasm. Qui non gira niente di tutto questo: nessun
 ; timer viene armato e si usano solo le primitive raw.
 ;
-; Pipeline:
-;   ./build/vcpu_sim asm linked/scheduler/hal/machine.vasm      -o build/machine.vo
-;   ./build/vcpu_sim asm linked/scheduler/kernel/coda.vasm      -o build/coda.vo
-;   ./build/vcpu_sim asm linked/scheduler/kernel/scheduler.vasm -o build/scheduler.vo
-;   ./build/vcpu_sim asm tests/test_coda.vasm                   -o build/test_coda.vo
+; Pipeline (-I dove c'e' una .include da risolvere; machine.vasm non ne ha):
+;   I=-Ilinked/scheduler/include
+;   ./build/vcpu_sim asm    linked/scheduler/hal/machine.vasm      -o build/machine.vo
+;   ./build/vcpu_sim asm $I linked/scheduler/kernel/coda.vasm      -o build/coda.vo
+;   ./build/vcpu_sim asm $I linked/scheduler/kernel/scheduler.vasm -o build/scheduler.vo
+;   ./build/vcpu_sim asm $I tests/test_coda.vasm                   -o build/test_coda.vo
 ;   ./build/vcpu_sim ld build/test_coda.vo build/coda.vo \
 ;                       build/scheduler.vo build/machine.vo -o build/test_coda.vx
 ;   ./build/vcpu_sim run build/test_coda.vx
 ;
 ; Atteso, in ordine:  0 1 1 1 0 0 0 2 1 0 0 0 0
 
-.include "../linked/scheduler/include/types.vinc"
+.include "types.vinc"
 
   .data
 

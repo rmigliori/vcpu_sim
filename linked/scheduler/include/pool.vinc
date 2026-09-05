@@ -9,12 +9,16 @@
 ; (non esiste "il blocco sbagliato"), che alloc e free sono un dequeue e un
 ; enqueue quindi O(1), e che il fallimento e' una condizione sola e limitata.
 ;
-; NON include types.vinc, ma non e' piu' un impedimento: `.include` e' ORA
-; IDEMPOTENTE, quindi la regola "i .vinc sono FOGLIA" e' caduta (vedi la nota in
-; timeout.vinc). La modellazione giusta sarebbe che questo file includa
-; types.vinc — BLOCCO *e'* un nodo di lista — e diventera' scrivibile quando le
-; .include passeranno a nome nudo con -I: un nome si risolve rispetto alla
-; cartella del file di primo livello, non di chi include.
+; INCLUDE types.vinc, ed e' una dipendenza vera e non una comodita': BLOCCO *e'*
+; un nodo di lista (fwd/bwd in testa, stesso idioma list_head), e una free-list
+; e' una TESTA con i blocchi come nodi. Chi usa il pool usa le code.
+;
+; Scrivibile solo da quando `.include` e' idempotente: prima, un .vinc che ne
+; includesse un altro esplodeva con "duplicate constant" appena un chiamante
+; includeva entrambi — ed e' esattamente il caso di pool.vasm e test_pool.vasm.
+; Il nome e' nudo perche' si risolve rispetto alla cartella del file di PRIMO
+; LIVELLO, non di chi include: chi assembla passa -I su questa cartella.
+.include "types.vinc"
 
 ; --------------------------------------------------------------------------
 ;  Le sei classi, per potenze di due sull'AREA DATI UTENTE.

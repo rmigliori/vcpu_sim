@@ -42,8 +42,8 @@
 ; fornitore" con due fornitori nello stesso modulo, e funziona proprio perche' i
 ; .vinc sono foglia — includerne uno che ne includesse un altro darebbe
 ; "duplicate constant".
-.include "../include/pool.vinc"
-.include "../include/types.vinc"
+.include "pool.vinc"
+.include "types.vinc"
 
   .data
 

@@ -5,14 +5,12 @@
 ; quindi non c'e' una mailbox da pubblicare: ci sono due entry point
 ; (timeout_arm/timeout_cancel) e i codici con cui rispondono.
 ;
-; NON include types.vinc, ma il motivo non e' piu' quello di prima. `.include` e'
-; ORA IDEMPOTENTE (un file gia' incluso e' un no-op, come #pragma once), quindi
-; un .vinc che ne includa un altro non esplode piu' con "duplicate constant": la
-; regola "i .vinc sono FOGLIA" e' caduta. Resta un vincolo di forma: un nome si
-; risolve rispetto alla cartella del file di PRIMO LIVELLO, quindi un .vinc puo'
-; nominarne un altro solo per nome nudo, e chi assembla deve passare la sua
-; cartella con -I. Finche' le pipeline scritte a mano non lo fanno, questo file
-; resta foglia per convenienza e non per impedimento.
+; NON include niente, ma ora e' una proprieta' del modello e non un impedimento
+; della toolchain. La regola provvisoria "i .vinc sono FOGLIA" e' caduta con
+; l'idempotenza di `.include` (pool.vinc infatti include types.vinc); questo file
+; resta foglia perche' il DESCRITTORE non entra mai in una lista (§9.3): e' una
+; casella di un vettore statico, non ha fwd/bwd, e quindi non ha niente da
+; chiedere a types.vinc.
 
 ; --------------------------------------------------------------------------
 ;  Il descrittore: una casella del vettore, cioe' UN timeout armato.

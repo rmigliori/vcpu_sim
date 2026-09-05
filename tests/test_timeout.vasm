@@ -14,19 +14,20 @@
 ; _trap_entry che referenzia sched_dispatch: da li' scheduler.vasm, e da li'
 ; coda.vasm. Nessuno dei tre gira.
 ;
-; Pipeline:
-;   ./build/vcpu_sim asm linked/scheduler/hal/machine.vasm      -o build/machine.vo
-;   ./build/vcpu_sim asm linked/scheduler/kernel/coda.vasm      -o build/coda.vo
-;   ./build/vcpu_sim asm linked/scheduler/kernel/scheduler.vasm -o build/scheduler.vo
-;   ./build/vcpu_sim asm linked/scheduler/kernel/timeout.vasm   -o build/timeout.vo
-;   ./build/vcpu_sim asm tests/test_timeout.vasm                -o build/test_timeout.vo
+; Pipeline (-I dove c'e' una .include da risolvere; machine.vasm non ne ha):
+;   I=-Ilinked/scheduler/include
+;   ./build/vcpu_sim asm    linked/scheduler/hal/machine.vasm      -o build/machine.vo
+;   ./build/vcpu_sim asm $I linked/scheduler/kernel/coda.vasm      -o build/coda.vo
+;   ./build/vcpu_sim asm $I linked/scheduler/kernel/scheduler.vasm -o build/scheduler.vo
+;   ./build/vcpu_sim asm $I linked/scheduler/kernel/timeout.vasm   -o build/timeout.vo
+;   ./build/vcpu_sim asm $I tests/test_timeout.vasm                -o build/test_timeout.vo
 ;   ./build/vcpu_sim ld build/test_timeout.vo build/timeout.vo build/coda.vo \
 ;                       build/scheduler.vo build/machine.vo -o build/test_timeout.vx
 ;   ./build/vcpu_sim run build/test_timeout.vx
 ;
 ; Atteso, in ordine:  3  0  150  1  2  0  0  0  3  0  1
 
-.include "../linked/scheduler/include/timeout.vinc"
+.include "timeout.vinc"
 
   .data
 

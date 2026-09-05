@@ -6,11 +6,12 @@
 ;   kernel/coda.vasm       -> le 5 routine di coda (list_head).
 ;   kernel/scheduler.vasm  -> kernel puro: politica RR + dispatch (nessun CSR).
 ;
-; Pipeline (compilazione separata + linking, path relativi a linked/scheduler/):
-;   ./build/vcpu_sim asm hal/machine.vasm             -o build/machine.vo
-;   ./build/vcpu_sim asm kernel/coda.vasm             -o build/coda.vo
-;   ./build/vcpu_sim asm kernel/scheduler.vasm        -o build/scheduler.vo
-;   ./build/vcpu_sim asm scheduler_demo.vasm          -o build/scheduler_demo.vo
+; Pipeline (compilazione separata + linking, path relativi a linked/scheduler/;
+; -I dove c'e' una .include da risolvere, che per machine.vasm non c'e'):
+;   ./build/vcpu_sim asm           hal/machine.vasm   -o build/machine.vo
+;   ./build/vcpu_sim asm -Iinclude kernel/coda.vasm   -o build/coda.vo
+;   ./build/vcpu_sim asm -Iinclude kernel/scheduler.vasm    -o build/scheduler.vo
+;   ./build/vcpu_sim asm -Iinclude scheduler_demo.vasm      -o build/scheduler_demo.vo
 ;   ./build/vcpu_sim ld build/scheduler_demo.vo build/scheduler.vo build/coda.vo \
 ;                       build/machine.vo -o build/scheduler_demo.vx
 ;   ./build/vcpu_sim run build/scheduler_demo.vx   (aggiungi --trace per vederlo)
@@ -20,7 +21,7 @@
 ; e vicini => i task si sono alternati (round-robin).
 
 ; Tipi comuni (TCB, stati) condivisi col kernel: stessa sorgente di verita'.
-.include "include/types.vinc"
+.include "types.vinc"
 
   .data
 

@@ -15,20 +15,21 @@
 ; che pool.vasm usa) e si tira dietro _trap_entry -> sched_dispatch ->
 ; scheduler.vasm. Nessuno dei due gira: nessun timer viene armato.
 ;
-; Pipeline:
-;   ./build/vcpu_sim asm linked/scheduler/hal/machine.vasm      -o build/machine.vo
-;   ./build/vcpu_sim asm linked/scheduler/kernel/coda.vasm      -o build/coda.vo
-;   ./build/vcpu_sim asm linked/scheduler/kernel/scheduler.vasm -o build/scheduler.vo
-;   ./build/vcpu_sim asm linked/scheduler/kernel/pool.vasm      -o build/pool.vo
-;   ./build/vcpu_sim asm tests/test_pool.vasm                   -o build/test_pool.vo
+; Pipeline (-I dove c'e' una .include da risolvere; machine.vasm non ne ha):
+;   I=-Ilinked/scheduler/include
+;   ./build/vcpu_sim asm    linked/scheduler/hal/machine.vasm      -o build/machine.vo
+;   ./build/vcpu_sim asm $I linked/scheduler/kernel/coda.vasm      -o build/coda.vo
+;   ./build/vcpu_sim asm $I linked/scheduler/kernel/scheduler.vasm -o build/scheduler.vo
+;   ./build/vcpu_sim asm $I linked/scheduler/kernel/pool.vasm      -o build/pool.vo
+;   ./build/vcpu_sim asm $I tests/test_pool.vasm                   -o build/test_pool.vo
 ;   ./build/vcpu_sim ld build/test_pool.vo build/pool.vo build/coda.vo \
 ;                       build/scheduler.vo build/machine.vo -o build/test_pool.vx
 ;   ./build/vcpu_sim run build/test_pool.vx
 ;
 ; Atteso, in ordine:  10 4 0  0 9  0 32 3  2 0  0 4  4 4  3  0 0  1 4
 
-.include "../linked/scheduler/include/pool.vinc"
-.include "../linked/scheduler/include/types.vinc"
+.include "pool.vinc"
+.include "types.vinc"
 
   .data
 

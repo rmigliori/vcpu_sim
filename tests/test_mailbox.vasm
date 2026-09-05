@@ -14,19 +14,20 @@
 ; current, e machine.vasm tira dentro _trap_entry che referenzia sched_dispatch.
 ; Nel test non gira: nessun timer viene armato.
 ;
-; Pipeline:
-;   ./build/vcpu_sim asm linked/scheduler/hal/machine.vasm            -o build/machine.vo
-;   ./build/vcpu_sim asm linked/scheduler/kernel/coda.vasm            -o build/coda.vo
-;   ./build/vcpu_sim asm linked/scheduler/kernel/scheduler.vasm       -o build/scheduler.vo
-;   ./build/vcpu_sim asm linked/scheduler/kernel/messageHandling.vasm -o build/msg.vo
-;   ./build/vcpu_sim asm tests/test_mailbox.vasm                      -o build/test_mailbox.vo
+; Pipeline (-I dove c'e' una .include da risolvere; machine.vasm non ne ha):
+;   I=-Ilinked/scheduler/include
+;   ./build/vcpu_sim asm    linked/scheduler/hal/machine.vasm            -o build/machine.vo
+;   ./build/vcpu_sim asm $I linked/scheduler/kernel/coda.vasm            -o build/coda.vo
+;   ./build/vcpu_sim asm $I linked/scheduler/kernel/scheduler.vasm       -o build/scheduler.vo
+;   ./build/vcpu_sim asm $I linked/scheduler/kernel/messageHandling.vasm -o build/msg.vo
+;   ./build/vcpu_sim asm $I tests/test_mailbox.vasm                      -o build/test_mailbox.vo
 ;   ./build/vcpu_sim ld build/test_mailbox.vo build/msg.vo build/coda.vo \
 ;                       build/scheduler.vo build/machine.vo -o build/test_mailbox.vx
 ;   ./build/vcpu_sim run build/test_mailbox.vx
 ;
 ; Atteso, in ordine:  0  1  2  11  22  0  33  0  0
 
-.include "../linked/scheduler/include/types.vinc"
+.include "types.vinc"
 
   .data
 
