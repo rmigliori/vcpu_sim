@@ -121,6 +121,8 @@ vasm_check(proc       MODE DUMPS EXPECT "100 200 300"
            SOURCE ${TESTS}/test_proc.vasm)
 vasm_check(include    MODE DUMPS EXPECT "16 12 16 512 1"
            IFLAGS -I${VINC_DIR} SOURCE ${TESTS}/test_include.vasm)
+vasm_check(epsw       MODE DUMPS EXPECT "1 0 0 7"
+           SOURCE ${TESTS}/test_epsw.vasm)
 
 vasm_check(mailbox MODE DUMPS PROGRAM test_mailbox
            EXPECT "0 1 2 11 22 0 33 0 0")

@@ -89,6 +89,7 @@ static uint64_t instr_cost(const Instr* in, int vl)
     case OP_SETVL: case OP_FLI:
     case OP_STI: case OP_CLI: case OP_SETHANDLER: case OP_SETTIMER:
     case OP_MFPSW: case OP_MTPSW: case OP_MFEPC: case OP_MTEPC:
+    case OP_MFEPSW: case OP_MTEPSW:
       return CYC_SCALAR_ALU;
 
     case OP_DIV: case OP_REM:
@@ -215,6 +216,8 @@ static void execute(VCpu* cpu, const Instr* in)
       case OP_MFPSW: set_scalar(cpu, in->a, (int64_t) cpu->psw); break;
       case OP_MTPSW: cpu->psw = (uint64_t) cpu->r[in->b];        break;
       case OP_MFEPC: set_scalar(cpu, in->a, cpu->epc);           break;
+      case OP_MFEPSW: set_scalar(cpu, in->a, (int64_t) cpu->epsw); break;
+      case OP_MTEPSW: cpu->epsw = (uint64_t) cpu->r[in->b];        break;
       case OP_MTEPC: cpu->epc = cpu->r[in->b];                   break;
       case OP_HALT: cpu->halted = 1;                                         break;
 
@@ -488,6 +491,8 @@ const char* vcpu_disasm(const Instr* in, char* buf, size_t bufsz)
     case OP_MFPSW:      snprintf(buf, bufsz, "mfpsw r%d", in->a); break;
     case OP_MTPSW:      snprintf(buf, bufsz, "mtpsw r%d", in->b); break;
     case OP_MFEPC:      snprintf(buf, bufsz, "mfepc r%d", in->a); break;
+    case OP_MFEPSW:     snprintf(buf, bufsz, "mfepsw r%d", in->a); break;
+    case OP_MTEPSW:     snprintf(buf, bufsz, "mtepsw r%d", in->b); break;
     case OP_MTEPC:      snprintf(buf, bufsz, "mtepc r%d", in->b); break;
     case OP_HALT:   snprintf(buf, bufsz, "halt"); break;
     case OP_VLOAD:  snprintf(buf, bufsz, "vload v%d, r%d", in->a, in->b); break;

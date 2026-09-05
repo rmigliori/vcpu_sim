@@ -829,7 +829,9 @@ interrupt gira esattamente come prima.
 | `mfpsw` | `rd` | `rd = psw` (leggi la parola di stato) | 1 |
 | `mtpsw` | `rs1` | `psw = rs1` (scrivi la parola di stato) | 1 |
 | `mfepc` | `rd` | `rd = epc` (per salvare il contesto) | 1 |
-| `mtepc` | `rs1` | `epc = rs1` (per il context switch) | 1 |
+| `mtepc` | `rs1` | `epc = rs1` (dove tornerà la `reti`) | 1 |
+| `mfepsw` | `rd` | `rd = epsw` (la parola di stato del task interrotto) | 1 |
+| `mtepsw` | `rs1` | `epsw = rs1` (**in che regime** tornerà la `reti`) | 1 |
 
 **Come funziona il trap.** L'interruzione del timer è consegnata al **confine di
 istruzione**: quando `IE` è attivo, il timer è armato e il contatore dei cicli
@@ -842,17 +844,20 @@ all'*exchange package* del Cray). Per un **cambio di contesto** il gestore
 riscrive `epc` con `mtepc` prima di `reti`, facendo ripartire un task diverso.
 Nel debugger `p psw` e `p epc` mostrano questi registri.
 
-> **`epsw` non è scrivibile, e questo limita il cambio di contesto.** Fino al
-> 05/09/2026 questo paragrafo diceva che il gestore riscrive «la coppia
-> `(epc, epsw)` con `mtepc`/`mtpsw`»: è falso, perché `mtpsw` scrive la PSW
-> **attiva** e `reti` la sovrascrive un'istruzione dopo con `epsw`. Non esiste
-> nessuna istruzione che scriva `epsw`.
+> **Il ritorno decide due cose: dove si va e in che regime.** `epc` dice dove,
+> `epsw` dice se gli interrupt saranno aperti. Sono parole distinte e vanno
+> scritte con istruzioni distinte — `mtepc` e `mtepsw`.
 >
-> Conseguenza pratica: **ogni `reti` ripristina il regime di interruzione del
-> task**, `IE` compreso. Va bene finché si torna sempre a un task; non va bene se
-> il ritorno deve puntare a codice di kernel, che si troverebbe a girare con gli
-> interrupt aperti. È la ragione per cui §12 della
-> [proposta](proposta-kernel-realtime.md) aggiunge `mfepsw`/`mtepsw`.
+> Attenzione a un errore facile, che questo manuale conteneva fino al
+> 05/09/2026: **`mtpsw` non serve a questo.** Scrive la PSW *attiva*, che `reti`
+> sovrascrive un'istruzione dopo con `epsw`; per lo stesso motivo non serve
+> nemmeno `cli`. Fino a quel giorno `epsw` non era né leggibile né scrivibile,
+> quindi ogni `reti` riportava per forza il regime del task interrotto — bene
+> finché si torna sempre a un task, un baco nel momento in cui il ritorno punta
+> a codice di kernel, che si troverebbe a girare con gli interrupt aperti.
+> `mfepsw`/`mtepsw` esistono per questo: vedi §12.5 della
+> [proposta](proposta-kernel-realtime.md), e `tests/test_epsw.vasm` che lo
+> dimostra.
 
 #### Vettoriali
 

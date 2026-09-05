@@ -567,6 +567,18 @@ static int encode(char** toks, int n, Instr* out, char* err, size_t errsz)
     R('r', NUM_SCALAR); out->b = reg;
     out->op = OP_MTEPC;
   }
+  else if (strcmp(mn, "mfepsw") == 0)
+  {
+    if (need(ARGS, 1, mn, err, errsz)) return -1;
+    R('r', NUM_SCALAR); out->a = reg;
+    out->op = OP_MFEPSW;
+  }
+  else if (strcmp(mn, "mtepsw") == 0)
+  {
+    if (need(ARGS, 1, mn, err, errsz)) return -1;
+    R('r', NUM_SCALAR); out->b = reg;
+    out->op = OP_MTEPSW;
+  }
   else if (strcmp(mn, "halt") == 0)
   {
     if (need(ARGS, 0, mn, err, errsz)) return -1;
@@ -792,7 +804,7 @@ static void join_tokens(char** toks, int start, int n, char* out, size_t outsz);
 //  because the prologue depends on the whole body: at .endproc it is scanned
 //  for scalar registers r1..r13 written by a plain destination-writing
 //  instruction (li/mov/add/sub/mul/addi/slli/srli/and/or/xor/div/rem/lw/
-//  setvl/mfpsw/mfepc), and only THOSE are pushed — plus r15 always, since
+//  setvl/mfpsw/mfepc/mfepsw), and only THOSE are pushed — plus r15 always, since
 //  "call" is always "jal r15, target" (link register cabled in the assembler)
 //  and must be saved before any call regardless of what the body computes.
 //  r15 is pushed first/popped last so it survives every call in the body;
@@ -840,7 +852,8 @@ static int scalar_dest_reg(char** toks, int n)
 {
   static const char* dest1[] = {
     "li", "mov", "add", "sub", "mul", "addi", "slli", "srli",
-    "and", "or", "xor", "div", "rem", "lw", "setvl", "mfpsw", "mfepc", NULL
+    "and", "or", "xor", "div", "rem", "lw", "setvl", "mfpsw", "mfepc",
+    "mfepsw", NULL
   };
   if (n < 2) return -1;
   int match = 0;

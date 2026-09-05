@@ -49,10 +49,11 @@ descrittori, invariante dei link, pool. Quello che resta del gestore dei timeout
 — la scansione delle scadenze e il ciclo del task — vuole la commutazione
 volontaria (§8.7) e lo scheduler a priorità (§7.4).
 
-**RIPRENDI DA §12 DELLA PROPOSTA**, scritta il 05/09/2026 e non implementata: la
-revisione del confine HAL/ISR/kernel (§3.18). Non dipende da §7.4, e §12.6 dà
-l'ordine dei quattro passi — il primo, `mfepsw`/`mtepsw` nell'ISA, è isolato e
-deve lasciare le invarianti immobili.
+**RIPRENDI DA §12 DELLA PROPOSTA**, la revisione del confine HAL/ISR/kernel
+(§3.18). Non dipende da §7.4. Il **passo 1 di §12.6 è fatto** — `mfepsw`/`mtepsw`
+sono nell'ISA (§3.19), invarianti immobili e `.vo` identici byte per byte. Il
+prossimo è il **passo 2**: la parola di stato nel frame (60 → 64 byte) e
+`hal.vinc` con `CTX_FRAME_SIZE` e `PSW_IE`.
 
 Le altre due strade, entrambe in §5:
 
@@ -60,10 +61,10 @@ Le altre due strade, entrambe in §5:
    i mutex. È quella che sblocca tutto il resto del kernel.
 2. ~~La ristrutturazione del build in target CMake~~ — **FATTA il 05/09/2026**
    salvo il punto 3, che non blocca niente. Vedi il riquadro qui sotto.
-3. **La revisione del confine HAL/ISR/kernel — §12 della proposta**, scritta il
-   05/09/2026 e **non implementata**: è da qui che riparte il codice. Non
-   dipende da §7.4, e il suo primo passo (`mfepsw`/`mtepsw` nell'ISA) è isolato
-   e a invarianti immobili. L'ordine dei quattro passi è in §12.6.
+3. **La revisione del confine HAL/ISR/kernel — §12 della proposta**: è da qui
+   che riparte il codice, e non dipende da §7.4. Il passo 1 di §12.6 è **fatto**
+   (§3.19); restano il frame a 64 byte con `hal.vinc`, il percorso di trap
+   nuovo — che **sposterà l'invariante (2)** — e le librerie.
 
 > ### 05/09/2026 — il build è in target CMake, invarianti immobili
 >
@@ -1265,6 +1266,40 @@ volontà*. I tre ritorni riguardano le ISR, dove `epc`/`epsw` li ha scritti
 l'hardware; per un task che si blocca su `receive` non c'è nessuna trap in corso
 e nell'ISA non c'è trap software. È §8.7, ed è perché `task_block` è uno stub.
 
+### 3.19 `mfepsw`/`mtepsw`: il passo 1 di §12.6 (05/09/2026)
+
+Primo passo del confine nuovo, e l'unico che si potesse fare per primo: è isolato
+e **falsificabile**. Il criterio non era «funziona», era che le invarianti **non
+si spostassero di un ciclo** — nessun `.vasm` esistente usa le due istruzioni,
+quindi qualunque movimento sarebbe stato un danno.
+
+**Dove stanno nell'enum, e non è una svista.** Il posto logico sarebbe accanto a
+`OP_MFEPC`/`OP_MTEPC`; stanno invece **in coda**. Il `.vo` serializza l'opcode
+come **numero** (`(int) in->op` in `toolchain.c`), quindi inserirle in mezzo
+avrebbe rinumerato tutti gli opcode successivi: ogni `.vo` del progetto avrebbe
+cambiato contenuto pur restando equivalente, buttando via la proprietà «identici
+byte per byte» usata come prova in §3.17. Verificato con un confronto prima/dopo
+sui sei moduli: **nessun `.vo` è cambiato di un byte**.
+
+| File | Cosa |
+|---|---|
+| `include/vcpu.h` | `OP_MFEPSW`/`OP_MTEPSW` in coda, con il perché |
+| `src/vcpu.c` | esecuzione, timing (1 ciclo, come le altre CSR), disassemblatore |
+| `src/assembler.c` | i due rami in `encode_instr`, più `mfepsw` nella tabella di `scalar_dest_reg` — scrive un registro, quindi `.proc` deve saperlo salvare |
+| `docs/manual.md` §4.3 | le due righe nella tabella, e il riquadro riscritto |
+| `tests/test_epsw.vasm` | **nuovo**, dà `1 0 0 7` |
+
+**Il test dimostra il meccanismo, non l'esistenza delle istruzioni.** Arma il
+timer; nell'ISR legge `epsw` (deve valere 1: è il regime del **task**) e la `psw`
+attiva (deve valere 0: la ISR gira a interrupt chiusi, ed è la prova che sono due
+parole distinte); poi dirotta il ritorno con `mtepc` e impone `IE=0` con
+`mtepsw`; dopo la `reti` rilegge la `psw` e deve trovare 0. È il **caso 2 di
+§12.4**, quello che senza `mtepsw` non si può scrivere.
+
+**Verificata la sensibilità del test**, che è ciò che lo rende una prova:
+togliendo la sola `mtepsw`, `r4` passa da 0 a **1** — si arriva nel kernel con
+gli interrupt aperti, cioè esattamente il baco che l'utente aveva indicato.
+
 ---
 
 ## 4. Invarianti di regressione — come verificare che nulla si sia rotto
@@ -1275,7 +1310,7 @@ e nell'ISA non c'è trap software. È §8.7, ed è perché `task_block` è uno s
 > cmake -B out -S . && cmake --build out -j && ctest --test-dir out
 > ```
 >
-> 22 test: le tre invarianti storiche, i cinque test mirati di `tests/`, la demo
+> 23 test: le tre invarianti storiche, i sei test mirati di `tests/`, la demo
 > HAL+kernel, e i 13 programmi di `standalone/` che devono continuare a girare da
 > soli. I numeri attesi stanno nel `CMakeLists.txt`, in un posto solo.
 >
@@ -1347,6 +1382,19 @@ quindi è anche l'unico sorgente che `asm` senza `-I` rifiuta di proposito:
 ./build/vcpu_sim -I linked/scheduler/include tests/test_include.vasm
 #   16 12 16 512 1
 ```
+
+Nona verifica, dal 05/09/2026: il test di `mfepsw`/`mtepsw` (§3.19). Gira da
+solo, e dimostra il caso 2 di §12.4 — non che le istruzioni esistano, ma che una
+ISR possa tornare verso il kernel a interrupt disabilitati:
+
+```bash
+./build/vcpu_sim tests/test_epsw.vasm
+#   1 0 0 7
+```
+
+Stato verificato il 05/09/2026 (dopo §3.19): **tutti i numeri identici a quelli
+di prima dell'aggiunta all'ISA**, nemmeno un ciclo di scarto, e i `.vo` identici
+byte per byte. `ctest` dà 23/23.
 
 Stato verificato il 05/09/2026 (dopo §3.16): **tutti i numeri identici a prima**
 — (1) 17/40/94, **(2) 98/65 con 8 tick**, (3) 18/40/95, `test_proc` 100/200/300,
@@ -1650,10 +1698,10 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 
 **Per il confine HAL/ISR/kernel (non dipende da §7.4) — CONSIGLIATA:**
 ```
-Leggi docs/stato-lavori.md §3.18 e docs/proposta-kernel-realtime.md §12.
-Il disegno e' scritto e non implementato. Comincia dal passo 1 di §12.6:
-mfepsw/mtepsw nell'ISA. E' isolato, e le invarianti di §4 non devono
-spostarsi di un ciclo.
+Leggi docs/stato-lavori.md §3.18/§3.19 e docs/proposta-kernel-realtime.md
+§12. Il passo 1 di §12.6 e' fatto: mfepsw/mtepsw sono nell'ISA.
+Continua dal passo 2: la parola di stato nel frame di contesto (60 -> 64
+byte) e hal.vinc con CTX_FRAME_SIZE e PSW_IE.
 ```
 
 **Per il build in target CMake — quasi finito:**

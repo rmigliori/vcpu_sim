@@ -132,7 +132,21 @@ typedef enum
   OP_DUMPF,   // b=fs                          -> print float register
   OP_DUMPV,   // a=vs                          -> print first VL elements of a vector
   OP_DUMPM,   // b=rs1,           imm=count    -> print 'count' floats from memory at r[rs1]
-  OP_DUMPMASK // (no operands)                 -> print first VL bits of vmask
+  OP_DUMPMASK, // (no operands)                -> print first VL bits of vmask
+
+  // --- Aggiunte in coda, non accanto ai loro fratelli, e non è una svista ---
+  // Il formato .vo serializza l'opcode come NUMERO (toolchain.c): inserire un
+  // opcode in mezzo all'enum rinumera tutti quelli dopo, e ogni .vo del progetto
+  // cambierebbe contenuto pur restando equivalente. In coda, invece, nessuna
+  // codifica esistente si muove. Il posto logico di queste due sarebbe accanto a
+  // OP_MFEPC/OP_MTEPC, e il manuale le documenta lì.
+  //
+  // Completano l'accesso ai CSR di trap: epc era leggibile e scrivibile, epsw
+  // non era né l'uno né l'altro, quindi ogni `reti` riportava per forza il
+  // regime di interruzione del task interrotto. Servono per far ritornare una
+  // ISR verso il kernel a interrupt DISABILITATI — §12.5 della proposta.
+  OP_MFEPSW,  // a=rd                          -> r[rd] = epsw
+  OP_MTEPSW   // b=rs1                         -> epsw = r[rs1]
 } OpCode;
 
 typedef struct

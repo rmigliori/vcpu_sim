@@ -1180,7 +1180,9 @@ taglia trova `POOL_VUOTO` invece di un caso speciale.
 > applicativa), e resta valido tutto §6 di questa proposta: la sequenza di
 > *avvio* descriveva già `dispatcher` con il TCB in input.
 >
-> **Niente di questa sezione è implementato.** L'ordine di lavoro è in §12.6.
+> **Stato: il passo 1 di §12.6 è fatto** (`mfepsw`/`mtepsw` sono nell'ISA dal
+> 05/09/2026). Il resto — frame a 64 byte, percorso di trap, librerie — non è
+> implementato.
 
 ### 12.1 Il difetto: il kernel sta in mezzo fra il vettore e l'ISR
 
@@ -1390,9 +1392,13 @@ mutex chiamano. Cambia cosa sono, non cosa manca dietro.
 
 L'ordine di lavoro, in passi che si verificano da soli:
 
-1. **`mfepsw`/`mtepsw` nell'ISA.** Isolato: nessuna struttura si muove e le
-   invarianti **non devono spostarsi di un ciclo** — è la verifica che il passo è
-   innocuo.
+1. ~~**`mfepsw`/`mtepsw` nell'ISA.**~~ **FATTO il 05/09/2026.** Le invarianti non
+   si sono spostate di un ciclo e i `.vo` sono identici byte per byte — i due
+   opcode stanno **in coda all'enum** e non accanto ai loro fratelli, perché il
+   `.vo` serializza l'opcode come numero e inserirli in mezzo avrebbe rinumerato
+   tutti quelli dopo. `tests/test_epsw.vasm` dimostra il caso 2 di §12.4 e non
+   solo l'esistenza delle istruzioni: senza la `mtepsw` il test vede `IE=1` nel
+   kernel, cioè il baco.
 2. **La parola di stato nel frame** (60 → 64 byte) e `hal.vinc` con
    `CTX_FRAME_SIZE` e `PSW_IE`.
 3. **Il percorso di trap nuovo**: `g_handler`/`irq_install` passano nell'HAL, il

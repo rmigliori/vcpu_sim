@@ -1,0 +1,68 @@
+; test_epsw.vasm — test mirato di mfepsw/mtepsw (§12.5 della proposta).
+;
+; Non verifica che le due istruzioni "funzionino" leggendo e riscrivendo un
+; valore qualunque: dimostra il MECCANISMO per cui esistono, cioe' che una ISR
+; puo' ritornare verso il kernel a INTERRUPT DISABILITATI. E' il caso 2 di
+; §12.4, quello che senza mtepsw non si puo' scrivere.
+;
+; Perche' senza mtepsw non si puo': `reti` fa `pc = epc; psw = epsw`, cioe'
+; ripristina anche il regime di interruzione. epc e' dirottabile con mtepc, ma
+; se epsw resta quella del task interrotto (IE=1) si arriva nel kernel con gli
+; interrupt aperti — che e' il baco, non una scelta.
+;
+; Il test:
+;   1. il task gira con IE=1 e aspetta il tick;
+;   2. la ISR legge epsw con mfepsw: deve valere 1 (IE del TASK, non della ISR,
+;      che gira a IE=0 perche' ce l'ha messa la trap);
+;   3. legge anche la psw ATTIVA con mfpsw: deve valere 0, ed e' la prova che
+;      le due sono parole distinte e non due nomi della stessa cosa;
+;   4. dirotta il ritorno su 'kernel_entry' con mtepc e impone IE=0 con mtepsw;
+;   5. dopo la reti, kernel_entry rilegge la psw: deve valere 0.
+;      Se mtepsw non facesse il suo lavoro qui uscirebbe 1.
+;
+; Il passo 5 e' quello che fallisce se si toglie la mtepsw: e' il test vero.
+;
+; Gira da solo, non serve il link:
+;   ./build/vcpu_sim tests/test_epsw.vasm
+;
+; Atteso, in ordine:  1 0 0 7
+
+  .text
+  .global main
+main:
+  li r14, 4096          ; sp
+  sethandler _isr       ; vettore di trap (prende l'etichetta, non un registro)
+  li r1, 50
+  settimer r1           ; arma il tick
+  sti                   ; IE = 1: da qui il task e' interrompibile
+
+attesa:
+  j attesa              ; aspetta il tick; ci arriva la trap
+
+; --------------------------------------------------------------------------
+;  La ISR. Ci si entra con IE=0 (ce l'ha messo la trap) ed epsw = psw del task.
+; --------------------------------------------------------------------------
+_isr:
+  mfepsw r1
+  dumps r1              ; 1 — la parola di stato del TASK: girava con IE=1
+
+  mfpsw r2
+  dumps r2              ; 0 — la parola di stato ATTIVA: la ISR gira a IE=0
+
+  li r3, kernel_entry
+  mtepc r3              ; dove si torna: non l'istruzione interrotta
+  li r3, 0
+  mtepsw r3             ; in che regime si torna: IE=0  <- il punto del test
+  reti
+
+; --------------------------------------------------------------------------
+;  Il "kernel": ci si arriva dalla reti dirottata, e ci si deve arrivare con
+;  gli interrupt ancora chiusi.
+; --------------------------------------------------------------------------
+kernel_entry:
+  mfpsw r4
+  dumps r4              ; 0 — se mtepsw non funzionasse, qui uscirebbe 1
+
+  li r5, 7
+  dumps r5              ; 7 — si e' arrivati fin qui: la reti e' andata a segno
+  halt
