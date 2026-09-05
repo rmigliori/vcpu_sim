@@ -1,6 +1,6 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **5 settembre 2026**
+> Ultimo aggiornamento: **5 settembre 2026** (quinta sessione: §3.23)
 > Scopo: fotografia dello stato per riprendere il lavoro a distanza di giorni
 > senza dover ricostruire il contesto.
 
@@ -8,7 +8,23 @@
 
 ## 0. STATO ATTUALE — LAVORO NON COMMITTATO NEL WORKING TREE
 
-**RIPRENDI DA QUI.** Il **30/08/2026** ci sono state **tre sessioni**, non una:
+> ### ▶ RIPRENDI DA QUI (06/09/2026)
+>
+> **Working tree pulito, niente in sospeso nel codice.** Il 05/09/2026 ci sono
+> state **cinque sessioni** (§3.16-§3.23): `-I` e `.include` idempotente, i target
+> CMake, `mfepsw`/`mtepsw`, la parola di stato nel frame, il percorso di trap
+> nuovo, sei librerie su un DAG — e infine, **senza scrivere codice**, la
+> decisione su come deve essere fatto l'albero (**§3.23**).
+>
+> **Il lavoro riprende da lì:** §5, «Ristrutturazione dell'albero: una cartella
+> per libreria». Lo schema è deciso, ma **tre domande sono aperte** (in fondo a
+> §3.23) e sono proposte di Claude, non decisioni prese: finché non hanno
+> risposta non si sposta nessun file.
+>
+> **Ci sono 6 commit locali non pushati** (§2). Il push si fa solo su richiesta
+> esplicita.
+
+Il **30/08/2026** ci sono state **tre sessioni**, non una:
 §3.9 (il TCB e i timeout), §3.10 (la mailbox, progettata e implementata) e §3.11
 (il gestore dei timeout, riprogettato da capo). Il documento da leggere resta
 [`docs/proposta-kernel-realtime.md`](proposta-kernel-realtime.md), ora coerente:
@@ -1450,6 +1466,116 @@ smetterà di includere `tcb.vinc`, e il grep a zero sarà la prova che il confin
 
 ---
 
+### 3.23 Cosa vuol dire «struttura professionale»: una cartella per libreria (05/09/2026, quinta sessione)
+
+**Sessione di sola discussione: nessuna riga scritta, nessun file spostato.** Si
+chiude con uno schema **deciso dall'utente** e **tre domande ancora aperte** —
+che è il motivo per cui non è stato toccato niente.
+
+**Il punto di partenza.** L'utente guarda il `CMakeLists.txt` uscito da §3.22 e
+dice che «non riflette la struttura di un progetto professionale». È vero, e il
+difetto è uno: **il file di primo livello conosce il percorso di ogni sorgente
+del progetto**. La spia sono `set(VINC_DIR ...)`, `set(SCHED ...)`,
+`set(TESTS ...)` — in CMake un `set()` che contiene un percorso verso *un'altra*
+cartella è quasi sempre un `add_subdirectory()` mancante. La descrizione di build
+di un componente deve vivere **con** il componente.
+
+**Lo schema dell'utente**, più preciso del generico «spezza in sottocartelle»:
+ogni libreria è una cartella con due rami, e il ramo dell'interfaccia contiene una
+sottocartella **che ripete il nome della libreria**.
+
+```
+coda/
+  CMakeLists.txt              add_subdirectory(impl interface)
+  impl/
+    CMakeLists.txt            add_subdirectory(src)
+    src/
+      CMakeLists.txt          sorgenti + librerie da linkare (anche la propria interfaccia)
+      coda.vasm
+  interface/
+    CMakeLists.txt            add_subdirectory(coda)
+    coda/                     <- ripete il nome della libreria
+      CMakeLists.txt          la libreria d'interfaccia + cosa linka a sua volta
+      coda.vinc
+```
+
+> #### Perché quel livello `interface/<nome>/` non è decorazione
+>
+> **Oggi la propagazione dei `-I` è teatro.** Tutti e sei i `vasm_interface`
+> puntano alla *stessa* cartella `linked/scheduler/include/`, quindi qualunque
+> modulo — qualunque cosa dichiari in `LIBS` — riceve un `-I` su una cartella che
+> contiene tutti e sei i `.vinc`. `test_pool.vasm` può includere `tcb.vinc` senza
+> che nessuno lo abbia autorizzato, e assembla. La dichiarazione di dipendenza è
+> un commento.
+>
+> Con `interface/<nome>/` ogni libreria propaga la **propria** cartella e il file
+> si include come `coda/coda.vinc`. Chi include `tcb/tcb.vinc` senza aver linkato
+> l'interfaccia del kernel non riceve quel `-I` e **non assembla**. Il grafo
+> smette di essere documentazione e diventa un vincolo imposto dalla macchina —
+> per le *costanti*, esattamente come §3.21 l'ha ottenuto per i *simboli*
+> (`ld machine.vo` da solo si chiude).
+
+**Verificato, e vale come vincolo per chi implementa: non serve toccare il C.**
+[`src/assembler.c:1180`](../src/assembler.c#L1180) compone `"%s/%s"` fra la
+cartella candidata e il nome, quindi un nome **con lo slash** si risolve già oggi;
+e `inc_canonical` (`realpath`) lo canonicalizza *dopo* aver aperto il file, quindi
+l'idempotenza di §3.16 regge senza modifiche.
+
+Conferma incidentale che lo spezzettamento di §3.22 era giusto: **sei librerie,
+sei `.vinc`, uno per libreria**, corrispondenza esatta. Se lo schema non fosse
+aderente al progetto si vedrebbe una `interface/` con dentro header di padroni
+diversi — ed era esattamente `types.vinc`, che ne teneva tre.
+
+**Le tre domande aperte.** Sono **proposte di Claude, non decisioni
+dell'utente**, e non vanno trattate come acquisite:
+
+1. **`impl/` deve guadagnarsi il suo livello.** Così com'è contiene solo `src/`:
+   due livelli per uno. Proposta: `impl/` tiene `src/` **e** `test/`, e
+   `tests/test_coda.vasm` — che è il test unitario di `lib_coda`, non un test di
+   sistema — si sposta in `coda/impl/test/`. Resterebbero in un `tests/` di primo
+   livello solo i test che verificano il **simulatore**: `test_epsw`,
+   `test_proc`, `test_include`, `standalone/`.
+2. **Dove vanno le sei cartelle.** `linked/` nacque per «esempi con più moduli
+   linkati» e ci convive `linked/multi/`; l'RTOS non è più un esempio. Proposta:
+   `rtos/` a primo livello con le sei librerie sorelle, lasciando `linked/multi/`
+   dov'è. Attenzione al **rovesciamento di significato**: oggi `kernel/` è la
+   cartella che contiene cinque delle sei librerie, domani sarebbe **una** delle
+   sei.
+3. **Fondere `LIBS` e `LINK` in `vasm_library`.** Lo schema lo implica: se una
+   libreria «linka anche la propria interfaccia», la distinzione fra interfaccia
+   (→ `-I`) e libreria (→ `.va`) non è più del chiamante ma è una proprietà del
+   target linkato, e la macchina la sa già (chi ha `VASM_HEADERS` è
+   un'interfaccia, chi ha un `.va` è una libreria). Un solo `LINK`, come il vero
+   `target_link_libraries`.
+
+**Il prezzo, detto per intero:** cinque librerie su sei sono **un solo file
+sorgente**, che finirebbe tre livelli sotto (`rtos/coda/impl/src/coda.vasm`) —
+sette cartelle e quattro `CMakeLists.txt` per ~200 righe. Si paga volentieri
+perché il vincolo sui `-I` frutta **adesso**, non «quando il progetto crescerà», e
+perché i confini non sono inventati: sono quelli dimostrati in §3.21-§3.22.
+
+**Altri difetti del `CMakeLists.txt` attuale**, emersi nella stessa analisi e da
+sistemare con lo spostamento:
+
+- **`CMAKE_SOURCE_DIR` ovunque**, anche in [`cmake/vasm.cmake:17`](../cmake/vasm.cmake#L17)
+  (`VASM_BINARY_DIR`): significa *la radice dell'albero*, non *la radice di questo
+  progetto*. Va `PROJECT_SOURCE_DIR` / `CMAKE_CURRENT_SOURCE_DIR` — e a quel punto
+  i percorsi diventano nomi nudi.
+- **Collisione già in atto:** `multi` è sia il programma sia il test. Funziona
+  perché sono due spazi di nomi diversi di CMake, ma è fortuna.
+- **`add_compile_options(-Wall -Wextra)` globale e non guardato** dal compilatore:
+  va sul target, con `$<$<C_COMPILER_ID:GNU,Clang>:...>`.
+- **`file(GLOB)` senza `CONFIGURE_DEPENDS`** per `standalone/`: si aggiunge un
+  `.vasm` e il build non se ne accorge.
+- **Doppia verità sui numeri attesi.** I valori stanno nel `CMakeLists.txt` **e**
+  nell'intestazione di sei test (`Atteso, in ordine: ...`), e accanto ci sono le
+  pipeline scritte a mano che CMake ha reso obsolete (altri sei file). Sono copie
+  che divergeranno **in silenzio**: `ctest` resterà verde mentre il commento
+  mente. Le intestazioni vanno riscritte con *cosa* verifica il test e *perché*;
+  pipeline e numeri se ne vanno dove li esegue la macchina.
+
+---
+
 ## 4. Invarianti di regressione — come verificare che nulla si sia rotto
 
 > ### Dal 05/09/2026 si fa con `ctest` (§3.17)
@@ -1583,8 +1709,10 @@ stessa alternanza dei task. `asm` pulito su tutti i 20 sorgenti di
 
 ## 5. Prossimi passi possibili
 
-Ci sono tre fronti: quello su cui si sta lavorando adesso, quello fermo in attesa
-di una decisione, e quello di vecchia data.
+Ci sono quattro fronti: la **ristrutturazione dell'albero**, che è quello aperto
+adesso e l'unico che non dipenda da nessuna decisione di progetto (§3.23); quello
+dei messaggi, arrivato in fondo a ciò che si poteva scrivere; quello fermo in
+attesa della decisione §7.4; e quello di vecchia data.
 
 ### Messaggi e interfacce dei servizi (FRONTE ATTIVO)
 
@@ -1827,6 +1955,48 @@ una ristrutturazione del build.
 > `main`, verificato sugli `#include`): i confini li stiamo già rispettando,
 > semplicemente nessuno li impone.
 
+### Ristrutturazione dell'albero: una cartella per libreria (DECISO, DA FARE — FRONTE ATTIVO)
+
+**È qui che riprende il lavoro il 06/09/2026.** Lo schema è **deciso**
+dall'utente e verbalizzato in **§3.23**, che va letta per intera prima di
+toccare un file: c'è lo schema, il motivo per cui non è decorazione (il vincolo
+sui `-I`, oggi inesistente), e il fatto già verificato che **l'assemblatore non
+va toccato**.
+
+**Prima di muovere anche un solo file servono tre risposte** (§3.23, elenco
+finale). Sono proposte di Claude, non decisioni prese, e sono esattamente il tipo
+di cosa su cui non si scrive codice in avanti:
+
+1. `impl/` tiene anche `test/`, e i test unitari si spostano accanto alla loro
+   libreria?
+2. Le sei cartelle vanno sotto un nuovo `rtos/` di primo livello?
+3. `LIBS` e `LINK` si fondono in un solo `LINK`?
+
+**Ordine di lavoro, una volta risposto:**
+
+1. Spostamento con **`git mv`** — la storia dei file non si perde, e serve:
+   `coda.vasm` e `pool.vasm` hanno una storia di progetto che vale più del
+   diff.
+2. Riscrittura delle `.include` da nome nudo a `<lib>/<nome>.vinc`. Sono 12 più
+   quelle interne ai `.vinc` (`pool.vinc`, `tcb.vinc` e `messaggio.vinc`
+   includono `coda.vinc`).
+3. `CMakeLists.txt` di primo livello ridotto a `project()` + opzioni +
+   `CMAKE_MODULE_PATH` + `add_subdirectory`; `cmake/vasm.cmake` diventa un modulo
+   incluso per nome (`include(VasmToolchain)`), non per percorso.
+4. I difetti minori elencati in fondo a §3.23 (`CMAKE_SOURCE_DIR`, la collisione
+   `multi`, `-Wall` globale, `file(GLOB)`).
+5. **A parte, in un commit suo:** la doppia verità nelle intestazioni dei test.
+
+**Vincolo non negoziabile, lo stesso di ogni migrazione di build:** alla fine
+`ctest` deve dare **23/23** e le invarianti di §4 gli **stessi identici numeri** —
+17/40/94, **97/64 con 8 tick**, 18/40/95. Questa è una migrazione a somma zero sui
+numeri: se un valore si muove, non è una ristrutturazione del build, è un baco.
+
+Il punto 3 della sezione precedente (`--emit-deps`) **resta aperto e non
+blocca**; anzi, dopo questa ristrutturazione vale di più, perché con un `-I` per
+libreria una dipendenza non dichiarata diventa un errore di assemblaggio invece
+che una bugia del rebuild incrementale.
+
 ### Front-end `vc` (il pezzo mancante di vecchia data)
 
 Progetto già completo in
@@ -1854,7 +2024,16 @@ Aprire Claude Code nella cartella del progetto e scrivere una di queste:
 Leggi docs/stato-lavori.md e riprendi da lì.
 ```
 
-**Per il confine HAL/ISR/kernel (non dipende da §7.4) — CONSIGLIATA:**
+**Per la ristrutturazione dell'albero — CONSIGLIATA, è dove si è fermato il 05/09:**
+```
+Leggi docs/stato-lavori.md §3.23 e la sezione di §5 "Ristrutturazione
+dell'albero: una cartella per libreria". Lo schema e' deciso: ogni libreria
+ha impl/src e interface/<nome>. Prima di spostare qualsiasi file rispondo
+alle tre domande aperte in fondo a §3.23. Alla fine ctest deve dare 23/23 e
+le invarianti di §4 gli stessi identici numeri.
+```
+
+**Per il confine HAL/ISR/kernel (non dipende da §7.4):**
 ```
 Leggi docs/stato-lavori.md §3.18-§3.22 e docs/proposta-kernel-realtime.md
 §12: e' tutta fatta, sei librerie su un DAG. Restano due debiti (§12.3):
@@ -1869,7 +2048,7 @@ Leggi docs/stato-lavori.md, la sezione di §5 sulla ristrutturazione del
 build. Punti 1, 2 e 4 fatti (§3.16, §3.17): -I, .include idempotente,
 nomi nudi e target CMake con ctest. Resta il punto 3, --emit-deps
 nell'assembler, per avere le dipendenze scoperte invece che dichiarate.
-Alla fine `ctest --test-dir out` deve dare 22/22.
+Alla fine `ctest --test-dir out` deve dare 23/23.
 ```
 
 **Per lo scheduler (la decisione che sblocca il kernel):**
