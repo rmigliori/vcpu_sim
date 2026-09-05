@@ -70,6 +70,12 @@ int  assemble_object(const char* path, VObject* obj, const char* expanded_out,
                       char* err, size_t errsz);
 void vobject_free(VObject* obj);
 
+// .include search path (-I), shared by assemble() and assemble_object():
+// a name that is not found next to the top-level source is looked up in these
+// directories, in the order they were added. Returns 0, or -1 if full.
+int  asm_add_include_dir(const char* dir);
+void asm_clear_include_dirs(void);
+
 // --- toolchain.c -----------------------------------------------------------
 int  vo_write(const char* path, const VObject* obj, char* err, size_t errsz);
 int  vo_read(const char* path, VObject* obj, char* err, size_t errsz);

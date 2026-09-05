@@ -5,10 +5,14 @@
 ; quindi non c'e' una mailbox da pubblicare: ci sono due entry point
 ; (timeout_arm/timeout_cancel) e i codici con cui rispondono.
 ;
-; NON include types.vinc di proposito: .include non e' idempotente in questo
-; assembler (includere due volte lo stesso file da' "duplicate constant"), quindi
-; un .vinc che ne includa un altro esplode appena un chiamante include entrambi.
-; Finche' non e' resa idempotente, la regola e' che i .vinc sono FOGLIA.
+; NON include types.vinc, ma il motivo non e' piu' quello di prima. `.include` e'
+; ORA IDEMPOTENTE (un file gia' incluso e' un no-op, come #pragma once), quindi
+; un .vinc che ne includa un altro non esplode piu' con "duplicate constant": la
+; regola "i .vinc sono FOGLIA" e' caduta. Resta un vincolo di forma: un nome si
+; risolve rispetto alla cartella del file di PRIMO LIVELLO, quindi un .vinc puo'
+; nominarne un altro solo per nome nudo, e chi assembla deve passare la sua
+; cartella con -I. Finche' le pipeline scritte a mano non lo fanno, questo file
+; resta foglia per convenienza e non per impedimento.
 
 ; --------------------------------------------------------------------------
 ;  Il descrittore: una casella del vettore, cioe' UN timeout armato.

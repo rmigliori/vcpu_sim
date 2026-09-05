@@ -8,6 +8,25 @@
 
 static int peek_magic(const char* path, char* out, size_t sz);
 
+// -I <dir> / -Idir: append to the assembler's .include search path. Returns 1
+// if argv[*i] was an -I flag (advancing *i past its argument when separate),
+// 0 if it was not, -1 on error (message already printed). A dropped -I would
+// only surface later as a puzzling "cannot open include", so it is fatal.
+static int parse_include_flag(int argc, char** argv, int* i)
+{
+  const char* dir = NULL;
+  if (strcmp(argv[*i], "-I") == 0 && *i + 1 < argc)          dir = argv[++(*i)];
+  else if (strncmp(argv[*i], "-I", 2) == 0 && argv[*i][2])   dir = argv[*i] + 2;
+  else return 0;
+
+  if (asm_add_include_dir(dir) != 0)
+  {
+    fprintf(stderr, "error: too many -I directories ('%s')\n", dir);
+    return -1;
+  }
+  return 1;
+}
+
 static void print_stats(const VCpu* cpu)
 {
   printf("---- stats ----\n");
@@ -40,12 +59,15 @@ static int cmd_asm(int argc, char** argv)
   const char* expanded = NULL;
   for (int i = 2; i < argc; ++i)
   {
+    int inc = parse_include_flag(argc, argv, &i);
+    if (inc < 0) return 2;
+    if (inc > 0) continue;
     if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) out = argv[++i];
     else if (strcmp(argv[i], "--emit-expanded") == 0 && i + 1 < argc) expanded = argv[++i];
     else in = argv[i];
   }
   if (!in || !out)
-  { fprintf(stderr, "usage: %s asm <in.vasm> -o <out.vo> [--emit-expanded <file>]\n", argv[0]); return 2; }
+  { fprintf(stderr, "usage: %s asm <in.vasm> -o <out.vo> [-I <dir>]... [--emit-expanded <file>]\n", argv[0]); return 2; }
 
   VObject* obj = calloc(1, sizeof(VObject));
   if (!obj) { fprintf(stderr, "out of memory\n"); return 1; }
@@ -367,6 +389,9 @@ int main(int argc, char** argv)
   RunMode     mode = RUN_NORMAL;
   for (int i = 1; i < argc; ++i)
   {
+    int inc = parse_include_flag(argc, argv, &i);
+    if (inc < 0) return 2;
+    if (inc > 0) continue;
     if (strcmp(argv[i], "--trace") == 0)      mode = RUN_TRACE;
     else if (strcmp(argv[i], "--debug") == 0) mode = RUN_DEBUG;
     else                                      path = argv[i];
@@ -374,8 +399,8 @@ int main(int argc, char** argv)
   if (!path)
   {
     fprintf(stderr,
-            "usage: %s [--trace|--debug] <program.vasm>\n"
-            "       %s asm <in.vasm> -o <out.vo>\n"
+            "usage: %s [--trace|--debug] [-I <dir>]... <program.vasm>\n"
+            "       %s asm <in.vasm> -o <out.vo> [-I <dir>]...\n"
             "       %s ld  <a.vo|lib.va> ... [-e <sym>] -o <out.vx>\n"
             "       %s run <prog.vx> [--trace|--debug]\n"
             "       %s nm  [-n|-p] [-r] <file.vo|file.vx>\n"

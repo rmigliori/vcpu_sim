@@ -1,0 +1,40 @@
+; tests/test_include.vasm — test mirato di `-I` e dell'idempotenza di .include.
+;
+; Quello che verifica non e' un comportamento della macchina ma una proprieta'
+; dell'assembler, e non ha bisogno del link: gira in modalita' legacy a file
+; singolo. La macchina serve solo a rendere osservabile l'esito, stampando
+; costanti che vengono da entrambi i file di interfaccia.
+;
+; Le tre righe qui sotto nominano DUE file, non tre: types.vinc arriva una volta
+; per nome nudo (risolto da -I) e una per path relativo (risolto rispetto alla
+; cartella di questo file). Sono due grafie dello stesso file, e l'assembler lo
+; riconosce canonicalizzando il path: la seconda .include e' un no-op.
+;
+; Senza idempotenza questo file darebbe `asm error: duplicate constant TESTA.fwd`;
+; senza -I darebbe `cannot open include 'types.vinc'`. Sono i due modi in cui il
+; test fallisce, ed e' quello che deve restare vero quando le 12 .include del
+; progetto passeranno tutte a nome nudo.
+;
+; Pipeline (l'unica del repo che ha bisogno di -I, per ora):
+;   ./build/vcpu_sim -I linked/scheduler/include tests/test_include.vasm
+;
+; Atteso, in ordine:  16 12 16 512 1
+
+.include "types.vinc"                              ; nome nudo, via -I
+.include "../linked/scheduler/include/types.vinc"  ; stesso file, altra grafia
+.include "pool.vinc"                               ; secondo fornitore, via -I
+
+  .text
+
+main:
+  li r1, TCB.size       ; 16 — da types.vinc, definita una volta sola
+  dumps r1
+  li r2, TCB.state      ; 12 — l'offset, non solo la taglia
+  dumps r2
+  li r3, POOL_D16       ; 16 — da pool.vinc: il secondo fornitore c'e'
+  dumps r3
+  li r4, POOL_D512      ; 512
+  dumps r4
+  li r5, RUNNING        ; 1 — uno stato, non un offset
+  dumps r5
+  halt

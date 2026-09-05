@@ -1015,24 +1015,122 @@ static void join_tokens(char** toks, int start, int n, char* out, size_t outsz)
 // ---------------------------------------------------------------------------
 //  .include support: a small stack of open source files. The bottom of the
 //  stack is the top-level file (left open so the caller's fclose(fp) frees it);
-//  nested includes are closed on EOF. Include paths resolve against base_dir
-//  (the directory of the top-level file), or as-is when absolute.
+//  nested includes are closed on EOF.
+//
+//  A name is resolved, in order, against: the directory of the top-level file,
+//  then each -I directory in the order it was given. An absolute name is used
+//  as-is. That order is what lets a bare name ("pool.vinc") be found through -I
+//  while the existing relative spellings ("../include/pool.vinc") keep working.
+//
+//  .include is IDEMPOTENT: every file that enters an assembly unit is recorded
+//  by its canonical path (realpath), and a second .include of the same file is
+//  a silent no-op — the semantics of #pragma once. Without it a .vinc could not
+//  include another .vinc, since the second arrival would redefine every
+//  constant ("duplicate constant"); with it the leaf-only rule that types.vinc
+//  and pool.vinc carry in their headers is no longer needed.
 // ---------------------------------------------------------------------------
-#define MAX_INCLUDE 8
+#define MAX_INCLUDE   8
+#define MAX_INC_DIRS 16
+#define MAX_INC_SEEN 64
 
-static int inc_next_line(FILE** stk, int* sp, char* line, size_t sz)
+// Search path from -I. Global because it is set once per process by the CLI and
+// applies to whatever the assembler is asked to assemble afterwards.
+static char g_inc_dirs[MAX_INC_DIRS][400];
+static int  g_inc_dir_count;
+
+void asm_clear_include_dirs(void)
 {
-  while (*sp > 0)
+  g_inc_dir_count = 0;
+}
+
+int asm_add_include_dir(const char* dir)
+{
+  if (g_inc_dir_count >= MAX_INC_DIRS) return -1;
+  snprintf(g_inc_dirs[g_inc_dir_count++], sizeof g_inc_dirs[0], "%s", dir);
+  return 0;
+}
+
+// Per-assembly-unit include state: the open-file stack plus the set of files
+// already pulled in (canonical paths), which is what makes .include idempotent.
+typedef struct
+{
+  FILE* stk[MAX_INCLUDE];
+  int   sp;
+  char  base_dir[400];
+  char  seen[MAX_INC_SEEN][512];
+  int   nseen;
+} IncState;
+
+static void base_dir_of(const char* path, char* out, size_t sz)
+{
+  const char* slash = strrchr(path, '/');
+  if (slash) snprintf(out, sz, "%.*s", (int) (slash - path), path);
+  else if (sz) out[0] = '\0';
+}
+
+// Canonical form of 'path', for identity comparison. realpath() only fails on a
+// file we cannot reach, and every caller has just opened it; the raw path is a
+// safe fallback anyway (it only ever costs a missed duplicate, never a wrong
+// match, because two spellings that canonicalise differently stay different).
+static void inc_canonical(const char* path, char* out, size_t sz)
+{
+  char* real = realpath(path, NULL);
+  snprintf(out, sz, "%s", real ? real : path);
+  free(real);
+}
+
+static int inc_already_seen(const IncState* inc, const char* canon)
+{
+  for (int i = 0; i < inc->nseen; ++i)
+    if (strcmp(inc->seen[i], canon) == 0) return 1;
+  return 0;
+}
+
+static int inc_remember(IncState* inc, const char* canon, char* err, size_t errsz)
+{
+  if (inc->nseen >= MAX_INC_SEEN)
   {
-    if (fgets(line, sz, stk[*sp - 1])) return 1;
-    if (*sp == 1) return 0;          // leave the top-level file open for the caller
-    fclose(stk[*sp - 1]);
-    *sp -= 1;
+    snprintf(err, errsz, "too many included files");
+    return -1;
+  }
+  snprintf(inc->seen[inc->nseen++], sizeof inc->seen[0], "%s", canon);
+  return 0;
+}
+
+// Start an assembly unit on an already-open top-level file. The top-level file
+// itself joins the seen-set, so a source that .includes itself is a no-op too.
+static int inc_begin(IncState* inc, FILE* top, const char* path, char* err, size_t errsz)
+{
+  memset(inc, 0, sizeof *inc);
+  base_dir_of(path, inc->base_dir, sizeof inc->base_dir);
+  inc->stk[inc->sp++] = top;
+  char canon[512];
+  inc_canonical(path, canon, sizeof canon);
+  return inc_remember(inc, canon, err, errsz);
+}
+
+static int inc_next_line(IncState* inc, char* line, size_t sz)
+{
+  while (inc->sp > 0)
+  {
+    if (fgets(line, sz, inc->stk[inc->sp - 1])) return 1;
+    if (inc->sp == 1) return 0;      // leave the top-level file open for the caller
+    fclose(inc->stk[inc->sp - 1]);
+    inc->sp -= 1;
   }
   return 0;
 }
 
-static FILE* inc_open(const char* base_dir, const char* raw, char* err, size_t errsz)
+// Close every nested include still open. The top-level file stays open: the
+// caller owns it and fcloses it itself, on the error paths too.
+static void inc_cleanup(IncState* inc)
+{
+  while (inc->sp > 1) fclose(inc->stk[--inc->sp]);
+}
+
+// Handle one .include directive: resolve, skip if already included, push.
+// Returns 1 pushed, 0 skipped (already seen), -1 error (message in 'err').
+static int inc_push(IncState* inc, const char* raw, int lineno, char* err, size_t errsz)
 {
   char name[400];
   size_t L = strlen(raw);
@@ -1040,19 +1138,53 @@ static FILE* inc_open(const char* base_dir, const char* raw, char* err, size_t e
     snprintf(name, sizeof name, "%.*s", (int) (L - 2), raw + 1);
   else
     snprintf(name, sizeof name, "%s", raw);
-  char full[512];
-  if (name[0] == '/' || base_dir[0] == '\0') snprintf(full, sizeof full, "%s", name);
-  else snprintf(full, sizeof full, "%s/%s", base_dir, name);
-  FILE* f = fopen(full, "r");
-  if (!f) snprintf(err, errsz, "cannot open include '%s'", full);
-  return f;
-}
 
-static void base_dir_of(const char* path, char* out, size_t sz)
-{
-  const char* slash = strrchr(path, '/');
-  if (slash) snprintf(out, sz, "%.*s", (int) (slash - path), path);
-  else if (sz) out[0] = '\0';
+  // Candidate directories: top-level file's directory first, then each -I.
+  // A NULL entry means "use the name as given".
+  const char* dirs[1 + MAX_INC_DIRS];
+  int ndirs = 0;
+  if (name[0] == '/') dirs[ndirs++] = NULL;
+  else
+  {
+    if (inc->base_dir[0] != '\0') dirs[ndirs++] = inc->base_dir;
+    else                          dirs[ndirs++] = NULL;
+    for (int i = 0; i < g_inc_dir_count; ++i) dirs[ndirs++] = g_inc_dirs[i];
+  }
+
+  char  full[512];
+  FILE* f = NULL;
+  for (int i = 0; i < ndirs && !f; ++i)
+  {
+    if (dirs[i]) snprintf(full, sizeof full, "%s/%s", dirs[i], name);
+    else         snprintf(full, sizeof full, "%s", name);
+    f = fopen(full, "r");
+  }
+  if (!f)
+  {
+    int off = snprintf(err, errsz, "line %d: cannot open include '%s'", lineno, name);
+    if (g_inc_dir_count > 0 && off > 0 && (size_t) off < errsz)
+    {
+      off += snprintf(err + off, errsz - (size_t) off, " (searched: %s", inc->base_dir);
+      for (int i = 0; i < g_inc_dir_count && off > 0 && (size_t) off < errsz; ++i)
+        off += snprintf(err + off, errsz - (size_t) off, ", %s", g_inc_dirs[i]);
+      if (off > 0 && (size_t) off < errsz) snprintf(err + off, errsz - (size_t) off, ")");
+    }
+    return -1;
+  }
+
+  char canon[512];
+  inc_canonical(full, canon, sizeof canon);
+  if (inc_already_seen(inc, canon)) { fclose(f); return 0; }
+
+  if (inc->sp >= MAX_INCLUDE)
+  {
+    snprintf(err, errsz, "line %d: .include nested too deep", lineno);
+    fclose(f);
+    return -1;
+  }
+  if (inc_remember(inc, canon, err, errsz) != 0) { fclose(f); return -1; }
+  inc->stk[inc->sp++] = f;
+  return 1;
 }
 
 int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
@@ -1082,13 +1214,10 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
   int     lineno   = 0;
 
   // .include: file stack (bottom = top-level file, kept open for fclose(fp)).
-  FILE*   inc_stk[MAX_INCLUDE];
-  int     inc_sp = 0;
-  char    base_dir[400];
-  base_dir_of(path, base_dir, sizeof base_dir);
-  inc_stk[inc_sp++] = fp;
+  IncState inc;
+  if (inc_begin(&inc, fp, path, err, errsz) != 0) { fclose(fp); return -1; }
 
-  while (inc_next_line(inc_stk, &inc_sp, line, sizeof(line)))
+  while (inc_next_line(&inc, line, sizeof(line)))
   {
     lineno += 1;
     char work[512];
@@ -1098,7 +1227,7 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
     if (n == 0) continue;
 
     int hb = handle_proc_body_line(line, toks, n, lineno, err, errsz);
-    if (hb < 0) { fclose(fp); return -1; }
+    if (hb < 0) { inc_cleanup(&inc); fclose(fp); return -1; }
     if (hb == 1) continue;
 
     int k = 0;
@@ -1109,7 +1238,7 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
       char name[64];
       snprintf(name, sizeof(name), "%.*s", (int) (len - 1), toks[0]);
       int64_t value = (section == SEC_DATA) ? data_ptr : g_code_count;
-      if (add_symbol(name, value, section == SEC_TEXT, err, errsz) != 0) { fclose(fp); return -1; }
+      if (add_symbol(name, value, section == SEC_TEXT, err, errsz) != 0) { inc_cleanup(&inc); fclose(fp); return -1; }
       k = 1;
     }
     if (k >= n) continue;  // label-only line
@@ -1121,11 +1250,8 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
       else if (strcmp(first, ".data") == 0) { section = SEC_DATA; }
       else if (strcmp(first, ".include") == 0)
       {
-        if (k + 1 >= n) { snprintf(err, errsz, "line %d: .include needs a file", lineno); fclose(fp); return -1; }
-        if (inc_sp >= MAX_INCLUDE) { snprintf(err, errsz, "line %d: .include nested too deep", lineno); fclose(fp); return -1; }
-        FILE* inf = inc_open(base_dir, toks[k + 1], err, errsz);
-        if (!inf) { fclose(fp); return -1; }
-        inc_stk[inc_sp++] = inf;
+        if (k + 1 >= n) { snprintf(err, errsz, "line %d: .include needs a file", lineno); inc_cleanup(&inc); fclose(fp); return -1; }
+        if (inc_push(&inc, toks[k + 1], lineno, err, errsz) < 0) { inc_cleanup(&inc); fclose(fp); return -1; }
       }
       else if (strcmp(first, ".float") == 0)
       {
@@ -1306,14 +1432,11 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
   int     lineno   = 0;
 
   // .include: file stack (bottom = top-level file, kept open for fclose(fp)).
-  FILE*   inc_stk[MAX_INCLUDE];
-  int     inc_sp = 0;
-  char    base_dir[400];
-  base_dir_of(path, base_dir, sizeof base_dir);
-  inc_stk[inc_sp++] = fp;
+  IncState inc;
+  if (inc_begin(&inc, fp, path, err, errsz) != 0) goto fail;
 
   // ---- Pass 1: symbols, data image, bindings, keep code lines -----------
-  while (inc_next_line(inc_stk, &inc_sp, line, sizeof(line)))
+  while (inc_next_line(&inc, line, sizeof(line)))
   {
     lineno += 1;
     char work[512];
@@ -1346,10 +1469,7 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
       else if (strcmp(first, ".include") == 0)
       {
         if (k + 1 >= n) { snprintf(err, errsz, "line %d: .include needs a file", lineno); goto fail; }
-        if (inc_sp >= MAX_INCLUDE) { snprintf(err, errsz, "line %d: .include nested too deep", lineno); goto fail; }
-        FILE* inf = inc_open(base_dir, toks[k + 1], err, errsz);
-        if (!inf) goto fail;
-        inc_stk[inc_sp++] = inf;
+        if (inc_push(&inc, toks[k + 1], lineno, err, errsz) < 0) goto fail;
       }
       else if (strcmp(first, ".global") == 0 || strcmp(first, ".globl") == 0)
       {
@@ -1526,6 +1646,7 @@ fail:
   free(data);
   free_proc_body();
   free_code_lines();
+  inc_cleanup(&inc);   // nested includes still open; fp is closed just below
   fclose(fp);
   return -1;
 }

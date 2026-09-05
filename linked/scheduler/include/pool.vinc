@@ -9,9 +9,12 @@
 ; (non esiste "il blocco sbagliato"), che alloc e free sono un dequeue e un
 ; enqueue quindi O(1), e che il fallimento e' una condizione sola e limitata.
 ;
-; NON include types.vinc: .include non e' idempotente in questo assembler, quindi
-; un .vinc che ne includa un altro esplode appena un chiamante include entrambi.
-; I .vinc sono FOGLIA finche' non e' resa idempotente.
+; NON include types.vinc, ma non e' piu' un impedimento: `.include` e' ORA
+; IDEMPOTENTE, quindi la regola "i .vinc sono FOGLIA" e' caduta (vedi la nota in
+; timeout.vinc). La modellazione giusta sarebbe che questo file includa
+; types.vinc — BLOCCO *e'* un nodo di lista — e diventera' scrivibile quando le
+; .include passeranno a nome nudo con -I: un nome si risolve rispetto alla
+; cartella del file di primo livello, non di chi include.
 
 ; --------------------------------------------------------------------------
 ;  Le sei classi, per potenze di due sull'AREA DATI UTENTE.
