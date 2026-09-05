@@ -140,11 +140,10 @@ tutto da `;` in poi anche nel pass 2).
 > tenuti perché contengono convenzioni ancora valide. Lo stato corrente è quello
 > dei paragrafi in cima alla sezione.
 
-**Working tree: il lavoro di §3.17 è da committare** (§2) — le 12 `.include` a
-nome nudo, `CMakeLists.txt`, `cmake/`, i documenti. Il lavoro di §3.16 è già
-committato in `21c9305` e `41e4565`. Il branch **è stato pushato** il 04/09/2026
-— `origin/master` è a `20ae071` — e restano locali tutti i commit successivi. Il
-push non è arrivato da una sessione di lavoro: vedi §2.
+**Working tree PULITO e tutto pushato** (§2): `origin/master` è a `e2955ff`, che
+comprende §3.16 e §3.17 per intero. Il push del 05/09/2026 l'ha chiesto l'utente,
+come quello del 04/09 — la regola resta «mai senza che sia chiesto in quel
+momento».
 
 ---
 
@@ -194,13 +193,21 @@ Branch `master`, pubblicato su `git@github.com:rmigliori/vcpu_sim.git` (remote
 `origin`, HTTPS + credential helper `git-credential-libsecret` configurato,
 push senza prompt).
 
+**Tutto pushato.** Il 05/09/2026 `origin/master` è passato da `20ae071` a
+`e2955ff`: nove commit, il lavoro di §3.16 e §3.17 più i tre di handoff rimasti
+indietro dal 04/09. Il push **l'ha chiesto l'utente**, come deve essere.
+
 ```
-41e4565 Aggiorna i documenti: -I e .include idempotente (§3.16)          <- LOCALE, non pushato
-21c9305 -I nell'assembler e .include idempotente                         <- LOCALE, non pushato
-99e82f9 Handoff: il push era dell'utente, e la regola sul push resta     <- LOCALE, non pushato
-3d46446 Handoff: correggi lo stato del push                             <- LOCALE, non pushato
-099454b Handoff: il piano per il build in target CMake                   <- LOCALE, non pushato
-20ae071 Aggiorna i documenti: pool (§10 della proposta) e handoff        <- ultimo pushato
+e2955ff Aggiorna i documenti: .include a nome nudo e target CMake (§3.17) <- ultimo pushato
+735b508 I .vasm in target CMake, e le invarianti diventano ctest
+5c14836 .include a nome nudo, e pool.vinc dipende da types.vinc
+fe07cf8 Aggiorna handoff: §3.16 committato, working tree pulito
+41e4565 Aggiorna i documenti: -I e .include idempotente (§3.16)
+21c9305 -I nell'assembler e .include idempotente
+99e82f9 Handoff: il push era dell'utente, e la regola sul push resta
+3d46446 Handoff: correggi lo stato del push
+099454b Handoff: il piano per il build in target CMake
+20ae071 Aggiorna i documenti: pool (§10 della proposta) e handoff
 dbf869c Pool di buffer a blocchi fissi, sei classi per potenze di due
 d2c2527 Gestore dei timeout: vettore di descrittori, arm e cancel
 ada7b4c Mailbox, strato _nc e invariante dei link nelle code
@@ -240,6 +247,11 @@ l'indirizzo 0 riservato il test dell'invariante dei link non passa.
 > nemmeno adesso che il branch è pubblicato — il fatto che `origin/master`
 > esista non rende il push un'operazione di routine. Committare in locale sì,
 > quando richiesto; pubblicare mai senza che sia chiesto in quel momento.
+>
+> **Il 05/09/2026 il push l'ha fatto la sessione, ed è coerente con la regola,
+> non un'eccezione**: l'utente l'ha chiesto esplicitamente in quel momento
+> («forse prima una push?»). È esattamente il caso previsto. Non vale come
+> autorizzazione permanente: al push successivo si richiede.
 >
 > `.vscode/` resta l'unica cosa non tracciata, di proposito.
 
