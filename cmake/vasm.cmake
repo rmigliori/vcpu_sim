@@ -130,6 +130,57 @@ function(_vasm_order_after name)
   add_dependencies(${name} ${ARGN})
 endfunction()
 
+# --- una libreria vera: sorgenti + dipendenze verso altre librerie ----------
+#
+#  vasm_library(lib_pool SOURCES pool.vasm LIBS vinc_pool LINK lib_coda)
+#
+#  Due tipi di dipendenza, che non vanno confusi:
+#    LIBS  le INTERFACCE (.vinc) da cui prende costanti -> diventano -I
+#    LINK  le altre LIBRERIE i cui simboli usa          -> diventano .va sul
+#          comando di ld, chiuse transitivamente
+#
+#  La chiusura e' il punto: un programma che linka lib_messaggi non deve sapere
+#  che sotto ci sono lib_coda e lib_hal. Prima quella conoscenza stava scritta a
+#  mano nell'intestazione di ogni test, come lista ordinata di .vo.
+function(vasm_library name)
+  cmake_parse_arguments(A "" "" "SOURCES;LIBS;LINK" ${ARGN})
+  set(objs "")
+  set(i 0)
+  foreach(src ${A_SOURCES})
+    get_filename_component(base ${src} NAME_WE)
+    vasm_object(${name}_${base} SOURCE ${src} LIBS ${A_LIBS})
+    list(APPEND objs ${name}_${base})
+    math(EXPR i "${i} + 1")
+  endforeach()
+  vasm_archive(${name} OBJECTS ${objs})
+  set_property(TARGET ${name} PROPERTY VASM_LINK ${A_LINK})
+  if(A_LINK)
+    _vasm_order_after(${name} ${A_LINK})
+  endif()
+endfunction()
+
+# Chiusura transitiva delle librerie, in ordine di scoperta: le dirette per
+# prime, poi cio' che si tirano dietro. L'ordine conta per il layout
+# dell'immagine, non per la correttezza -- il linker fa inclusione selettiva a
+# fixpoint, quindi un ciclo o un ordine sfortunato non gli impediscono di
+# chiudere i riferimenti.
+function(_vasm_link_closure out)
+  set(libs "")
+  set(pending ${ARGN})
+  while(pending)
+    list(POP_FRONT pending lib)
+    if(lib IN_LIST libs)
+      continue()
+    endif()
+    list(APPEND libs ${lib})
+    get_target_property(deps ${lib} VASM_LINK)
+    if(deps)
+      list(APPEND pending ${deps})
+    endif()
+  endwhile()
+  set(${out} "${libs}" PARENT_SCOPE)
+endfunction()
+
 # --- una libreria: piu' .vo -> .va ------------------------------------------
 function(vasm_archive name)
   cmake_parse_arguments(A "" "" "OBJECTS" ${ARGN})
@@ -148,8 +199,16 @@ endfunction()
 
 # --- un eseguibile: .vo/.va -> .vx ------------------------------------------
 function(vasm_program name)
-  cmake_parse_arguments(A "" "ENTRY" "OBJECTS" ${ARGN})
-  _vasm_outputs(objs ${A_OBJECTS})
+  cmake_parse_arguments(A "" "ENTRY" "OBJECTS;LINK" ${ARGN})
+  # Gli oggetti espliciti (sempre linkati) per primi, poi le librerie della
+  # chiusura, da cui il linker pesca solo cio' che serve.
+  set(all ${A_OBJECTS})
+  if(A_LINK)
+    _vasm_link_closure(libs ${A_LINK})
+    list(APPEND all ${libs})
+  endif()
+  _vasm_outputs(objs ${all})
+  set(A_OBJECTS ${all})
   set(entry_flag "")
   if(A_ENTRY)
     set(entry_flag -e ${A_ENTRY})

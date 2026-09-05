@@ -20,8 +20,8 @@
 ;
 ; Atteso, in ordine:  16 12 16 512 1
 
-.include "types.vinc"                              ; nome nudo, via -I
-.include "../linked/scheduler/include/types.vinc"  ; stesso file, altra grafia
+.include "tcb.vinc"                                ; nome nudo, via -I
+.include "../linked/scheduler/include/tcb.vinc"    ; stesso file, altra grafia
 .include "pool.vinc"                               ; secondo fornitore, via -I
 
   .text

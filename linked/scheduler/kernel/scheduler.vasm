@@ -37,7 +37,7 @@
 ;   sp_salvato = il puntatore-a-contesto opaco fornito dall'HAL.
 
 ; Tipi comuni (TESTA, TCB, stati) condivisi con l'app: single source of truth.
-.include "types.vinc"
+.include "tcb.vinc"
 
   .data
 

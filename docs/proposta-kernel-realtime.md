@@ -1180,11 +1180,14 @@ taglia trova `POOL_VUOTO` invece di un caso speciale.
 > applicativa), e resta valido tutto §6 di questa proposta: la sequenza di
 > *avvio* descriveva già `dispatcher` con il TCB in input.
 >
-> **Stato: i passi 1, 2 e 3 di §12.6 sono fatti** (05/09/2026): `mfepsw`/`mtepsw`
-> nell'ISA, la parola di stato nel frame con `hal.vinc`, e il percorso di trap
-> nuovo — **l'HAL non nomina più il kernel**. Restano il **passo 4** (le
-> librerie) e, dentro §12.3, il `dispatcher` che deve ancora prendere il TCB in
-> input invece di rileggere `current`.
+> **Stato: §12.6 è COMPLETA** (05/09/2026). `mfepsw`/`mtepsw` nell'ISA, la
+> parola di stato nel frame con `hal.vinc`, il percorso di trap nuovo — **l'HAL
+> non nomina più il kernel** — e le sei librerie su un grafo che è un DAG.
+>
+> Restano due debiti, entrambi annotati nei sorgenti e bloccati su §8.7/§7.4: il
+> `dispatcher` deve prendere il TCB in input invece di rileggere `current`
+> (§12.3), e `messageHandling.vasm` scrive `TCB.state`, che è l'ultima
+> violazione del confine «solo il kernel gestisce i task».
 
 ### 12.1 Il difetto: il kernel sta in mezzo fra il vettore e l'ISR
 
@@ -1414,8 +1417,10 @@ L'ordine di lavoro, in passi che si verificano da soli:
    solo** — la prova del confine è un comando, non un'opinione. Invariante (2) da
    94/60 a **97/64**, stessi 8 tick: i contatori *salgono*, perché sparisce un
    livello di `call`/`ret`.
-4. **Le librerie e le interfacce**: `types.vinc` spezzato in `coda.vinc`,
-   `tcb.vinc` e `messaggio.vinc`, `libhal` senza `.extern`, il grafo che è un DAG.
+4. ~~**Le librerie e le interfacce**~~ **FATTO il 05/09/2026** (§3.22
+   dell'handoff): `types.vinc` spezzato in tre, sei librerie CMake con
+   dipendenze transitive, e il grafo che è un DAG — `ld lib_hal.va` da solo si
+   chiude. Invarianti immobili.
 
 Il passo 4 è la ragione per cui questa revisione viene **prima** della
 decomposizione in librerie: farla adesso significherebbe dichiarare un ciclo per

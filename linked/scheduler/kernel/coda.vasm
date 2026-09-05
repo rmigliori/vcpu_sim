@@ -54,7 +54,7 @@
 ; Layout come struttura: offset simbolici (TESTA.fwd/bwd/count) invece di 0/4/8.
 ; La struct descrive la TESTA (sentinella); il nodo condivide i primi due campi
 ; (fwd,bwd) -> stesso codice di insert/remove. Da qui arrivano anche i CODA_*.
-.include "types.vinc"
+.include "coda.vinc"
 
   .text
 

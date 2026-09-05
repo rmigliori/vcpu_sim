@@ -9,7 +9,7 @@
 ; (non esiste "il blocco sbagliato"), che alloc e free sono un dequeue e un
 ; enqueue quindi O(1), e che il fallimento e' una condizione sola e limitata.
 ;
-; INCLUDE types.vinc, ed e' una dipendenza vera e non una comodita': BLOCCO *e'*
+; INCLUDE coda.vinc, ed e' una dipendenza vera e non una comodita': BLOCCO *e'*
 ; un nodo di lista (fwd/bwd in testa, stesso idioma list_head), e una free-list
 ; e' una TESTA con i blocchi come nodi. Chi usa il pool usa le code.
 ;
@@ -18,7 +18,7 @@
 ; includeva entrambi — ed e' esattamente il caso di pool.vasm e test_pool.vasm.
 ; Il nome e' nudo perche' si risolve rispetto alla cartella del file di PRIMO
 ; LIVELLO, non di chi include: chi assembla passa -I su questa cartella.
-.include "types.vinc"
+.include "coda.vinc"
 
 ; --------------------------------------------------------------------------
 ;  Le sei classi, per potenze di due sull'AREA DATI UTENTE.
@@ -49,7 +49,7 @@
 ;
 ;  Il buffer consegnato E' GIA' un MESSAGGIO: fwd, bwd, e da +8 il payload. La
 ;  parola di provenienza non e' del kernel — e' il primo campo del PAYLOAD
-;  (PAYLOAD.pool in types.vinc), cioe' il pool e' un cliente del messaggio come
+;  (PAYLOAD.pool in messaggio.vinc), cioe' il pool e' un cliente del messaggio come
 ;  tutti gli altri. Qui la si ridichiara con il nome che ha per noi, esattamente
 ;  come TCB ridichiara i due link invece di annidare TESTA.
 ;

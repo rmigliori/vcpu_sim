@@ -1,0 +1,29 @@
+; include/coda.vinc — interfaccia di kernel/coda.vasm: il tipo lista e gli esiti.
+;
+; E' il .vinc piu' basso del sistema e il piu' incluso: il TCB, il MESSAGGIO e il
+; BLOCCO del pool sono tutti nodi di lista, quindi tcb.vinc, messaggio.vinc e
+; pool.vinc includono questo. FOGLIA: non ha niente da chiedere a nessuno.
+;
+; Nato il 05/09/2026 spezzando types.vinc, che teneva insieme code, task e
+; messaggi: un unico file di interfaccia per tre fornitori diversi faceva
+; dipendere ogni modulo da tutto (§12.6, passo 4). Il pool si portava dietro TCB
+; e MESSAGGIO senza nominarli mai.
+
+; Testa di coda (sentinella): condivide fwd/bwd con i nodi (idioma list_head).
+.struct TESTA
+  .field fwd              ; +0
+  .field bwd              ; +4
+  .field count            ; +8
+.ends
+
+; Esito delle primitive di coda (kernel/coda.vasm), restituito in r3.
+;
+; Poggiano su un'invariante che la rimozione mantiene e l'inserimento verifica:
+; UN NODO CHE NON STA IN NESSUNA LISTA HA fwd == bwd == 0. Chi rimuove azzera i
+; link del nodo che sfila (list_del_init di Linux), chi inserisce controlla che
+; siano nulli. Cosa fare dell'errore lo decide l'applicativo: coda.vasm segnala
+; e basta, non ferma la macchina — fermarla e' una politica, e questo e' il
+; modulo piu' basso del sistema.
+.equ CODA_OK        0
+.equ CODA_LINKED    1   ; enqueue di un nodo che sta GIA' in una lista
+.equ CODA_UNLINKED  2   ; remove di un nodo che non sta in nessuna lista

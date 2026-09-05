@@ -51,11 +51,15 @@ volontaria (§8.7) e lo scheduler a priorità (§7.4).
 
 **RIPRENDI DA §12 DELLA PROPOSTA**, la revisione del confine HAL/ISR/kernel
 (§3.18). Non dipende da §7.4. Il **passo 1 di §12.6 è fatto** — `mfepsw`/`mtepsw`
-sono nell'ISA (§3.19), il **passo 2** — la parola di stato nel frame e
-`hal.vinc` (§3.20) — e il **passo 3**, il percorso di trap nuovo (§3.21):
-**`machine.vasm` ha zero `.extern` e si linka da solo**, l'HAL non nomina più il
-kernel. Invariante (2) a **97/64**, sempre 8 tick. Resta il **passo 4**: le
-librerie, con `types.vinc` spezzato in tre e il grafo che diventa un DAG.
+sono TUTTI E QUATTRO FATTI (§3.19–§3.22): `mfepsw`/`mtepsw` nell'ISA, la parola
+di stato nel frame con `hal.vinc`, il percorso di trap nuovo — **l'HAL non nomina
+più il kernel e si linka da solo** — e le sei librerie su un grafo che è un DAG.
+Invariante (2) a **97/64**, sempre 8 tick.
+
+Restano **due debiti**, annotati nei sorgenti e bloccati su §8.7/§7.4: il
+`dispatcher` deve prendere il TCB in input invece di rileggere `current`
+(§12.3), e `messageHandling.vasm` scrive `TCB.state` — l'ultima violazione del
+confine «solo il kernel gestisce i task». Da lì in avanti si torna su **§7.4**.
 
 Le altre due strade, entrambe in §5:
 
@@ -65,8 +69,8 @@ Le altre due strade, entrambe in §5:
    salvo il punto 3, che non blocca niente. Vedi il riquadro qui sotto.
 3. **La revisione del confine HAL/ISR/kernel — §12 della proposta**: è da qui
    che riparte il codice, e non dipende da §7.4. Il passo 1 di §12.6 è **fatto**
-   (§3.19), il 2 (§3.20) e il 3 (§3.21). Resta il **passo 4**, le librerie — e
-   dentro §12.3 il `dispatcher`, che deve ancora prendere il TCB in input.
+   (§3.19), il 2 (§3.20), il 3 (§3.21) e il 4 (§3.22): **§12.6 è completa**.
+   Restano i due debiti di §12.3, bloccati su §8.7 e §7.4.
 
 > ### 05/09/2026 — il build è in target CMake, invarianti immobili
 >
@@ -1390,6 +1394,60 @@ dell'applicazione invece di un `ret` verso il kernel.
 **Non fatto, ed è il prossimo debito:** `dispatcher` continua a rileggere
 `current` invece di ricevere il TCB in input (§12.3). Annotato nel sorgente.
 
+### 3.22 Sei librerie e un DAG: la decomposizione (05/09/2026)
+
+Passo 4 di §12.6, l'ultimo. Due metà, verificate separatamente.
+
+**`types.vinc` spezzato in tre.** Teneva insieme code, task e messaggi: un unico
+file di interfaccia per tre fornitori diversi, quindi ogni modulo dipendeva da
+tutto — il pool si portava dietro `TCB` e `MESSAGGIO` senza nominarli mai. Ora:
+
+| File | Contiene | Dipende da |
+|---|---|---|
+| `coda.vinc` | `TESTA`, `CODA_*` | — (il più basso e il più incluso) |
+| `tcb.vinc` | `TCB`, `READY`/`RUNNING`/`SUSPENDED` | `coda.vinc` |
+| `messaggio.vinc` | `MESSAGGIO`, `PAYLOAD`, `MSG_*` | `coda.vinc` |
+| `pool.vinc` | `BLOCCO`, `POOL_*` | `coda.vinc` (era `types.vinc`) |
+| `hal.vinc`, `timeout.vinc` | — | foglie |
+
+Le tre dipendenze hanno tutte la stessa ragione: **`TCB`, `MESSAGGIO` e `BLOCCO`
+sono nodi di lista.** Ogni sorgente include ciò che *nomina*, non un
+aggregatore. Nessun numero si è mosso, ed era il punto: le costanti sono le
+stesse, cambia solo chi le riceve.
+
+**Le sei librerie.** `vasm_library` distingue due dipendenze che non vanno
+confuse: `LIBS` sono le **interfacce** da cui un modulo prende costanti (→ `-I`),
+`LINK` sono le **librerie** di cui usa i simboli (→ `.va` sul comando di `ld`,
+chiuse transitivamente da `_vasm_link_closure`).
+
+Il guadagno è dove ci si aspetta: un programma dichiara la libreria che usa e
+non la lista dei moduli. `test_mailbox` dice `LINK lib_messaggi` e si ritrova
+`lib_coda`, `lib_kernel` e `lib_hal` senza saperlo; prima quella catena stava
+scritta a mano nell'intestazione del test, da tenere aggiornata a occhio.
+
+**Il grafo è un DAG**, e non è una parola: `ld lib_hal.va` da solo si chiude
+(exit 0). Tutte le frecce vanno verso l'HAL, nessun percorso torna indietro.
+
+```
+messaggi ──▶ kernel ──▶ coda ──▶ hal
+    │           │                 ▲
+    └───────────┴─────────────────┘
+               pool ──▶ coda
+            timeout ──────────────▶ hal
+```
+
+**Invarianti: nessuna si muove.** `ctest` 23/23, e i numeri sono quelli lasciati
+dal passo 3 — 17/40/94, **97/64 con 8 tick**, 18/40/95. Non è ovvio: cambiando
+gli archivi cambia il layout delle immagini, e i valori sono rimasti perché il
+codice eseguito è lo stesso.
+
+**Resta aperto**, e sono i due debiti annotati nei sorgenti: `dispatcher` deve
+prendere il TCB in input invece di rileggere `current` (§12.3), e
+`messageHandling.vasm` scrive `TCB.state` (riga 177) — l'ultima violazione del
+confine «solo il kernel gestisce i task». Quando sarà sanata, quel modulo
+smetterà di includere `tcb.vinc`, e il grep a zero sarà la prova che il confine
+è vero. Entrambe dipendono da §8.7 e §7.4.
+
 ---
 
 ## 4. Invarianti di regressione — come verificare che nulla si sia rotto
@@ -1481,6 +1539,10 @@ ISR possa tornare verso il kernel a interrupt disabilitati:
 ./build/vcpu_sim tests/test_epsw.vasm
 #   1 0 0 7
 ```
+
+Stato verificato il 05/09/2026 (dopo §3.22, la decomposizione in librerie):
+invarianti **immobili** rispetto al passo 3 — le costanti sono le stesse, cambia
+solo chi le riceve, e il codice eseguito non cambia. `ctest` 23/23.
 
 Stato verificato il 05/09/2026 (dopo §3.21): (1) 17/40/94, **(2) 97/64 con 8
 tick** (98/65 → 94/60 → 97/64 nella stessa giornata: la parola di stato nel frame
@@ -1794,11 +1856,11 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 
 **Per il confine HAL/ISR/kernel (non dipende da §7.4) — CONSIGLIATA:**
 ```
-Leggi docs/stato-lavori.md §3.18-§3.21 e docs/proposta-kernel-realtime.md
-§12. I passi 1, 2 e 3 di §12.6 sono fatti: l'HAL non nomina piu' il
-kernel e si linka da solo. Continua dal passo 4: spezza types.vinc in
-coda.vinc/tcb.vinc/messaggio.vinc e decomponi in librerie CMake (hal,
-coda, kernel, pool, timeout, messaggi) con le dipendenze transitive.
+Leggi docs/stato-lavori.md §3.18-§3.22 e docs/proposta-kernel-realtime.md
+§12: e' tutta fatta, sei librerie su un DAG. Restano due debiti (§12.3):
+dispatcher deve prendere il TCB in input, e messageHandling non deve
+scrivere TCB.state. Dipendono da §8.7 e §7.4, quindi la strada e'
+riprendere da §7.4: ereditarieta' di priorita' o priority ceiling.
 ```
 
 **Per il build in target CMake — quasi finito:**

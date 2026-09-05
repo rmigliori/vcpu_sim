@@ -1,38 +1,13 @@
-; include/types.vinc — tipi comuni di kernel e app, inclusi con `.include`.
-; Solo costanti di compile-time (offset simbolici + stati): niente magic number,
-; una sola sorgente di verita' condivisa da scheduler.vasm e dall'app.
-
-; Testa di coda (sentinella): condivide fwd/bwd con i nodi (idioma list_head).
-.struct TESTA
-  .field fwd              ; +0
-  .field bwd              ; +4
-  .field count            ; +8
-.ends
-
-; Descrittore di task.
-.struct TCB
-  .field fwd              ; +0
-  .field bwd              ; +4
-  .field sp               ; +8  contesto opaco salvato
-  .field state            ; +12 stato corrente
-.ends
-
-; Stati del task (campo TCB.state).
-.equ READY     0
-.equ RUNNING   1
-.equ SUSPENDED 2
-
-; Esito delle primitive di coda (kernel/coda.vasm), restituito in r3.
+; include/messaggio.vinc — il messaggio e la testa comune del payload.
 ;
-; Poggiano su un'invariante che la rimozione mantiene e l'inserimento verifica:
-; UN NODO CHE NON STA IN NESSUNA LISTA HA fwd == bwd == 0. Chi rimuove azzera i
-; link del nodo che sfila (list_del_init di Linux), chi inserisce controlla che
-; siano nulli. Cosa fare dell'errore lo decide l'applicativo: coda.vasm segnala
-; e basta, non ferma la macchina — fermarla e' una politica, e questo e' il
-; modulo piu' basso del sistema.
-.equ CODA_OK        0
-.equ CODA_LINKED    1   ; enqueue di un nodo che sta GIA' in una lista
-.equ CODA_UNLINKED  2   ; remove di un nodo che non sta in nessuna lista
+; Interfaccia CONDIVISA fra chi manda e chi riceve, non del kernel:
+; kernel/messageHandling.vasm sa muovere i messaggi ma non ne legge un byte
+; (§8.4). Include coda.vinc perche' un messaggio E' un nodo di lista e una
+; mailbox E' una TESTA.
+;
+; Nato il 05/09/2026 spezzando types.vinc (§12.6, passo 4).
+
+.include "coda.vinc"
 
 ; Messaggio: per il kernel e' SOLO un nodo di coda. Due link, e da +8 in poi il
 ; payload — che il kernel non legge e non scrive MAI: comporlo correttamente e'

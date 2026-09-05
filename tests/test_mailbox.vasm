@@ -29,7 +29,9 @@
 ;
 ; Atteso, in ordine:  0  1  2  11  22  0  33  0  0
 
-.include "types.vinc"
+.include "coda.vinc"
+.include "tcb.vinc"
+.include "messaggio.vinc"
 
   .data
 

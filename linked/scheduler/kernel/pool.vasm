@@ -43,7 +43,7 @@
 ; .vinc sono foglia — includerne uno che ne includesse un altro darebbe
 ; "duplicate constant".
 .include "pool.vinc"
-.include "types.vinc"
+.include "coda.vinc"
 
   .data
 

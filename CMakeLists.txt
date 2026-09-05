@@ -45,69 +45,95 @@ enable_testing()
 # ---------------------------------------------------------------------------
 set(VINC_DIR ${CMAKE_SOURCE_DIR}/linked/scheduler/include)
 
-# L'HAL pubblica la taglia del frame di contesto e i bit della parola di stato:
-# senza, finirebbero come numeri magici dentro l'HAL stesso o duplicati fuori.
-vasm_interface(vinc_hal     DIR ${VINC_DIR} HEADERS hal.vinc)
-vasm_interface(vinc_types   DIR ${VINC_DIR} HEADERS types.vinc)
+# Le due foglie: non dipendono da nessuno.
+#   hal.vinc     la taglia del frame di contesto e i bit della parola di stato
+#   coda.vinc    il tipo lista e gli esiti: il .vinc piu' basso e piu' incluso
+vasm_interface(vinc_hal  DIR ${VINC_DIR} HEADERS hal.vinc)
+vasm_interface(vinc_coda DIR ${VINC_DIR} HEADERS coda.vinc)
+
+# timeout.vinc e' foglia per una proprieta' del modello, non per un limite: il
+# DESCRITTORE non entra mai in una lista (§9.3), quindi non ha niente da
+# chiedere alle code.
 vasm_interface(vinc_timeout DIR ${VINC_DIR} HEADERS timeout.vinc)
 
-# pool.vinc include types.vinc: BLOCCO *e'* un nodo di lista, e una free-list e'
-# una TESTA con i blocchi come nodi. E' la dipendenza fra interfacce che §5
-# indicava come modellazione giusta, scrivibile da quando .include e'
-# idempotente (§3.16): chi linka vinc_pool si porta dietro vinc_types.
-vasm_interface(vinc_pool DIR ${VINC_DIR} HEADERS pool.vinc LINK vinc_types)
+# I tre che dipendono da coda.vinc, e sempre per la stessa ragione: TCB,
+# MESSAGGIO e BLOCCO sono tutti NODI DI LISTA. Chi linka uno di questi si porta
+# dietro vinc_coda senza doverlo sapere -- e' la propagazione transitiva che
+# prima non si poteva nemmeno dichiarare, perche' .include non era idempotente e
+# un unico types.vinc teneva insieme code, task e messaggi (§12.6, passo 4).
+vasm_interface(vinc_tcb       DIR ${VINC_DIR} HEADERS tcb.vinc       LINK vinc_coda)
+vasm_interface(vinc_messaggio DIR ${VINC_DIR} HEADERS messaggio.vinc LINK vinc_coda)
+vasm_interface(vinc_pool      DIR ${VINC_DIR} HEADERS pool.vinc      LINK vinc_coda)
 
 # ---------------------------------------------------------------------------
-#  I moduli.
+#  Le librerie.
+#
+#  Sei librerie e un grafo che e' un DAG: tutte le frecce vanno verso l'HAL e
+#  nessun percorso torna indietro. Fino al 05/09/2026 non era cosi' -- l'HAL
+#  nominava sched_dispatch e il kernel nominava ctx_restore, cioe' un ciclo
+#  (§12.1 della proposta). Ora `ld machine.vo` da solo si chiude, ed e' quella
+#  la prova che libhal e' davvero lo strato piu' basso.
+#
+#      messaggi ──▶ kernel ──▶ coda ──▶ hal
+#          │           │                 ▲
+#          └───────────┴─────────────────┘
+#                     pool ──▶ coda
+#                  timeout ──────────────▶ hal
 # ---------------------------------------------------------------------------
 set(SCHED ${CMAKE_SOURCE_DIR}/linked/scheduler)
 
-vasm_object(hal_machine  SOURCE ${SCHED}/hal/machine.vasm            LIBS vinc_hal)
+# L'HAL: zero dipendenze, e per un HAL e' la proprieta' che conta.
+vasm_library(lib_hal     SOURCES ${SCHED}/hal/machine.vasm  LIBS vinc_hal)
 
-vasm_object(k_coda       SOURCE ${SCHED}/kernel/coda.vasm            LIBS vinc_types)
-vasm_object(k_scheduler  SOURCE ${SCHED}/kernel/scheduler.vasm       LIBS vinc_types)
-vasm_object(k_message    SOURCE ${SCHED}/kernel/messageHandling.vasm LIBS vinc_types)
-vasm_object(k_timeout    SOURCE ${SCHED}/kernel/timeout.vasm         LIBS vinc_timeout)
-# pool.vasm nomina TESTA (le sei free-list sono `.res TESTA`) oltre a BLOCCO,
-# quindi dichiara entrambe: include-what-you-use, anche se vinc_types
-# arriverebbe comunque per transitivita' da vinc_pool.
-vasm_object(k_pool       SOURCE ${SCHED}/kernel/pool.vasm            LIBS vinc_pool vinc_types)
+# Le code dipendono dall'HAL, ma solo per lo strato _s: i wrapper protetti
+# chiamano irq_save/irq_restore. Le primitive raw e lo strato _nc no -- il
+# giorno che servisse, il confine per dividerla in due passa di li'.
+vasm_library(lib_coda    SOURCES ${SCHED}/kernel/coda.vasm  LIBS vinc_coda
+                         LINK lib_hal)
 
-vasm_object(demo_main    SOURCE ${SCHED}/scheduler_demo.vasm         LIBS vinc_types)
+# Il kernel: SOLO gli algoritmi di gestione dei task (scheduler, dispatcher,
+# uscita da ISR). Mailbox, semafori e mutex NON stanno qui: sono clienti che lo
+# chiamano.
+vasm_library(lib_kernel  SOURCES ${SCHED}/kernel/scheduler.vasm LIBS vinc_tcb
+                         LINK lib_coda lib_hal)
 
-set(TESTS ${CMAKE_SOURCE_DIR}/tests)
-vasm_object(t_coda     SOURCE ${TESTS}/test_coda.vasm    LIBS vinc_types)
-vasm_object(t_mailbox  SOURCE ${TESTS}/test_mailbox.vasm LIBS vinc_types)
-vasm_object(t_timeout  SOURCE ${TESTS}/test_timeout.vasm LIBS vinc_timeout)
-vasm_object(t_pool     SOURCE ${TESTS}/test_pool.vasm    LIBS vinc_pool vinc_types)
+vasm_library(lib_pool    SOURCES ${SCHED}/kernel/pool.vasm  LIBS vinc_pool vinc_coda
+                         LINK lib_coda)
+
+vasm_library(lib_timeout SOURCES ${SCHED}/kernel/timeout.vasm LIBS vinc_timeout
+                         LINK lib_hal)
+
+# I messaggi sono un CLIENTE del kernel, non parte sua: chiamano task_ready /
+# task_block per bloccare e risvegliare. Semafori e mutex nasceranno qui
+# accanto, allo stesso livello.
+vasm_library(lib_messaggi SOURCES ${SCHED}/kernel/messageHandling.vasm
+                          LIBS vinc_coda vinc_tcb
+                          LINK lib_coda lib_kernel)
+
+# ---------------------------------------------------------------------------
+#  I programmi.
+#
+#  Ognuno dichiara la libreria che usa, non la lista dei moduli da linkare: la
+#  chiusura la calcola vasm_program. Prima quella lista stava scritta a mano
+#  nell'intestazione di ogni test, e andava tenuta aggiornata a occhio.
+# ---------------------------------------------------------------------------
+vasm_object(demo_main   SOURCE ${SCHED}/scheduler_demo.vasm LIBS vinc_tcb)
+vasm_program(scheduler_demo OBJECTS demo_main LINK lib_kernel)
 
 vasm_object(multi_main  SOURCE ${CMAKE_SOURCE_DIR}/linked/multi/main.vasm)
 vasm_object(multi_saxpy SOURCE ${CMAKE_SOURCE_DIR}/linked/multi/saxpy.vasm)
+vasm_program(multi      OBJECTS multi_main multi_saxpy)
 
-# ---------------------------------------------------------------------------
-#  Gli eseguibili.
-#
-#  L'ordine degli oggetti e' quello delle pipeline scritte a mano che questi
-#  target sostituiscono, e va tenuto: cambiarlo cambia il layout dell'immagine.
-#  Il vincolo della migrazione e' che le invarianti diano gli stessi identici
-#  numeri, quindi qui si riproduce esattamente cio' che c'era.
-# ---------------------------------------------------------------------------
-vasm_program(scheduler_demo OBJECTS demo_main k_scheduler k_coda hal_machine)
-vasm_program(multi          OBJECTS multi_main multi_saxpy)
+set(TESTS ${CMAKE_SOURCE_DIR}/tests)
+vasm_object(t_coda     SOURCE ${TESTS}/test_coda.vasm    LIBS vinc_coda vinc_tcb)
+vasm_object(t_mailbox  SOURCE ${TESTS}/test_mailbox.vasm LIBS vinc_coda vinc_tcb vinc_messaggio)
+vasm_object(t_timeout  SOURCE ${TESTS}/test_timeout.vasm LIBS vinc_timeout)
+vasm_object(t_pool     SOURCE ${TESTS}/test_pool.vasm    LIBS vinc_pool vinc_coda)
 
-# Il kernel come UNA libreria, non come una lista da ricopiare in ogni test.
-#
-# Il linker ne pesca solo i membri che servono a chiudere i riferimenti
-# (inclusione selettiva, dal commit 2111646). La chiusura non sparisce —
-# machine.vo serve per irq_save/irq_restore e referenzia sched_dispatch, quindi
-# si tira dietro scheduler.vo comunque — ma diventa una conseguenza del codice
-# invece che una lista da mantenere in quattro intestazioni.
-vasm_archive(libkernel OBJECTS k_coda k_scheduler k_message k_timeout k_pool hal_machine)
-
-vasm_program(test_coda    OBJECTS t_coda    libkernel)
-vasm_program(test_mailbox OBJECTS t_mailbox libkernel)
-vasm_program(test_timeout OBJECTS t_timeout libkernel)
-vasm_program(test_pool    OBJECTS t_pool    libkernel)
+vasm_program(test_coda    OBJECTS t_coda    LINK lib_coda)
+vasm_program(test_mailbox OBJECTS t_mailbox LINK lib_messaggi)
+vasm_program(test_timeout OBJECTS t_timeout LINK lib_timeout)
+vasm_program(test_pool    OBJECTS t_pool    LINK lib_pool)
 
 # ---------------------------------------------------------------------------
 #  Le invarianti di regressione — §4 di docs/stato-lavori.md.

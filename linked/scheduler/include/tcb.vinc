@@ -1,0 +1,30 @@
+; include/tcb.vinc — interfaccia del kernel: il descrittore di task e i suoi
+; stati. E' quello che mailbox, semafori e mutex devono conoscere del kernel per
+; parlargli, e nient'altro.
+;
+; Include coda.vinc perche' il TCB E' un nodo di lista: ridichiara fwd/bwd a
+; offset 0 invece di annidare una TESTA, cosi' il puntatore al TCB E' il
+; puntatore ai link e coda.vasm non ha bisogno di nessun container_of.
+;
+; Nato il 05/09/2026 spezzando types.vinc (§12.6, passo 4).
+;
+; DA RIVEDERE quando §12.2 sara' completa: nel confine nuovo il kernel e' l'unico
+; a gestire i task, quindi TCB.state non dovrebbe essere scritto da fuori. Oggi
+; kernel/messageHandling.vasm lo fa (riga 177), ed e' l'ultima violazione rimasta
+; di quel confine: quando sara' sanata, questo file smettera' di essere incluso
+; da chi non e' kernel — e il grep a zero sara' la prova che il confine e' vero.
+
+.include "coda.vinc"
+
+; Descrittore di task.
+.struct TCB
+  .field fwd              ; +0
+  .field bwd              ; +4
+  .field sp               ; +8  contesto opaco salvato
+  .field state            ; +12 stato corrente
+.ends
+
+; Stati del task (campo TCB.state).
+.equ READY     0
+.equ RUNNING   1
+.equ SUSPENDED 2
