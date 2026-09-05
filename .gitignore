@@ -1,6 +1,11 @@
 # Artefatti di build: binario del simulatore e file scratch della toolchain
 build/
 
+# Build di CMake. Il nome non e' imposto (`cmake -B <dir>`), ma out/ e' quello
+# usato nella documentazione: build/ e' gia' del Makefile e i due si
+# pesterebbero i piedi sull'eseguibile.
+out/
+
 # Oggetti/eseguibili/archivi della toolchain generati fuori da build/
 *.vo
 *.vx
