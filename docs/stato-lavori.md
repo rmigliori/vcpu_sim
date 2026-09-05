@@ -40,7 +40,7 @@ Quattro pezzi, nell'ordine in cui sono nati:
 | Pool di buffer, sei classi dimensionate 10/4/0/0/0/0 | `kernel/pool.vasm`, `include/pool.vinc` | §3.15 |
 
 A cui si aggiunge, dal 05/09/2026 e su un fronte diverso (il build), `-I`
-nell'assembler e `.include` idempotente — §3.16, **da committare**.
+nell'assembler e `.include` idempotente — §3.16, committato in `21c9305`.
 
 Cinque test mirati in `tests/`, tutti verdi, elencati in §4.
 
@@ -126,11 +126,10 @@ tutto da `;` in poi anche nel pass 2).
 > tenuti perché contengono convenzioni ancora valide. Lo stato corrente è quello
 > dei paragrafi in cima alla sezione.
 
-**Working tree: il lavoro di §3.16 è da committare** (§2) — `src/assembler.c`,
-`src/main.c`, `include/toolchain.h`, i due `.vinc`, i tre documenti e il nuovo
-`tests/test_include.vasm`. Il branch **è stato pushato** il 04/09/2026 —
-`origin/master` è a `20ae071` — e restano locali i commit successivi. Il push non
-è arrivato da una sessione di lavoro: vedi §2.
+**Working tree PULITO** (§2): il lavoro di §3.16 è committato in `21c9305`
+(codice) e `41e4565` (documenti). Il branch **è stato pushato** il 04/09/2026 —
+`origin/master` è a `20ae071` — e restano locali tutti i commit successivi. Il
+push non è arrivato da una sessione di lavoro: vedi §2.
 
 ---
 
@@ -180,10 +179,9 @@ Branch `master`, pubblicato su `git@github.com:rmigliori/vcpu_sim.git` (remote
 `origin`, HTTPS + credential helper `git-credential-libsecret` configurato,
 push senza prompt).
 
-Il lavoro di §3.16 (`-I` e `.include` idempotente) è **nel working tree, non
-ancora committato**.
-
 ```
+41e4565 Aggiorna i documenti: -I e .include idempotente (§3.16)          <- LOCALE, non pushato
+21c9305 -I nell'assembler e .include idempotente                         <- LOCALE, non pushato
 99e82f9 Handoff: il push era dell'utente, e la regola sul push resta     <- LOCALE, non pushato
 3d46446 Handoff: correggi lo stato del push                             <- LOCALE, non pushato
 099454b Handoff: il piano per il build in target CMake                   <- LOCALE, non pushato
