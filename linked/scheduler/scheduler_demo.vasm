@@ -6,9 +6,8 @@
 ;   kernel/coda.vasm       -> le 5 routine di coda (list_head).
 ;   kernel/scheduler.vasm  -> kernel puro: politica RR + dispatch (nessun CSR).
 ;
-; Pipeline (compilazione separata + linking, path relativi a linked/scheduler/;
-; -I dove c'e' una .include da risolvere, che per machine.vasm non c'e'):
-;   ./build/vcpu_sim asm           hal/machine.vasm   -o build/machine.vo
+; Pipeline (compilazione separata + linking, path relativi a linked/scheduler/):
+;   ./build/vcpu_sim asm -Iinclude hal/machine.vasm   -o build/machine.vo
 ;   ./build/vcpu_sim asm -Iinclude kernel/coda.vasm   -o build/coda.vo
 ;   ./build/vcpu_sim asm -Iinclude kernel/scheduler.vasm    -o build/scheduler.vo
 ;   ./build/vcpu_sim asm -Iinclude scheduler_demo.vasm      -o build/scheduler_demo.vo
@@ -46,6 +45,7 @@ stackB_top:
   .extern enqueue_coda
   .extern irq_install
   .extern request_preempt
+  .extern sched_isr_exit
   .extern ctx_init
   .extern timer_init
   .extern irq_arm
@@ -80,7 +80,8 @@ main:
   sw r5, TCB.state(r2)     ; tcbA.stato = RUNNING
 
   li r1, timer_isr
-  call irq_install         ; registra l'handler applicativo (dato dello scheduler)
+  call irq_install         ; registra l'ISR applicativa NELL'HAL: il vettore le
+                           ; consegnera' il controllo direttamente (§12.2)
   call irq_arm             ; installa il vettore di trap dell'HAL
   li r1, 500
   call timer_init          ; un tick ogni 500 cicli
@@ -110,14 +111,25 @@ loopB:
   j loopB
 
 ; ==========================================================================
-;  timer_isr: handler applicativo del timer. Il kernel ha GIA' salvato il
-;  contesto -> e' una funzione normale (usa registri e call liberamente). Non e'
-;  foglia (chiama request_preempt) -> salva ra come da convenzione.
+;  timer_isr(r1 = contesto opaco del task interrotto): ISR APPLICATIVA del
+;  timer, registrata nell'HAL con irq_install. Ci arriva direttamente il vettore
+;  di trap: l'HAL ha gia' salvato il contesto e non fa altro, quindi da qui in
+;  poi decide l'applicazione (§12.2 della proposta).
+;
+;  NON RITORNA: un'ISR sceglie come uscire, e non c'e' nessuno a cui tornare
+;  (il vettore ha consegnato con `jr`). Qui l'uscita e' sempre la stessa —
+;  salta a sched_isr_exit passando il contesto — ma e' una scelta di QUESTA
+;  ISR, non una regola: §12.4 ne elenca tre.
+;
+;  Il contesto arriva in r1, che serve subito come scratch: va messo al sicuro
+;  in un registro che sopravviva alle call (r6). Il kernel se lo aspetta in r1
+;  all'uscita, perche' e' lui a doverlo registrare nel TCB — non l'ISR, che del
+;  TCB non sa niente.
+;
 ;  Conta i tick; dopo 8 stampa i contatori e ferma; altrimenti chiede lo switch.
 ; ==========================================================================
 timer_isr:
-  addi r14, r14, -4
-  sw r15, 0(r14)          ; non-foglia: salva il ritorno al kernel
+  mov r6, r1              ; il contesto: r1 sta per essere sporcato
   li r1, ticks
   lw r2, 0(r1)
   addi r2, r2, 1
@@ -133,6 +145,5 @@ timer_isr:
   halt
 isr_go:
   call request_preempt    ; chiede lo switch a uscita IRQ (need_resched)
-  lw r15, 0(r14)
-  addi r14, r14, 4
-  ret
+  mov r1, r6              ; il contesto torna in r1, dove il kernel lo aspetta
+  j sched_isr_exit        ; uscita dall'ISR: da qui decide il kernel

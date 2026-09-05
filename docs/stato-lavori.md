@@ -51,11 +51,11 @@ volontaria (§8.7) e lo scheduler a priorità (§7.4).
 
 **RIPRENDI DA §12 DELLA PROPOSTA**, la revisione del confine HAL/ISR/kernel
 (§3.18). Non dipende da §7.4. Il **passo 1 di §12.6 è fatto** — `mfepsw`/`mtepsw`
-sono nell'ISA (§3.19) e il **passo 2 pure** — la parola di stato nel frame e
-`hal.vinc` (§3.20), che ha spostato l'invariante (2) a **94/60**, sempre 8 tick.
-Il prossimo è il **passo 3**: il percorso di trap nuovo, dove
-`g_handler`/`irq_install` passano nell'HAL e il vettore consegna all'ISR. Anche
-quello sposterà i numeri.
+sono nell'ISA (§3.19), il **passo 2** — la parola di stato nel frame e
+`hal.vinc` (§3.20) — e il **passo 3**, il percorso di trap nuovo (§3.21):
+**`machine.vasm` ha zero `.extern` e si linka da solo**, l'HAL non nomina più il
+kernel. Invariante (2) a **97/64**, sempre 8 tick. Resta il **passo 4**: le
+librerie, con `types.vinc` spezzato in tre e il grafo che diventa un DAG.
 
 Le altre due strade, entrambe in §5:
 
@@ -65,8 +65,8 @@ Le altre due strade, entrambe in §5:
    salvo il punto 3, che non blocca niente. Vedi il riquadro qui sotto.
 3. **La revisione del confine HAL/ISR/kernel — §12 della proposta**: è da qui
    che riparte il codice, e non dipende da §7.4. Il passo 1 di §12.6 è **fatto**
-   (§3.19) e il passo 2 anche (§3.20); restano il percorso di trap nuovo — che
-   **sposterà l'invariante (2)** una seconda volta — e le librerie.
+   (§3.19), il 2 (§3.20) e il 3 (§3.21). Resta il **passo 4**, le librerie — e
+   dentro §12.3 il `dispatcher`, che deve ancora prendere il TCB in input.
 
 > ### 05/09/2026 — il build è in target CMake, invarianti immobili
 >
@@ -1342,6 +1342,54 @@ regressione. Le altre invarianti **non si muovono**, e non è un caso: gli altri
 quattro test linkano l'HAL ma non armano nessun timer, quindi non fanno un solo
 context switch.
 
+### 3.21 Il percorso di trap nuovo: l'HAL non nomina piu' il kernel (05/09/2026)
+
+Passo 3 di §12.6, il cuore della revisione. Il ragionamento sta in §12.2 della
+proposta; qui l'esito e le misure.
+
+**Cosa si è spostato.** `g_handler` e `irq_install` sono passati dal kernel
+all'**HAL** — installare un vettore è hardware — e `_trap_entry` ora consegna il
+controllo all'ISR applicativa con `jr`, passandole il contesto opaco in `r1`.
+`sched_dispatch` non esiste più: al suo posto c'è **`sched_isr_exit(r1 =
+contesto)`**, dove l'ISR **salta** quando ha finito. La differenza non è il nome:
+prima l'HAL chiamava il kernel e il kernel invocava l'ISR, mettendosi in mezzo;
+ora il vettore consegna all'ISR e il kernel rientra solo quando l'ISR glielo
+chiede.
+
+**La prova del confine è un comando, non un'opinione:**
+
+```
+$ ./build/vcpu_sim ld build/machine.vo -o hal.vx
+```
+
+Prima dava `undefined reference to 'sched_dispatch'`. Ora **si chiude**, e
+`machine.vasm` ha **zero `.extern`**. È la definizione di «la libreria che rende
+tutto il resto indipendente dall'hardware», e fino a oggi non era vera.
+
+**Un guadagno che non avevo previsto: tre eseguibili si sono alleggeriti.** Le
+intestazioni di `test_coda`, `test_pool` e `test_timeout` spiegavano che
+`machine.vo` «si tira dietro `_trap_entry` → `sched_dispatch` → `scheduler.vasm`»;
+ora non più, e `scheduler.vasm` **non entra più nel link** di quei tre. Resta in
+`test_mailbox` per una ragione sola e legittima: è lui a definire `current`, che
+`receive` legge — cioè uno dei difetti aperti di §8.7. Le quattro intestazioni
+sono state riscritte.
+
+**Invariante (2): 94/60 → 97/64**, con gli stessi **8 tick**. Stavolta i
+contatori **salgono**, cioè il percorso di trap è diventato più corto: sparisce
+un livello di `call`/`ret` (l'HAL chiamava il kernel, il kernel chiamava l'ISR,
+l'ISR tornava al kernel; ora sono due salti). Un confine più pulito che costa
+meno è un buon segno, non un sospetto: si è tolto un intermediario, non del
+lavoro.
+
+**L'ISR della demo è diventata una ISR vera.** `timer_isr` riceve il contesto in
+`r1`, lo mette al sicuro perché `r1` le serve come scratch, e **non ritorna**:
+esce saltando a `sched_isr_exit`. È una scelta di quella ISR, non una regola —
+§12.4 ne elenca tre — ma è la prima volta che nel codice l'uscita è una decisione
+dell'applicazione invece di un `ret` verso il kernel.
+
+**Non fatto, ed è il prossimo debito:** `dispatcher` continua a rileggere
+`current` invece di ricevere il TCB in input (§12.3). Annotato nel sorgente.
+
 ---
 
 ## 4. Invarianti di regressione — come verificare che nulla si sia rotto
@@ -1376,8 +1424,8 @@ make                                    # deve compilare SENZA warning
 #     05/09/2026 i nomi sono nudi, §3.17); machine.vasm e linked/multi/ no.
 I=-Ilinked/scheduler/include
 
-# (2) demo HAL+kernel: deve stampare r5 = 94 e r5 = 60 (era 98/65 prima della
-#     parola di stato nel frame — vedi §3.20, non e' una regressione)
+# (2) demo HAL+kernel: deve stampare r5 = 97 e r5 = 64 (era 94/60 prima del
+#     percorso di trap nuovo — vedi §3.21, non e' una regressione)
 ./build/vcpu_sim asm    linked/scheduler/hal/machine.vasm      -o build/machine.vo
 ./build/vcpu_sim asm $I linked/scheduler/kernel/coda.vasm      -o build/coda.vo
 ./build/vcpu_sim asm $I linked/scheduler/kernel/scheduler.vasm -o build/scheduler.vo
@@ -1434,9 +1482,11 @@ ISR possa tornare verso il kernel a interrupt disabilitati:
 #   1 0 0 7
 ```
 
-Stato verificato il 05/09/2026 (dopo §3.20): (1) 17/40/94, **(2) 94/60 con 8
-tick** (era 98/65: la parola di stato nel frame costa 6 istruzioni per switch,
-§3.20), (3) 18/40/95, e i sei test mirati di `tests/`. `ctest` dà 23/23.
+Stato verificato il 05/09/2026 (dopo §3.21): (1) 17/40/94, **(2) 97/64 con 8
+tick** (98/65 → 94/60 → 97/64 nella stessa giornata: la parola di stato nel frame
+costa 6 istruzioni per switch, il percorso di trap nuovo ne toglie di più perché
+sparisce un livello di call/ret — §3.20 e §3.21), (3) 18/40/95, e i sei test
+mirati di `tests/`. `ctest` dà 23/23.
 
 Stato verificato il 05/09/2026 (dopo §3.19): **tutti i numeri identici a quelli
 di prima dell'aggiunta all'ISA**, nemmeno un ciclo di scarto, e i `.vo` identici
@@ -1744,11 +1794,11 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 
 **Per il confine HAL/ISR/kernel (non dipende da §7.4) — CONSIGLIATA:**
 ```
-Leggi docs/stato-lavori.md §3.18-§3.20 e docs/proposta-kernel-realtime.md
-§12. I passi 1 e 2 di §12.6 sono fatti: mfepsw/mtepsw nell'ISA, la parola
-di stato nel frame e hal.vinc. Continua dal passo 3: g_handler e
-irq_install passano nell'HAL, il vettore consegna all'ISR, l'ISR esce con
-reti. L'invariante (2) si spostera': tieni gli 8 tick e l'alternanza.
+Leggi docs/stato-lavori.md §3.18-§3.21 e docs/proposta-kernel-realtime.md
+§12. I passi 1, 2 e 3 di §12.6 sono fatti: l'HAL non nomina piu' il
+kernel e si linka da solo. Continua dal passo 4: spezza types.vinc in
+coda.vinc/tcb.vinc/messaggio.vinc e decomponi in librerie CMake (hal,
+coda, kernel, pool, timeout, messaggi) con le dipendenze transitive.
 ```
 
 **Per il build in target CMake — quasi finito:**

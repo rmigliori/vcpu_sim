@@ -1180,10 +1180,11 @@ taglia trova `POOL_VUOTO` invece di un caso speciale.
 > applicativa), e resta valido tutto §6 di questa proposta: la sequenza di
 > *avvio* descriveva già `dispatcher` con il TCB in input.
 >
-> **Stato: i passi 1 e 2 di §12.6 sono fatti** (05/09/2026): `mfepsw`/`mtepsw`
-> nell'ISA, e la parola di stato nel frame con `hal.vinc`. Restano il **passo 3**
-> — il percorso di trap, cioè il cuore di questa sezione — e il **passo 4**, le
-> librerie.
+> **Stato: i passi 1, 2 e 3 di §12.6 sono fatti** (05/09/2026): `mfepsw`/`mtepsw`
+> nell'ISA, la parola di stato nel frame con `hal.vinc`, e il percorso di trap
+> nuovo — **l'HAL non nomina più il kernel**. Restano il **passo 4** (le
+> librerie) e, dentro §12.3, il `dispatcher` che deve ancora prendere il TCB in
+> input invece di rileggere `current`.
 
 ### 12.1 Il difetto: il kernel sta in mezzo fra il vettore e l'ISR
 
@@ -1406,12 +1407,13 @@ L'ordine di lavoro, in passi che si verificano da soli:
    `ctx_init`: da quando `ctx_restore` ripristina la `psw` dal frame, il frame
    finto **deve** scrivere `PSW_IE`, se no il primo task parte a interrupt
    disabilitati e non viene mai preemptato.
-3. **Il percorso di trap nuovo**: `g_handler`/`irq_install` passano nell'HAL, il
-   vettore consegna all'ISR, l'ISR esce con `reti`. **Qui l'invariante (2) si
-   sposta**, come già in §3.4, §3.5, §3.10 e §3.14 di
-   [`stato-lavori.md`](stato-lavori.md): cambia il codice eseguito a ogni tick.
-   L'invariante da tenere è quella qualitativa — 8 tick, i due contatori che
-   crescono alternandosi.
+3. ~~**Il percorso di trap nuovo**~~ **FATTO il 05/09/2026** (§3.21
+   dell'handoff): `g_handler`/`irq_install` sono nell'HAL, il vettore consegna
+   all'ISR con `jr`, e `sched_dispatch` è diventata `sched_isr_exit`, dove l'ISR
+   **salta** quando ha finito. **`machine.vasm` ha zero `.extern` e si linka da
+   solo** — la prova del confine è un comando, non un'opinione. Invariante (2) da
+   94/60 a **97/64**, stessi 8 tick: i contatori *salgono*, perché sparisce un
+   livello di `call`/`ret`.
 4. **Le librerie e le interfacce**: `types.vinc` spezzato in `coda.vinc`,
    `tcb.vinc` e `messaggio.vinc`, `libhal` senza `.extern`, il grafo che è un DAG.
 

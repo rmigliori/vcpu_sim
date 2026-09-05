@@ -117,7 +117,7 @@ vasm_check(saxpy      MODE STATS EXPECT "17 40 94"
            SOURCE ${CMAKE_SOURCE_DIR}/standalone/saxpy.vasm)
 vasm_check(multi      MODE STATS EXPECT "18 40 95"  PROGRAM multi)
 
-vasm_check(scheduler_demo MODE DUMPS EXPECT "94 60" PROGRAM scheduler_demo)
+vasm_check(scheduler_demo MODE DUMPS EXPECT "97 64" PROGRAM scheduler_demo)
 
 vasm_check(proc       MODE DUMPS EXPECT "100 200 300"
            SOURCE ${TESTS}/test_proc.vasm)

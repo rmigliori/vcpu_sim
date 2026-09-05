@@ -5,26 +5,28 @@
 ; PUNTATORE OPACO (sp) e non lo interpreta mai.
 ;
 ; Modello IRQ-STUB a preemption DIFFERITA (need_resched di Linux /
-; xHigherPriorityTaskWoken di FreeRTOS): l'HAL salva il contesto (ctx_save) e
-; chiama SEMPRE lo stesso simbolo kernel (sched_dispatch) — e' l'unico punto di
-; contatto tra i due strati, per costruzione: l'HAL non sa cos'e' un'ISR ne'
-; cosa sia lo scheduling, il kernel non sa quanti o quali registri esistano.
+; xHigherPriorityTaskWoken di FreeRTOS). Dal 05/09/2026 (§12.2 della proposta)
+; il kernel NON e' piu' chiamato dall'HAL: il vettore consegna il controllo
+; all'ISR applicativa, e l'ISR — che e' cliente sia dell'HAL sia del kernel —
+; entra qui quando ha finito, saltando a sched_isr_exit. Prima l'HAL chiamava
+; sched_dispatch, che invocava lei l'ISR: il kernel stava in mezzo, e da li'
+; veniva la dipendenza HAL -> kernel che ora non esiste piu'.
 ;
 ; Tre routine, tre responsabilita' nette (nessuna mischia le altre due):
-;   sched_dispatch  orchestratore  meccanismo: registra lo sp uscente, invoca
-;                                  l'handler applicativo, decide se consultare
-;                                  lo scheduler, chiama SEMPRE il dispatcher
+;   sched_isr_exit  uscita da ISR  registra il contesto uscente nel TCB, decide
+;                                  se consultare lo scheduler, chiama SEMPRE il
+;                                  dispatcher
 ;   scheduler       POLITICA       chi e' il prossimo: round-robin
 ;   dispatcher      DISPATCHER     mette in esecuzione 'current': chiama l'HAL
 ;                                  (ctx_restore) e non ritorna mai
 ;
-; sched_dispatch e scheduler non sono API generiche (non le chiama "chiunque"):
+; sched_isr_exit e scheduler non sono API generiche (non le chiama "chiunque"):
 ; hanno un solo chiamante per costruzione, quindi restano scritte a mano invece
 ; che con la sugar .proc/.endproc — riservata a procedure con un contratto
 ; stabile e riusabile.
 ;
 ; Separazione mechanism/policy: si cambia politica (RR -> priorita') riscrivendo
-; solo scheduler, senza toccare l'HAL, sched_dispatch ne' dispatcher.
+; solo scheduler, senza toccare l'HAL, sched_isr_exit ne' dispatcher.
 ;
 ; --- Modello a 3 stati (una posizione fisica del TCB per ogni stato) ---
 ;   READY(0)     : il TCB e' linkato nella ready queue.
@@ -44,26 +46,15 @@
 
 ready:     .res TESTA     ; ready queue (sentinella): fwd/bwd/count
 current:   .word 0        ; &TCB del task RUNNING (0 = nessuno, boot)
-g_handler: .word 0        ; puntatore all'handler applicativo (indice istruzione)
 g_resched: .word 0        ; need_resched: !=0 => switch a uscita IRQ
 
   .text
 
-  .global sched_dispatch
-  .global irq_install
+  .global sched_isr_exit
   .global request_preempt
   .extern enqueue_coda
   .extern dequeue_testa
   .extern ctx_restore
-
-; ==========================================================================
-;  irq_install(r1 = puntatore all'handler applicativo): lo registra. L'app lo
-;  ottiene con `li rX, timer_isr` (R_ADDR -> indice d'istruzione = function ptr).
-; ==========================================================================
-irq_install:
-  li r2, g_handler
-  sw r1, 0(r2)
-  ret
 
 ; ==========================================================================
 ;  request_preempt: arma il need_resched. Chiamata dall'handler quando vuole uno
@@ -77,47 +68,48 @@ request_preempt:
   ret
 
 ; ==========================================================================
-;  sched_dispatch(r1 = sp uscente): orchestratore, UNICO simbolo che l'HAL
-;  chiama (da _trap_entry, a contesto gia' salvo da ctx_save). Registra lo sp
-;  uscente nel TCB corrente, invoca l'handler applicativo (chiamata indiretta
-;  via puntatore a funzione — l'ISR e' codice applicativo, non HAL: e' lei che
-;  decide se chiedere una preemption, non il kernel) e, solo se e' stata
-;  richiesta, consulta lo scheduler (politica). Chiama SEMPRE il dispatcher
-;  (meccanismo) per rimettere in esecuzione 'current' — con o senza switch e'
-;  l'unico modo di uscire dalla trap.
+;  sched_isr_exit(r1 = contesto opaco del task interrotto): USCITA DA UN'ISR.
+;  Ci salta l'ISR applicativa quando ha finito, e non ritorna mai.
+;
+;  Sostituisce sched_dispatch (§12.2 della proposta). La differenza non e' il
+;  nome: sched_dispatch veniva chiamata DALL'HAL e invocava lei l'ISR, mettendo
+;  il kernel in mezzo fra il vettore e il codice applicativo. Ora il vettore
+;  consegna direttamente all'ISR, e il kernel torna in gioco solo quando l'ISR
+;  glielo chiede — che e' cio' che rende l'ISR cliente di HAL e kernel invece
+;  che una callback del kernel.
+;
+;  Registra il contesto uscente nel TCB corrente (l'ISR non tocca il TCB: non e'
+;  affar suo dove finisce il contesto), poi, SOLO se l'ISR ha chiesto una
+;  preemption, consulta lo scheduler. Chiama SEMPRE il dispatcher: con o senza
+;  switch e' l'unico modo di uscire dalla trap.
 ;
 ;  Non ha un ritorno proprio (il dispatcher, in coda, chiude nell'HAL con
 ;  ctx_restore/reti): niente da salvare per se stessa, anche se non-foglia.
-;  Non e' un'API generica (un solo chiamante per costruzione: l'HAL) -> scritta
-;  a mano. Non tocca alcun CSR: il kernel resta puro.
+;  Non tocca alcun CSR: il kernel resta puro.
 ; ==========================================================================
-sched_dispatch:
+sched_isr_exit:
   li r2, current
   lw r3, 0(r2)
-  sw r1, TCB.sp(r3)      ; current.sp = sp uscente (contesto opaco)
-
-  li r5, g_handler       ; handler dell'app: funzione normale (contesto gia' salvo)
-  lw r5, 0(r5)
-  jalr r15, r5
+  sw r1, TCB.sp(r3)      ; current.sp = contesto uscente (opaco)
 
   li r1, g_resched
   lw r2, 0(r1)
-  beq r2, r0, sched_dispatch_done
+  beq r2, r0, sched_isr_exit_done
   sw r0, 0(r1)           ; consuma il need_resched
   call scheduler         ; POLITICA: sceglie il prossimo, current = next
-sched_dispatch_done:
+sched_isr_exit_done:
   call dispatcher        ; MECCANISMO: mette in esecuzione current, SEMPRE
 
 ; ==========================================================================
 ;  scheduler (POLITICA, interno): round-robin a coda singola. Rimette in coda
 ;  il task uscente e sceglie il prossimo current. E' la SOLA cosa da riscrivere
-;  per cambiare politica (RR -> priorita'): HAL, sched_dispatch e dispatcher
-;  restano intatti. Non e' un'API generica (un solo chiamante: sched_dispatch)
+;  per cambiare politica (RR -> priorita'): HAL, sched_isr_exit e dispatcher
+;  restano intatti. Non e' un'API generica (un solo chiamante: sched_isr_exit)
 ;  -> scritta a mano, non .proc. Non-foglia -> salva r15.
 ; ==========================================================================
 scheduler:
   addi r14, r14, -4
-  sw r15, 0(r14)         ; non-foglia: preserva il ritorno a sched_dispatch
+  sw r15, 0(r14)         ; non-foglia: preserva il ritorno a sched_isr_exit
   li r6, current
   lw r4, 0(r6)           ; r4 = TCB uscente
   sw r0, TCB.state(r4)   ; stato uscente = READY
@@ -125,7 +117,7 @@ scheduler:
   mov r2, r4
   call enqueue_coda      ; uscente in fondo alla ready queue. L'esito in r3 e'
                          ; IGNORATO: giriamo dentro la trap, non c'e' nessun
-                         ; chiamante a cui restituirlo (sched_dispatch non ha un
+                         ; chiamante a cui restituirlo (sched_isr_exit non ha un
                          ; ritorno proprio). Stesso nodo aperto della receive,
                          ; §8.7. Qui il controllo non puo' comunque scattare: il
                          ; TCB uscente e' RUNNING, cioe' fuori da ogni coda, e da
@@ -146,7 +138,10 @@ scheduler:
 ;  puntato da 'current', switch o no — chiama l'HAL (ctx_restore) e non sa
 ;  ne' vuole sapere come sono fatti i registri. Non ritorna mai (ctx_restore
 ;  chiude con reti): niente da salvare. Non e' un'API generica (un solo
-;  chiamante: sched_dispatch) -> scritta a mano.
+;  chiamante: sched_isr_exit) -> scritta a mano.
+;
+;  DA FARE (§12.3): deve prendere il TCB in INPUT invece di rileggerlo da
+;  'current' — lo scheduler ce l'ha gia' in un registro quando lo sceglie.
 ; ==========================================================================
 dispatcher:
   li r2, current

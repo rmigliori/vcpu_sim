@@ -12,12 +12,14 @@
 ; il primo buf_free il blocco e' nella free-list, quindi ha i link non nulli.
 ;
 ; machine.vasm entra nel link per irq_save/irq_restore (li vogliono i wrapper _s
-; che pool.vasm usa) e si tira dietro _trap_entry -> sched_dispatch ->
-; scheduler.vasm. Nessuno dei due gira: nessun timer viene armato.
+; che pool.vasm usa) e non si tira dietro nient'altro: dal 05/09/2026 l'HAL non
+; nomina piu' nessun simbolo di kernel (§12.2 della proposta), quindi
+; scheduler.vasm NON entra piu'. Non gira comunque niente: nessun timer e'
+; armato.
 ;
-; Pipeline (-I dove c'e' una .include da risolvere; machine.vasm non ne ha):
+; Pipeline (-I: ogni sorgente qui sotto ha una .include da risolvere):
 ;   I=-Ilinked/scheduler/include
-;   ./build/vcpu_sim asm    linked/scheduler/hal/machine.vasm      -o build/machine.vo
+;   ./build/vcpu_sim asm $I linked/scheduler/hal/machine.vasm      -o build/machine.vo
 ;   ./build/vcpu_sim asm $I linked/scheduler/kernel/coda.vasm      -o build/coda.vo
 ;   ./build/vcpu_sim asm $I linked/scheduler/kernel/scheduler.vasm -o build/scheduler.vo
 ;   ./build/vcpu_sim asm $I linked/scheduler/kernel/pool.vasm      -o build/pool.vo
