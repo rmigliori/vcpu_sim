@@ -44,8 +44,9 @@
 >    debito scoperto in §3.24 — `task_ready` e `task_block` **non esistono**, e
 >    finché non nascono `lib_messaggi` non si chiude da sola.
 >
-> **Ci sono 18 commit locali non pushati** (§2). Il push si fa solo su richiesta
-> esplicita.
+> **Tutto pushato** fino a `15d302e` (§2), il 06/09/2026: diciannove commit,
+> §3.18-§3.24. Il push l'ha chiesto l'utente, come deve essere — e resta una
+> richiesta da rifare ogni volta.
 
 Il **30/08/2026** ci sono state **tre sessioni**, non una:
 §3.9 (il TCB e i timeout), §3.10 (la mailbox, progettata e implementata) e §3.11
@@ -251,20 +252,26 @@ Branch `master`, pubblicato su `git@github.com:rmigliori/vcpu_sim.git` (remote
 `origin`, HTTPS + credential helper `git-credential-libsecret` configurato,
 push senza prompt).
 
-**Ultimo pushato: `e2955ff`**, il 05/09/2026 — nove commit, il lavoro di §3.16 e
-§3.17 più i tre di handoff rimasti indietro dal 04/09. Il push **l'ha chiesto
-l'utente**, come deve essere.
+**Tutto pushato.** Il 06/09/2026 `origin/master` è passato da `e2955ff` a
+`15d302e`: **diciannove commit**, cioè §3.18-§3.23 del 05/09 più gli undici del
+06/09 che sono §3.24 e la sua documentazione. Il push **l'ha chiesto l'utente**
+(«forse è ora di fare push?»), come deve essere.
 
-**Da allora ci sono 18 commit locali non pushati**: §3.18-§3.23 del 05/09, e i
-dieci del 06/09 che sono §3.24. Il push si fa **solo** su richiesta esplicita in
-quel momento (vedi il riquadro qui sotto).
+Perché quel momento e non un altro, visto che se ne è discusso: i commit della
+ristrutturazione sono **verdi uno per uno**, non solo alla fine — ognuno chiude
+con `ctest` 23/23 e i `.vx` identici byte per byte al precedente. La storia
+pubblicata è quindi **bisecabile**: se un giorno un numero si muove,
+`git bisect` atterra su un commit che compila e gira, non su un albero a metà
+migrazione. Accumulare altro lavoro sopra avrebbe annacquato quella proprietà.
 
-I dieci di §3.24 sono in ordine di dipendenza e va tenuto: i due di sorgenti
+Gli undici di §3.24 sono in ordine di dipendenza e va tenuto: i due di sorgenti
 (`a834cfe`, `913d3f7`) precedono il cambio di build (`4437546`), che precede i
 sette spostamenti, che vanno dal basso del DAG in su. Ognuno chiude con `ctest`
 23/23 e i `.vx` identici byte per byte al precedente.
 
 ```
+15d302e Aggiorna manuale e proposta ai percorsi nuovi (§3.24) <- ultimo pushato
+7e0c127 Handoff §3.24: l'albero ristrutturato, e le tre risposte
 076af17 i test unitari sono applicazioni: vanno in cima al DAG del loro gruppo
 3232793 la mailbox e la demo: linked/scheduler non esiste piu'
 229ae36 lo scheduler in rtos/: kernel da contenitore a una delle sei
@@ -282,7 +289,7 @@ b071ed7 La parola di stato nel frame di contesto, e hal.vinc
 8f62946 ISA: mfepsw/mtepsw, il ritorno decide anche il regime
 a00df00 Proposta §12: il confine HAL/ISR/kernel, i tre ritorni, mfepsw/mtepsw
 a4091d0 Aggiorna handoff: pushato fino a e2955ff
-e2955ff Aggiorna i documenti: .include a nome nudo e target CMake (§3.17) <- ultimo pushato
+e2955ff Aggiorna i documenti: .include a nome nudo e target CMake (§3.17)
 735b508 I .vasm in target CMake, e le invarianti diventano ctest
 5c14836 .include a nome nudo, e pool.vinc dipende da types.vinc
 fe07cf8 Aggiorna handoff: §3.16 committato, working tree pulito
@@ -332,10 +339,12 @@ l'indirizzo 0 riservato il test dell'invariante dei link non passa.
 > esista non rende il push un'operazione di routine. Committare in locale sì,
 > quando richiesto; pubblicare mai senza che sia chiesto in quel momento.
 >
-> **Il 05/09/2026 il push l'ha fatto la sessione, ed è coerente con la regola,
-> non un'eccezione**: l'utente l'ha chiesto esplicitamente in quel momento
-> («forse prima una push?»). È esattamente il caso previsto. Non vale come
-> autorizzazione permanente: al push successivo si richiede.
+> **I push del 05/09 e del 06/09 li ha fatti la sessione, e sono coerenti con la
+> regola, non eccezioni**: tutte e due le volte l'utente l'ha chiesto
+> esplicitamente in quel momento («forse prima una push?», «forse è ora di fare
+> push?»). È esattamente il caso previsto. Che sia successo due volte **non lo
+> rende routine**: nessuna delle due vale come autorizzazione permanente, e al
+> push successivo si richiede di nuovo.
 >
 > `.vscode/` resta l'unica cosa non tracciata, di proposito.
 
