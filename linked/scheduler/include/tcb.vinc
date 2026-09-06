@@ -14,7 +14,7 @@
 ; di quel confine: quando sara' sanata, questo file smettera' di essere incluso
 ; da chi non e' kernel — e il grep a zero sara' la prova che il confine e' vero.
 
-.include "coda.vinc"
+.include "coda/coda.vinc"
 
 ; Descrittore di task.
 .struct TCB

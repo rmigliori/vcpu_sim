@@ -52,14 +52,12 @@ enable_testing()
 #  target dev'essere definito prima di essere nominato.
 # ---------------------------------------------------------------------------
 add_subdirectory(hal)
+add_subdirectory(generic)
 
 # ---------------------------------------------------------------------------
 #  Le interfacce: un .vinc per fornitore (§8.6 della proposta).
 # ---------------------------------------------------------------------------
 set(VINC_DIR ${CMAKE_SOURCE_DIR}/linked/scheduler/include)
-
-# coda.vinc: il tipo lista e gli esiti, il .vinc piu' basso e piu' incluso.
-vasm_interface(vinc_coda DIR ${VINC_DIR} HEADERS coda.vinc)
 
 # timeout.vinc e' foglia per una proprieta' del modello, non per un limite: il
 # DESCRITTORE non entra mai in una lista (§9.3), quindi non ha niente da
@@ -93,12 +91,6 @@ vasm_interface(vinc_pool      DIR ${VINC_DIR} HEADERS pool.vinc      INTERFACES 
 #                  timeout ──────────────▶ hal
 # ---------------------------------------------------------------------------
 set(SCHED ${CMAKE_SOURCE_DIR}/linked/scheduler)
-
-# Le code dipendono dall'HAL, ma solo per lo strato _s: i wrapper protetti
-# chiamano irq_save/irq_restore. Le primitive raw e lo strato _nc no -- il
-# giorno che servisse, il confine per dividerla in due passa di li'.
-vasm_library(lib_coda    SOURCES ${SCHED}/kernel/coda.vasm  INTERFACES vinc_coda
-                         LINK lib_hal)
 
 # Il kernel: SOLO gli algoritmi di gestione dei task (scheduler, dispatcher,
 # uscita da ISR). Mailbox, semafori e mutex NON stanno qui: sono clienti che lo
@@ -156,8 +148,15 @@ vasm_check(scheduler_demo MODE DUMPS EXPECT "97 64" PROGRAM scheduler_demo)
 
 vasm_check(proc       MODE DUMPS EXPECT "100 200 300"
            SOURCE ${TESTS}/test_proc.vasm)
+# test_include gira in modalita' legacy a file singolo (non ha oggetti ne'
+# link), quindi i -I vanno passati a mano invece di arrivare da INTERFACES. Il
+# secondo non e' un doppione: tcb.vinc include "coda/coda.vinc", e la cartella
+# di coda ora e' un'altra. Si prende dal target invece che a percorso, cosi'
+# segue la libreria se si sposta ancora.
 vasm_check(include    MODE DUMPS EXPECT "16 12 16 512 1"
-           IFLAGS -I${VINC_DIR} SOURCE ${TESTS}/test_include.vasm)
+           IFLAGS -I${VINC_DIR}
+                  -I$<TARGET_PROPERTY:vinc_coda,INTERFACE_INCLUDE_DIRECTORIES>
+           SOURCE ${TESTS}/test_include.vasm)
 vasm_check(epsw       MODE DUMPS EXPECT "1 0 0 7"
            SOURCE ${TESTS}/test_epsw.vasm)
 

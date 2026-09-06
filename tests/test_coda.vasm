@@ -39,7 +39,7 @@
 ;
 ; Atteso, in ordine:  0 1 1 1 0 0 0 2 1 0 0 0 0
 
-.include "coda.vinc"
+.include "coda/coda.vinc"
 
 ; Il nodo di questo test. Le code non sanno cosa sia un nodo oltre ai due link
 ; in testa (l'idioma list_head, lo stesso di TESTA, TCB, MESSAGGIO e BLOCCO):

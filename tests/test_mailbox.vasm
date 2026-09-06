@@ -29,7 +29,7 @@
 ;
 ; Atteso, in ordine:  0  1  2  11  22  0  33  0  0
 
-.include "coda.vinc"
+.include "coda/coda.vinc"
 .include "tcb.vinc"
 .include "messaggio.vinc"
 

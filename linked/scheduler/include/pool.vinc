@@ -16,9 +16,12 @@
 ; Scrivibile solo da quando `.include` e' idempotente: prima, un .vinc che ne
 ; includesse un altro esplodeva con "duplicate constant" appena un chiamante
 ; includeva entrambi — ed e' esattamente il caso di pool.vasm e test_pool.vasm.
-; Il nome e' nudo perche' si risolve rispetto alla cartella del file di PRIMO
-; LIVELLO, non di chi include: chi assembla passa -I su questa cartella.
-.include "coda.vinc"
+; Il nome e' qualificato con la cartella della libreria e si risolve SOLO via
+; -I: .include cerca nella cartella del file di PRIMO LIVELLO, mai in quella di
+; chi include, quindi un modulo che non ha dichiarato l'interfaccia delle code
+; non lo trova e non assembla. E' il vincolo che la ristrutturazione del
+; 06/09/2026 e' venuta a costruire.
+.include "coda/coda.vinc"
 
 ; --------------------------------------------------------------------------
 ;  Le sei classi, per potenze di due sull'AREA DATI UTENTE.

@@ -48,7 +48,7 @@
 ; no-op da quando .include e' idempotente (§3.16), che e' anche cio' che ha reso
 ; scrivibile un .vinc che ne include un altro.
 .include "pool.vinc"
-.include "coda.vinc"
+.include "coda/coda.vinc"
 
   .data
 
