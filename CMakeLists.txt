@@ -41,14 +41,24 @@ include(cmake/vasm.cmake)
 enable_testing()
 
 # ---------------------------------------------------------------------------
+#  Le librerie che hanno gia' una cartella propria.
+#
+#  Ristrutturazione in corso (§3.24 dell'handoff): una libreria alla volta
+#  passa da una dichiarazione qui sotto a una cartella con impl/src e
+#  interface/<nome>, e la sua descrizione di build va a vivere con lei. Cio'
+#  che resta piu' in basso in questo file e' quello che non e' ancora passato.
+#
+#  L'ordine e' un ordine topologico del DAG e non e' negoziabile: in CMake un
+#  target dev'essere definito prima di essere nominato.
+# ---------------------------------------------------------------------------
+add_subdirectory(hal)
+
+# ---------------------------------------------------------------------------
 #  Le interfacce: un .vinc per fornitore (§8.6 della proposta).
 # ---------------------------------------------------------------------------
 set(VINC_DIR ${CMAKE_SOURCE_DIR}/linked/scheduler/include)
 
-# Le due foglie: non dipendono da nessuno.
-#   hal.vinc     la taglia del frame di contesto e i bit della parola di stato
-#   coda.vinc    il tipo lista e gli esiti: il .vinc piu' basso e piu' incluso
-vasm_interface(vinc_hal  DIR ${VINC_DIR} HEADERS hal.vinc)
+# coda.vinc: il tipo lista e gli esiti, il .vinc piu' basso e piu' incluso.
 vasm_interface(vinc_coda DIR ${VINC_DIR} HEADERS coda.vinc)
 
 # timeout.vinc e' foglia per una proprieta' del modello, non per un limite: il
@@ -83,9 +93,6 @@ vasm_interface(vinc_pool      DIR ${VINC_DIR} HEADERS pool.vinc      INTERFACES 
 #                  timeout ──────────────▶ hal
 # ---------------------------------------------------------------------------
 set(SCHED ${CMAKE_SOURCE_DIR}/linked/scheduler)
-
-# L'HAL: zero dipendenze, e per un HAL e' la proprieta' che conta.
-vasm_library(lib_hal     SOURCES ${SCHED}/hal/machine.vasm  INTERFACES vinc_hal)
 
 # Le code dipendono dall'HAL, ma solo per lo strato _s: i wrapper protetti
 # chiamano irq_save/irq_restore. Le primitive raw e lo strato _nc no -- il

@@ -28,7 +28,7 @@
 ;   ritorno puo' puntare a codice di kernel, che si troverebbe a girare con gli
 ;   interrupt aperti: da li' `mfepsw`/`mtepsw` nell'ISA e questa parola nel frame.
 
-.include "hal.vinc"
+.include "hal/hal.vinc"
 
   .data
 
