@@ -12,10 +12,64 @@
 #    vasm_archive    piu' .vo -> un .va (il linker ne pesca solo cio' che serve)
 #    vasm_program    .vo/.va -> un .vx eseguibile
 #    vasm_check      un .vx (o un .vasm legacy) -> un test di ctest
+#
+#  DUE SPECIE DI DIPENDENZA, e non vanno confuse:
+#
+#    INTERFACES  le interfacce da cui un sorgente prende COSTANTI (.equ,
+#                .struct). Diventano i -I di `asm`, e servono a risolvere le
+#                .include.
+#    LINK        le librerie di cui un sorgente usa i SIMBOLI. Diventano i .va
+#                sul comando di `ld`, e servono a risolvere gli .extern.
+#
+#  Sono davvero due cose diverse e il progetto lo mostra: lib_kernel LINKa le
+#  code ma non ne dichiara l'interfaccia, perche' scheduler.vasm chiama
+#  enqueue_coda senza aver bisogno di una sola costante di coda.vinc. Tenerle
+#  in due parole chiave e non in una lista sola e' quello che rende quel fatto
+#  leggibile al punto di chiamata invece che deducibile da com'e' fatto un
+#  target definito altrove.
+#
+#  Si propagano anche con regole diverse, ed e' la ragione per cui la chiusura
+#  e' calcolata due volte da due funzioni distinte. I -I sono transitivi FRA
+#  INTERFACCE (tcb.vinc contiene .include "coda.vinc": chi nomina la prima deve
+#  ricevere la cartella della seconda) ma NON attraversano un arco fra
+#  librerie: se lo facessero, chi dichiara LINK lib_messaggi si ritroverebbe
+#  gratis i -I di code, TCB e HAL, e potrebbe includerne gli header senza
+#  averli dichiarati. E' la distinzione fra PUBLIC e PRIVATE di
+#  target_link_libraries, fatta qui con due parole chiave invece che con un
+#  qualificatore.
+#
+#  La specie di ogni target sta nella proprieta' VASM_KIND ed e' CONTROLLATA:
+#  mettere una libreria in INTERFACES, o un'interfaccia in LINK, e' un errore a
+#  tempo di configure, non un -I che manca a tempo di assemblaggio.
 # ---------------------------------------------------------------------------
 
 set(VASM_BINARY_DIR ${CMAKE_BINARY_DIR}/vasm)
 file(MAKE_DIRECTORY ${VASM_BINARY_DIR})
+
+# --- la specie di un target, controllata ------------------------------------
+#
+# Ogni forma marchia cio' che produce con VASM_KIND, e le parole chiave che
+# accettano una lista di target verificano di aver ricevuto la specie giusta.
+# Prima la garanzia era la convenzione sui nomi (vinc_* contro lib_*), cioe'
+# niente: scambiarli dava un -I mancante a tempo di assemblaggio, lontano dalla
+# riga sbagliata. Qui l'errore arriva a tempo di configure e dice quale voce di
+# quale parola chiave.
+function(_vasm_require_kind where keyword kind)
+  foreach(t ${ARGN})
+    if(NOT TARGET ${t})
+      message(FATAL_ERROR
+        "${where}: ${keyword} nomina '${t}', che non e' un target. "
+        "Le voci di ${keyword} sono target, non percorsi.")
+    endif()
+    get_target_property(k ${t} VASM_KIND)
+    if(NOT "${k}" STREQUAL "${kind}")
+      message(FATAL_ERROR
+        "${where}: ${keyword} vuole target di specie '${kind}', ma '${t}' e' "
+        "'${k}'. INTERFACES sono le interfacce da cui arrivano le COSTANTI "
+        "(-I), LINK le librerie da cui arrivano i SIMBOLI (.va).")
+    endif()
+  endforeach()
+endfunction()
 
 # --- una libreria di interfaccia: i .vinc -----------------------------------
 #
@@ -27,17 +81,24 @@ file(MAKE_DIRECTORY ${VASM_BINARY_DIR})
 # dei file, che diventera' un DEPENDS. La seconda e' in una proprieta' nostra
 # (VASM_HEADERS) perche' CMake propaga da solo le sole proprieta' INTERFACE_*
 # che conosce; la chiusura transitiva la calcola _vasm_closure qui sotto.
+#
+# INTERFACES sono le interfacce che questa include a sua volta: tcb.vinc
+# contiene .include "coda.vinc", quindi vinc_tcb dichiara INTERFACES vinc_coda
+# e chi nomina il primo riceve la cartella del secondo. Non e' un LINK: qui non
+# ci sono simboli da risolvere, un .vinc non emette un byte.
 function(vasm_interface name)
-  cmake_parse_arguments(A "" "DIR" "HEADERS;LINK" ${ARGN})
+  cmake_parse_arguments(A "" "DIR" "HEADERS;INTERFACES" ${ARGN})
+  _vasm_require_kind("vasm_interface(${name})" INTERFACES interface ${A_INTERFACES})
   add_library(${name} INTERFACE)
+  set_property(TARGET ${name} PROPERTY VASM_KIND interface)
   target_include_directories(${name} INTERFACE ${A_DIR})
   set(files "")
   foreach(h ${A_HEADERS})
     list(APPEND files ${A_DIR}/${h})
   endforeach()
   set_property(TARGET ${name} PROPERTY VASM_HEADERS ${files})
-  if(A_LINK)
-    target_link_libraries(${name} INTERFACE ${A_LINK})
+  if(A_INTERFACES)
+    target_link_libraries(${name} INTERFACE ${A_INTERFACES})
   endif()
 endfunction()
 
@@ -86,11 +147,12 @@ endfunction()
 #
 # DEPENDS elenca i .vinc della chiusura, ed e' quello che fa scattare il
 # riassemblaggio quando cambia un file di interfaccia. E' una dipendenza
-# DICHIARATA, non scoperta: se un .vasm include un .vinc senza che LIBS lo dica,
-# CMake non lo sapra' mai. La versione scoperta e' --emit-deps (punto 3).
+# DICHIARATA, non scoperta: se un .vasm include un .vinc senza che INTERFACES lo
+# dica, CMake non lo sapra' mai. La versione scoperta e' --emit-deps (punto 3).
 function(vasm_object name)
-  cmake_parse_arguments(A "" "SOURCE" "LIBS" ${ARGN})
-  _vasm_closure(dirs headers ${A_LIBS})
+  cmake_parse_arguments(A "" "SOURCE" "INTERFACES" ${ARGN})
+  _vasm_require_kind("vasm_object(${name})" INTERFACES interface ${A_INTERFACES})
+  _vasm_closure(dirs headers ${A_INTERFACES})
 
   set(iflags "")
   foreach(d ${dirs})
@@ -105,6 +167,7 @@ function(vasm_object name)
     COMMENT "asm  ${name}.vo"
     VERBATIM)
   add_custom_target(${name} DEPENDS ${out})
+  set_property(TARGET ${name} PROPERTY VASM_KIND object)
   set_property(TARGET ${name} PROPERTY VASM_OUTPUT ${out})
 endfunction()
 
@@ -132,23 +195,25 @@ endfunction()
 
 # --- una libreria vera: sorgenti + dipendenze verso altre librerie ----------
 #
-#  vasm_library(lib_pool SOURCES pool.vasm LIBS vinc_pool LINK lib_coda)
+#  vasm_library(lib_pool SOURCES pool.vasm INTERFACES vinc_pool LINK lib_coda)
 #
-#  Due tipi di dipendenza, che non vanno confusi:
-#    LIBS  le INTERFACCE (.vinc) da cui prende costanti -> diventano -I
-#    LINK  le altre LIBRERIE i cui simboli usa          -> diventano .va sul
-#          comando di ld, chiuse transitivamente
+#  Le due specie di dipendenza dell'intestazione di questo file:
+#    INTERFACES  le interfacce (.vinc) da cui prende costanti -> diventano -I
+#    LINK        le altre librerie i cui simboli usa          -> diventano .va
+#                sul comando di ld, chiuse transitivamente
 #
 #  La chiusura e' il punto: un programma che linka lib_messaggi non deve sapere
 #  che sotto ci sono lib_coda e lib_hal. Prima quella conoscenza stava scritta a
 #  mano nell'intestazione di ogni test, come lista ordinata di .vo.
 function(vasm_library name)
-  cmake_parse_arguments(A "" "" "SOURCES;LIBS;LINK" ${ARGN})
+  cmake_parse_arguments(A "" "" "SOURCES;INTERFACES;LINK" ${ARGN})
+  _vasm_require_kind("vasm_library(${name})" INTERFACES interface ${A_INTERFACES})
+  _vasm_require_kind("vasm_library(${name})" LINK archive ${A_LINK})
   set(objs "")
   set(i 0)
   foreach(src ${A_SOURCES})
     get_filename_component(base ${src} NAME_WE)
-    vasm_object(${name}_${base} SOURCE ${src} LIBS ${A_LIBS})
+    vasm_object(${name}_${base} SOURCE ${src} INTERFACES ${A_INTERFACES})
     list(APPEND objs ${name}_${base})
     math(EXPR i "${i} + 1")
   endforeach()
@@ -194,12 +259,14 @@ function(vasm_archive name)
     VERBATIM)
   add_custom_target(${name} DEPENDS ${out})
   _vasm_order_after(${name} ${A_OBJECTS})
+  set_property(TARGET ${name} PROPERTY VASM_KIND archive)
   set_property(TARGET ${name} PROPERTY VASM_OUTPUT ${out})
 endfunction()
 
 # --- un eseguibile: .vo/.va -> .vx ------------------------------------------
 function(vasm_program name)
   cmake_parse_arguments(A "" "ENTRY" "OBJECTS;LINK" ${ARGN})
+  _vasm_require_kind("vasm_program(${name})" LINK archive ${A_LINK})
   # Gli oggetti espliciti (sempre linkati) per primi, poi le librerie della
   # chiusura, da cui il linker pesca solo cio' che serve.
   set(all ${A_OBJECTS})
@@ -222,6 +289,7 @@ function(vasm_program name)
     VERBATIM)
   add_custom_target(${name} ALL DEPENDS ${out})
   _vasm_order_after(${name} ${A_OBJECTS})
+  set_property(TARGET ${name} PROPERTY VASM_KIND program)
   set_property(TARGET ${name} PROPERTY VASM_OUTPUT ${out})
 endfunction()
 

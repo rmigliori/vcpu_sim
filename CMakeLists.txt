@@ -57,13 +57,15 @@ vasm_interface(vinc_coda DIR ${VINC_DIR} HEADERS coda.vinc)
 vasm_interface(vinc_timeout DIR ${VINC_DIR} HEADERS timeout.vinc)
 
 # I tre che dipendono da coda.vinc, e sempre per la stessa ragione: TCB,
-# MESSAGGIO e BLOCCO sono tutti NODI DI LISTA. Chi linka uno di questi si porta
-# dietro vinc_coda senza doverlo sapere -- e' la propagazione transitiva che
-# prima non si poteva nemmeno dichiarare, perche' .include non era idempotente e
+# MESSAGGIO e BLOCCO sono tutti NODI DI LISTA. Chi dichiara uno di questi in
+# INTERFACES si porta dietro vinc_coda senza saperlo -- e' la propagazione
+# transitiva FRA INTERFACCE, l'unica che ci sia: attraverso un arco fra librerie
+# i -I non passano, altrimenti dichiarare LINK basterebbe a includere. Prima
+# non si poteva nemmeno dichiarare, perche' .include non era idempotente e
 # un unico types.vinc teneva insieme code, task e messaggi (§12.6, passo 4).
-vasm_interface(vinc_tcb       DIR ${VINC_DIR} HEADERS tcb.vinc       LINK vinc_coda)
-vasm_interface(vinc_messaggio DIR ${VINC_DIR} HEADERS messaggio.vinc LINK vinc_coda)
-vasm_interface(vinc_pool      DIR ${VINC_DIR} HEADERS pool.vinc      LINK vinc_coda)
+vasm_interface(vinc_tcb       DIR ${VINC_DIR} HEADERS tcb.vinc       INTERFACES vinc_coda)
+vasm_interface(vinc_messaggio DIR ${VINC_DIR} HEADERS messaggio.vinc INTERFACES vinc_coda)
+vasm_interface(vinc_pool      DIR ${VINC_DIR} HEADERS pool.vinc      INTERFACES vinc_coda)
 
 # ---------------------------------------------------------------------------
 #  Le librerie.
@@ -83,31 +85,31 @@ vasm_interface(vinc_pool      DIR ${VINC_DIR} HEADERS pool.vinc      LINK vinc_c
 set(SCHED ${CMAKE_SOURCE_DIR}/linked/scheduler)
 
 # L'HAL: zero dipendenze, e per un HAL e' la proprieta' che conta.
-vasm_library(lib_hal     SOURCES ${SCHED}/hal/machine.vasm  LIBS vinc_hal)
+vasm_library(lib_hal     SOURCES ${SCHED}/hal/machine.vasm  INTERFACES vinc_hal)
 
 # Le code dipendono dall'HAL, ma solo per lo strato _s: i wrapper protetti
 # chiamano irq_save/irq_restore. Le primitive raw e lo strato _nc no -- il
 # giorno che servisse, il confine per dividerla in due passa di li'.
-vasm_library(lib_coda    SOURCES ${SCHED}/kernel/coda.vasm  LIBS vinc_coda
+vasm_library(lib_coda    SOURCES ${SCHED}/kernel/coda.vasm  INTERFACES vinc_coda
                          LINK lib_hal)
 
 # Il kernel: SOLO gli algoritmi di gestione dei task (scheduler, dispatcher,
 # uscita da ISR). Mailbox, semafori e mutex NON stanno qui: sono clienti che lo
 # chiamano.
-vasm_library(lib_kernel  SOURCES ${SCHED}/kernel/scheduler.vasm LIBS vinc_tcb
+vasm_library(lib_kernel  SOURCES ${SCHED}/kernel/scheduler.vasm INTERFACES vinc_tcb
                          LINK lib_coda lib_hal)
 
-vasm_library(lib_pool    SOURCES ${SCHED}/kernel/pool.vasm  LIBS vinc_pool vinc_coda
+vasm_library(lib_pool    SOURCES ${SCHED}/kernel/pool.vasm  INTERFACES vinc_pool vinc_coda
                          LINK lib_coda)
 
-vasm_library(lib_timeout SOURCES ${SCHED}/kernel/timeout.vasm LIBS vinc_timeout
+vasm_library(lib_timeout SOURCES ${SCHED}/kernel/timeout.vasm INTERFACES vinc_timeout
                          LINK lib_hal)
 
 # I messaggi sono un CLIENTE del kernel, non parte sua: chiamano task_ready /
 # task_block per bloccare e risvegliare. Semafori e mutex nasceranno qui
 # accanto, allo stesso livello.
 vasm_library(lib_messaggi SOURCES ${SCHED}/kernel/messageHandling.vasm
-                          LIBS vinc_coda vinc_tcb
+                          INTERFACES vinc_coda vinc_tcb
                           LINK lib_coda lib_kernel)
 
 # ---------------------------------------------------------------------------
@@ -117,7 +119,7 @@ vasm_library(lib_messaggi SOURCES ${SCHED}/kernel/messageHandling.vasm
 #  chiusura la calcola vasm_program. Prima quella lista stava scritta a mano
 #  nell'intestazione di ogni test, e andava tenuta aggiornata a occhio.
 # ---------------------------------------------------------------------------
-vasm_object(demo_main   SOURCE ${SCHED}/scheduler_demo.vasm LIBS vinc_tcb)
+vasm_object(demo_main   SOURCE ${SCHED}/scheduler_demo.vasm INTERFACES vinc_tcb)
 vasm_program(scheduler_demo OBJECTS demo_main LINK lib_kernel)
 
 vasm_object(multi_main  SOURCE ${CMAKE_SOURCE_DIR}/linked/multi/main.vasm)
@@ -125,10 +127,10 @@ vasm_object(multi_saxpy SOURCE ${CMAKE_SOURCE_DIR}/linked/multi/saxpy.vasm)
 vasm_program(multi      OBJECTS multi_main multi_saxpy)
 
 set(TESTS ${CMAKE_SOURCE_DIR}/tests)
-vasm_object(t_coda     SOURCE ${TESTS}/test_coda.vasm    LIBS vinc_coda)
-vasm_object(t_mailbox  SOURCE ${TESTS}/test_mailbox.vasm LIBS vinc_coda vinc_tcb vinc_messaggio)
-vasm_object(t_timeout  SOURCE ${TESTS}/test_timeout.vasm LIBS vinc_timeout)
-vasm_object(t_pool     SOURCE ${TESTS}/test_pool.vasm    LIBS vinc_pool vinc_coda)
+vasm_object(t_coda     SOURCE ${TESTS}/test_coda.vasm    INTERFACES vinc_coda)
+vasm_object(t_mailbox  SOURCE ${TESTS}/test_mailbox.vasm INTERFACES vinc_coda vinc_tcb vinc_messaggio)
+vasm_object(t_timeout  SOURCE ${TESTS}/test_timeout.vasm INTERFACES vinc_timeout)
+vasm_object(t_pool     SOURCE ${TESTS}/test_pool.vasm    INTERFACES vinc_pool vinc_coda)
 
 vasm_program(test_coda    OBJECTS t_coda    LINK lib_coda)
 vasm_program(test_mailbox OBJECTS t_mailbox LINK lib_messaggi)
