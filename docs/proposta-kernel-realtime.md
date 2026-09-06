@@ -36,9 +36,17 @@ un'estensione per l'anteprima (*Markdown Preview Mermaid Support*).
     campi — l'indirizzo della coda di quel livello e l'indirizzo dell'eventuale
     TCB preemptato a quel livello.
   - **Mailbox**: *è* una testa di coda di `coda.vasm`, con il contatore usato
-    con segno (§8). Una per task, ed è l'**unico punto di blocco di un task**
-    (§7.5).
-  - **Semafori**: da specificare.
+    con segno (§8). Una per task. Era anche l'**unico punto di blocco di un
+    task** (§7.5): dal 06/09/2026 **non più**, perché il semaforo blocca — e la
+    conseguenza sui timeout è aperta, vedi §13.8.
+  - **Semafori**: specificati in **§13**. Contatore *contabile* — positivo =
+    risorse disponibili (che non sono nodi), negativo = task accodati — e per
+    questo **non** sono una mailbox con un parametro diverso (§13.1). Sono
+    l'unico oggetto la cui dichiarazione statica non è «tutti zeri»: nasce col
+    conteggio iniziale delle risorse.
+  - **Mutex**: specificati in **§13**. Ceiling statico (§7.4), e sono *la
+    sezione critica* — la stessa disciplina di `irq_save`/`irq_restore` con un
+    limite calcolato per risorsa invece che infinito (§13.2).
   - **Messaggi**: per il kernel sono solo nodi di lista — due link e un
     payload che non legge mai (§8). Il buffer è di chi manda: nel traffico
     richiesta/risposta è memoria del cliente prestata al fornitore per la durata
@@ -482,11 +490,15 @@ secondo campo dello stesso tipo — due puntatori simmetrici, nessuna aritmetica
 Il nome `prio` sarebbe fuorviante per un campo che contiene un indirizzo: si
 chiama `pcb`.
 
-### 7.4 Inversione di priorità: ereditarietà o ceiling? — **APERTA, da decidere**
+### 7.4 Inversione di priorità: ereditarietà o ceiling? — **DECISA: il ceiling** (06/09/2026)
 
-**È la questione da riprendere.** Priorità statiche più mutex, senza
-contromisure, danno inversione illimitata: un task ad alta priorità resta dietro
-a uno basso per un tempo non calcolabile.
+> **Decisa dall'utente il 06/09/2026**, dopo essere stata la questione aperta
+> più a lungo del progetto e il tappo da cui dipendevano i due debiti di §12.3.
+> La specifica che ne discende — mutex, semaforo, e cosa succede quando il
+> ceiling è dichiarato male — sta in **§13**.
+
+Priorità statiche più mutex, senza contromisure, danno inversione illimitata: un
+task ad alta priorità resta dietro a uno basso per un tempo non calcolabile.
 
 Il campo `prio_eff` riguarda i **mutex, non i semafori**. L'ereditarietà ha senso
 solo dove c'è un *proprietario* da promuovere: un semaforo contatore non ce l'ha
@@ -520,6 +532,33 @@ essere analizzabile davvero.
 
 Con acquisizioni e rilasci **annidati per costruzione**, salvare nel mutex la
 priorità precedente basta: non serve nessuna lista.
+
+#### L'argomento che ha deciso, e non è nessuno dei due qui sopra
+
+La tabella confronta i costi statici. Quello che ha chiuso la questione è un
+costo **dinamico** che non ci compare, ed è specifico di *questo* modello:
+
+> Col ceiling la priorità cambia **solo al task che sta girando**. Con
+> l'ereditarietà cambia a un task che per definizione **non** sta girando.
+
+Chi acquisisce un mutex sta eseguendo `mutex_lock`; chi lo rilascia sta
+eseguendo `mutex_unlock`. In entrambi i casi ha la CPU, quindi **non è dentro
+nessuna coda** — la sua priorità si può cambiare scrivendo un campo, e basta.
+
+L'ereditarietà promuove il **possessore** del mutex, che è promosso proprio
+perché *non* sta girando: sta nella coda del suo livello, o nello slot
+`preemptato` del suo PCB. E in un modello a **una coda per livello di priorità**
+(§3, §4) cambiare priorità a un task accodato non è scrivere un campo: è
+**sfilarlo da una testa e accodarlo a un'altra**, dentro la sezione critica di
+chi si sta bloccando, con il caso `preemptato` da trattare a parte. La stessa
+struttura che rende la selezione O(1) rende la promozione un'operazione di
+lista.
+
+Ne discende anche che l'ordinamento per priorità delle code d'attesa (§13.6)
+ha un'invariante che regge: col ceiling un task entra in coda con la priorità
+già definitiva e nessuno gliela cambia sotto. Con l'ereditarietà un task
+accodato può essere promosso da un evento che riguarda un *altro* mutex, e da
+quel momento la coda è ordinata male senza che nessuno se ne accorga.
 
 ### 7.5 Il TCB ha una sola coppia di link — **DECISA**
 
@@ -1439,3 +1478,358 @@ L'ordine di lavoro, in passi che si verificano da soli:
 Il passo 4 è la ragione per cui questa revisione viene **prima** della
 decomposizione in librerie: farla adesso significherebbe dichiarare un ciclo per
 poi ritirarlo.
+
+---
+
+## 13. Semafori e mutex — **SPECIFICATI** il 06/09/2026
+
+> Nasce come §13 e non fra §10 e §11 per una ragione operativa: i sorgenti
+> nominano §12.1-§12.6, §10.3, §9.2, §8.4. Rinumerare romperebbe decine di
+> riferimenti dentro i commenti del codice, che sono la parte del progetto che
+> invecchia peggio. **Le sezioni si aggiungono in fondo, non si inseriscono.**
+
+§1 elencava «**Semafori**: da specificare». Questa sezione lo fa, e specifica il
+mutex insieme perché la decisione di §7.4 li lega.
+
+### 13.1 Il semaforo NON è una mailbox, e la differenza sta nel contatore
+
+La tentazione è forte: mailbox e semaforo sono tutti e due una `TESTA` con un
+contatore con segno e dei task accodati sul negativo. Sembrano lo stesso oggetto
+con un parametro diverso. Non lo sono, e la differenza è precisa:
+
+| | Mailbox | Semaforo |
+|---|---|---|
+| `count > 0` | in lista ci sono `count` **messaggi**, nodi fisici con `fwd`/`bwd` | **risorse disponibili**, che non sono nodi e non stanno in nessuna lista |
+| `count < 0` | `-count` TCB in attesa (in pratica sempre −1) | `-count` TCB in attesa, e −N è la norma |
+| `count == 0` | lista vuota | lista vuota, nessuna risorsa |
+| natura del contatore | **descrittivo**: descrive la lista in ogni istante | **contabile**: disponibili meno in attesa |
+| verificabilità | ridondante con la lista, quindi controllabile | il lato positivo non è testimoniato da niente |
+
+**Il contatore della mailbox è descrittivo su entrambi i lati**: se dice 3, in
+lista ci sono tre nodi. `kernel/messageHandling.vasm` lo dichiara e spiega
+perché non usa la convenzione contabile — «lascerebbe una finestra in cui il
+conto è pari mentre in lista c'è un messaggio», cioè un `send` che consegna a un
+ricevente in attesa riporterebbe il conto a zero mentre il messaggio è ancora
+fisicamente in lista.
+
+**Il contatore del semaforo è contabile**, e non può essere altrimenti: una
+risorsa disponibile non è un oggetto da accodare. `sem_wait` con `count > 0`
+decrementa e **ritorna senza toccare la lista** — un cammino veloce che la
+`receive` non ha e non può avere, perché con `count > 0` deve per forza sfilare
+un nodo vero.
+
+Da qui discendono tre conseguenze che non sono cosmetiche:
+
+1. **Il semaforo vuole un valore iniziale.** Una mailbox nasce corretta dal
+   `.data` azzerato — zero messaggi, nessuno in attesa — e il progetto ci si
+   appoggia. Un semaforo che protegge dieci buffer nasce a 10: `.word 0, 0, 10`.
+   Resta tutto statico e senza percorso d'errore all'avvio (§1), ma è il primo
+   oggetto del progetto la cui dichiarazione naturale non è «zeri».
+2. **Il lato positivo non è verificabile da niente.** Sulla mailbox il contatore
+   è ridondante con la lista, quindi un'asserzione può confrontarli — è la
+   stessa famiglia dell'invariante `fwd == bwd == 0`. Sul semaforo il conteggio
+   delle risorse è l'**unico** testimone di sé stesso: nessun controllo può
+   accorgersi di una deriva. È la categoria di cosa su cui è già caduto il primo
+   modello dei timeout (§9.6). Ne segue che quel campo vuole **un solo
+   scrittore** e un'invariante dichiarata, perché sotto non c'è rete.
+3. **Il negativo vale −N, non −1.** La mailbox se la cava con un ricevente solo
+   perché ce n'è una per task (§8), e da lì discendono due semplificazioni che
+   il semaforo **non eredita**: non serve l'inserimento ordinato per priorità, e
+   la `receive` non ha bisogno del ciclo di ricontrollo al risveglio perché
+   nessuno può rubarle il messaggio. Su un semaforo con N in attesa servono
+   tutti e due (§13.6).
+
+### 13.2 Il mutex è la sezione critica, e il ceiling è `cli` con un limite
+
+Il mutex non è un semaforo binario. La differenza non è il conteggio, è il
+**proprietario**: un mutex sa chi lo tiene, ed è quel campo a rendere possibile
+il ceiling. §7.4 lo diceva già dal lato dell'ereditarietà; vale identico dal lato
+del ceiling.
+
+Il modo più utile di vederlo è che **il mutex con ceiling e la disabilitazione
+degli interrupt sono lo stesso meccanismo con un limite diverso**:
+
+| | `irq_save`/`irq_restore` | `mutex_lock`/`mutex_unlock` (ICPP) |
+|---|---|---|
+| cosa fa | ti porta a un livello da cui nessuno ti toglie la CPU | idem |
+| quale livello | il massimo assoluto: nemmeno le ISR | il **ceiling della risorsa**: solo chi può contendere *questa* |
+| come torna indietro | ripristina la **psw precedente**, non «riabilita» | ripristina la **priorità precedente**, non «torna alla nominale» |
+| dove sta il salvataggio | il valore di ritorno di `irq_save` | un campo **nel mutex** |
+| esclude le ISR | sì | **no** |
+
+Non è un'analogia: è la stessa disciplina di salva-e-ripristina applicata a una
+risorsa invece che alla macchina. `hal/machine.vasm` la implementa già nella
+forma giusta — `irq_save() -> r5 = psw precedente` — ed è per questo che le
+sezioni critiche annidate funzionano. Il campo `prio_prec` del mutex **è** quel
+valore di ritorno, promosso di un livello, ed è la ragione per cui §7.4 può dire
+«salvare nel mutex la priorità precedente basta».
+
+Il guadagno rispetto a `cli` è tutto nel limite: disabilitare gli interrupt
+blocca *tutto*, comprese le ISR e i task ad alta priorità che con quella risorsa
+non c'entrano niente. Il ceiling blocca solo ciò che potrebbe davvero contendere,
+e la latenza del lavoro che non c'entra resta intatta.
+
+**Ma il ceiling non esclude le ISR**, e questa è la riga da non perdere: un'ISR
+non ha una priorità nello spazio dello scheduler, non si accoda a un mutex e non
+si può far aspettare. Ne discende una regola d'uso:
+
+> **Se il dato lo tocca anche un'ISR: `irq_save`/`irq_restore`, cioè lo strato
+> `_s` di `coda.vasm`. Se lo toccano solo task: mutex.**
+
+E la seconda metà è un'ottimizzazione di **latenza**, non di correttezza: per una
+sezione di tre istruzioni `_s` costa meno di un lock con cambio di priorità. Il
+mutex si giustifica quando la sezione è abbastanza lunga che tenere chiusi gli
+interrupt farebbe male.
+
+### 13.3 Le strutture
+
+```
+SEMAFORO = TESTA        fwd/bwd/count — count contabile: >0 risorse, <0 attese
+                        Dichiarazione statica con il conteggio iniziale:
+                        sem: .word 0, 0, 10
+
+MUTEX    = TESTA        fwd/bwd/count — gli attendenti. VUOTA sotto ceiling
+                        corretto: vedi §13.5
+           owner        il TCB che lo tiene, 0 = libero. È ciò che lo separa da
+                        un semaforo binario
+           prio_prec    la priorità salvata al lock — il valore di ritorno di
+                        irq_save, un livello sopra
+           ceiling      costante, calcolata a compile-time
+```
+
+Ventiquattro byte per il mutex, dodici per il semaforo, e **niente nel TCB**:
+nessuna lista di mutex posseduti, che è ciò che l'ereditarietà avrebbe imposto
+(+12 byte a task, §7.4).
+
+Un dettaglio da sciogliere col codice davanti, non adesso: il mutex accoda solo
+task, quindi il suo `count` è il numero di nodi e ricade nella disciplina
+**contata** di `coda.vasm` — a differenza di mailbox e semaforo, che al contatore
+danno un significato proprio e vanno di `_nc`. L'inserimento ordinato potrebbe
+quindi servire in entrambe le varianti, oppure il mutex adotta `_nc` per
+uniformità visto che la camminata è comunque del chiamante.
+
+### 13.4 Non ci si blocca tenendo un mutex
+
+Discende dalla lettura di §13.2 e non è una regola in più: bloccarsi tenendo un
+mutex è sbagliato **esattamente come** bloccarsi con gli interrupt disabilitati.
+Cederesti la CPU tenendo chiusa una porta che nessun altro può aprire. Nessuno lo
+scriverebbe con `cli`; non va scritto nemmeno col mutex.
+
+Non è solo igiene: è una delle tre premesse da cui discende che la coda del mutex
+resti vuota (§13.5).
+
+### 13.5 Il degrado del mutex — cosa succede quando il ceiling è dichiarato male
+
+**Questa sezione esiste perché il ceiling ha un rischio che la tabella di §7.4
+segnala in una riga e che va capito per intero:** se un task più prioritario del
+ceiling prende il mutex, la garanzia salta **in silenzio**. Qui si specifica cosa
+vuol dire «salta», e soprattutto **come deve saltare**.
+
+#### La proprietà, e le tre premesse da cui dipende
+
+Sotto ICPP vale questo:
+
+> Se un task `T` sta girando e prova a prendere il mutex `M`, **`M` è libero**.
+
+La dimostrazione è in due righe. Supponiamo `M` tenuto da `L`. Siccome `T` può
+prendere `M`, per definizione di ceiling `ceiling(M) >= prio(T)`. Ma `L`, avendo
+preso `M`, gira a `max(prio(L), ceiling(M)) >= prio(T)`. Un task eseguibile a
+priorità maggiore o uguale a quella di `T` esclude che `T` stia girando. Assurdo.
+
+Ne segue che **la coda d'attesa del mutex non si usa mai**. Ma la dimostrazione
+ha tre premesse, e ognuna può cadere:
+
+1. **monoprocessore** — qui è vero per costruzione;
+2. **il ceiling è dichiarato correttamente**, cioè è davvero il massimo delle
+   priorità dei task che possono prendere quel mutex;
+3. **`L` è eseguibile**, cioè nessuno si blocca tenendo un mutex (§13.4).
+
+Il passaggio «un task eseguibile a priorità ≥ esclude che `T` giri» usa la (3):
+se `L` si è bloccato, non è eseguibile, e `T` può girare pur essendo `M` occupato.
+
+**Le premesse (2) e (3) producono lo stesso sintomo**, ed è una fortuna: in
+entrambi i casi qualcuno finisce nella coda del mutex. Un solo osservabile
+copre due regole.
+
+#### Cosa succede se cade la (2), coi numeri
+
+`M` ha `ceiling = 5`, ma esiste un task `T` a priorità 10 che può prenderlo: il
+ceiling è dichiarato male, perché avrebbe dovuto essere almeno 10.
+
+1. `S`, priorità 7, prende `M`. Gira a `max(7, 5) = 7`: il ceiling non lo alza,
+   perché è più basso di lui. **Qui la protezione ha già smesso di funzionare**,
+   e nessuno se n'è accorto.
+2. `T`, priorità 10, diventa eseguibile e preempta `S` — 10 batte 7.
+3. `T` prova a prendere `M` e **lo trova occupato**.
+
+#### La risposta sbagliata: rimettere `T` nella sua coda di ready
+
+È la reazione istintiva — «non può prenderlo adesso, lo riprova dopo» — ed è
+l'unica che trasforma un errore di dichiarazione in un sistema che non va avanti:
+
+1. `T` viene riaccodato alla coda del livello 10;
+2. lo scheduler cerca il più prioritario fra gli eseguibili: è `T`, perché `S`
+   sta a 7;
+3. `T` riparte, riprova, trova ancora occupato, si riaccoda;
+4. torna al punto 2.
+
+`S` non gira **mai** e quindi non rilascia mai. È **livelock**, non deadlock: la
+macchina è occupata al 100% e sembra che stia lavorando. Un riaccodamento è
+un'attesa attiva alla granularità dello scheduler, e come ogni attesa attiva
+funziona solo se chi tiene la risorsa può girare — che è esattamente ciò che qui
+non è vero.
+
+#### La risposta giusta: `T` esce dagli eseguibili
+
+`T` si **blocca** sulla coda del mutex e diventa `SUSPENDED`. Da quel momento:
+
+1. il più prioritario fra gli **eseguibili** è `S`, che riparte;
+2. `S` finisce la sezione critica e fa `mutex_unlock`;
+3. `unlock` trova la coda non vuota, sfila il primo — che per §13.6 è il più
+   prioritario fra gli attendenti — e lo rende `READY`;
+4. `T` riparte e prende `M`.
+
+L'inversione di priorità c'è: `T` a priorità 10 ha aspettato `S` a priorità 7. Ma
+è **limitata dalla lunghezza della sezione critica di `S`**, che è la garanzia
+minima accettabile e la stessa che darebbe un mutex senza nessun protocollo.
+
+#### Cosa si perde e cosa si tiene
+
+Si perde la proprietà **analitica** del ceiling — «un task si blocca al più una
+volta, e prima di cominciare a eseguire» — che è ciò che serve per l'analisi di
+schedulabilità, non per far girare la macchina. Si tiene la correttezza e un
+tempo di blocco limitato.
+
+Detto in un modo che vale come principio di disegno:
+
+> La coda del mutex non c'è per essere usata. C'è perché **un ceiling dichiarato
+> male degradi invece di appendere**.
+
+#### Una tentazione da respingere: promuovere `S`
+
+Nel momento in cui `T` si blocca, verrebbe voglia di alzare `S` alla priorità di
+`T` per farlo finire prima. **Quella è ereditarietà**, e rientrerebbe dalla
+finestra portandosi dietro tutto ciò per cui §7.4 l'ha scartata: promuovere un
+task che non sta girando, quindi spostarlo fra code, dentro la sezione critica di
+chi si sta bloccando. Nel caso degradato si accetta l'inversione limitata e si
+tiene la struttura semplice. **Il posto dove si aggiusta è la dichiarazione del
+ceiling, non il runtime.**
+
+#### Come accorgersene
+
+Sotto ceiling corretto e senza blocchi con mutex in mano, la coda di **ogni**
+mutex è vuota **sempre**. Quindi:
+
+> Un TCB accodato a un mutex è un'anomalia osservabile: o il ceiling di quel
+> mutex è dichiarato troppo basso, o qualcuno si è bloccato tenendolo.
+
+È un'asserzione a costo zero — `count != 0` su un mutex — ed è lo stesso mestiere
+di `CODA_LINKED` e dell'invariante `fwd == bwd == 0`: una struttura che sorveglia
+una convenzione, invece di sperarci. Vale la pena esporla come contatore
+diagnostico e non solo come `assert`, perché il caso può essere raro e
+dipendente dai tempi.
+
+### 13.6 L'inserimento ordinato, e dove NON va scritto
+
+Con N task in attesa su una testa, chi affiora deve essere il **più prioritario**,
+altrimenti il risveglio FIFO è un'inversione di priorità silenziosa. Serve a
+semafori e mutex — non alle code di ready, che sono già una per livello e dentro
+le quali il FIFO è esattamente giusto (è il round-robin), e non alla mailbox, che
+ha un solo ricevente.
+
+`coda.vasm` non ha l'inserimento ordinato, e **non deve acquisirlo nella forma
+ovvia**. Una `enqueue_prio` che legge la priorità dal nodo dovrebbe sapere che il
+nodo è un TCB: `generic/coda` includerebbe `tcb/tcb.vinc`, cioè
+`generic/` dipenderebbe da `rtos/`, il grafo tornerebbe ciclico e la cartella
+smetterebbe di essere sollevabile. È il difetto tolto il 06/09/2026 (§3.24
+dell'handoff) che rientrerebbe dalla finestra.
+
+La divisione giusta è la stessa di `sched_dispatch` (meccanismo) contro
+`scheduler` (politica):
+
+- **`coda.vasm` guadagna una primitiva agnostica**: `enqueue_dopo(prec, nodo)`,
+  puro maneggio di link, che non sa e non deve sapere perché la si chiama. Non è
+  nemmeno una terza disciplina: siccome `TESTA` è una **sentinella** dentro una
+  lista circolare, `enqueue_testa` è «dopo la sentinella» ed `enqueue_coda` è
+  «dopo `testa.bwd`». La primitiva nuova le **contiene**;
+- **la camminata** che cerca il punto di inserimento sta in `rtos/`, dentro
+  `sem_wait` o `mutex_lock`, che i TCB li conoscono legittimamente.
+
+Tre vincoli sulla primitiva:
+
+1. **serve nella variante `_nc`** almeno: semaforo e mailbox danno al contatore
+   un significato proprio, e una versione contata sarebbe per giunta sbagliata
+   per il semaforo — incrementerebbe all'inserimento, mentre accodare il primo
+   attendente deve portare da 0 a −1;
+2. **niente variante `_s`**, per la regola già scritta in `coda.vasm`: la sezione
+   critica deve comprendere l'aritmetica del contatore, quindi appartiene al
+   chiamante. Qui deve comprendere **anche la camminata**;
+3. **l'invariante dei link resta a carico suo**: deve verificare
+   `fwd == bwd == 0` e rispondere `CODA_LINKED`, altrimenti diventa il buco da
+   cui il doppio accodamento rientra — ed è già caduto un modello lì sopra
+   (§9.6).
+
+Due dettagli da mettere nella specifica e non lasciare impliciti:
+
+- **FIFO fra pari**: l'inserimento va *dopo* l'ultimo di uguale priorità. Prima
+  darebbe LIFO dentro il livello, e un task può restare indietro indefinitamente
+  mentre altri della sua stessa priorità gli passano davanti;
+- **la sezione critica diventa O(N)** sugli attendenti di quella testa. È
+  limitabile — e in un RTOS conta il limite, non il costo — ma **il limite va
+  dichiarato**, non lasciato implicito.
+
+### 13.7 `mutex_unlock` è un punto di preemption
+
+Discende dal parallelo di §13.2 e va implementato, non dedotto. `irq_restore` è
+implicitamente un punto di preemption: riabilitando, un interrupt pendente scatta
+subito. `mutex_unlock` deve esserlo allo stesso modo — abbassando la priorità dal
+ceiling può diventare eseguibile un task più prioritario, e se nessuno guarda
+quel momento la preemption slitta al tick successivo, cioè la latenza diventa il
+periodo del timer invece della lunghezza della sezione critica.
+
+Va agganciato alla stessa logica di `request_preempt` (§6): non commuta lui,
+arma il flag e lascia che sia il percorso di uscita a decidere.
+
+### 13.8 Cosa resta aperto
+
+- **Il `post` su un semaforo senza attendenti.** Se il contatore è contabile, il
+  permesso si accumula (`count` sale) ed è il semaforo contatore classico —
+  quello che serve all'esempio dei dieci buffer. Resta da decidere se esista
+  anche una variante di **segnalazione**, in cui un `post` senza attendenti si
+  perde. Sono due primitive diverse, non un parametro.
+- **Il tetto del contatore.** Un `post` di troppo su un semaforo contatore è un
+  errore di costruzione come il doppio rilascio di un buffer nel pool (§10). Se
+  esista un massimo dichiarato e cosa restituisca il `post` che lo supera è da
+  decidere, e la risposta naturale in questo progetto è un esito in `r3` come
+  fanno le code, non un fermo macchina.
+- **Il semaforo davanti al pool.** L'esempio dei dieci buffer *è* la classe 16
+  del pool, dimensionata a dieci apposta. Oggi chi la trova vuota riceve
+  `POOL_VUOTO` e ripassa più tardi (§9.2). Un semaforo davanti trasformerebbe la
+  ritentata in un blocco — è il primo cliente vero che il semaforo avrebbe qui
+  dentro. Con un limite: **chi gira nel percorso del tick non può bloccarsi**,
+  quindi il gestore dei timeout resterebbe comunque sul ramo non bloccante, e il
+  semaforo servirebbe ai chiamanti in contesto task.
+- **I timeout, ed è la più grossa.** §7.5 fonda su «la mailbox è l'unico punto
+  di blocco di un task» la garanzia che *ogni attesa possa avere un tempo
+  massimo*: il gestore dei timeout consegna un messaggio nella casella su cui il
+  task sta aspettando (§9). Con il semaforo quella premessa cade — un task
+  accodato a un semaforo **non** è nella propria mailbox, e il messaggio di
+  scadenza arriva dove non c'è nessuno in ascolto. §7.5 lo aveva mezzo previsto
+  («`sem_wait` non ha timeout, per costruzione»), ma le due frasi non stanno
+  insieme: o la mailbox non è l'unico punto di blocco, o il semaforo non blocca.
+  Le due uscite:
+  1. **`sem_wait` non ha timeout**, e chi vuole un tempo massimo passa dalla
+     mailbox. È già scritto in §7.5 e ora ha una giustificazione strutturale
+     invece che una convenzione. Costo: esistono attese non limitabili nel
+     tempo, ed è esattamente ciò che §7.5 voleva evitare;
+  2. **il timeout smette di essere «consegna un messaggio» e diventa «sgancia il
+     task da dove sta e restituiscigli un esito»**. Funzionerebbe uniformemente
+     per mailbox e semaforo, e con `enqueue_dopo`/`remove_buffer` il meccanismo
+     c'è già. Costo, e va detto per intero: **il gestore dei timeout è oggi
+     l'unico cliente del pool** (§10), che esiste proprio per avere un buffer da
+     consegnare quando il cliente dorme. Se il timeout non consegna più un
+     messaggio, il pool resta senza utenti.
+- **Se un task promosso al ceiling può bloccarsi su un semaforo**, §13.4 lo
+  vieta per i mutex. Ne segue che la catena transitiva di priorità non si forma,
+  e che l'ordinamento di §13.6 può usare la priorità corrente senza doversi
+  chiedere se cambierà.

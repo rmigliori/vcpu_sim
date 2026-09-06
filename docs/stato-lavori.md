@@ -1,6 +1,6 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **6 settembre 2026** (§3.24: l'albero ristrutturato)
+> Ultimo aggiornamento: **6 settembre 2026** (§3.24 l'albero, §3.25 il ceiling)
 > Scopo: fotografia dello stato per riprendere il lavoro a distanza di giorni
 > senza dover ricostruire il contesto.
 
@@ -38,11 +38,19 @@
 >    `multi`;
 > 3. `linked/multi` e `standalone/` sotto un `examples/` — deciso a metà:
 >    proposto e non risposto;
-> 4. **§7.4**, lo scheduler a priorità statiche. È il vero fronte fermo, e da
->    lui dipendono i due debiti noti: il dispatcher che deve prendere il TCB in
->    input, e `messageHandling.vasm` che scrive `TCB.state`. Vedi anche il
->    debito scoperto in §3.24 — `task_ready` e `task_block` **non esistono**, e
->    finché non nascono `lib_messaggi` non si chiude da sola.
+> 4. **Lo scheduler a priorità statiche.** §7.4 non è più il tappo: il
+>    06/09/2026 l'utente ha deciso il **priority ceiling** (§3.25), e semafori e
+>    mutex sono ora specificati in §13 della proposta. Resta aperta **§8.7**, la
+>    commutazione volontaria, da cui dipendono ancora i due debiti noti — il
+>    dispatcher che deve prendere il TCB in input, e `messageHandling.vasm` che
+>    scrive `TCB.state`. E il debito scoperto in §3.24: `task_ready` e
+>    `task_block` **non esistono**, e finché non nascono `lib_messaggi` non si
+>    chiude da sola.
+> 5. **La tensione aperta da §3.25, ed è di disegno, non di codice:** il
+>    semaforo blocca, quindi «la mailbox è l'unico punto di blocco» non è più
+>    vero, e con esso cade il modo in cui i timeout raggiungono chi aspetta. Le
+>    due uscite sono in §13.8 della proposta, e la seconda lascerebbe il pool
+>    senza clienti.
 >
 > **Tutto pushato**, questo aggiornamento compreso (§2): il 06/09/2026 sono
 > usciti §3.18-§3.24 e la loro documentazione. Il push l'ha chiesto l'utente,
@@ -1845,6 +1853,157 @@ sequenze dei test unitari. Migrazione a somma zero, dimostrata e non dichiarata.
 
 ---
 
+### 3.25 §7.4 chiusa: il ceiling, e la specifica di semafori e mutex (06/09/2026, seconda parte)
+
+**Sessione di sole decisioni, come §3.23 — ma stavolta verbalizzate lo stesso
+giorno.** Nessuna riga di `.vasm` scritta: il codice di semafori e mutex non
+esiste ancora e non poteva nascere prima, perché §7.4 era il tappo.
+
+#### La decisione
+
+> **§7.4: priority ceiling, non ereditarietà.** Decisa dall'utente.
+
+Era la questione aperta più a lungo del progetto. La proposta la raccomandava già
+per la calcolabilità a compile-time, ma l'argomento che ha chiuso è un altro, ed
+è specifico di *questo* modello — ora scritto in §7.4 della proposta, dove prima
+stava solo qui nell'handoff come nota del 30/08:
+
+**Col ceiling la priorità cambia solo al task che sta girando.** Chi acquisisce
+sta eseguendo `mutex_lock`, chi rilascia sta eseguendo `mutex_unlock`: in
+entrambi i casi ha la CPU, quindi non è dentro nessuna coda e la promozione è la
+scrittura di un campo. L'ereditarietà promuove il **possessore**, che è promosso
+proprio perché *non* sta girando — sta nella coda del suo livello o nello slot
+`preemptato` — e in un modello a una coda per livello quella promozione è
+**sfilare da una testa e accodare a un'altra**, dentro la sezione critica di chi
+si blocca. La stessa struttura che rende la selezione O(1) rende la promozione
+un'operazione di lista.
+
+#### Il mutex È la sezione critica
+
+Osservazione dell'utente, e ha cambiato la forma della specifica: il mutex è
+quello che si implementava disabilitando gli interrupt all'inizio e
+riabilitandoli alla fine. Non è un'analogia — **è la stessa disciplina con un
+limite diverso**. `cli` ti porta al massimo assoluto; il ceiling ti porta alla
+priorità più alta *che possa contendere questa risorsa*, e non un filo più su.
+
+La conferma sta nel codice, e nella forma esatta: `irq_save` non «disabilita»,
+**restituisce la psw precedente** ([`hal/impl/src/machine.vasm:218`](../hal/impl/src/machine.vasm#L218)),
+ed è per questo che l'annidamento funziona. Il campo `prio_prec` del mutex *è*
+quel valore di ritorno, promosso di un livello — ed è la ragione per cui §7.4
+poteva già dire «salvare nel mutex la priorità precedente basta».
+
+Da lì discendono due cose che prima erano domande aperte:
+
+- **non ci si blocca tenendo un mutex**, perché sarebbe sbagliato esattamente
+  come bloccarsi con gli interrupt disabilitati: cederesti la CPU tenendo chiusa
+  una porta che nessun altro può aprire;
+- **il ceiling non esclude le ISR**, quindi un dato condiviso con un'ISR non è
+  protetto da un mutex. Regola: *se la tocca un'ISR, `_s`; se la toccano solo
+  task, mutex* — e la seconda metà è un'ottimizzazione di latenza, non di
+  correttezza.
+
+#### Il semaforo non è una mailbox, e per un motivo preciso
+
+Sembravano lo stesso oggetto: una `TESTA`, un contatore con segno, task accodati
+sul negativo. La differenza è la **natura del contatore**, e l'utente l'ha messa
+a fuoco correggendo una propria semplificazione:
+
+- **mailbox — contatore descrittivo**: descrive la lista in ogni istante. Se dice
+  3, in lista ci sono tre nodi-messaggio, fisici;
+- **semaforo — contatore contabile**: sul positivo conta **risorse**, che non
+  sono nodi e non stanno in nessuna lista. `sem_wait` con `count > 0` decrementa
+  e ritorna **senza toccare la lista** — un cammino veloce che la `receive` non
+  ha e non può avere.
+
+Tre conseguenze non cosmetiche, tutte in §13.1: il semaforo vuole un valore
+iniziale (è il primo oggetto del progetto che non nasce «tutti zeri»); il suo
+lato positivo **non è verificabile da niente**, mentre il contatore della mailbox
+è ridondante con la lista e quindi controllabile; e il negativo vale −N, non −1,
+il che gli fa perdere le due semplificazioni di cui la mailbox gode (niente
+ordinamento, niente ciclo di ricontrollo al risveglio).
+
+#### Il degrado del mutex, ed è la parte lunga di §13
+
+**§13.5 esiste perché l'utente ha chiesto la spiegazione per esteso**, e la
+merita: è il punto in cui il ceiling può fallire in silenzio.
+
+Sotto ICPP vale che un task che gira e prova a prendere un mutex **lo trova
+libero**, quindi la coda d'attesa non si usa mai. La dimostrazione è di due
+righe, ma poggia su tre premesse — monoprocessore, ceiling dichiarato
+correttamente, e nessuno che si blocchi tenendo un mutex. La seconda e la terza
+possono cadere, e producono **lo stesso sintomo**: qualcuno finisce nella coda.
+
+Il cuore è cosa fare di quel qualcuno. La reazione istintiva — rimetterlo nella
+sua coda di ready perché riprovi — è **l'unica risposta che rompe**: se è più
+prioritario di chi tiene il mutex, lo scheduler lo rimette subito in esecuzione,
+riprova, fallisce, si riaccoda, e il possessore non gira mai. È **livelock**, con
+la macchina al 100% che sembra lavorare. Deve invece **uscire dagli eseguibili** e
+bloccarsi sulla coda del mutex: allora il possessore riparte, finisce, rilascia e
+lo sveglia. L'inversione c'è ma è limitata dalla sezione critica.
+
+Il che corregge, in meglio, come era stata presentata la coda del mutex a metà
+discussione:
+
+> La coda del mutex non c'è per essere usata. C'è perché **un ceiling dichiarato
+> male degradi invece di appendere**.
+
+E siccome sotto ceiling corretto è vuota sempre, un TCB accodato a un mutex è
+**un'anomalia osservabile** a costo zero — stesso mestiere di `CODA_LINKED` e
+dell'invariante `fwd == bwd == 0`.
+
+#### L'inserimento ordinato, e il confine che stava per essere violato
+
+Con N attese servono risveglio per priorità e inserimento ordinato — ai semafori
+e ai mutex, **non** alle code di ready (già una per livello, dentro cui il FIFO è
+il round-robin) e non alla mailbox (un ricevente solo).
+
+La forma ovvia era una `enqueue_prio` in `coda.vasm`. **Sarebbe stata una
+violazione del confine appena costruito**: leggere la priorità dal nodo significa
+sapere che il nodo è un TCB, quindi `generic/coda` includerebbe `tcb/tcb.vinc` e
+`generic/` dipenderebbe da `rtos/` — il difetto tolto la mattina stessa (§3.24)
+che rientra dalla finestra.
+
+La regola l'ha data l'utente, ed è quella giusta: *il gestore delle code non deve
+sapere perché gli si chiede di accodare in testa, in coda o fra due elementi.*
+Quindi `coda.vasm` guadagna `enqueue_dopo(prec, nodo)` — puro maneggio di link — e
+la camminata sta in `rtos/`, dove i TCB si conoscono. E non è nemmeno una terza
+disciplina: `TESTA` è una **sentinella** in lista circolare, quindi
+`enqueue_testa` è «dopo la sentinella» e `enqueue_coda` è «dopo `testa.bwd`».
+La primitiva nuova le contiene entrambe.
+
+#### Cosa è stato scritto
+
+| Dove | Cosa |
+|---|---|
+| §7.4 della proposta | da **APERTA** a **DECISA: il ceiling**, con l'argomento sullo spostamento fra code che finora stava solo in questo handoff |
+| §13 della proposta (nuova) | semafori e mutex: strutture, il contatore contabile contro descrittivo, il mutex come sezione critica, **§13.5 il degrado per esteso**, l'inserimento ordinato e il confine, `mutex_unlock` come punto di preemption |
+| §1 della proposta | «Semafori: da specificare» non c'è più |
+
+**§13 e non una sezione fra §10 e §11**, di proposito: i sorgenti nominano
+§12.1-§12.6, §10.3, §9.2, §8.4 dentro i commenti. Rinumerare romperebbe decine
+di riferimenti nel codice, che è la parte del progetto che invecchia peggio.
+**Le sezioni si aggiungono in fondo, non si inseriscono.**
+
+#### La tensione che questa sessione ha aperto, e che NON è stata risolta
+
+§1 e §7.5 dicono che **la mailbox è l'unico punto di blocco di un task**, e da lì
+discende la garanzia che *ogni attesa possa avere un tempo massimo*: il gestore
+dei timeout consegna un messaggio nella casella su cui il task aspetta.
+
+**Il semaforo blocca**, quindi quella premessa cade: un task accodato a un
+semaforo non è nella propria mailbox, e il messaggio di scadenza arriva dove non
+c'è nessuno in ascolto. §7.5 lo aveva mezzo previsto («`sem_wait` non ha timeout,
+per costruzione»), ma le due frasi non stanno insieme.
+
+Le due uscite sono in §13.8, e la seconda ha un prezzo che va guardato prima di
+sceglierla: se il timeout smette di consegnare un messaggio e diventa «sgancia il
+task da dove sta», **il pool resta senza clienti** — è oggi l'unico, ed è nato
+per quello.
+
+È la prima cosa da riprendere sul fronte del kernel.
+
+---
+
 ## 4. Invarianti di regressione — come verificare che nulla si sia rotto
 
 > ### Si fa con `ctest`, ed è l'unico modo che resta (§3.17, §3.24)
@@ -2012,7 +2171,7 @@ perché col modello «un `.vinc` per fornitore» diventa un problema appena i fi
 di interfaccia sono due, **è stata fatta il 05/09/2026** (§3.16) — dall'altro
 fronte, perché lì era un prerequisito.
 
-### Riscrittura dello scheduler a priorità statiche (FERMO SU §7.4)
+### Riscrittura dello scheduler a priorità statiche (§7.4 DECISA il 06/09/2026, ora ferma su §8.7)
 
 **È qui che riprende il lavoro.** Discussione del 29/08/2026, verbalizzata per
 intero in [`docs/proposta-kernel-realtime.md`](proposta-kernel-realtime.md)
@@ -2055,13 +2214,17 @@ contiene in realtà transizioni di stato, manipolazione di code e commit di
    costruzione**; inoltre il secondo argomento tecnico di §7.2 si indebolisce
    (da rivedere).
 
-**Decisione aperta, da riprendere per prima** (§7.4): per l'inversione di
-priorità sui **mutex** (non sui semafori: senza proprietario non c'è nessuno da
-promuovere), si va di **ereditarietà** o di **priority ceiling**? Cambia cosa va
-dichiarato staticamente — l'ereditarietà vuole una `TESTA` in più nel TCB per la
-lista dei mutex posseduti, il ceiling vuole un campo nel mutex e nient'altro. La
-proposta raccomanda il ceiling, perché con tutto statico il ceiling è calcolabile
-a compile-time; l'utente non ha ancora deciso.
+**§7.4 È DECISA dal 06/09/2026: priority ceiling** (§3.25). Era la questione
+aperta più a lungo del progetto. L'argomento che ha chiuso non è quello della
+calcolabilità a compile-time che la proposta raccomandava, ma il costo dinamico:
+col ceiling la priorità cambia **solo al task che sta girando**, mentre
+l'ereditarietà promuove il possessore, che per definizione non gira — e in un
+modello a una coda per livello quella promozione è uno spostamento fra teste,
+non la scrittura di un campo.
+
+Semafori e mutex sono ora **specificati in §13 della proposta**, degrado del
+mutex compreso (§13.5). Quel che resta aperto sta in §13.8, e la voce grossa è
+la tensione sui timeout descritta qui sopra al punto 5 di §0.
 
 Argomento aggiuntivo emerso il 30/08/2026 a favore del ceiling, **non ancora
 verbalizzato nella proposta perché la decisione resta dell'utente**: è più forte
@@ -2273,8 +2436,20 @@ Aprire Claude Code nella cartella del progetto e scrivere una di queste:
 Leggi docs/stato-lavori.md e riprendi da lì.
 ```
 
-**Per le intestazioni dei test — CONSIGLIATA, è il pezzo rimasto di §3.24 e
-l'unico che peggiora col tempo:**
+**Per la tensione sui timeout — è la decisione di disegno che sta davanti a
+tutto il resto del kernel:**
+```
+Leggi docs/stato-lavori.md §3.25 e docs/proposta-kernel-realtime.md §13.8.
+Il semaforo blocca, quindi "la mailbox e' l'unico punto di blocco di un task"
+(§1, §7.5) non e' piu' vero, e con esso cade il modo in cui i timeout
+raggiungono chi aspetta. Le due uscite sono in §13.8: o sem_wait non ha
+timeout, o il timeout diventa "sgancia il task da dove sta e restituiscigli
+un esito" -- e in quel caso il pool resta senza clienti. Non scrivere codice
+prima che la decisione sia presa.
+```
+
+**Per le intestazioni dei test — il pezzo rimasto di §3.24, e l'unico che
+peggiora col tempo:**
 ```
 Leggi docs/stato-lavori.md §3.24 e la sezione di §5 "Ristrutturazione
 dell'albero". L'albero e' fatto; resta la doppia verita' nelle intestazioni
