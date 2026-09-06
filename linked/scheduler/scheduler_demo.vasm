@@ -20,7 +20,7 @@
 ; e vicini => i task si sono alternati (round-robin).
 
 ; Tipi comuni (TCB, stati) condivisi col kernel: stessa sorgente di verita'.
-.include "tcb.vinc"
+.include "tcb/tcb.vinc"
 
   .data
 

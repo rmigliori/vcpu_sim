@@ -1,33 +1,39 @@
 ; tests/test_include.vasm — test mirato di `-I` e dell'idempotenza di .include.
 ;
-; Quello che verifica non e' un comportamento della macchina ma una proprieta'
-; dell'assembler, e non ha bisogno del link: gira in modalita' legacy a file
-; singolo. La macchina serve solo a rendere osservabile l'esito, stampando
-; costanti che vengono da entrambi i file di interfaccia.
+; Verifica una proprieta' dell'ASSEMBLER, non un comportamento della macchina,
+; e non ha bisogno del link: gira in modalita' legacy a file singolo. La
+; macchina serve solo a rendere osservabile l'esito, stampando costanti che
+; vengono da due file di interfaccia diversi.
 ;
-; Le tre righe qui sotto nominano DUE file, non tre: types.vinc arriva una volta
-; per nome nudo (risolto da -I) e una per path relativo (risolto rispetto alla
-; cartella di questo file). Sono due grafie dello stesso file, e l'assembler lo
-; riconosce canonicalizzando il path: la seconda .include e' un no-op.
+; Le tre .include qui sotto nominano DUE file, non tre: tcb.vinc arriva una
+; volta per nome qualificato (risolto da -I) e una per percorso relativo
+; (risolto rispetto alla cartella di QUESTO file, che essendo il file di primo
+; livello e' anche la base di ricerca). Sono due grafie dello stesso file, e
+; l'assembler lo riconosce canonicalizzando il path con realpath: la seconda
+; .include e' un no-op.
 ;
-; Senza idempotenza questo file darebbe `asm error: duplicate constant TESTA.fwd`;
-; senza -I darebbe `cannot open include 'types.vinc'`. Sono i due modi in cui il
-; test fallisce, ed e' quello che deve restare vero quando le 12 .include del
-; progetto passeranno tutte a nome nudo.
+; I due modi in cui questo test fallisce:
+;   senza idempotenza  -> asm error: duplicate constant TCB.fwd
+;   senza il -I giusto -> cannot open include 'tcb/tcb.vinc'
 ;
-; Pipeline (l'unica del repo che ha bisogno di -I, per ora):
-;   ./build/vcpu_sim -I linked/scheduler/include tests/test_include.vasm
+; Il secondo e' diventato il punto della cosa dal 06/09/2026. Prima tutti i
+; .vinc stavano in una cartella sola e un -I li serviva tutti, quindi la
+; dichiarazione di dipendenza era un commento; ora ogni libreria propaga la
+; propria cartella e il nome porta il nome della libreria, quindi includere
+; senza aver dichiarato NON assembla. Questo file e' l'unico che i -I se li
+; scrive a mano — non essendo un target non li riceve da INTERFACES — e la sua
+; riga nel CMakeLists dice quali e perche'.
 ;
 ; Atteso, in ordine:  16 12 16 512 1
 
-.include "tcb.vinc"                                ; nome nudo, via -I
-.include "../linked/scheduler/include/tcb.vinc"    ; stesso file, altra grafia
-.include "pool/pool.vinc"                               ; secondo fornitore, via -I
+.include "tcb/tcb.vinc"                                  ; via -I
+.include "../rtos/scheduler/interface/tcb/tcb.vinc"      ; stesso file, altra grafia
+.include "pool/pool.vinc"                                ; secondo fornitore, via -I
 
   .text
 
 main:
-  li r1, TCB.size       ; 16 — da types.vinc, definita una volta sola
+  li r1, TCB.size       ; 16 — da tcb.vinc, definita una volta sola
   dumps r1
   li r2, TCB.state      ; 12 — l'offset, non solo la taglia
   dumps r2

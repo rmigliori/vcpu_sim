@@ -53,20 +53,7 @@ enable_testing()
 # ---------------------------------------------------------------------------
 add_subdirectory(hal)
 add_subdirectory(generic)
-
-# ---------------------------------------------------------------------------
-#  Le interfacce: un .vinc per fornitore (§8.6 della proposta).
-# ---------------------------------------------------------------------------
-set(VINC_DIR ${CMAKE_SOURCE_DIR}/linked/scheduler/include)
-
-# I tre che dipendono da coda.vinc, e sempre per la stessa ragione: TCB,
-# MESSAGGIO e BLOCCO sono tutti NODI DI LISTA. Chi dichiara uno di questi in
-# INTERFACES si porta dietro vinc_coda senza saperlo -- e' la propagazione
-# transitiva FRA INTERFACCE, l'unica che ci sia: attraverso un arco fra librerie
-# i -I non passano, altrimenti dichiarare LINK basterebbe a includere. Prima
-# non si poteva nemmeno dichiarare, perche' .include non era idempotente e
-# un unico types.vinc teneva insieme code, task e messaggi (§12.6, passo 4).
-vasm_interface(vinc_tcb       DIR ${VINC_DIR} HEADERS tcb.vinc       INTERFACES vinc_coda)
+add_subdirectory(rtos)
 
 # ---------------------------------------------------------------------------
 #  Le librerie.
@@ -84,12 +71,6 @@ vasm_interface(vinc_tcb       DIR ${VINC_DIR} HEADERS tcb.vinc       INTERFACES 
 #                  timeout ──────────────▶ hal
 # ---------------------------------------------------------------------------
 set(SCHED ${CMAKE_SOURCE_DIR}/linked/scheduler)
-
-# Il kernel: SOLO gli algoritmi di gestione dei task (scheduler, dispatcher,
-# uscita da ISR). Mailbox, semafori e mutex NON stanno qui: sono clienti che lo
-# chiamano.
-vasm_library(lib_kernel  SOURCES ${SCHED}/kernel/scheduler.vasm INTERFACES vinc_tcb
-                         LINK lib_coda lib_hal)
 
 # I messaggi sono un CLIENTE del kernel, non parte sua: chiamano task_ready /
 # task_block per bloccare e risvegliare. Semafori e mutex nasceranno qui
@@ -145,9 +126,9 @@ vasm_check(proc       MODE DUMPS EXPECT "100 200 300"
 # DA REGOLARIZZARE quando i test avranno una cartella loro: diventa un
 # vasm_object con INTERFACES e questa lista sparisce.
 vasm_check(include    MODE DUMPS EXPECT "16 12 16 512 1"
-           IFLAGS -I${VINC_DIR}
-                  -I$<TARGET_PROPERTY:vinc_coda,INTERFACE_INCLUDE_DIRECTORIES>
+           IFLAGS -I$<TARGET_PROPERTY:vinc_tcb,INTERFACE_INCLUDE_DIRECTORIES>
                   -I$<TARGET_PROPERTY:vinc_pool,INTERFACE_INCLUDE_DIRECTORIES>
+                  -I$<TARGET_PROPERTY:vinc_coda,INTERFACE_INCLUDE_DIRECTORIES>
            SOURCE ${TESTS}/test_include.vasm)
 vasm_check(epsw       MODE DUMPS EXPECT "1 0 0 7"
            SOURCE ${TESTS}/test_epsw.vasm)
