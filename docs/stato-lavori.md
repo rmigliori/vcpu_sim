@@ -6,13 +6,19 @@
 
 ---
 
-## 0. STATO ATTUALE — LAVORO NON COMMITTATO NEL WORKING TREE
+## 0. STATO ATTUALE — DA DOVE SI RIPRENDE
 
 > ### ▶ RIPRENDI DA QUI (07/09/2026 o dopo)
 >
-> **Working tree pulito. La ristrutturazione dell'albero è FATTA** — §3.24, dieci
-> commit del 06/09/2026, `ctest` 23/23 e gli stessi identici numeri. L'albero
-> adesso è a tre strati:
+> **Working tree pulito, tutto committato e tutto pushato.** Il 06/09/2026 ha
+> avuto due metà, e servono a cose diverse:
+>
+> - **§3.24 — l'albero**, dieci commit. `ctest` 23/23 e gli stessi identici
+>   numeri a ogni commit, verificati confrontando i `.vx` byte per byte;
+> - **§3.25 — le decisioni**, nessuna riga di codice. §7.4 chiusa (priority
+>   ceiling), e semafori e mutex specificati in **§13** della proposta.
+>
+> L'albero adesso è a tre strati:
 >
 > ```
 > hal/          la macchina, e il solo strato che la conosce
@@ -23,38 +29,58 @@
 > src/ include/ il simulatore in C
 > ```
 >
-> Ogni libreria ha `impl/src` e `interface/<nome>`, e il `-I` per libreria è
-> ora un **vincolo imposto dalla macchina**: includere un header senza averlo
+> Ogni libreria ha `impl/src` e `interface/<nome>`, e il `-I` per libreria è ora
+> un **vincolo imposto dalla macchina**: includere un header senza averlo
 > dichiarato non assembla.
 >
-> **Da dove si riprende**, in ordine di valore e nessuno bloccante:
+> #### I due fronti sono indipendenti, e non hanno la stessa forma
+>
+> **A) Il kernel — una decisione, e sta davanti a tutto il resto.**
+>
+> Non è lavoro incrementale: finché non è presa, scrivere codice di semaforo
+> significa scrivere sopra una decisione aperta.
+>
+> > Il semaforo **blocca**, quindi «la mailbox è l'unico punto di blocco di un
+> > task» (§1, §7.5 della proposta) non è più vero — e con esso cade il modo in
+> > cui i timeout raggiungono chi aspetta: il messaggio di scadenza arriva in
+> > una casella su cui nessuno è in ascolto.
+>
+> Le due uscite sono in **§13.8**, e non costano uguale: o `sem_wait` non ha
+> timeout (e allora esistono attese non limitabili, che è ciò che §7.5 voleva
+> evitare), oppure il timeout diventa «sgancia il task da dove sta e
+> restituiscigli un esito» — e in quel caso **il pool resta senza clienti**, è
+> oggi l'unico ed è nato per quello. C'è una formula pronta in §6.
+>
+> Dietro a questa, e solo dopo: **§8.7**, la commutazione volontaria, da cui
+> dipendono i due debiti noti (il dispatcher che deve prendere il TCB in input,
+> e `messageHandling.vasm` che scrive `TCB.state`). E il debito scoperto in
+> §3.24: `task_ready` e `task_block` **non esistono** in `scheduler.vasm` —
+> sono `.extern` nella mailbox e le uniche definizioni sono gli stub dentro
+> `test_mailbox.vasm`, quindi `lib_messaggi` non si chiude da sola.
+>
+> **B) Il build e l'albero — quattro rifiniture, tutte incrementali.**
+>
+> Nessuna blocca niente, e si possono fare in qualsiasi ordine e in qualsiasi
+> momento, anche a spizzichi:
 >
 > 1. **la doppia verità nelle intestazioni dei test** — le pipeline scritte a
->    mano nominano percorsi che non esistono più. È il pezzo rimasto di §3.24, e
->    peggiora finché non si fa;
+>    mano nominano percorsi che non esistono più. È il pezzo rimasto di §3.24 ed
+>    è **l'unica che peggiora** col tempo; `tests/test_include.vasm` è già stato
+>    riscritto e vale da modello;
 > 2. i **difetti minori** del build (§3.23 in fondo): `CMAKE_SOURCE_DIR`,
 >    `-Wall` non guardato dal compilatore, `file(GLOB)` senza
 >    `CONFIGURE_DEPENDS`, la collisione fra il programma `multi` e il test
 >    `multi`;
-> 3. `linked/multi` e `standalone/` sotto un `examples/` — deciso a metà:
->    proposto e non risposto;
-> 4. **Lo scheduler a priorità statiche.** §7.4 non è più il tappo: il
->    06/09/2026 l'utente ha deciso il **priority ceiling** (§3.25), e semafori e
->    mutex sono ora specificati in §13 della proposta. Resta aperta **§8.7**, la
->    commutazione volontaria, da cui dipendono ancora i due debiti noti — il
->    dispatcher che deve prendere il TCB in input, e `messageHandling.vasm` che
->    scrive `TCB.state`. E il debito scoperto in §3.24: `task_ready` e
->    `task_block` **non esistono**, e finché non nascono `lib_messaggi` non si
->    chiude da sola.
-> 5. **La tensione aperta da §3.25, ed è di disegno, non di codice:** il
->    semaforo blocca, quindi «la mailbox è l'unico punto di blocco» non è più
->    vero, e con esso cade il modo in cui i timeout raggiungono chi aspetta. Le
->    due uscite sono in §13.8 della proposta, e la seconda lascerebbe il pool
->    senza clienti.
+> 3. `linked/multi` e `standalone/` sotto un `examples/` — **proposto e non
+>    risposto**, decisione dell'utente;
+> 4. i numeri di riga negli errori dell'assembler **slittano** della lunghezza
+>    degli include già processati (`line 84` per una riga che sta alla 51).
+>    Preesistente, ma rende faticoso leggere proprio gli errori che il nuovo
+>    vincolo sui `-I` produrrà.
 >
 > **Tutto pushato**, questo aggiornamento compreso (§2): il 06/09/2026 sono
-> usciti §3.18-§3.24 e la loro documentazione. Il push l'ha chiesto l'utente,
-> come deve essere — e resta una richiesta da rifare ogni volta.
+> usciti §3.18-§3.25 e la loro documentazione. Il push l'ha chiesto l'utente,
+> come deve essere — e resta **una richiesta da rifare ogni volta**.
 
 Il **30/08/2026** ci sono state **tre sessioni**, non una:
 §3.9 (il TCB e i timeout), §3.10 (la mailbox, progettata e implementata) e §3.11
@@ -261,8 +287,8 @@ Branch `master`, pubblicato su `git@github.com:rmigliori/vcpu_sim.git` (remote
 push senza prompt).
 
 **Tutto pushato.** Il 06/09/2026 `origin/master` è passato da `e2955ff` a
-`15d302e`: **diciannove commit**, cioè §3.18-§3.23 del 05/09 più gli undici del
-06/09 che sono §3.24 e la sua documentazione. Il push **l'ha chiesto l'utente**
+`1806f5a`: **venti commit**, cioè §3.18-§3.23 del 05/09 più i dodici del 06/09
+che sono §3.24, §3.25 e la loro documentazione. Il push **l'ha chiesto l'utente**
 («forse è ora di fare push?»), come deve essere.
 
 Perché quel momento e non un altro, visto che se ne è discusso: i commit della
