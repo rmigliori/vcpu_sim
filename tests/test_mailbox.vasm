@@ -31,7 +31,7 @@
 
 .include "coda/coda.vinc"
 .include "tcb.vinc"
-.include "messaggio.vinc"
+.include "messaggio/messaggio.vinc"
 
   .data
 

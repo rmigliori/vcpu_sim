@@ -59,11 +59,6 @@ add_subdirectory(generic)
 # ---------------------------------------------------------------------------
 set(VINC_DIR ${CMAKE_SOURCE_DIR}/linked/scheduler/include)
 
-# timeout.vinc e' foglia per una proprieta' del modello, non per un limite: il
-# DESCRITTORE non entra mai in una lista (§9.3), quindi non ha niente da
-# chiedere alle code.
-vasm_interface(vinc_timeout DIR ${VINC_DIR} HEADERS timeout.vinc)
-
 # I tre che dipendono da coda.vinc, e sempre per la stessa ragione: TCB,
 # MESSAGGIO e BLOCCO sono tutti NODI DI LISTA. Chi dichiara uno di questi in
 # INTERFACES si porta dietro vinc_coda senza saperlo -- e' la propagazione
@@ -72,7 +67,6 @@ vasm_interface(vinc_timeout DIR ${VINC_DIR} HEADERS timeout.vinc)
 # non si poteva nemmeno dichiarare, perche' .include non era idempotente e
 # un unico types.vinc teneva insieme code, task e messaggi (§12.6, passo 4).
 vasm_interface(vinc_tcb       DIR ${VINC_DIR} HEADERS tcb.vinc       INTERFACES vinc_coda)
-vasm_interface(vinc_messaggio DIR ${VINC_DIR} HEADERS messaggio.vinc INTERFACES vinc_coda)
 
 # ---------------------------------------------------------------------------
 #  Le librerie.
@@ -96,9 +90,6 @@ set(SCHED ${CMAKE_SOURCE_DIR}/linked/scheduler)
 # chiamano.
 vasm_library(lib_kernel  SOURCES ${SCHED}/kernel/scheduler.vasm INTERFACES vinc_tcb
                          LINK lib_coda lib_hal)
-
-vasm_library(lib_timeout SOURCES ${SCHED}/kernel/timeout.vasm INTERFACES vinc_timeout
-                         LINK lib_hal)
 
 # I messaggi sono un CLIENTE del kernel, non parte sua: chiamano task_ready /
 # task_block per bloccare e risvegliare. Semafori e mutex nasceranno qui
