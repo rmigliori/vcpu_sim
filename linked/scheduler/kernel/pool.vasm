@@ -1,13 +1,17 @@
 ; kernel/pool.vasm — pool di buffer a blocchi fissi, sei classi per potenze di
 ; due sull'area dati utente (§10 della proposta).
 ;
-; Serve a un caso solo, e vale la pena ricordarlo perche' delimita l'uso: un
-; timeout che scade deve consegnare un messaggio per conto di un cliente che in
-; quel momento sta dormendo, quindi il gestore non ha niente da prestargli.
-; NEL TRAFFICO RICHIESTA/RISPOSTA IL POOL NON C'ENTRA: li' il buffer e' del
-; cliente e la risposta e' lo stesso buffer girato (§8.6), quindi nessuna send
-; puo' fallire. La regola: il pool serve ai messaggi per cui nessuno puo'
-; prestare un buffer.
+; Distribuisce blocchi e non guarda cosa ci si mette dentro: l'area dati e'
+; opaca, e chi la usa la formatta come vuole. E' questa proprieta', non una
+; scelta di collocazione, a rendere il modulo indipendente da chi lo chiama.
+;
+; Chi lo chiama oggi, e vale la pena ricordarlo perche' DELIMITA l'uso senza
+; definire il modulo: un timeout che scade deve consegnare un messaggio per
+; conto di un cliente che in quel momento sta dormendo, quindi il gestore non ha
+; niente da prestargli. NEL TRAFFICO RICHIESTA/RISPOSTA IL POOL NON C'ENTRA:
+; li' il buffer e' del cliente e la risposta e' lo stesso buffer girato (§8.6),
+; quindi nessuna send puo' fallire. La regola, che e' del chiamante e non nostra:
+; si passa dal pool solo per i messaggi che nessuno puo' prestare.
 ;
 ; --- Zero meccanismo nuovo ---
 ; Una free-list di blocchi a taglia fissa E' una TESTA con i blocchi come nodi:
@@ -37,11 +41,12 @@
 ;
 ; Convenzione registri: r1 argomento ed esito, r2 buffer, r3..r6 scratch.
 
-; Due .vinc, non annidati: pool.vinc e' l'interfaccia del pool, types.vinc serve
-; per TESTA (le sei free-list). E' il primo caso del modello "un .vinc per
-; fornitore" con due fornitori nello stesso modulo, e funziona proprio perche' i
-; .vinc sono foglia — includerne uno che ne includesse un altro darebbe
-; "duplicate constant".
+; Due .vinc, e sono i soli due: pool.vinc e' la nostra interfaccia, coda.vinc
+; serve per TESTA (le sei free-list). Si nominano entrambi anche se pool.vinc
+; include gia' coda.vinc, perche' la regola e' includere cio' che si NOMINA e
+; non fidarsi di cosa si porta dietro un altro header; l'inclusione doppia e' un
+; no-op da quando .include e' idempotente (§3.16), che e' anche cio' che ha reso
+; scrivibile un .vinc che ne include un altro.
 .include "pool.vinc"
 .include "coda.vinc"
 

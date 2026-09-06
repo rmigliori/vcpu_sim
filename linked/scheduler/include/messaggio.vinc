@@ -40,10 +40,17 @@
 .struct PAYLOAD
   .field pool             ; +0  PROVENIENZA del buffer: taglia in byte dell'area
                           ;     dati se viene dal pool, 0 se e' un buffer statico
-                          ;     del cliente. Sta qui e non in MESSAGGIO perche' il
+                          ;     del cliente. La parola NON e' nostra: e'
+                          ;     BLOCCO.pool, che il pool scrive a pool_init sulla
+                          ;     terza parola di ogni blocco senza sapere che
+                          ;     esistano i messaggi. Questo formato le da' un
+                          ;     nome e comincia il proprio contenuto dopo, a +4
+                          ;     del payload — e' il formato che si adatta al
+                          ;     pool, mai il contrario, ed e' cosi' che il pool
+                          ;     resta sollevabile in un progetto che di messaggi
+                          ;     non ne ha. Sta qui e non in MESSAGGIO perche' il
                           ;     kernel non deve possedere niente dentro il
-                          ;     messaggio (§8.4): il pool e' un cliente del
-                          ;     payload come tutti gli altri. E sta nella testa
+                          ;     messaggio (§8.4). E sta nella testa
                           ;     COMUNE, non solo sui buffer del pool, perche' una
                           ;     mailbox riceve entrambi i tipi — il messaggio di
                           ;     scadenza viene dal pool, la risposta a una
@@ -78,6 +85,12 @@
                           ;     volta la routine generica di risposta.
   .field specifiche       ; +20 specifiche[0]: primo byte, lunghezza dal fornitore
 .ends
+
+; Un PAYLOAD senza specifiche occupa 20 byte, di cui i primi 4 sono la parola
+; del pool: sedici byte di area dati, cioe' esattamente la classe piu' piccola
+; del pool (POOL_D16). E' un'osservazione di questo file e non di pool.vinc — le
+; classi sono potenze di due per conto loro — e vale la pena scriverla perche' e'
+; il buffer che manda il gestore dei timeout quando un descrittore scade.
 
 .equ MSG_REQUEST 0
 .equ MSG_REPLY   1

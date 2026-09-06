@@ -30,8 +30,9 @@
 ;  di richieste piccole si mangia la lista grande e piu' tardi fallisce una
 ;  richiesta da 512 che aveva il suo blocco garantito per costruzione.
 ;
-;  La classe da 16 contiene esattamente una testa PAYLOAD senza specifiche: e'
-;  quella del gestore dei timeout.
+;  Le sei taglie sono potenze di due e non hanno bisogno di altra motivazione:
+;  che una certa classe capiti giusta per un certo formato e' un'osservazione
+;  che appartiene a quel formato, e sta scritta li'.
 ; --------------------------------------------------------------------------
 .equ POOL_D16   16
 .equ POOL_D32   32
@@ -44,14 +45,23 @@
 ;  Il blocco, visto dal pool. Nessun campo prima dei link: l'indirizzo
 ;  consegnato al cliente E' la base dell'allocazione, quindi niente offset
 ;  negativi e la regola di coda.vasm ("il puntatore al link e' il puntatore al
-;  buffer") vale sia quando il blocco sta in una mailbox sia quando sta nella
-;  free-list, che lo lincia attraverso quegli stessi due campi.
+;  buffer") vale sia quando il blocco e' accodato da qualche parte sia quando
+;  sta nella free-list, che lo lincia attraverso quegli stessi due campi.
 ;
-;  Il buffer consegnato E' GIA' un MESSAGGIO: fwd, bwd, e da +8 il payload. La
-;  parola di provenienza non e' del kernel — e' il primo campo del PAYLOAD
-;  (PAYLOAD.pool in messaggio.vinc), cioe' il pool e' un cliente del messaggio come
-;  tutti gli altri. Qui la si ridichiara con il nome che ha per noi, esattamente
-;  come TCB ridichiara i due link invece di annidare TESTA.
+;  Dodici byte di testa, POSSEDUTI DAL POOL, e da +12 un'area che il pool non
+;  legge e non scrive mai. Cosa ci metta il cliente — un messaggio, una
+;  struttura sua, dei byte — qui non si sa e non si deve sapere: e' la ragione
+;  per cui questo modulo dipende dalle sole code e vive senza scheduler e senza
+;  formato di messaggio.
+;
+;  Ne segue un vincolo, ed e' a carico di chi definisce un formato da appoggiare
+;  su un blocco, non nostro: le prime due parole sono i link (l'idioma di
+;  coda.vinc, condiviso da ogni nodo di lista), la terza e' del POOL, e il
+;  formato dispone di cio' che comincia a +12. Il pool non conosce nessun
+;  formato e non va toccato per aggiungerne uno; e' il formato che si adatta.
+;  messaggio.vinc lo fa dal suo lato, dando un nome proprio (PAYLOAD.pool) alla
+;  parola che scriviamo noi, ed e' li' che sta scritto perche' a un ricevente
+;  serva leggerla.
 ;
 ;  "dati" e' un indirizzo, non un campo: BLOCCO.size NON e' la taglia di un
 ;  blocco e ".res BLOCCO" non va usata — si usano le BLOCCOnn qui sotto.
@@ -121,7 +131,7 @@
 ;  buf_free non ha nessun parametro oltre al buffer: la classe se la legge
 ;  dentro. Riconosce tre cose che non deve accettare — un buffer che non viene
 ;  dal pool, un doppio rilascio, e il rilascio di un buffer ANCORA accodato in
-;  una mailbox. Le ultime due si vedono dai link, grazie all'invariante di
+;  una lista. Le ultime due si vedono dai link, grazie all'invariante di
 ;  coda.vasm (un nodo fuori da ogni lista ha fwd == bwd == 0).
 ; --------------------------------------------------------------------------
 .equ POOL_OK        0
