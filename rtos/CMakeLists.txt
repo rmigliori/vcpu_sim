@@ -17,3 +17,5 @@
 #  L'ordine: scheduler prima di servizi, che lo linka.
 # ---------------------------------------------------------------------------
 add_subdirectory(scheduler)
+add_subdirectory(servizi)
+add_subdirectory(demo)

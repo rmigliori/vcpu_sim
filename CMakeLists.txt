@@ -56,39 +56,12 @@ add_subdirectory(generic)
 add_subdirectory(rtos)
 
 # ---------------------------------------------------------------------------
-#  Le librerie.
-#
-#  Sei librerie e un grafo che e' un DAG: tutte le frecce vanno verso l'HAL e
-#  nessun percorso torna indietro. Fino al 05/09/2026 non era cosi' -- l'HAL
-#  nominava sched_dispatch e il kernel nominava ctx_restore, cioe' un ciclo
-#  (§12.1 della proposta). Ora `ld machine.vo` da solo si chiude, ed e' quella
-#  la prova che libhal e' davvero lo strato piu' basso.
-#
-#      messaggi ──▶ kernel ──▶ coda ──▶ hal
-#          │           │                 ▲
-#          └───────────┴─────────────────┘
-#                     pool ──▶ coda
-#                  timeout ──────────────▶ hal
-# ---------------------------------------------------------------------------
-set(SCHED ${CMAKE_SOURCE_DIR}/linked/scheduler)
-
-# I messaggi sono un CLIENTE del kernel, non parte sua: chiamano task_ready /
-# task_block per bloccare e risvegliare. Semafori e mutex nasceranno qui
-# accanto, allo stesso livello.
-vasm_library(lib_messaggi SOURCES ${SCHED}/kernel/messageHandling.vasm
-                          INTERFACES vinc_coda vinc_tcb
-                          LINK lib_coda lib_kernel)
-
-# ---------------------------------------------------------------------------
 #  I programmi.
 #
 #  Ognuno dichiara la libreria che usa, non la lista dei moduli da linkare: la
 #  chiusura la calcola vasm_program. Prima quella lista stava scritta a mano
 #  nell'intestazione di ogni test, e andava tenuta aggiornata a occhio.
 # ---------------------------------------------------------------------------
-vasm_object(demo_main   SOURCE ${SCHED}/scheduler_demo.vasm INTERFACES vinc_tcb)
-vasm_program(scheduler_demo OBJECTS demo_main LINK lib_kernel)
-
 vasm_object(multi_main  SOURCE ${CMAKE_SOURCE_DIR}/linked/multi/main.vasm)
 vasm_object(multi_saxpy SOURCE ${CMAKE_SOURCE_DIR}/linked/multi/saxpy.vasm)
 vasm_program(multi      OBJECTS multi_main multi_saxpy)
