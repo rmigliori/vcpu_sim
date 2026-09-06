@@ -1,6 +1,6 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **5 settembre 2026** (quinta sessione: §3.23)
+> Ultimo aggiornamento: **6 settembre 2026** (§3.24: l'albero ristrutturato)
 > Scopo: fotografia dello stato per riprendere il lavoro a distanza di giorni
 > senza dover ricostruire il contesto.
 
@@ -8,20 +8,43 @@
 
 ## 0. STATO ATTUALE — LAVORO NON COMMITTATO NEL WORKING TREE
 
-> ### ▶ RIPRENDI DA QUI (06/09/2026)
+> ### ▶ RIPRENDI DA QUI (07/09/2026 o dopo)
 >
-> **Working tree pulito, niente in sospeso nel codice.** Il 05/09/2026 ci sono
-> state **cinque sessioni** (§3.16-§3.23): `-I` e `.include` idempotente, i target
-> CMake, `mfepsw`/`mtepsw`, la parola di stato nel frame, il percorso di trap
-> nuovo, sei librerie su un DAG — e infine, **senza scrivere codice**, la
-> decisione su come deve essere fatto l'albero (**§3.23**).
+> **Working tree pulito. La ristrutturazione dell'albero è FATTA** — §3.24, dieci
+> commit del 06/09/2026, `ctest` 23/23 e gli stessi identici numeri. L'albero
+> adesso è a tre strati:
 >
-> **Il lavoro riprende da lì:** §5, «Ristrutturazione dell'albero: una cartella
-> per libreria». Lo schema è deciso, ma **tre domande sono aperte** (in fondo a
-> §3.23) e sono proposte di Claude, non decisioni prese: finché non hanno
-> risposta non si sposta nessun file.
+> ```
+> hal/          la macchina, e il solo strato che la conosce
+> generic/      tutto cio' che NON usa lo scheduler: coda, pool, timeout,
+>               messaggio (formato) + i suoi test
+> rtos/         cio' che lo USA: scheduler, servizi/mailbox, demo, test
+> tests/        i tre test che verificano il SIMULATORE, non l'RTOS
+> src/ include/ il simulatore in C
+> ```
 >
-> **Ci sono 6 commit locali non pushati** (§2). Il push si fa solo su richiesta
+> Ogni libreria ha `impl/src` e `interface/<nome>`, e il `-I` per libreria è
+> ora un **vincolo imposto dalla macchina**: includere un header senza averlo
+> dichiarato non assembla.
+>
+> **Da dove si riprende**, in ordine di valore e nessuno bloccante:
+>
+> 1. **la doppia verità nelle intestazioni dei test** — le pipeline scritte a
+>    mano nominano percorsi che non esistono più. È il pezzo rimasto di §3.24, e
+>    peggiora finché non si fa;
+> 2. i **difetti minori** del build (§3.23 in fondo): `CMAKE_SOURCE_DIR`,
+>    `-Wall` non guardato dal compilatore, `file(GLOB)` senza
+>    `CONFIGURE_DEPENDS`, la collisione fra il programma `multi` e il test
+>    `multi`;
+> 3. `linked/multi` e `standalone/` sotto un `examples/` — deciso a metà:
+>    proposto e non risposto;
+> 4. **§7.4**, lo scheduler a priorità statiche. È il vero fronte fermo, e da
+>    lui dipendono i due debiti noti: il dispatcher che deve prendere il TCB in
+>    input, e `messageHandling.vasm` che scrive `TCB.state`. Vedi anche il
+>    debito scoperto in §3.24 — `task_ready` e `task_block` **non esistono**, e
+>    finché non nascono `lib_messaggi` non si chiude da sola.
+>
+> **Ci sono 18 commit locali non pushati** (§2). Il push si fa solo su richiesta
 > esplicita.
 
 Il **30/08/2026** ci sono state **tre sessioni**, non una:
@@ -191,7 +214,9 @@ livello.
 | Assembler (2 passi, rilocazioni) | completo | [`src/assembler.c`](../src/assembler.c) |
 | Linker, archivi, loader | completo | [`src/toolchain.c`](../src/toolchain.c) |
 | CLI `asm/ld/run/nm/ar` | completo | [`src/main.c`](../src/main.c) |
-| HAL + kernel + scheduler RR | completo, ridisegnato (§3.5), committato in `ae310d5` | [`linked/scheduler/`](../linked/scheduler/) |
+| HAL | completo (§3.21) | [`hal/`](../hal/) |
+| Code, pool, timeout, formato messaggi | completo, indipendente dallo scheduler (§3.24) | [`generic/`](../generic/) |
+| Kernel + scheduler RR + mailbox | completo, ridisegnato (§3.5), da riscrivere a priorità (§7.4) | [`rtos/`](../rtos/) |
 | Linguaggio alto livello `vc` | **da fare** — solo progettato | [`docs/proposta-linguaggio-alto-livello.md`](proposta-linguaggio-alto-livello.md) |
 
 Macchina: 16 registri scalari `r0..r15` (`r0` = 0), 16 float `f0..f15`, 8
@@ -205,11 +230,13 @@ separati per contratto d'uso:
 - [`standalone/`](../standalone/) — programmi eseguibili da soli con
   `./build/vcpu_sim FILE.vasm` (modalità legacy a file singolo). Include il
   vecchio monolite `scheduler.vasm` (§3.2, §7.9 del manuale).
-- [`linked/`](../linked/) — progetti che richiedono `asm` + `ld` su più moduli:
-  - `linked/scheduler/` — lo scheduler a strati (`hal/`, `kernel/`,
-    `include/types.vinc`, `scheduler_demo.vasm`), descritto in §3.2 e §7.10.
-  - `linked/multi/` — demo minimale di link fra due moduli con eliminazione di
-    codice morto (`main.vasm` + `saxpy.vasm` + `unused.vasm`).
+- [`linked/`](../linked/) — progetti che richiedono `asm` + `ld` su più moduli.
+  Dal 06/09/2026 (§3.24) contiene il **solo** `linked/multi/`, demo minimale di
+  link fra due moduli con eliminazione di codice morto (`main.vasm` +
+  `saxpy.vasm` + `unused.vasm`). `linked/scheduler/` non esiste più: è diventato
+  `hal/`, `generic/` e `rtos/` al primo livello.
+- [`hal/`](../hal/), [`generic/`](../generic/), [`rtos/`](../rtos/) — l'RTOS,
+  una cartella per libreria con `impl/src` e `interface/<nome>` (§3.24).
 
 Nessun path era hardcoded nel codice C (`src/`), quindi lo spostamento non ha
 toccato la toolchain — solo `Makefile` e i tre documenti in `docs/`, aggiornati
@@ -224,11 +251,37 @@ Branch `master`, pubblicato su `git@github.com:rmigliori/vcpu_sim.git` (remote
 `origin`, HTTPS + credential helper `git-credential-libsecret` configurato,
 push senza prompt).
 
-**Tutto pushato.** Il 05/09/2026 `origin/master` è passato da `20ae071` a
-`e2955ff`: nove commit, il lavoro di §3.16 e §3.17 più i tre di handoff rimasti
-indietro dal 04/09. Il push **l'ha chiesto l'utente**, come deve essere.
+**Ultimo pushato: `e2955ff`**, il 05/09/2026 — nove commit, il lavoro di §3.16 e
+§3.17 più i tre di handoff rimasti indietro dal 04/09. Il push **l'ha chiesto
+l'utente**, come deve essere.
+
+**Da allora ci sono 18 commit locali non pushati**: §3.18-§3.23 del 05/09, e i
+dieci del 06/09 che sono §3.24. Il push si fa **solo** su richiesta esplicita in
+quel momento (vedi il riquadro qui sotto).
+
+I dieci di §3.24 sono in ordine di dipendenza e va tenuto: i due di sorgenti
+(`a834cfe`, `913d3f7`) precedono il cambio di build (`4437546`), che precede i
+sette spostamenti, che vanno dal basso del DAG in su. Ognuno chiude con `ctest`
+23/23 e i `.vx` identici byte per byte al precedente.
 
 ```
+076af17 i test unitari sono applicazioni: vanno in cima al DAG del loro gruppo
+3232793 la mailbox e la demo: linked/scheduler non esiste piu'
+229ae36 lo scheduler in rtos/: kernel da contenitore a una delle sei
+e1ebb2f timeout e messaggio: generic/ e' completa
+89bc838 pool in generic/: il modulo piu' lontano dalla macchina
+a440ebc coda in generic/: la cartella che deve poter vivere senza scheduler
+71a9800 hal esce da linked/scheduler: prima cartella per libreria, e il -I morde
+4437546 INTERFACES e LINK: la coppia resta, e la specie diventa un controllo
+913d3f7 test_coda si dichiara il nodo: generic non chiede piu' l'header del kernel
+a834cfe La parola di provenienza e' del pool: proprieta' rovesciata
+9785d6d Handoff §3.23: come deve essere fatto l'albero, e le tre domande aperte
+127de06 Sei librerie su un DAG: types.vinc spezzato e dipendenze transitive
+f65a1b1 Il vettore consegna all'ISR: l'HAL non nomina piu' il kernel
+b071ed7 La parola di stato nel frame di contesto, e hal.vinc
+8f62946 ISA: mfepsw/mtepsw, il ritorno decide anche il regime
+a00df00 Proposta §12: il confine HAL/ISR/kernel, i tre ritorni, mfepsw/mtepsw
+a4091d0 Aggiorna handoff: pushato fino a e2955ff
 e2955ff Aggiorna i documenti: .include a nome nudo e target CMake (§3.17) <- ultimo pushato
 735b508 I .vasm in target CMake, e le invarianti diventano ctest
 5c14836 .include a nome nudo, e pool.vinc dipende da types.vinc
@@ -319,13 +372,13 @@ dalle label**, quindi non possono mai essere scambiate per simboli rilocabili.
 Rifattorizzazione del monolite [`standalone/scheduler.vasm`](../standalone/scheduler.vasm)
 in tre strati con contratto netto:
 
-- [`linked/scheduler/hal/machine.vasm`](../linked/scheduler/hal/machine.vasm) — **unico** codice che tocca l'hardware:
+- [`hal/impl/src/machine.vasm`](../hal/impl/src/machine.vasm) — **unico** codice che tocca l'hardware:
   `_trap_entry` (frame di contesto da 60 byte), `ctx_init` (frame finto, come
   `pxPortInitialiseStack` di FreeRTOS), `timer_init`/`irq_arm`/`irq_enable`, e
   `irq_save`/`irq_restore` a coppia — **componibili**, quindi corretti anche annidati.
-- [`linked/scheduler/kernel/coda.vasm`](../linked/scheduler/kernel/coda.vasm) — 5 primitive `list_head` con unlink
+- [`generic/coda/impl/src/coda.vasm`](../generic/coda/impl/src/coda.vasm) — 5 primitive `list_head` con unlink
   O(1), più le varianti `_s` protette da sezione critica.
-- [`linked/scheduler/kernel/scheduler.vasm`](../linked/scheduler/kernel/scheduler.vasm) — kernel **puro**: politica
+- [`rtos/scheduler/impl/src/scheduler.vasm`](../rtos/scheduler/impl/src/scheduler.vasm) — kernel **puro**: politica
   round-robin + **preemption differita** (`need_resched` di Linux /
   `xHigherPriorityTaskWoken` di FreeRTOS). Vede il contesto come puntatore
   **opaco**, non tocca un solo CSR.
@@ -367,7 +420,7 @@ Due ragioni, non solo il silenziamento del warning:
 (salva sp uscente, chiama l'handler dell'app, recupera sp entrante) e la
 *politica* (leggere `g_resched`, deciderne il consumo, chiamare `ctx_pick`).
 Estratta una nuova routine interna **`scheduler`**
-([`linked/scheduler/kernel/scheduler.vasm`](../linked/scheduler/kernel/scheduler.vasm)):
+([`rtos/scheduler/impl/src/scheduler.vasm`](../rtos/scheduler/impl/src/scheduler.vasm)):
 consuma `g_resched` e, se richiesto, delega a `ctx_pick`. `sched_dispatch` ora
 chiama **sempre** `scheduler`, senza sapere se — o chi — verrà switchato: tre
 routine, tre responsabilità nette (dispatcher / scheduler / politica), invece
@@ -1576,95 +1629,282 @@ sistemare con lo spostamento:
 
 ---
 
+### 3.24 L'albero ristrutturato: tre strati, sette commit, zero numeri mossi (06/09/2026)
+
+Le tre domande aperte di §3.23 hanno avuto risposta, e **due su tre non sono
+andate come Claude aveva proposto.** Poi lo spostamento, una libreria per
+commit.
+
+#### Il criterio, che è dell'utente e vale più delle tre risposte
+
+> **Tutto ciò che non usa lo scheduler non fa parte di `rtos`.**
+
+Applicato ai **simboli veri** — non alle intenzioni, non ai nomi delle cartelle
+— dà una partizione senza residui. Basta guardare cosa ogni modulo chiede a
+qualcun altro:
+
+| modulo | simboli che chiede | usa lo scheduler? |
+|---|---|---|
+| `machine.vasm` | nessuno | no → `hal/` |
+| `coda.vasm` | `irq_save`, `irq_restore` | no → `generic/` |
+| `timeout.vasm` | `irq_save`, `irq_restore` | no → `generic/` |
+| `pool.vasm` | `coda_init`, `enqueue_coda`, `enqueue_coda_s`, `dequeue_testa_s` | no → `generic/` |
+| `messaggio.vinc` | (solo `coda.vinc`) | no → `generic/` |
+| `scheduler.vasm` | `enqueue_coda`, `dequeue_testa`, `ctx_restore` | **è** lo scheduler → `rtos/` |
+| `messageHandling.vasm` | + `task_ready`, `task_block`, `current` | sì → `rtos/` |
+
+Da cui la conseguenza che ha ridisegnato l'albero: **`hal/` e `generic/` non
+stanno sotto `rtos/`.** Se ci stessero, l'albero affermerebbe un contenimento
+che il grafo nega — una lista doppiamente concatenata e un allocatore a blocchi
+fissi si sollevano di peso in un progetto che di scheduler non ne ha, purché
+fornisca `irq_save` e `irq_restore`. È il senso della parola *generic*, e la
+cartella deve poterlo **dimostrare** invece di dichiararlo.
+
+Due cose che la tabella dice e che non erano scritte da nessuna parte:
+
+- **il pool non nomina un solo simbolo dell'HAL.** La sezione critica gli
+  arriva già confezionata dai wrapper `_s` delle code. Sta un gradino più
+  lontano dalla macchina delle code stesse;
+- **`timeout` entra in `generic/` per la firma esatta di `coda.vasm`.** Con una
+  cosa da sapere: `tmo_now` è un contatore di tick e l'incremento appartiene al
+  percorso del tick, che non esiste ancora. Quando esisterà sarà il timer ISR a
+  muovere quella parola — resta un legame verso l'HAL, non verso il kernel,
+  quindi la collocazione non cambia, ma sarà l'unico modulo di `generic/` con
+  uno stato che scrive qualcun altro.
+
+#### Le tre risposte
+
+**1. `impl/` NON prende un `test/`, e i test unitari non vanno dentro le
+librerie.** La proposta di §3.23 era l'opposto. L'ha bocciata l'utente con un
+argomento solo: *un test è un'applicazione che usa la libreria*.
+
+La verifica ha confermato e ha dato il criterio generale. Confrontando gli
+`.extern` di ogni test con i `.global` del fornitore, **nessuno dei quattro
+scavalca un'interfaccia**: tutti passano dalla porta principale. Quindi:
+
+> Un test sta **dentro** la libreria solo se gli serve un accesso che la
+> libreria non pubblica. Se passa dai `.global` è indistinguibile da qualunque
+> altro cliente, e metterlo dentro gli regala un privilegio che non usa in
+> cambio di un arco di dipendenza che la libreria non ha.
+
+`test_mailbox` lo mostra meglio di tutti: attraversa code, messaggi e kernel —
+chiamarlo «test unitario di `lib_messaggi`» era già una forzatura.
+
+Stanno però **dentro il gruppo che verificano** (`generic/test/`, `rtos/test/`)
+e non in un `tests/` comune, perché `generic/` deve potersi sollevare altrove:
+portarsela via senza le sue verifiche sarebbe portarsi via meno di quello che
+c'è. In `tests/` restano i tre che verificano il **simulatore** — `epsw` l'ISA,
+`proc` una direttiva, `include` la risoluzione dei `-I` — che appartengono al C.
+
+L'argomento con cui Claude aveva sostenuto lo spostamento dentro le librerie
+**non reggeva**, e va detto perché non torni: sosteneva che servisse a chiudere
+la falla dei `-I`. Non è così — il vincolo nasce dall'avere **un `-I` per
+libreria**, non da dove sta il file.
+
+**2. Tre strati di primo livello, non sei sorelle sotto `rtos/`.**
+
+```
+hal/          machine.vasm + hal.vinc
+generic/      coda/  pool/  timeout/  messaggio/  + test/
+rtos/         scheduler/  servizi/mailbox/  demo/  test/
+tests/        test_epsw  test_proc  test_include   (verificano il simulatore)
+```
+
+Il rovesciamento previsto da §3.23 è avvenuto ed è una **correzione**, non una
+perdita: `kernel/` era la cartella che conteneva cinque librerie su sei, adesso
+lo scheduler è **una** delle sei. §3.22 aveva già stabilito che i messaggi sono
+un *cliente* del kernel e non parte sua, e la vecchia cartella contraddiceva il
+grafo.
+
+**3. `LIBS` e `LINK` NON si fondono.** Anche qui la proposta di §3.23 è stata
+bocciata dall'utente, con la domanda giusta: «non rende la comprensione delle
+liste più complicata?».
+
+Sì, e l'analogia con cui Claude l'aveva sostenuta la smonta. In CMake
+`target_link_libraries` se la cava con una parola chiave sola **perché `PUBLIC`
+o `PRIVATE` lo scrivi lì, ogni volta**; la fusione avrebbe tolto l'unico segno
+visibile della distinzione *conservandone la sostanza*. E c'è un caso nel
+progetto che si legge oggi e che sarebbe sparito: **`lib_kernel` linka le code
+ma non ne dichiara l'interfaccia**, perché `scheduler.vasm` chiama
+`enqueue_coda` senza aver bisogno di una costante di `coda.vinc`.
+
+Il difetto vero erano i **nomi**. Quindi `LIBS` → `INTERFACES` ovunque, anche in
+`vasm_interface` (dove il `LINK` fra due `.vinc` non era un link: un `.vinc` non
+emette un byte). E la cosa che la fusione voleva sfruttare — che la macchina sa
+già distinguere le specie — è diventata una **verifica** invece che
+un'inferenza: ogni forma marchia ciò che produce con `VASM_KIND`
+(`interface`/`object`/`archive`/`program`), e `_vasm_require_kind` rifiuta a
+tempo di configure una libreria in `INTERFACES` o un'interfaccia in `LINK`.
+
+#### Il vincolo sui `-I` esiste, e ha morso da solo
+
+Era il motivo per cui valeva la pena pagare sette cartelle per ~200 righe.
+Provato deliberatamente: aggiungendo `.include "hal/hal.vinc"` a `coda.vasm`,
+che non dichiara `vinc_hal`, l'assemblaggio si ferma con `cannot open include`.
+
+Ma la prova migliore non l'ha cercata nessuno: **`test_include` è fallito due
+volte da solo**, al passo del pool e a quello dello scheduler, perché nominava
+header di librerie che non aveva dichiarato. Prima quella dichiarazione era un
+commento.
+
+Un dettaglio dell'assembler che §3.23 non aveva registrato e che è portante:
+[`assembler.c:1171`](../src/assembler.c#L1171) cerca in `inc->base_dir`, che è
+fissato **una volta sola dal file di primo livello**
+([`assembler.c:1127`](../src/assembler.c#L1127)) e **non** dalla cartella di chi
+include. Quindi `tcb.vinc` che include `"coda/coda.vinc"` non può risolverlo per
+via relativa: o arriva il `-I`, o non assembla. Il vincolo vale anche per gli
+archi interfaccia→interfaccia, più forte di quanto §3.23 sperasse.
+
+#### Due scoperte sulla forma delle librerie
+
+**`mailbox` non ha `interface/`, `messaggio` non ha `impl/`**, e sono la stessa
+cosa vista dai due lati: il *formato* di un messaggio è costanti senza codice,
+il *servizio* che li muove è codice che non pubblica costanti — la sua
+interfaccia sono due simboli, `send` e `receive`, e i simboli viaggiano nel
+`.va`. Che le due metà fossero una libreria sola era il residuo da sciogliere:
+stavano insieme perché parlano della stessa cosa, non perché abbiano le stesse
+dipendenze. Semafori e mutex nasceranno con la stessa forma.
+
+**`task_ready` e `task_block` non esistono in `scheduler.vasm`.** Sono `.extern`
+in `messageHandling.vasm` e le uniche definizioni sono gli **stub dentro
+`test_mailbox.vasm`**. Finché §7.4 non atterra, `lib_messaggi` non si chiude da
+sola: l'unico programma che la linka è il test, che il kernel se lo finge.
+
+#### I due commit di sorgenti che sono venuti prima
+
+Nessuno dei due sposta un file, e per questo si verificano ad albero fermo.
+
+**La parola di provenienza è del pool.** `BLOCCO.pool` (+8) e `PAYLOAD.pool`
+(payload+0) sono la **stessa parola**, e `BLOCCO.dati` (+12) cade su
+`PAYLOAD.messageType`: le due geometrie sono incastrate al byte. Nel codice la
+dipendenza non c'era già — `pool.vasm` nomina solo `BLOCCO.*` — ma il
+**commento** dichiarava la proprietà al contrario, e così scritto il pool si
+definiva a partire da un formato che non conosce. Ora `pool.vinc` possiede
+dodici byte di testa e consegna da +12 un'area opaca, e il vincolo è formulato a
+carico di chi definisce un formato; `messaggio.vinc` prende il ruolo opposto.
+
+**`test_coda` si dichiara il nodo.** Dichiarava i nodi `.res TCB` e per farlo
+includeva `tcb.vinc`, cioè l'interfaccia dello scheduler, pur essendo il test
+della libreria più bassa: `generic/` si trascinava dentro il kernel attraverso
+il proprio test. Ora una `.struct NODO` propria — due link più otto byte opachi,
+che dicono qualcosa in più del vecchio TCB (che `coda.vasm` non assume niente
+sulla taglia del nodo) — e **16 byte come TCB apposta**, per non muovere
+l'immagine dati.
+
+#### Il difetto di partenza, chiuso
+
+`CMakeLists.txt` da **167 righe a 105**, e non conosce più il percorso di un
+solo sorgente dell'RTOS: tre `add_subdirectory`, gli esempi del simulatore, e le
+invarianti che restano sue. `VINC_DIR`, `SCHED` e `TESTS` non esistono più. Era
+esattamente la diagnosi di §3.23 — «il file di primo livello conosce il percorso
+di ogni sorgente del progetto».
+
+Nota per chi rilegge §3.23: lo schema vi era abbreviato in
+`add_subdirectory(impl interface)`, che **in CMake vuol dire un'altra cosa**
+(`source_dir` e `binary_dir`). Servono due chiamate, e **l'interfaccia va
+prima**, perché `impl/` la nomina e un target dev'essere definito prima di
+essere nominato.
+
+#### Come è stato verificato
+
+A **ogni** commit: `ctest` 23/23, **e** i sei `.vx` confrontati byte per byte
+con quelli del commit precedente, ricostruito ogni volta in una cartella
+separata. Non «gli stessi numeri»: gli stessi **byte**. Sui due commit di sola
+dichiarazione la verifica è ancora più stretta — filtrando dal diff le righe di
+commento non resta nulla.
+
+Invarianti finali: **17/40/94**, **97/64 con 8 tick**, **18/40/95**, e le quattro
+sequenze dei test unitari. Migrazione a somma zero, dimostrata e non dichiarata.
+
+#### Cosa resta
+
+- **`linked/multi` e `standalone/` sotto un `examples/`** — aperto, e ora
+  `linked/` ha un solo abitante;
+- i **difetti minori** elencati in fondo a §3.23: `CMAKE_SOURCE_DIR`, `-Wall`
+  non guardato dal compilatore, `file(GLOB)` senza `CONFIGURE_DEPENDS`, la
+  collisione fra il programma `multi` e il test `multi`;
+- **la doppia verità nelle intestazioni dei test**, ora peggiorata: le pipeline
+  scritte a mano nominano percorsi che non esistono più. `test_include` è già
+  stato riscritto perché doveva cambiare comunque;
+- un difetto dell'assembler visto e non toccato: i messaggi d'errore riportano
+  un **numero di riga che slitta della lunghezza degli include già
+  processati** (`line 84` per una riga che sta alla 51). È preesistente, ma
+  rende più faticoso leggere proprio gli errori che il nuovo vincolo produrrà.
+
+---
+
 ## 4. Invarianti di regressione — come verificare che nulla si sia rotto
 
-> ### Dal 05/09/2026 si fa con `ctest` (§3.17)
+> ### Si fa con `ctest`, ed è l'unico modo che resta (§3.17, §3.24)
 >
 > ```bash
 > cmake -B out -S . && cmake --build out -j && ctest --test-dir out
 > ```
 >
-> 23 test: le tre invarianti storiche, i sei test mirati di `tests/`, la demo
-> HAL+kernel, e i 13 programmi di `standalone/` che devono continuare a girare da
-> soli. I numeri attesi stanno nel `CMakeLists.txt`, in un posto solo.
+> 23 test: le tre invarianti storiche, i sei test mirati, la demo HAL+kernel, e i
+> 13 programmi di `standalone/` che devono continuare a girare da soli. I numeri
+> attesi stanno **ognuno accanto al programma che lo produce** — nel
+> `CMakeLists.txt` di `generic/test/`, di `rtos/test/`, o in quello di primo
+> livello per ciò che resta suo — e comunque in **un posto solo**: è `ctest` a
+> confrontarli, non chi legge.
 >
-> **Questo era il premio della migrazione**, più dei path: fino a ieri la suite
-> era un commento e la disciplina di chi lo eseguiva — quattro pipeline scritte a
-> mano nelle intestazioni dei test, ripetute qui sotto, e il confronto con le
-> sequenze attese fatto **a occhio**. Il confronto è di ciò che questa sezione
-> dichiara invariante — la sequenza dei `dumps`, o le tre statistiche — non di
-> tutto l'output, che renderebbe i test più fragili del contratto.
+> **Questo era il premio della migrazione**, più dei path: fino al 05/09/2026 la
+> suite era un commento e la disciplina di chi lo eseguiva — pipeline scritte a
+> mano nelle intestazioni dei test e il confronto con le sequenze attese fatto
+> **a occhio**. Il confronto è di ciò che questa sezione dichiara invariante — la
+> sequenza dei `dumps`, o le tre statistiche — non di tutto l'output, che
+> renderebbe i test più fragili del contratto.
 >
-> Quello che segue resta valido e resta utile: è la stessa verifica fatta a mano,
-> ed è il modo di isolare un singolo passo quando qualcosa si muove.
+> #### Le pipeline scritte a mano non ci sono più, e non è una perdita
+>
+> Fino a §3.24 questa sezione le riportava tutte, come modo di isolare un singolo
+> passo. **Nominavano `linked/scheduler/hal/`, `linked/scheduler/kernel/` e
+> `linked/scheduler/include/`, che non esistono più.** Riscriverle a mano
+> significherebbe ricostruire la doppia verità appena tolta: sarebbero copie
+> destinate a divergere in silenzio, con `ctest` verde e il documento che mente.
+>
+> Per isolare un singolo passo si usa quello che il build già sa dire:
+>
+> ```bash
+> ctest --test-dir out -R coda --output-on-failure   # un test solo, con l'output
+> ctest --test-dir out -N                            # elenca i 23 senza eseguirli
+> cmake --build out -j --verbose                     # i comandi asm/ld esatti
+> ```
+>
+> L'ultimo è il sostituto vero delle pipeline: stampa la riga di comando che
+> CMake esegue davvero, `-I` compresi, e non può divergere da ciò che gira.
+>
+> **Le stesse intestazioni dei test le contengono ancora**, e sono altrettanto
+> false: è l'ultimo pezzo della doppia verità, elencato fra ciò che resta in
+> fondo a §3.24.
 
-```bash
-make                                    # deve compilare SENZA warning
+Le sequenze attese, per chi deve leggerle senza aprire il build:
 
-# (1) invariante saxpy: 17 istruzioni / 40 vec-elem-ops / 94 cicli
-./build/vcpu_sim standalone/saxpy.vasm
+| verifica | atteso | dove sta il numero |
+|---|---|---|
+| `saxpy` — istruzioni / vec-elem-ops / cicli | `17 40 94` | `CMakeLists.txt` |
+| `scheduler_demo` — 8 tick, due task che si alternano | `97 64` | `CMakeLists.txt` |
+| `multi` — link con inclusione selettiva | `18 40 95` | `CMakeLists.txt` |
+| `coda` — invariante dei link (§3.14) | `0 1 1 1 0 0 0 2 1 0 0 0 0` | `generic/test/` |
+| `pool` — sei classi, alloc/free (§3.15) | `10 4 0 0 9 0 32 3 2 0 0 4 4 4 3 0 0 1 4` | `generic/test/` |
+| `timeout` — vettore di descrittori (§3.13) | `3 0 150 1 2 0 0 0 3 0 1` | `generic/test/` |
+| `mailbox` — send/receive con blocco (§3.10) | `0 1 2 11 22 0 33 0 0` | `rtos/test/` |
+| `proc` — `.proc`/`.endproc` (§3.6) | `100 200 300` | `CMakeLists.txt` |
+| `include` — `-I` e idempotenza (§3.16, §3.24) | `16 12 16 512 1` | `CMakeLists.txt` |
+| `epsw` — `mfepsw`/`mtepsw` (§3.19) | `1 0 0 7` | `CMakeLists.txt` |
 
-# -I: dove stanno i .vinc. Serve a ogni sorgente che ha una .include (dal
-#     05/09/2026 i nomi sono nudi, §3.17); machine.vasm e linked/multi/ no.
-I=-Ilinked/scheduler/include
+Più i 13 programmi di `standalone/`, per cui si verifica che nessuno vada in
+errore, non cosa stampano.
 
-# (2) demo HAL+kernel: deve stampare r5 = 97 e r5 = 64 (era 94/60 prima del
-#     percorso di trap nuovo — vedi §3.21, non e' una regressione)
-./build/vcpu_sim asm    linked/scheduler/hal/machine.vasm      -o build/machine.vo
-./build/vcpu_sim asm $I linked/scheduler/kernel/coda.vasm      -o build/coda.vo
-./build/vcpu_sim asm $I linked/scheduler/kernel/scheduler.vasm -o build/scheduler.vo
-./build/vcpu_sim asm $I linked/scheduler/scheduler_demo.vasm   -o build/scheduler_demo.vo
-./build/vcpu_sim ld build/scheduler_demo.vo build/scheduler.vo \
-                    build/coda.vo build/machine.vo -o build/scheduler_demo.vx
-./build/vcpu_sim run build/scheduler_demo.vx
+> Nota: `rtos/demo/scheduler_demo.vasm` **fallisce di proposito** in modalità
+> legacy a file singolo, perché ha `.extern ready`: va necessariamente linkato.
+> Non è una regressione.
 
-# (3) link multi-modulo con inclusione selettiva: 18 / 40 / 95
-./build/vcpu_sim asm linked/multi/main.vasm  -o build/mainc.vo
-./build/vcpu_sim asm linked/multi/saxpy.vasm -o build/msaxpy.vo
-./build/vcpu_sim ld build/mainc.vo build/msaxpy.vo -o build/multi.vx
-./build/vcpu_sim run build/multi.vx
-```
-
-Quarta verifica, dal 30/08/2026: il test della mailbox (§3.10), che ha bisogno
-del link con `messageHandling` e `scheduler` — la pipeline completa sta
-nell'intestazione di [`tests/test_mailbox.vasm`](../tests/test_mailbox.vasm).
-Deve stampare `0 1 2 11 22 0 33 0 0`.
-
-Settima verifica, dal 04/09/2026: il test del pool (§3.15), che si linka con
-`pool` piu' `coda`/`machine`/`scheduler`. Pipeline nell'intestazione di
-[`tests/test_pool.vasm`](../tests/test_pool.vasm). Deve stampare
-`10 4 0 0 9 0 32 3 2 0 0 4 4 4 3 0 0 1 4`.
-
-Sesta verifica, dal 04/09/2026: il test dell'invariante dei link (§3.14), che si
-linka con `coda` piu' `machine`/`scheduler`. Pipeline nell'intestazione di
-[`tests/test_coda.vasm`](../tests/test_coda.vasm). Deve stampare
-`0 1 1 1 0 0 0 2 1 0 0 0 0`.
-
-Quinta verifica, dal 04/09/2026: il test del vettore di descrittori (§3.13), che
-si linka con `timeout.vasm` più `machine`/`scheduler`/`coda` (nessuno dei tre
-gira: `machine.vasm` entra solo per `irq_save`/`irq_restore` e si tira dietro il
-resto). Pipeline nell'intestazione di
-[`tests/test_timeout.vasm`](../tests/test_timeout.vasm). Deve stampare
-`3 0 150 1 2 0 0 0 3 0 1`.
-
-Ottava verifica, dal 05/09/2026: il test di `-I` e dell'idempotenza di
-`.include` (§3.16). Non ha bisogno del link e non usa la macchina se non per
-rendere osservabile l'esito. **È l'unica pipeline del repo che richiede `-I`**,
-quindi è anche l'unico sorgente che `asm` senza `-I` rifiuta di proposito:
-
-```bash
-./build/vcpu_sim -I linked/scheduler/include tests/test_include.vasm
-#   16 12 16 512 1
-```
-
-Nona verifica, dal 05/09/2026: il test di `mfepsw`/`mtepsw` (§3.19). Gira da
-solo, e dimostra il caso 2 di §12.4 — non che le istruzioni esistano, ma che una
-ISR possa tornare verso il kernel a interrupt disabilitati:
-
-```bash
-./build/vcpu_sim tests/test_epsw.vasm
-#   1 0 0 7
-```
+Stato verificato il 06/09/2026 (dopo §3.24, la ristrutturazione dell'albero):
+invarianti **immobili**, e verificate più strettamente del solito — a ogni
+commit i sei `.vx` sono stati confrontati **byte per byte** con quelli del
+commit precedente, ricostruito in una cartella separata. Non «gli stessi
+numeri»: gli stessi byte. `ctest` 23/23.
 
 Stato verificato il 05/09/2026 (dopo §3.22, la decomposizione in librerie):
 invarianti **immobili** rispetto al passo 3 — le costanti sono le stesse, cambia
@@ -1701,18 +1941,15 @@ stessa alternanza dei task. `asm` pulito su tutti i 20 sorgenti di
 `.proc`/`.endproc` (casi validi ed errore, sia a file singolo sia via
 `asm`+`ld`).
 
-> Nota: `linked/scheduler/scheduler_demo.vasm` **fallisce di proposito** in
-> modalità legacy a file singolo (`./build/vcpu_sim linked/scheduler/scheduler_demo.vasm`),
-> perché ha `.extern ready`: va necessariamente linkato. Non è una regressione.
-
 ---
 
 ## 5. Prossimi passi possibili
 
-Ci sono quattro fronti: la **ristrutturazione dell'albero**, che è quello aperto
-adesso e l'unico che non dipenda da nessuna decisione di progetto (§3.23); quello
-dei messaggi, arrivato in fondo a ciò che si poteva scrivere; quello fermo in
-attesa della decisione §7.4; e quello di vecchia data.
+Ci sono quattro fronti. La **ristrutturazione dell'albero** è **fatta** (§3.24) e
+lascia dietro solo rifiniture, elencate qui sotto. Restano: quello dei messaggi,
+arrivato in fondo a ciò che si poteva scrivere; quello fermo in attesa della
+decisione **§7.4**, che è il vero blocco perché da lui dipendono tutti i debiti
+noti; e quello di vecchia data, il front-end `vc`.
 
 ### Messaggi e interfacce dei servizi (FRONTE ATTIVO)
 
@@ -1773,7 +2010,7 @@ livello**, dove il TCB preemptato viene tenuto in un campo dedicato del PCB
 invece di tornare in fondo alla coda.
 
 Il difetto che ha innescato tutto: l'attuale `scheduler`
-([`kernel/scheduler.vasm:118-135`](../linked/scheduler/kernel/scheduler.vasm#L118-L135))
+([`rtos/scheduler/impl/src/scheduler.vasm:118-135`](../rtos/scheduler/impl/src/scheduler.vasm#L118-L135))
 riaccoda **sempre** il task uscente, il che rende il blocking su semaforo
 inesprimibile — pur essendo promesso dal modello a 3 stati dichiarato
 nell'intestazione dello stesso file. Inoltre ciò che si chiama "politica"
@@ -1955,47 +2192,47 @@ una ristrutturazione del build.
 > `main`, verificato sugli `#include`): i confini li stiamo già rispettando,
 > semplicemente nessuno li impone.
 
-### Ristrutturazione dell'albero: una cartella per libreria (DECISO, DA FARE — FRONTE ATTIVO)
+### Ristrutturazione dell'albero: una cartella per libreria (FATTA il 06/09/2026)
 
-**È qui che riprende il lavoro il 06/09/2026.** Lo schema è **deciso**
-dall'utente e verbalizzato in **§3.23**, che va letta per intera prima di
-toccare un file: c'è lo schema, il motivo per cui non è decorazione (il vincolo
-sui `-I`, oggi inesistente), e il fatto già verificato che **l'assemblatore non
-va toccato**.
+**Fatta in dieci commit, §3.24, che va letta per intera** — c'è il criterio
+dell'utente che ha deciso la forma, le tre risposte (due delle quali hanno
+bocciato le proposte di §3.23), e il modo in cui è stata verificata.
 
-**Prima di muovere anche un solo file servono tre risposte** (§3.23, elenco
-finale). Sono proposte di Claude, non decisioni prese, e sono esattamente il tipo
-di cosa su cui non si scrive codice in avanti:
+L'albero è a tre strati; ogni libreria ha `impl/src` e `interface/<nome>`; il
+`-I` per libreria è un vincolo imposto dalla macchina, non più un commento; il
+`CMakeLists.txt` di primo livello è passato da 167 righe a 105 e non conosce più
+il percorso di un solo sorgente dell'RTOS.
 
-1. `impl/` tiene anche `test/`, e i test unitari si spostano accanto alla loro
-   libreria?
-2. Le sei cartelle vanno sotto un nuovo `rtos/` di primo livello?
-3. `LIBS` e `LINK` si fondono in un solo `LINK`?
+**Cosa resta, e nessuna delle quattro blocca niente:**
 
-**Ordine di lavoro, una volta risposto:**
+1. **La doppia verità nelle intestazioni dei test.** È il pezzo non fatto di
+   §3.24 e l'unico che *peggiora* col tempo: le pipeline scritte a mano nominano
+   `linked/scheduler/...`, che non esiste più, e i numeri attesi sono ripetuti
+   accanto. §4 di questo documento è già stata ripulita, le intestazioni no. Le
+   intestazioni vanno riscritte con **cosa** verifica il test e **perché**;
+   pipeline e numeri se ne vanno dove li esegue la macchina. `test_include.vasm`
+   è già stato riscritto così, perché doveva cambiare comunque — vale da
+   modello.
+2. **I difetti minori del build**, elencati in fondo a §3.23: `CMAKE_SOURCE_DIR`
+   dove va `PROJECT_SOURCE_DIR`, `add_compile_options(-Wall -Wextra)` globale e
+   non guardato dal compilatore (va sul target con
+   `$<$<C_COMPILER_ID:GNU,Clang>:...>`), `file(GLOB)` senza `CONFIGURE_DEPENDS`
+   per `standalone/`, e la collisione fra il programma `multi` e il test `multi`
+   — che funziona solo perché sono due spazi di nomi diversi di CMake.
+3. **`examples/`.** Con `linked/scheduler/` sparito, `linked/` ha un solo
+   abitante: `linked/multi/`. Insieme a `standalone/` sono entrambi esempi del
+   **simulatore**, e starebbero bene sotto un `examples/`. **Proposto e non
+   risposto** — è `git mv` e non muove nessun numero (i test si chiamano per
+   `NAME_WE`), ma è una decisione dell'utente.
+4. **`--emit-deps`** (punto 3 della sezione precedente). Vale più di prima: con
+   un `-I` per libreria una dipendenza non dichiarata è già un errore di
+   assemblaggio, quindi `--emit-deps` servirebbe ora per la sola correttezza del
+   rebuild incrementale, non per la disciplina.
 
-1. Spostamento con **`git mv`** — la storia dei file non si perde, e serve:
-   `coda.vasm` e `pool.vasm` hanno una storia di progetto che vale più del
-   diff.
-2. Riscrittura delle `.include` da nome nudo a `<lib>/<nome>.vinc`. Sono 12 più
-   quelle interne ai `.vinc` (`pool.vinc`, `tcb.vinc` e `messaggio.vinc`
-   includono `coda.vinc`).
-3. `CMakeLists.txt` di primo livello ridotto a `project()` + opzioni +
-   `CMAKE_MODULE_PATH` + `add_subdirectory`; `cmake/vasm.cmake` diventa un modulo
-   incluso per nome (`include(VasmToolchain)`), non per percorso.
-4. I difetti minori elencati in fondo a §3.23 (`CMAKE_SOURCE_DIR`, la collisione
-   `multi`, `-Wall` globale, `file(GLOB)`).
-5. **A parte, in un commit suo:** la doppia verità nelle intestazioni dei test.
-
-**Vincolo non negoziabile, lo stesso di ogni migrazione di build:** alla fine
-`ctest` deve dare **23/23** e le invarianti di §4 gli **stessi identici numeri** —
-17/40/94, **97/64 con 8 tick**, 18/40/95. Questa è una migrazione a somma zero sui
-numeri: se un valore si muove, non è una ristrutturazione del build, è un baco.
-
-Il punto 3 della sezione precedente (`--emit-deps`) **resta aperto e non
-blocca**; anzi, dopo questa ristrutturazione vale di più, perché con un `-I` per
-libreria una dipendenza non dichiarata diventa un errore di assemblaggio invece
-che una bugia del rebuild incrementale.
+**La regola di verifica, che ha funzionato e va riusata:** non cambiare mai
+semantica del build e albero nello stesso commit, e a ogni commit confrontare i
+`.vx` byte per byte con quelli del commit precedente, ricostruito in una
+cartella separata. È più stretto di «gli stessi numeri» e costa dieci secondi.
 
 ### Front-end `vc` (il pezzo mancante di vecchia data)
 
@@ -2024,13 +2261,24 @@ Aprire Claude Code nella cartella del progetto e scrivere una di queste:
 Leggi docs/stato-lavori.md e riprendi da lì.
 ```
 
-**Per la ristrutturazione dell'albero — CONSIGLIATA, è dove si è fermato il 05/09:**
+**Per le intestazioni dei test — CONSIGLIATA, è il pezzo rimasto di §3.24 e
+l'unico che peggiora col tempo:**
 ```
-Leggi docs/stato-lavori.md §3.23 e la sezione di §5 "Ristrutturazione
-dell'albero: una cartella per libreria". Lo schema e' deciso: ogni libreria
-ha impl/src e interface/<nome>. Prima di spostare qualsiasi file rispondo
-alle tre domande aperte in fondo a §3.23. Alla fine ctest deve dare 23/23 e
-le invarianti di §4 gli stessi identici numeri.
+Leggi docs/stato-lavori.md §3.24 e la sezione di §5 "Ristrutturazione
+dell'albero". L'albero e' fatto; resta la doppia verita' nelle intestazioni
+dei test: le pipeline scritte a mano nominano linked/scheduler/, che non
+esiste piu', e ripetono i numeri attesi. Vanno riscritte con COSA verifica
+il test e PERCHE'; pipeline e numeri se ne vanno dove li esegue la macchina.
+tests/test_include.vasm e' gia' cosi' e vale da modello. Alla fine ctest
+deve dare 23/23 e gli stessi identici numeri.
+```
+
+**Per i difetti minori del build (piccoli e indipendenti):**
+```
+Leggi docs/stato-lavori.md, punto 2 della sezione di §5 "Ristrutturazione
+dell'albero": CMAKE_SOURCE_DIR dove va PROJECT_SOURCE_DIR, -Wall globale e
+non guardato dal compilatore, file(GLOB) senza CONFIGURE_DEPENDS, la
+collisione fra il programma multi e il test multi. Alla fine ctest 23/23.
 ```
 
 **Per il confine HAL/ISR/kernel (non dipende da §7.4):**
