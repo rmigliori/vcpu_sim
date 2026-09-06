@@ -22,7 +22,7 @@
 
 .include "tcb.vinc"                                ; nome nudo, via -I
 .include "../linked/scheduler/include/tcb.vinc"    ; stesso file, altra grafia
-.include "pool.vinc"                               ; secondo fornitore, via -I
+.include "pool/pool.vinc"                               ; secondo fornitore, via -I
 
   .text
 

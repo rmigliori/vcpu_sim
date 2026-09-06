@@ -19,3 +19,4 @@
 #  sanato prima di cominciare a spostare.
 # ---------------------------------------------------------------------------
 add_subdirectory(coda)
+add_subdirectory(pool)

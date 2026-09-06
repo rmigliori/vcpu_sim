@@ -47,7 +47,7 @@
 ; non fidarsi di cosa si porta dietro un altro header; l'inclusione doppia e' un
 ; no-op da quando .include e' idempotente (§3.16), che e' anche cio' che ha reso
 ; scrivibile un .vinc che ne include un altro.
-.include "pool.vinc"
+.include "pool/pool.vinc"
 .include "coda/coda.vinc"
 
   .data

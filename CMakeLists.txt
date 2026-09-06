@@ -73,7 +73,6 @@ vasm_interface(vinc_timeout DIR ${VINC_DIR} HEADERS timeout.vinc)
 # un unico types.vinc teneva insieme code, task e messaggi (§12.6, passo 4).
 vasm_interface(vinc_tcb       DIR ${VINC_DIR} HEADERS tcb.vinc       INTERFACES vinc_coda)
 vasm_interface(vinc_messaggio DIR ${VINC_DIR} HEADERS messaggio.vinc INTERFACES vinc_coda)
-vasm_interface(vinc_pool      DIR ${VINC_DIR} HEADERS pool.vinc      INTERFACES vinc_coda)
 
 # ---------------------------------------------------------------------------
 #  Le librerie.
@@ -97,9 +96,6 @@ set(SCHED ${CMAKE_SOURCE_DIR}/linked/scheduler)
 # chiamano.
 vasm_library(lib_kernel  SOURCES ${SCHED}/kernel/scheduler.vasm INTERFACES vinc_tcb
                          LINK lib_coda lib_hal)
-
-vasm_library(lib_pool    SOURCES ${SCHED}/kernel/pool.vasm  INTERFACES vinc_pool vinc_coda
-                         LINK lib_coda)
 
 vasm_library(lib_timeout SOURCES ${SCHED}/kernel/timeout.vasm INTERFACES vinc_timeout
                          LINK lib_hal)
@@ -149,13 +145,18 @@ vasm_check(scheduler_demo MODE DUMPS EXPECT "97 64" PROGRAM scheduler_demo)
 vasm_check(proc       MODE DUMPS EXPECT "100 200 300"
            SOURCE ${TESTS}/test_proc.vasm)
 # test_include gira in modalita' legacy a file singolo (non ha oggetti ne'
-# link), quindi i -I vanno passati a mano invece di arrivare da INTERFACES. Il
-# secondo non e' un doppione: tcb.vinc include "coda/coda.vinc", e la cartella
-# di coda ora e' un'altra. Si prende dal target invece che a percorso, cosi'
-# segue la libreria se si sposta ancora.
+# link), quindi i suoi -I se li scrive a mano invece di riceverli da
+# INTERFACES. La lista cresce di uno a ogni libreria che si sposta, ed e' il
+# vincolo che funziona: il file nomina tcb.vinc e pool.vinc, e pool.vinc tira
+# dentro coda.vinc. Le cartelle si prendono dai target e non a percorso, cosi'
+# seguono le librerie se si spostano ancora.
+#
+# DA REGOLARIZZARE quando i test avranno una cartella loro: diventa un
+# vasm_object con INTERFACES e questa lista sparisce.
 vasm_check(include    MODE DUMPS EXPECT "16 12 16 512 1"
            IFLAGS -I${VINC_DIR}
                   -I$<TARGET_PROPERTY:vinc_coda,INTERFACE_INCLUDE_DIRECTORIES>
+                  -I$<TARGET_PROPERTY:vinc_pool,INTERFACE_INCLUDE_DIRECTORIES>
            SOURCE ${TESTS}/test_include.vasm)
 vasm_check(epsw       MODE DUMPS EXPECT "1 0 0 7"
            SOURCE ${TESTS}/test_epsw.vasm)
