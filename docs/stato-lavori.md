@@ -44,9 +44,9 @@
 >    debito scoperto in §3.24 — `task_ready` e `task_block` **non esistono**, e
 >    finché non nascono `lib_messaggi` non si chiude da sola.
 >
-> **Tutto pushato** fino a `15d302e` (§2), il 06/09/2026: diciannove commit,
-> §3.18-§3.24. Il push l'ha chiesto l'utente, come deve essere — e resta una
-> richiesta da rifare ogni volta.
+> **Tutto pushato**, questo aggiornamento compreso (§2): il 06/09/2026 sono
+> usciti §3.18-§3.24 e la loro documentazione. Il push l'ha chiesto l'utente,
+> come deve essere — e resta una richiesta da rifare ogni volta.
 
 Il **30/08/2026** ci sono state **tre sessioni**, non una:
 §3.9 (il TCB e i timeout), §3.10 (la mailbox, progettata e implementata) e §3.11
@@ -270,7 +270,10 @@ sette spostamenti, che vanno dal basso del DAG in su. Ognuno chiude con `ctest`
 23/23 e i `.vx` identici byte per byte al precedente.
 
 ```
-15d302e Aggiorna manuale e proposta ai percorsi nuovi (§3.24) <- ultimo pushato
+15d302e Aggiorna manuale e proposta ai percorsi nuovi (§3.24)
+        (piu' i due commit di handoff che registrano il push, usciti subito
+        dopo: un commit non puo' nominare il proprio hash, quindi qui la
+        catena si ferma di proposito invece di rincorrersi)
 7e0c127 Handoff §3.24: l'albero ristrutturato, e le tre risposte
 076af17 i test unitari sono applicazioni: vanno in cima al DAG del loro gruppo
 3232793 la mailbox e la demo: linked/scheduler non esiste piu'
