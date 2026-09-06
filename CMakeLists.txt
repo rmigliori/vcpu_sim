@@ -125,7 +125,7 @@ vasm_object(multi_saxpy SOURCE ${CMAKE_SOURCE_DIR}/linked/multi/saxpy.vasm)
 vasm_program(multi      OBJECTS multi_main multi_saxpy)
 
 set(TESTS ${CMAKE_SOURCE_DIR}/tests)
-vasm_object(t_coda     SOURCE ${TESTS}/test_coda.vasm    LIBS vinc_coda vinc_tcb)
+vasm_object(t_coda     SOURCE ${TESTS}/test_coda.vasm    LIBS vinc_coda)
 vasm_object(t_mailbox  SOURCE ${TESTS}/test_mailbox.vasm LIBS vinc_coda vinc_tcb vinc_messaggio)
 vasm_object(t_timeout  SOURCE ${TESTS}/test_timeout.vasm LIBS vinc_timeout)
 vasm_object(t_pool     SOURCE ${TESTS}/test_pool.vasm    LIBS vinc_pool vinc_coda)

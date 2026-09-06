@@ -8,10 +8,18 @@
 ; contatore incoerente: il controllo sta prima dell'aritmetica proprio per
 ; questo, ed e' la parte che si romperebbe in silenzio se qualcuno riordinasse.
 ;
-; I nodi sono .res TCB: al modulo delle code servono solo i primi due campi, e
-; TCB e' l'unico tipo di nodo che esiste oggi. Nascono azzerati dall'immagine
-; dati, cioe' gia' conformi all'invariante — che e' anche il motivo per cui il
-; primo accodamento di un TCB al boot passa senza inizializzazioni.
+; I nodi sono NODO, dichiarato qui sotto e da nessun'altra parte. Al modulo
+; delle code servono solo i primi due campi e il resto del nodo non lo tocca
+; mai: NODO lo dice: due link piu' otto byte opachi. Era .res TCB, e la ragione
+; scritta allora ("TCB e' l'unico tipo di nodo che esiste oggi") era vera ma
+; comprava un difetto — il test della libreria piu' bassa includeva tcb.vinc,
+; cioe' l'interfaccia dello scheduler, e trascinava il kernel dentro il
+; sottoalbero che deve poter vivere senza. Nessun byte si e' mosso: NODO e' 16
+; come TCB, apposta.
+;
+; I nodi nascono azzerati dall'immagine dati, cioe' gia' conformi
+; all'invariante — che e' anche il motivo per cui il primo accodamento di un
+; TCB al boot passa senza inizializzazioni.
 ;
 ; machine.vasm entra nel link solo perche' coda.vasm dichiara .extern
 ; irq_save/irq_restore per i wrapper _s, e non si tira dietro nient'altro: dal
@@ -32,13 +40,22 @@
 ; Atteso, in ordine:  0 1 1 1 0 0 0 2 1 0 0 0 0
 
 .include "coda.vinc"
-.include "tcb.vinc"
+
+; Il nodo di questo test. Le code non sanno cosa sia un nodo oltre ai due link
+; in testa (l'idioma list_head, lo stesso di TESTA, TCB, MESSAGGIO e BLOCCO):
+; gli otto byte opachi stanno qui per esercitare proprio quello, cioe' che
+; coda.vasm non assume nulla sulla taglia del nodo ne' legge oltre +8.
+.struct NODO
+  .field fwd              ; +0
+  .field bwd              ; +4
+  .field opaco  8         ; +8  il modulo delle code non li tocca mai
+.ends                     ; 16
 
   .data
 
 testa:  .res TESTA
-n1:     .res TCB
-n2:     .res TCB
+n1:     .res NODO
+n2:     .res NODO
 stack:  .space 64
 stack_top:
 
