@@ -2462,8 +2462,34 @@ Aprire Claude Code nella cartella del progetto e scrivere una di queste:
 Leggi docs/stato-lavori.md e riprendi da lì.
 ```
 
-**Per la tensione sui timeout — è la decisione di disegno che sta davanti a
-tutto il resto del kernel:**
+> Le due formule qui sotto non sono intercambiabili. La **prima** riapre tutto
+> il filo di disegno su semafori, mutex e mailbox — serve se si vuole
+> discutere. La **seconda** è chirurgica: carica solo la decisione che blocca,
+> e serve se la si vuole prendere e basta.
+
+**Per riprendere il disegno di semafori, mutex e mailbox — tutto il filo:**
+```
+Leggi docs/proposta-kernel-realtime.md §13 per intero (semafori e mutex), poi
+§8 (la mailbox, gia' implementata) e §7.4 (perche' il ceiling). Come ci si e'
+arrivati sta in docs/stato-lavori.md §3.25.
+
+DECISO, da non riaprire senza una ragione nuova:
+  - priority ceiling, non ereditarieta' (§7.4);
+  - il semaforo NON e' una mailbox: contatore contabile contro descrittivo
+    (§13.1), e non e' lo stesso tipo con un parametro diverso;
+  - il mutex E' la sezione critica, cioe' cli con un limite per risorsa
+    (§13.2), e non ci si blocca tenendolo (§13.4);
+  - la coda del mutex esiste per far DEGRADARE un ceiling sbagliato invece
+    che appendere, non per essere usata (§13.5);
+  - l'ordinamento per priorita' e' del chiamante: coda.vasm prende una
+    enqueue_dopo agnostica e non sa perche' la si chiama (§13.6).
+
+APERTO: §13.8, e la voce grossa e' la tensione sui timeout. Niente codice di
+semaforo prima che quella sia sciolta.
+```
+
+**Per la tensione sui timeout, senza rileggere tutto — è la decisione di
+disegno che sta davanti a tutto il resto del kernel:**
 ```
 Leggi docs/stato-lavori.md §3.25 e docs/proposta-kernel-realtime.md §13.8.
 Il semaforo blocca, quindi "la mailbox e' l'unico punto di blocco di un task"
