@@ -41,12 +41,19 @@ include(cmake/vasm.cmake)
 enable_testing()
 
 # ---------------------------------------------------------------------------
-#  Le librerie che hanno gia' una cartella propria.
+#  I tre strati, e questo file non sa altro di loro che il nome (§3.24).
 #
-#  Ristrutturazione in corso (§3.24 dell'handoff): una libreria alla volta
-#  passa da una dichiarazione qui sotto a una cartella con impl/src e
-#  interface/<nome>, e la sua descrizione di build va a vivere con lei. Cio'
-#  che resta piu' in basso in questo file e' quello che non e' ancora passato.
+#    hal/      lo strato che conosce la macchina, e il solo
+#    generic/  tutto cio' che non usa lo scheduler: code, pool, timeout, il
+#              formato dei messaggi. Si solleva in un progetto senza RTOS,
+#              purche' fornisca irq_save e irq_restore
+#    rtos/     cio' che USA lo scheduler: il kernel, i servizi che bloccano
+#              i task, la demo
+#
+#  hal/ e generic/ NON stanno sotto rtos/, e il criterio e' letterale: un
+#  modulo e' rtos se nomina un simbolo del kernel. Applicato ai simboli veri
+#  da' una partizione senza residui, e ogni gruppo la argomenta nel proprio
+#  CMakeLists invece che qui.
 #
 #  L'ordine e' un ordine topologico del DAG e non e' negoziabile: in CMake un
 #  target dev'essere definito prima di essere nominato.
@@ -56,26 +63,16 @@ add_subdirectory(generic)
 add_subdirectory(rtos)
 
 # ---------------------------------------------------------------------------
-#  I programmi.
+#  Cio' che non e' l'RTOS: gli esempi del simulatore.
 #
-#  Ognuno dichiara la libreria che usa, non la lista dei moduli da linkare: la
-#  chiusura la calcola vasm_program. Prima quella lista stava scritta a mano
-#  nell'intestazione di ogni test, e andava tenuta aggiornata a occhio.
+#  linked/multi e' l'esempio di piu' moduli linkati insieme, e resta l'unico
+#  abitante di linked/ da quando linked/scheduler e' diventato tre cartelle di
+#  primo livello. Insieme a standalone/ starebbe bene sotto un examples/: e'
+#  aperto e non blocca.
 # ---------------------------------------------------------------------------
 vasm_object(multi_main  SOURCE ${CMAKE_SOURCE_DIR}/linked/multi/main.vasm)
 vasm_object(multi_saxpy SOURCE ${CMAKE_SOURCE_DIR}/linked/multi/saxpy.vasm)
 vasm_program(multi      OBJECTS multi_main multi_saxpy)
-
-set(TESTS ${CMAKE_SOURCE_DIR}/tests)
-vasm_object(t_coda     SOURCE ${TESTS}/test_coda.vasm    INTERFACES vinc_coda)
-vasm_object(t_mailbox  SOURCE ${TESTS}/test_mailbox.vasm INTERFACES vinc_coda vinc_tcb vinc_messaggio)
-vasm_object(t_timeout  SOURCE ${TESTS}/test_timeout.vasm INTERFACES vinc_timeout)
-vasm_object(t_pool     SOURCE ${TESTS}/test_pool.vasm    INTERFACES vinc_pool vinc_coda)
-
-vasm_program(test_coda    OBJECTS t_coda    LINK lib_coda)
-vasm_program(test_mailbox OBJECTS t_mailbox LINK lib_messaggi)
-vasm_program(test_timeout OBJECTS t_timeout LINK lib_timeout)
-vasm_program(test_pool    OBJECTS t_pool    LINK lib_pool)
 
 # ---------------------------------------------------------------------------
 #  Le invarianti di regressione — §4 di docs/stato-lavori.md.
@@ -88,7 +85,7 @@ vasm_check(multi      MODE STATS EXPECT "18 40 95"  PROGRAM multi)
 vasm_check(scheduler_demo MODE DUMPS EXPECT "97 64" PROGRAM scheduler_demo)
 
 vasm_check(proc       MODE DUMPS EXPECT "100 200 300"
-           SOURCE ${TESTS}/test_proc.vasm)
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_proc.vasm)
 # test_include gira in modalita' legacy a file singolo (non ha oggetti ne'
 # link), quindi i suoi -I se li scrive a mano invece di riceverli da
 # INTERFACES. La lista cresce di uno a ogni libreria che si sposta, ed e' il
@@ -96,24 +93,15 @@ vasm_check(proc       MODE DUMPS EXPECT "100 200 300"
 # dentro coda.vinc. Le cartelle si prendono dai target e non a percorso, cosi'
 # seguono le librerie se si spostano ancora.
 #
-# DA REGOLARIZZARE quando i test avranno una cartella loro: diventa un
-# vasm_object con INTERFACES e questa lista sparisce.
+# Resta legacy di proposito: e' il test dell'assemblatore, e passargli i -I a
+# mano e' proprio cio' che verifica. Le tre righe sono la sua asserzione.
 vasm_check(include    MODE DUMPS EXPECT "16 12 16 512 1"
            IFLAGS -I$<TARGET_PROPERTY:vinc_tcb,INTERFACE_INCLUDE_DIRECTORIES>
                   -I$<TARGET_PROPERTY:vinc_pool,INTERFACE_INCLUDE_DIRECTORIES>
                   -I$<TARGET_PROPERTY:vinc_coda,INTERFACE_INCLUDE_DIRECTORIES>
-           SOURCE ${TESTS}/test_include.vasm)
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_include.vasm)
 vasm_check(epsw       MODE DUMPS EXPECT "1 0 0 7"
-           SOURCE ${TESTS}/test_epsw.vasm)
-
-vasm_check(mailbox MODE DUMPS PROGRAM test_mailbox
-           EXPECT "0 1 2 11 22 0 33 0 0")
-vasm_check(coda    MODE DUMPS PROGRAM test_coda
-           EXPECT "0 1 1 1 0 0 0 2 1 0 0 0 0")
-vasm_check(timeout MODE DUMPS PROGRAM test_timeout
-           EXPECT "3 0 150 1 2 0 0 0 3 0 1")
-vasm_check(pool    MODE DUMPS PROGRAM test_pool
-           EXPECT "10 4 0 0 9 0 32 3 2 0 0 4 4 4 3 0 0 1 4")
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_epsw.vasm)
 
 # I 13 programmi di standalone/ devono continuare a girare da soli: qui si
 # verifica che nessuno vada in errore, non cosa stampano (solo saxpy ha

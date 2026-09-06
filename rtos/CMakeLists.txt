@@ -19,3 +19,4 @@
 add_subdirectory(scheduler)
 add_subdirectory(servizi)
 add_subdirectory(demo)
+add_subdirectory(test)
