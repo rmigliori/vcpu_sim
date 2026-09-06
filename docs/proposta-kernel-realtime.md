@@ -3,7 +3,7 @@
 > Discussione del **29 agosto 2026**, proseguita il **30 agosto** in tre
 > sessioni successive e il **5 settembre** (§12).
 > Sostituirà il disegno a coda singola di
-> [`linked/scheduler/kernel/scheduler.vasm`](../linked/scheduler/kernel/scheduler.vasm).
+> [`rtos/scheduler/impl/src/scheduler.vasm`](../rtos/scheduler/impl/src/scheduler.vasm).
 >
 > **§12 è la sezione da leggere per prima se si riprende da qui**: rivede il
 > confine HAL/ISR/kernel (l'HAL non nomina più il kernel), dà al dispatcher il
@@ -14,7 +14,7 @@
 > **Stato: quattro decisioni prese (§7.1–7.3, §7.5), una aperta (§7.4).**
 > Lo scheduler è ancora tutto da scrivere e non si scrive prima di §7.4. La
 > **mailbox** invece è stata progettata e implementata (§8):
-> [`kernel/messageHandling.vasm`](../linked/scheduler/kernel/messageHandling.vasm)
+> [`rtos/servizi/mailbox/…/messageHandling.vasm`](../rtos/servizi/mailbox/impl/src/messageHandling.vasm)
 > esiste, gira ed è testato. Il **gestore dei timeout** è progettato ma non
 > scritto (§9): modello a vettore di descrittori con interfaccia procedurale e
 > pool di buffer, che sostituisce quello a messaggio prestato dal cliente — §9.6
@@ -91,7 +91,7 @@ attuale finiscono nello stesso posto:
 ## 3. Le strutture statiche
 
 Le code sono quelle già implementate in
-[`kernel/coda.vasm`](../linked/scheduler/kernel/coda.vasm): liste circolari
+[`generic/coda/…/coda.vasm`](../generic/coda/impl/src/coda.vasm): liste circolari
 doppie con sentinella, idioma `list_head` del kernel Linux.
 
 ```mermaid
@@ -379,7 +379,7 @@ sequenceDiagram
 Nessuna `call`: sono salti, e nessuno di questi passi ha un ritorno da onorare.
 Sparisce la finzione attuale delle tre `call` che non ritornano mai
 (`sched_dispatch` → `dispatcher` → `ctx_restore`, più `call sched_dispatch` in
-[`hal/machine.vasm:53`](../linked/scheduler/hal/machine.vasm#L53)).
+[`hal/machine.vasm:53`](../hal/impl/src/machine.vasm#L53)).
 
 ### Preemption
 
@@ -431,11 +431,12 @@ Il campo è essenziale per il debugging. **E ha un secondo motivo tecnico**: dat
 un TCB, `TCB.pcb->coda` fornisce la sua coda di *ready*, non la coda in cui si
 trova **adesso**. Se il task è sospeso sta in quella di un semaforo o di un
 mutex, e per sganciarlo con `remove_buffer` (che vuole la testa giusta, vedi
-[`coda.vasm:87-95`](../linked/scheduler/kernel/coda.vasm#L87-L95)) bisogna sapere
+[`coda.vasm:87-95`](../generic/coda/impl/src/coda.vasm#L87-L95)) bisogna sapere
 quale delle due. Senza `state` non lo sai. Non è ridondanza: è l'unico modo di
 sapere dove cercare.
 
-Oggi [`types.vinc`](../linked/scheduler/include/types.vinc) ha tre valori. Con lo
+Oggi [`tcb.vinc`](../rtos/scheduler/interface/tcb/tcb.vinc) ha tre valori
+(era `types.vinc`, spezzato in tre il 05/09/2026). Con lo
 slot ne serve un quarto: un task in `PCB.preemptato` non è in una coda di ready,
 non è sulla CPU e non è bloccato. Marcarlo `READY` farebbe mentire il campo
 proprio nel momento in cui lo si interroga per capire cosa sta succedendo.
@@ -546,7 +547,7 @@ Ne discendono tre conseguenze, tutte da tenere in conto:
 
 1. **`coda.vasm` resta intatta**, e con lei il suo contratto forte — «il link sta
    a offset 0, quindi il puntatore al link *è* il puntatore al buffer, niente
-   `container_of`» ([`coda.vasm:5-6`](../linked/scheduler/kernel/coda.vasm#L5-L6)).
+   `container_of`» ([`coda.vasm:5-6`](../generic/coda/impl/src/coda.vasm#L5-L6)).
    Con una seconda coppia a offset non nullo quel contratto sarebbe rimasto vero
    per le primitive e falso per i chiamanti, costretti a risalire al TCB con un
    `addi` dopo ogni `dequeue_testa` sulla lista d'evento: una istruzione, gratis
@@ -575,7 +576,7 @@ Ne discendono tre conseguenze, tutte da tenere in conto:
 §7.5 ha promosso la mailbox a *unico punto di blocco di un task*, ma la sezione
 che la descriveva era rimasta quella di prima: quindici righe sul vincolo di
 layout imposto da `coda.vasm`. Qui c'è il ragionamento intero, e il codice che ne
-è uscito ([`kernel/messageHandling.vasm`](../linked/scheduler/kernel/messageHandling.vasm)).
+è uscito ([`rtos/servizi/mailbox/…/messageHandling.vasm`](../rtos/servizi/mailbox/impl/src/messageHandling.vasm)).
 
 ### 8.1 Una per task
 
@@ -928,8 +929,9 @@ Tre corollari:
 ### 9.5.1 Cosa resta aperto
 
 - **Il pool**: chiuso. Disegnato in **§10** e scritto — la taglia dei buffer sono
-  sei classi per potenze di due, il pool sta in `kernel/`, e il dimensionamento è
-  in §10.5.
+  sei classi per potenze di due, il pool è software di base per §8.4 (non legge
+  ciò che distribuisce) e vive in `generic/pool/` perché non usa lo scheduler,
+  e il dimensionamento è in §10.5.
 - **La motivazione della `send` raw va riscritta.** §8.5 la giustifica con «il
   gestore dei timeout è un mittente e gira nell'ISR del tick»: non è più vero. La
   raw serve ancora — all'ISR, per il messaggio di tick — ma con quella
@@ -945,7 +947,7 @@ fallire.
 
 Si è rotto sulla **cancellazione**. Il messaggio può essersi spostato da solo —
 il tick lo sfila dalla lista del gestore e lo mette in mailbox — e le liste di
-[`coda.vasm`](../linked/scheduler/kernel/coda.vasm) sono circolari con
+[`coda.vasm`](../generic/coda/impl/src/coda.vasm) sono circolari con
 sentinella, quindi **un nodo non sa a quale testa appartiene**: chi cancella deve
 nominarla. Da qui un campo `dove` con tre valori (`MSG_TIMER`, `MSG_MAILBOX`,
 `MSG_FUORI`) e la sua tabella di transizioni.
@@ -957,7 +959,7 @@ non è cosmetico:
 
 > Mailbox di A: `[tmo, m2]`, `count = 2`. A riceve `tmo`; resta `[m2]`,
 > `count = 1`, ma `tmo.fwd` vale ancora `m2` e `tmo.bwd` ancora `&mbox`
-> ([`coda.vasm:110-116`](../linked/scheduler/kernel/coda.vasm#L110-L116) non
+> ([`coda.vasm:110-116`](../generic/coda/impl/src/coda.vasm#L110-L116) non
 > azzera i link del nodo che sfila). A riceve anche `m2`: mailbox vuota,
 > `count = 0`. Poi A chiama `timeout_cancel` su un percorso di uscita comune;
 > `dove` dice ancora `MSG_MAILBOX`, quindi `prev = &mbox`, `next = m2` →
@@ -1125,7 +1127,19 @@ catena taglia→classe è aritmetica sull'argomento e l'unico atto sullo stato �
 una costante del blocco. Sono due wrapper sottili sopra le primitive già
 esistenti — **zero meccanismo nuovo**, come dice §9.5.1.
 
-Il pool sta in `kernel/`: non legge ciò che distribuisce.
+**Il pool ha diritto di cittadinanza nel software di base: non legge ciò che
+distribuisce** (§8.4). Fino al 06/09/2026 questa frase diceva «sta in
+`kernel/`», e la cartella non c'è più.
+
+> **Due criteri diversi, e non sono in conflitto.** §8.4 chiede *può essere
+> trattato come software di base?* — e la risposta per il pool è sì, perché non
+> ispeziona i payload. La ristrutturazione dell'albero (§3.24 dell'handoff)
+> chiede un'altra cosa: *usa lo scheduler?* — e la risposta è no, il pool non
+> nomina nemmeno un simbolo dell'HAL. È il secondo criterio a decidere la
+> **cartella**, ed è per questo che il pool sta in `generic/pool/` e non sotto
+> `rtos/`: si solleva in un progetto che di scheduler non ne ha. Il primo
+> criterio resta quello che decide di cosa ci si può **fidare**, ed è la domanda
+> che conta quando si discute il confine, non quando si sceglie una directory.
 
 ### 10.5 Il dimensionamento
 
@@ -1152,17 +1166,17 @@ taglia trova `POOL_VUOTO` invece di un caso speciale.
 
 | Componente | Destino |
 |---|---|
-| [`hal/machine.vasm`](../linked/scheduler/hal/machine.vasm) | **intatto** — il confine HAL/kernel sul contesto opaco regge |
-| [`kernel/coda.vasm`](../linked/scheduler/kernel/coda.vasm) | **esteso, non riscritto**: lo strato `_nc`, che è il corpo delle primitive contate (§8.3), e l'**invariante dei link** con l'esito in `r3` (§10.3). Resta il tipo coda usato da PCB, semafori, mutex, mailbox e free-list del pool |
-| [`kernel/messageHandling.vasm`](../linked/scheduler/kernel/messageHandling.vasm) | **nuovo, già scritto e testato** (§8): `send`, `send_s`, `receive` |
+| [`hal/…/machine.vasm`](../hal/impl/src/machine.vasm) | **intatto** — il confine HAL/kernel sul contesto opaco regge |
+| [`generic/coda/…/coda.vasm`](../generic/coda/impl/src/coda.vasm) | **esteso, non riscritto**: lo strato `_nc`, che è il corpo delle primitive contate (§8.3), e l'**invariante dei link** con l'esito in `r3` (§10.3). Resta il tipo coda usato da PCB, semafori, mutex, mailbox e free-list del pool |
+| [`rtos/servizi/mailbox/…/messageHandling.vasm`](../rtos/servizi/mailbox/impl/src/messageHandling.vasm) | **nuovo, già scritto e testato** (§8): `send`, `send_s`, `receive` |
 | `current` | **sopravvive** (§7.1) |
 | `ctx_init` | **NON eliminabile** (§8.7): il blocco volontario di `receive` ha bisogno di un frame di trap finto, quindi quella macchineria serve a regime e non solo al boot |
 | `kernel/scheduler.vasm` | **riscritto**: politica, meccanismo e transizioni di stato oggi stanno tutti dentro `scheduler` |
 | `TCB.state` | **resta**, con un quarto valore `PREEMPTED` (§7.2) |
 | `TCB` link | **una coppia sola**, `fwd`/`bwd` a offset 0 (§7.5) |
 | `ready` (coda singola) | **sostituita** dalla tabella dei PCB |
-| gestore dei timeout | **nuovo** (§9). Il **vettore di descrittori** con `timeout_arm`/`timeout_cancel` è **scritto e testato** in [`kernel/timeout.vasm`](../linked/scheduler/kernel/timeout.vasm), interfaccia in [`include/timeout.vinc`](../linked/scheduler/include/timeout.vinc): non legge nessun payload, quindi per §8.4 sta legittimamente in `kernel/`. La **scansione delle scadenze e la consegna** non sono scritte — vogliono il pool (§9.5.1), la commutazione volontaria (§8.7) e lo scheduler a priorità (§7.4) — e sono la parte che formatta il payload, quindi per §8.4 **non è kernel**: quando arriva, o il file si sposta o si divide |
-| pool di buffer | **nuovo, scritto e testato** (§10): [`kernel/pool.vasm`](../linked/scheduler/kernel/pool.vasm) + [`include/pool.vinc`](../linked/scheduler/include/pool.vinc). Sei classi per potenze di due sull'area dati (16..512), free-list a taglia fissa cioè una `TESTA` con i blocchi come nodi — `buf_alloc` è `dequeue_testa_s`, `buf_free` è `enqueue_coda_s`. Non legge ciò che distribuisce, quindi sta in `kernel/` |
+| gestore dei timeout | **nuovo** (§9). Il **vettore di descrittori** con `timeout_arm`/`timeout_cancel` è **scritto e testato** in [`generic/timeout/…/timeout.vasm`](../generic/timeout/impl/src/timeout.vasm), interfaccia in [`timeout/timeout.vinc`](../generic/timeout/interface/timeout/timeout.vinc): non legge nessun payload, quindi per §8.4 è legittimamente software di base (e vive in `generic/timeout/`, perché non usa lo scheduler). La **scansione delle scadenze e la consegna** non sono scritte — vogliono il pool (§9.5.1), la commutazione volontaria (§8.7) e lo scheduler a priorità (§7.4) — e sono la parte che formatta il payload, quindi per §8.4 **non è kernel**: quando arriva, o il file si sposta o si divide |
+| pool di buffer | **nuovo, scritto e testato** (§10): [`generic/pool/…/pool.vasm`](../generic/pool/impl/src/pool.vasm) + [`pool/pool.vinc`](../generic/pool/interface/pool/pool.vinc). Sei classi per potenze di due sull'area dati (16..512), free-list a taglia fissa cioè una `TESTA` con i blocchi come nodi — `buf_alloc` è `dequeue_testa_s`, `buf_free` è `enqueue_coda_s`. Non legge ciò che distribuisce, quindi per §8.4 è software di base; vive in `generic/pool/`, perché non usa lo scheduler |
 | `MESSAGGIO.dove`, lista delle scadenze | **mai esistiti fuori dalla proposta**: caduti con il modello precedente (§9.6) |
 
 ---
@@ -1198,7 +1212,7 @@ _trap_entry (HAL)  --call sched_dispatch-->  kernel  --jalr g_handler-->  ISR
 ```
 
 L'HAL nomina il kernel (`.extern sched_dispatch` in
-[`hal/machine.vasm`](../linked/scheduler/hal/machine.vasm)), e il kernel chiama
+[`hal/…/machine.vasm`](../hal/impl/src/machine.vasm)), e il kernel chiama
 l'ISR applicativa attraverso un puntatore che possiede lui (`g_handler` e
 `irq_install` stanno in `kernel/scheduler.vasm`). L'ISR non è un cliente che
 chiama HAL e kernel: è **chiamata dal** kernel, che si è messo in mezzo.

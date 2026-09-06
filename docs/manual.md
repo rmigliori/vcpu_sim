@@ -559,11 +559,12 @@ tcbA: .res TCB            ; riserva 16 byte; &tcbA in `li r1, tcbA`
 ```
 
 Le costanti sono locali al file; per condividerle basta un **header** incluso con
-`.include`, che dà una sola sorgente di verità: p.es. `linked/scheduler/include/types.vinc` con
-`.struct TCB` e gli stati, incluso sia dal kernel sia dall'app
-(`.include "../include/types.vinc"`, dal kernel; `.include "include/types.vinc"` dall'app, che sta
-allo stesso livello di `include/`). Come si risolve un nome, e perché una seconda
-inclusione dello stesso file non è un errore, sta in §4.2.2.
+`.include`, che dà una sola sorgente di verità: p.es.
+`rtos/scheduler/interface/tcb/tcb.vinc` con `.struct TCB` e gli stati, incluso
+sia dal kernel sia da chi lo usa — sempre con la stessa grafia,
+`.include "tcb/tcb.vinc"`, perché il nome porta il nome della libreria e si
+risolve via `-I`. Come si risolve un nome, e perché una seconda inclusione dello
+stesso file non è un errore, sta in §4.2.2.
 
 Le costanti sono **locali al file** (nessuna rilocazione) e vanno definite prima
 dell'uso in una direttiva `.equ`/`.field`; nel codice invece sono usabili anche
@@ -647,7 +648,7 @@ a mano e il commento fa da traccia leggibile del blocco:
 **Limite importante**: è un'analisi statica delle sole istruzioni scritte nel
 corpo, **non** vede cosa sporca una routine chiamata. Un registro il cui
 valore arriva da una `call` (come la `psw` nell'idioma `irq_save`/
-`irq_restore` in `linked/scheduler/kernel/coda.vasm`, dove la routine
+`irq_restore` in `generic/coda/impl/src/coda.vasm`, dove la routine
 chiamata scrive `r5` ma il corpo della `.proc` lo tratta solo in memoria) resta
 invisibile allo scanner e va ancora salvato a mano intorno alla `call`,
 esattamente come prima.
@@ -656,7 +657,7 @@ Questa sugar **non copre** i casi che non hanno la forma "corpo lineare, un
 solo esit" — e nel kernel/HAL sono la maggioranza:
 
 - procedure **foglia** (non chiamano nulla): non serve salvare r15 affatto —
-  vedi `ctx_save` in `linked/scheduler/hal/machine.vasm`;
+  vedi `ctx_save` in `hal/impl/src/machine.vasm`;
 - procedure che **non ritornano mai** (finiscono in `reti`, o incatenano una
   `call` finale che a sua volta non ritorna): non c'è un epilogo da generare —
   vedi `_trap_entry`, `ctx_restore`, `sched_dispatch`, `dispatcher`;
@@ -664,7 +665,7 @@ solo esit" — e nel kernel/HAL sono la maggioranza:
   un'etichetta a metà procedura): l'epilogo va scritto a mano perché non c'è un
   singolo punto in cui inserirlo automaticamente;
 - procedure con **un solo chiamante per costruzione**, non un'API generica
-  riusabile (es. `scheduler` in `linked/scheduler/kernel/scheduler.vasm`): anche
+  riusabile (es. `scheduler` in `rtos/scheduler/impl/src/scheduler.vasm`): anche
   quando la forma sarebbe lineare, restano scritte a mano per scelta, riservando
   `.proc` a contratti stabili e pensati per essere richiamati da più punti.
 
@@ -684,20 +685,33 @@ Un nome assoluto (che comincia con `/`) è usato così com'è. Il flag `-I` sta 
 sul percorso a file singolo sia su `asm`, nelle due forme abituali:
 
 ```bash
-./build/vcpu_sim -I linked/scheduler/include tests/test_include.vasm
-./build/vcpu_sim asm -Ilinked/scheduler/include tests/test_pool.vasm -o build/test_pool.vo
+./build/vcpu_sim -I rtos/scheduler/interface -I generic/pool/interface \
+                 -I generic/coda/interface tests/test_include.vasm
+./build/vcpu_sim asm -Igeneric/pool/interface -Igeneric/coda/interface \
+                 generic/test/test_pool.vasm -o build/test_pool.vo
 ```
 
-Grazie a `-I` la **dipendenza si scrive per nome** (`.include "pool.vinc"`)
-invece che per posizione (`.include "../linked/scheduler/include/pool.vinc"`), e
-lo stesso file di interfaccia ha una sola grafia in tutto il progetto invece di
+Grazie a `-I` la **dipendenza si scrive per nome** (`.include "pool/pool.vinc"`)
+invece che per posizione (`.include "../../generic/pool/interface/pool/pool.vinc"`),
+e lo stesso file di interfaccia ha una sola grafia in tutto il progetto invece di
 una per ogni cartella da cui viene incluso.
+
+> **Il nome porta il nome della libreria, e non è una convenzione estetica.**
+> Ogni libreria propaga come `-I` la propria cartella `interface/`, dentro cui
+> c'è una sottocartella che ripete il nome della libreria: il file si trova
+> solo scrivendo `"pool/pool.vinc"`, e solo se quel `-I` è arrivato. Un modulo
+> che include un header senza aver dichiarato la libreria che lo pubblica **non
+> assembla**. Prima tutti i `.vinc` stavano in una cartella sola e un `-I` li
+> serviva tutti, quindi la dichiarazione di dipendenza era un commento. Chi usa
+> il build CMake non scrive nessun `-I` a mano: li genera `INTERFACES` (§3.24
+> dell'handoff).
 
 **`.include` è idempotente.** Un file già entrato in questa unità di
 assemblaggio non viene incluso una seconda volta: la direttiva è un no-op
 silenzioso, esattamente come `#pragma once` in C. L'identità è quella del file
-sul disco (path canonicalizzato), non della stringa scritta: `"pool.vinc"` e
-`"../include/pool.vinc"` sono lo stesso file e vengono riconosciuti tali.
+sul disco (path canonicalizzato), non della stringa scritta: `"pool/pool.vinc"`
+e `"../generic/pool/interface/pool/pool.vinc"` sono lo stesso file e vengono
+riconosciuti tali.
 
 Non è un accessorio. I `.vinc` contengono **solo** costanti di compile-time,
 quindi una seconda inclusione fallirebbe con `duplicate constant`; è per questo
@@ -1297,7 +1311,7 @@ dall'uno all'altro. È un esempio a **file singolo** che tiene *tutto* insieme
 (kernel e applicazione) come riferimento didattico compatto; la versione §7.10 lo
 spezza in kernel riutilizzabile + demo e mostra un confine più realistico.
 
-### 7.10 HAL, kernel puro e preemption differita (`linked/scheduler/hal/` + `linked/scheduler/kernel/` + `linked/scheduler/scheduler_demo.vasm`)
+### 7.10 HAL, kernel puro e preemption differita (`hal/` + `generic/coda/` + `rtos/`)
 
 Il mini-kernel di §7.9 mescola software di base e applicazione in un solo file.
 Ora che i **puntatori a funzione** attraversano la toolchain (rilocazione
@@ -1306,10 +1320,10 @@ sistema reale (l'*arch/port* di Linux e FreeRTOS rispetto al core portabile):
 
 | File | Strato | Ruolo | Esporta |
 |------|--------|-------|---------|
-| `linked/scheduler/hal/machine.vasm` | **HAL** (hardware) | vettore di trap, save/restore contesto (`ctx_save`/`ctx_restore`), timer, `sti`, sezioni critiche | `_trap_entry`, `ctx_restore`, `ctx_init`, `timer_init`, `irq_arm`, `irq_enable`, `irq_save`, `irq_restore` |
-| `linked/scheduler/kernel/coda.vasm` | kernel | le 5 routine di coda (`list_head`) | `coda_init`, `enqueue_coda`, `enqueue_testa`, `dequeue_testa`, `remove_buffer` |
-| `linked/scheduler/kernel/scheduler.vasm` | **kernel puro** | orchestrazione + politica RR + dispatch, **nessun CSR** | `sched_dispatch`, `irq_install`, `request_preempt`, `ready`, `current` |
-| `linked/scheduler/scheduler_demo.vasm` | applicazione | boot (`main`) + due task + `timer_isr` + dati | `main` |
+| `hal/impl/src/machine.vasm` | **HAL** (hardware) | vettore di trap, save/restore contesto (`ctx_save`/`ctx_restore`), timer, `sti`, sezioni critiche | `_trap_entry`, `ctx_restore`, `ctx_init`, `timer_init`, `irq_arm`, `irq_enable`, `irq_save`, `irq_restore` |
+| `generic/coda/impl/src/coda.vasm` | generic | le 5 routine di coda (`list_head`) | `coda_init`, `enqueue_coda`, `enqueue_testa`, `dequeue_testa`, `remove_buffer` |
+| `rtos/scheduler/impl/src/scheduler.vasm` | **kernel puro** | orchestrazione + politica RR + dispatch, **nessun CSR** | `sched_dispatch`, `irq_install`, `request_preempt`, `ready`, `current` |
+| `rtos/demo/scheduler_demo.vasm` | applicazione | boot (`main`) + due task + `timer_isr` + dati | `main` |
 
 **HAL: l'unico strato che tocca l'hardware.** Il *vettore grezzo* di trap
 (`_trap_entry`), il salvataggio/ripristino dei registri (`ctx_save`/
@@ -1331,7 +1345,7 @@ valore andrebbe perso. È un vincolo strutturale della ISA (qualunque registro
 si scegliesse come link register avrebbe lo stesso problema), non un'eccezione
 di stile: per questo resta l'unico frammento non delegato a `ctx_save`.
 
-**Kernel puro, tre responsabilità nette.** `linked/scheduler/kernel/scheduler.vasm`
+**Kernel puro, tre responsabilità nette.** `rtos/scheduler/impl/src/scheduler.vasm`
 non contiene **nessuna** istruzione hardware, ed è a sua volta stratificato in tre
 routine che non si mischiano:
 
@@ -1367,11 +1381,15 @@ La pipeline di compilazione separata (o, in alternativa, un archivio `libkernel.
 con inclusione selettiva):
 
 ```bash
-I=-Ilinked/scheduler/include    # dove stanno i .vinc: serve a chi ha una .include
-./build/vcpu_sim asm    linked/scheduler/hal/machine.vasm      -o build/machine.vo
-./build/vcpu_sim asm $I linked/scheduler/kernel/coda.vasm      -o build/coda.vo
-./build/vcpu_sim asm $I linked/scheduler/kernel/scheduler.vasm -o build/scheduler.vo
-./build/vcpu_sim asm $I linked/scheduler/scheduler_demo.vasm   -o build/scheduler_demo.vo
+# Un -I per libreria: e' la cartella interface/ che ogni libreria pubblica, e
+# il nome incluso porta il nome della libreria ("coda/coda.vinc", "tcb/tcb.vinc").
+Ihal=-Ihal/interface
+Icoda=-Igeneric/coda/interface
+Itcb="-Irtos/scheduler/interface $Icoda"      # tcb.vinc include coda/coda.vinc
+./build/vcpu_sim asm $Ihal hal/impl/src/machine.vasm           -o build/machine.vo
+./build/vcpu_sim asm $Icoda generic/coda/impl/src/coda.vasm    -o build/coda.vo
+./build/vcpu_sim asm $Itcb rtos/scheduler/impl/src/scheduler.vasm -o build/scheduler.vo
+./build/vcpu_sim asm $Itcb rtos/demo/scheduler_demo.vasm       -o build/scheduler_demo.vo
 ./build/vcpu_sim ld build/scheduler_demo.vo build/scheduler.vo build/coda.vo \
                     build/machine.vo -o build/scheduler_demo.vx
 ./build/vcpu_sim run build/scheduler_demo.vx
