@@ -15,14 +15,21 @@
 > **I commit del 07/09 (§3.26, §3.27) sono solo in locale.** Il push si chiede,
 > non si fa.
 >
-> ### ▶▶ IN CORSO: scheduler e dispatcher
+> ### ⚠ IL WORKING TREE HA LAVORO NON COMMITTATO CHE NON LINKA
 >
-> **§3.28 ha fatto il primo passo** — `dispatcher(TCB)` con l'input esplicito
-> (§12.3) — e ha fissato la convenzione: **0 è la priorità più alta**. Restano
-> due cose prima di poter scrivere il modello a livelli: **quanti livelli**
-> (numero non deciso, dimensiona il vettore statico dei PCB) e il **PCB con la
-> `TESTA` annidata** invece che puntata, che §3 lasciava «da valutare» e che ora
-> è scrivibile.
+> `tcb.vinc` e `scheduler.vasm` hanno il **modello a PCB già scritto** — TCB a 20
+> byte, `PCB` con la `TESTA` annidata, otto livelli, `sched_init`, la scansione di
+> §4 — ma **`rtos/demo/scheduler_demo.vasm` cerca ancora `ready`**, che non esiste
+> più, quindi il link fallisce. Non è un lavoro a metà da recuperare: la demo
+> **va riscritta come il test di §3.28**, e ha senso farlo dopo `task_block`.
+>
+> **Il primo passo della prossima sessione è §8.8**, appena scritta nella
+> proposta: `hal_ctx_block` nell'HAL, poi `task_block`/`task_ready` nel kernel,
+> poi la demo diventa la simulazione a quattro task, e a quel punto il modello a
+> PCB si verifica davvero invece di stare fermo in un tree che non compila.
+>
+> §3.28 ha fissato anche la convenzione: **0 è la priorità più alta**, e
+> `dispatcher(TCB)` prende il TCB in input (§12.3).
 >
 > Cioè **§3 e §4 della proposta**, che è ciò che §3.26 aveva già indicato come
 > l'unico ordine possibile — mutex e semaforo sono corti *perché* tutto il resto
@@ -2503,6 +2510,92 @@ batteva 7, cioè con la convenzione opposta a quella appena decisa. Ora `T` sta 
 **minimo** invece che un massimo. La dimostrazione usa le parole («almeno
 prioritario quanto») invece dei simboli, perché il verso dei confronti è
 esattamente la cosa che si sbaglia rileggendo.
+
+#### Il modello a PCB è scritto, e ha rivelato cosa manca
+
+Nel working tree (**non committato: la demo non linka**, vedi in fondo) ci sono
+già `TCB` a 20 byte con `pcb`, `PCB` con la `TESTA` **annidata**, `N_LIVELLI 8`,
+`PREEMPTED`, la tabella degli otto PCB scritti **uno per uno**, `sched_init` e la
+scansione di §4 con lo slot che batte la coda.
+
+Otto livelli, e il numero è una scelta di **costo**: la scansione deve restare
+lineare perché **nell'ISA non c'è nessuna istruzione di conteggio bit**
+(verificato sul repertorio), quindi una bitmap dei livelli non vuoti vorrebbe
+comunque un loop di shift senza diventare O(1), più l'onere di tenerla coerente.
+Un livello vuoto costa 12 cicli, quindi il caso peggiore è 8 × 12 = 96 — sotto il
+costo di un context switch (~120). A 32 livelli lo dominerebbe di tre volte.
+
+#### Il round-robin fra pari, e un errore mio da non ripetere
+
+Scrivendo la scansione ho concluso che il modello «non prevede» la rotazione fra
+task di pari priorità, perché al tick l'uscente va nello slot e lo slot batte la
+coda: due pari non si alternerebbero mai. **La conclusione era sbagliata**, e
+l'utente l'ha corretta: SCHED_RR *è* uno scheduler a priorità statiche, la
+rotazione fra pari non è un'alternativa al modello ma una sua parte, e serve
+contro lo stallo. Non era «il modello non lo prevede»: era che **manca**.
+
+Ne segue che §2 fa la distinzione a metà. «Lasciata controvoglia» contiene due
+casi con destini opposti:
+
+| il task… | finisce | perché |
+|---|---|---|
+| **preemptato da uno più prioritario** | `PCB.preemptato` | non ha consumato il turno: non deve pagarlo |
+| ha **esaurito il turno** | in fondo a `PCB.coda` | il turno l'ha avuto: tocca a un pari |
+| ha **ceduto** o si è **bloccato** | coda / altrove | come già scritto |
+
+**E non serve un quanto**, che è la seconda correzione dell'utente dopo che
+avevo proposto un contatore nel TCB: **il tick È il quanto**. Il timer scandisce
+già il tempo, quindi non serve un campo per misurare ciò che il periodo del timer
+misura da sé. La distinzione diventa una domanda su **chi** ha fatto rientrare nel
+kernel — il tick (turno finito, in coda) o un altro evento che ha svegliato
+qualcuno di più prioritario (interrotto senza colpa, nello slot). Nessuna
+struttura nuova, e §2 resta com'è scritta.
+
+#### Il test: la simulazione, e perché il vecchio era un giocattolo
+
+`97 64` verificava che due contatori arrivassero a due numeri: di uno scheduler
+non dimostra niente, e i numeri erano **fotografati**, non derivati. Lo scenario
+deciso dall'utente:
+
+- un **idle** che incrementa un contatore e non rilascia mai la CPU;
+- **A** e **B** alla massima priorità *applicativa*: A arma un timeout e ogni 10
+  scadenze manda un messaggio a B; B ne manda uno a C;
+- **C**, priorità immediatamente inferiore, conta i messaggi ricevuti.
+
+Il pregio non è avere più task: è che **il valore atteso diventa derivabile**.
+Con un tick ogni N cicli e M tick di simulazione, il contatore di C dev'essere
+M/10 — si calcola prima di eseguire. Copre quattro proprietà distinte: la
+precedenza per priorità (C gira solo quando A e B dormono); la terminazione della
+scansione (l'idle gira solo se nessun altro può, e il suo contatore **misura la
+CPU non usata**, quindi un valore troppo basso dice che il kernel si prende tempo
+che non gli spetta); lo slot di §2 (C preemptato riprende da dove stava); e la
+catena timeout → mailbox → mailbox, cioè §8, §9 e §10 insieme sotto lo scheduler
+vero — cosa che non è mai girata nello stesso programma.
+
+Due aggiustamenti annotati: **A e B non possono stare al livello 0**, dove sta il
+gestore dei timeout (§9.2, che ci sta per non far dipendere la latenza da quanti
+timeout sono armati) — quindi 0 al gestore, 1 ad A e B, 2 a C, 7 all'idle. E
+**manca la rotazione**: A e B sono pari ma non competono mai, si passano il
+testimone e dormono. Servirebbe un **D** accanto a C, anche lui a contare: se il
+tick manda l'uscente in fondo alla coda, i due contatori devono venire quasi
+uguali, e quel *quasi* è la proprietà.
+
+#### Il blocco vero: `task_block` non esiste
+
+Il test si regge tutto sul blocco — A che aspetta una scadenza, B e C un
+messaggio — e **`task_ready`/`task_block` esistono solo come stub dentro
+`test_mailbox.vasm`**. È il debito di §8.7, ed è lo stesso schema di ieri: il
+mutex non era scrivibile perché mancavano le priorità, il test non lo è perché
+manca il blocco.
+
+**Il disegno è stato deciso e scritto in §8.8 della proposta** (sezione nuova):
+`hal_ctx_block(r1 = indirizzo di ripresa) -> r1 = contesto`, che salva i registri
+come `ctx_save` ma scrive `epc` = l'indirizzo ricevuto e `psw` = `PSW_IE`. I due
+sostituti non sono espedienti — senza istruzione interrotta l'`epc` **è** un
+indirizzo di ritorno, e `IE:1` discende da §12.5 perché si torna a un task. E
+l'indirizzo di ripresa è un **argomento**, non un dedotto: fra `receive`,
+`task_block` e l'HAL ci sono due livelli di `r15` e quello corrente al push è
+quello sbagliato.
 
 #### Cosa resta prima di §3/§4
 

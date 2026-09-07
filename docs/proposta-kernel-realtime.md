@@ -772,13 +772,65 @@ specifiche di richiesta e di risposta.
 
 ### 8.7 Cosa resta aperto
 
-- **`task_ready` / `task_block`.** I due simboli che il kernel deve fornire sono
-  `.extern` con il contratto scritto, ma `task_block` non può esistere finché non
-  si decide come si entra nel kernel da un task: **non c'è trap software
-  nell'ISA** (verificato: solo `sti`/`cli`/`reti`/`sethandler`/`settimer`), quindi
-  serve una routine HAL che fabbrichi un frame di trap finto. Il che dice anche
-  che `ctx_init` **non è eliminabile** come ipotizza §11: quella macchineria serve
-  a regime, non solo al boot.
+- ~~**`task_ready` / `task_block`**~~ — **DECISA il 07/09/2026**, vedi §8.8 qui
+  sotto: il blocco sincrono si fa con un frame costruito a mano, e l'indirizzo di
+  ripresa è un **argomento**. Resta vero, e va tenuto: `ctx_init` **non è
+  eliminabile** come ipotizza §11 — quella macchineria serve a regime, non solo
+  al boot, ed è il modello da cui il blocco discende.
+
+### 8.8 Come un task entra nel kernel: il context switch **sincrono** — DECISA (07/09/2026)
+
+`task_block` è l'unico commutatore di contesto **sincrono** del sistema: non lo
+provoca un'interruzione, lo chiede il task stesso. E non c'è trap software
+nell'ISA (verificato: solo `sti`/`cli`/`reti`/`sethandler`/`settimer`), quindi il
+frame va costruito a mano.
+
+Il modello esiste già ed è `ctx_init`, che fabbrica dal nulla il contesto di un
+task mai girato scrivendo **solo** `epc` e `psw`: `reti` non sa distinguerlo da
+uno vero. Serve l'analogo per un task che **sta girando** — stesso formato,
+registri veri, `epc` da un'altra sorgente:
+
+> **`hal_ctx_block(r1 = indirizzo di ripresa) -> r1 = contesto opaco`**
+> Salva `r15` e `r1..r13` esattamente come `ctx_save`, ma al posto di `mfepc`
+> scrive l'indirizzo ricevuto e al posto di `mfepsw` scrive `PSW_IE`.
+
+**I due sostituti non sono arbitrari, ed è la ragione per cui questa forma è
+quella giusta e non un espediente.** `mfepc`/`mfepsw` hanno senso solo dentro una
+trap: qui non c'è nessuna istruzione interrotta, c'è una `call` da cui si
+tornerà, quindi l'`epc` **è** un indirizzo di ritorno. E la `psw` è `IE:1` senza
+bisogno di leggerla, per l'argomento di §12.5: l'uniformità «IE=1» vale ogni
+volta che si torna a un **task**, e un task che si blocca riprenderà come task.
+Ciò che §12.5 ha dovuto smontare era il caso in cui si torna a codice di
+*kernel*, che qui non si dà.
+
+**L'indirizzo di ripresa è un argomento, non un dedotto**, ed è il punto in cui
+il disegno si gioca: `receive` chiama `task_block`, che chiama l'HAL — due
+livelli di `r15`, e quello corrente al momento del push non è quello giusto. La
+ripresa dev'essere il ritorno dentro `receive`, cioè l'`r15` che `task_block` ha
+ricevuto. Passarlo esplicitamente è la stessa scelta fatta per `dispatcher(TCB)`
+(§12.3), e per lo stesso motivo: un valore che viaggia in un registro dichiarato
+invece che per convenzione implicita.
+
+Il resto discende e non ha niente di nuovo:
+
+1. `task_block` scrive il contesto in `current.sp` e **salta allo scheduler**,
+   non al dispatcher — è il caso 2 di §12.4, «qualcosa è cambiato e la scelta va
+   rifatta». `IE` è già 0 perché `receive` è in sezione critica;
+2. scansione dei livelli, dispatcher, `ctx_restore`, `reti`;
+3. quando qualcuno rimette in ready quel TCB e lo scheduler lo sceglie, `reti`
+   atterra dentro `receive`, che ristabilisce la propria sezione critica da sola
+   — come il suo contratto già dichiara.
+
+`task_ready(r1 = &TCB)` è corta in confronto: accoda il TCB nella coda del suo
+livello (`TCB.pcb`, e `&pcb == &pcb.coda`) e, se quel livello batte `current`,
+chiama `request_preempt`. Il confronto è una `blt` sui due `TCB.pcb`, resa
+possibile dall'invariante di §7.3 col verso fissato in §4.
+
+> **Simmetria che vale la pena vedere:** `ctx_init(sp, entry)` costruisce il
+> frame di un task che non è **mai** girato, `hal_ctx_block(ripresa)` quello di
+> un task che sta girando **adesso**. Stesso formato, stessa `psw`, due sorgenti
+> diverse per l'`epc` — e in mezzo `ctx_save`, che lo stesso frame lo riempie
+> leggendo i CSR. Tre modi di produrre un contesto, uno solo di riprenderlo.
 - **`receive` legge `current`** direttamente: il modulo dei messaggi conosce una
   variabile dello scheduler. Va dietro il hook.
 - **L'`halt`** sul secondo ricevente: fermare la macchina è una politica, e non è
