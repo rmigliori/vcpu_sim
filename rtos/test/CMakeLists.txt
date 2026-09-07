@@ -47,3 +47,28 @@ vasm_program(test_scheduler OBJECTS t_scheduler LINK lib_kernel)
 
 vasm_check(scheduler MODE DUMPS PROGRAM test_scheduler
            EXPECT "74 5 10 59")
+
+# ---------------------------------------------------------------------------
+#  test_block — il blocco volontario: un task che dorme davvero.
+#
+#  Primo uso vero di task_block/hal_ctx_block (§8.8). E' il passo piu' piccolo
+#  che li mette in gioco -- due task, una mailbox, l'ISR che consegna -- prima
+#  della simulazione completa di §3.28, che ne metterebbe cinque insieme.
+#
+#  E' anche il primo programma che linka le DUE librerie: lib_messaggi per la
+#  mailbox e lib_kernel per lo scheduler. Da quando lib_messaggi non nomina piu'
+#  lib_kernel nel proprio LINK, e' il programma a comporre le due meta' -- ed e'
+#  la ragione per cui quella separazione andava fatta.
+#
+#  cntW e' DERIVABILE (i tick pari prima dell'8: 2, 4, 6 -> 3); cntI dipende dai
+#  cicli, e cio' che conta
+#  e' che sia > 0: e' la CPU libera misurata mentre un task DORME, non mentre il
+#  sistema non e' ancora partito.
+# ---------------------------------------------------------------------------
+vasm_object(t_block SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_block.vasm
+                    INTERFACES vinc_coda vinc_tcb vinc_mailbox)
+
+vasm_program(test_block OBJECTS t_block LINK lib_messaggi lib_kernel)
+
+vasm_check(block MODE DUMPS PROGRAM test_block
+           EXPECT "3 28")

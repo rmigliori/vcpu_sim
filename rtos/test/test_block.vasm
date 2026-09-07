@@ -1,0 +1,178 @@
+; rtos/test/test_block.vasm — il BLOCCO VOLONTARIO: un task che dorme davvero.
+;
+; Primo uso vero di task_block/hal_ctx_block (§8.8), che fino al 07/09/2026
+; erano codice scritto e mai eseguito. E' il passo piu' piccolo che li mette in
+; gioco: due task, una mailbox, e l'ISR del tick che consegna.
+;
+; --- PERCHE' QUESTO PRIMA DELLA SIMULAZIONE COMPLETA ---
+; Il test di §3.28 -- timeout, due mailbox in catena, quattro task -- metterebbe
+; in gioco cinque cose nuove insieme. Il pezzo piu' rischioso e' il frame
+; costruito a mano: se e' sbagliato non da' un test rosso, da' corruzione che si
+; manifesta altrove. Qui c'e' un percorso solo, e se rompe si sa dove guardare.
+;
+; --- COSA VERIFICA ---
+;   W  livello 2  fa receive in loop sulla propria mailbox e conta i messaggi.
+;                 Con la mailbox vuota si BLOCCA: task_block costruisce il suo
+;                 contesto a mano, lo scheduler passa ad altri, e W riprende
+;                 dentro receive quando la send lo sveglia.
+;   I  livello 7  l'IDLE.
+;
+;   1. IL FRAME SINCRONO regge: W riprende esattamente dopo la call a
+;      task_block, dentro receive, e continua a contare. Se l'epc o la psw
+;      fossero sbagliati non tornerebbe affatto, o tornerebbe con IE=0 e il
+;      sistema si fermerebbe al primo blocco.
+;   2. IL RISVEGLIO ATTRAVERSA IL KERNEL: la send trova il TCB in lista, lo
+;      sfila e chiama task_ready, che lo accoda al livello 2 e chiede la
+;      preemption perche' 2 batte 7. Nessuno di questi passi e' saltabile.
+;   3. LA CPU LIBERA E' MISURATA SUL SERIO: cntI conta mentre W DORME, che e' la
+;      forma vera della statistica -- in test_scheduler l'idle girava solo
+;      perche' il sistema non era ancora partito.
+;
+; cntW e' DERIVABILE, e va derivato con attenzione: l'ISR manda sui tick PARI e
+; l'8o non manda, ferma. I tick pari prima dell'8 sono 2, 4 e 6, quindi W ne
+; riceve TRE. (La prima stesura diceva "8/2 = 4": il valore atteso di un test si
+; sbaglia esattamente cosi', contando un bordo che non c'e'.)
+
+.include "tcb/tcb.vinc"
+.include "coda/coda_api.vinc"
+.include "mailbox/mailbox.vinc"
+
+  .data
+
+cntW:   .word 0        ; messaggi ricevuti da W
+cntI:   .word 0        ; giri dell'idle: la CPU libera, quella vera
+ticks:  .word 0
+
+mbW:    .res MAILBOX   ; la mailbox di W. Nasce da coda_init: una TESTA vuota
+                       ; non e' fatta di zeri (fwd = bwd = &se stessa)
+msg:    .space 4       ; un messaggio: due link piu' due parole di payload che
+                       ; nessuno legge (§8.4). Si RIUSA a ogni giro, ed e' lecito
+                       ; perche' dequeue_testa_nc azzera i link del nodo che
+                       ; sfila: quando W l'ha prelevato, il buffer e' di nuovo
+                       ; accodabile e l'invariante fwd == bwd == 0 vale
+
+tcbW:   .res TCB
+tcbI:   .res TCB
+
+stackW: .space 64
+stackW_top:
+stackI: .space 64
+stackI_top:
+
+  .text
+
+  .global main
+  .extern current
+  .extern pcb2
+  .extern pcb7
+  .extern sched_init
+  .extern send
+  .extern receive
+  .extern irq_install
+  .extern sched_isr_exit
+  .extern ctx_init
+  .extern timer_init
+  .extern irq_arm
+  .extern irq_enable
+
+; ==========================================================================
+;  BOOT. W parte a freddo e si blocca quasi subito: e' il primo programma in cui
+;  il sistema passa spontaneamente all'idle invece di arrivarci perche' non era
+;  ancora partito.
+; ==========================================================================
+main:
+  li r14, stackW_top       ; PRIMA di ogni call (sched_init non e' foglia)
+  call sched_init
+
+  li r1, mbW
+  call coda_init           ; la mailbox vuota: count = 0, lista su se stessa
+
+  ; --- I (idle, livello 7): READY, in coda ---
+  li r1, stackI_top
+  li r2, taskI
+  call ctx_init
+  li r3, tcbI
+  sw r1, TCB.sp(r3)
+  li r4, pcb7
+  sw r4, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r1, r4               ; &pcb == &pcb.coda
+  mov r2, r3
+  call enqueue_coda
+
+  ; --- W (livello 2): parte a freddo, quindi RUNNING e fuori da ogni coda ---
+  li r3, tcbW
+  li r4, pcb2
+  sw r4, TCB.pcb(r3)
+  li r1, current
+  sw r3, 0(r1)             ; current = W: receive accodera' QUESTO TCB
+  li r5, RUNNING
+  sw r5, TCB.state(r3)
+
+  li r1, timer_isr
+  call irq_install
+  call irq_arm
+  li r1, 500
+  call timer_init
+  call irq_enable
+  li r5, taskW
+  jr r5                    ; cold start di W
+
+; ==========================================================================
+;  W: riceve e conta. La receive si blocca da sola quando la mailbox e' vuota,
+;  e da fuori non si vede la differenza fra "c'era un messaggio" e "ho dormito
+;  due tick" -- che e' esattamente il punto del blocco.
+; ==========================================================================
+taskW:
+  li r1, mbW
+  call receive             ; r2 = messaggio (o blocco fino alla consegna)
+  li r3, cntW
+  lw r4, 0(r3)
+  addi r4, r4, 1
+  sw r4, 0(r3)
+  j taskW
+
+taskI:
+  li r1, cntI
+loopI:
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  j loopI
+
+; ==========================================================================
+;  timer_isr(r1 = contesto opaco): manda un messaggio a W ogni due tick.
+;
+;  Usa la send RAW e non send_s, ed e' il caso per cui la raw esiste (§8.5): qui
+;  gli interrupt sono gia' disabilitati, e proteggere di nuovo sarebbe sbagliato
+;  oltre che inutile. La send fa il resto da sola -- trova il TCB di W in lista,
+;  lo sfila, mette il messaggio al suo posto e chiama task_ready, che accoda W al
+;  livello 2 e chiede la preemption perche' 2 batte il 7 dell'idle.
+; ==========================================================================
+timer_isr:
+  mov r6, r1               ; il contesto: r1 sta per essere sporcato
+  li r1, ticks
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+
+  li r3, 8
+  blt r2, r3, isr_manda
+  li r1, cntW
+  lw r5, 0(r1)
+  dumps r5                 ; DERIVABILE: i tick pari prima dell'8 -> 2, 4, 6 = 3
+  li r1, cntI
+  lw r5, 0(r1)
+  dumps r5                 ; > 0: la CPU libera mentre W dorme
+  halt
+
+isr_manda:
+  li r3, 2
+  rem r4, r2, r3
+  bne r4, r0, isr_go       ; solo sui tick pari
+  li r1, mbW
+  li r2, msg
+  call send                ; raw: la consegna sveglia W e chiede la preemption
+isr_go:
+  mov r1, r6
+  j sched_isr_exit

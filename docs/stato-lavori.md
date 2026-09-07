@@ -23,10 +23,15 @@
 > (slot), se arriva al suo livello senza trovare nessuno era fine turno (in
 > fondo alla coda). Il tick è il quanto. `ctest` 23/23.
 >
-> **Resta il punto 3**: la simulazione completa di §3.28 — A e B che si mandano
-> messaggi via timeout, C che li conta, l'idle che misura la CPU libera *dai
-> task che dormono*. È il primo programma in cui §8, §9, §10 e lo scheduler
-> girerebbero insieme, ed è anche il primo uso vero di `task_block`.
+> **Il primo passo del punto 3 è fatto** (§3.31): `test_block` — un task che si
+> blocca su una mailbox vuota, l'ISR che gli consegna, e l'idle che gira
+> *mentre lui dorme*. `task_block` e `hal_ctx_block` non sono più codice mai
+> eseguito. **24 test.**
+>
+> Restano i due passi grossi: la **catena A→B→C** (due salti di mailbox, e la
+> preemption provocata da un risveglio fra livelli diversi), poi il **gestore
+> dei timeout come task**, che è l'unico pezzo che tira dentro anche il pool
+> (§10) e per questo va per ultimo.
 >
 > ### (storico) LO SCHEDULER A PRIORITÀ GIRA (§3.29)
 >
@@ -3070,6 +3075,7 @@ Le sequenze attese, per chi deve leggerle senza aprire il build:
 | `pool` — sei classi, alloc/free (§3.15) | `10 4 0 0 9 0 32 3 2 0 0 4 4 4 3 0 0 1 4` | `generic/test/` |
 | `timeout` — vettore di descrittori (§3.13) | `3 0 150 1 2 0 0 0 3 0 1` | `generic/test/` |
 | `mailbox` — send/receive con blocco (§3.10) | `0 1 2 11 22 0 33 0 0` | `rtos/test/` |
+| `block` — un task che DORME, e la CPU libera vera | `3 28` | `rtos/test/` |
 | `proc` — `.proc`/`.endproc` (§3.6) | `100 200 300` | `CMakeLists.txt` |
 | `include` — `-I` e idempotenza (§3.16, §3.24) | `20 16 16 512 1` | `CMakeLists.txt` |
 | `epsw` — `mfepsw`/`mtepsw` (§3.19) | `1 0 0 7` | `CMakeLists.txt` |
