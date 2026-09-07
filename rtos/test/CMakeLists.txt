@@ -72,3 +72,37 @@ vasm_program(test_block OBJECTS t_block LINK lib_messaggi lib_kernel)
 
 vasm_check(block MODE DUMPS PROGRAM test_block
            EXPECT "3 28")
+
+# ---------------------------------------------------------------------------
+#  test_catena — la catena A -> B -> C: due salti di mailbox fatti da TASK.
+#
+#  Primo dei due passi che restano del test di §3.28 (l'altro e' il gestore dei
+#  timeout come task, che tira dentro anche il pool). Mette in gioco tre pezzi
+#  che test_block non toccava:
+#
+#    - send_s, la send da contesto di task con IE=1. In test_block manda solo
+#      l'ISR, quindi il wrapper non era mai stato eseguito;
+#    - il ramo di task_ready che NON preempta: A sveglia B, che gli sta sotto,
+#      e la blt sui puntatori ai PCB prende per la prima volta l'altro ramo;
+#    - la scansione di task_block che attraversa livelli POPOLATI (pcb1 -> pcb2
+#      -> pcb3), invece di trovare solo l'idle sotto al bloccato.
+#
+#  I primi tre numeri sono DERIVABILI e devono venire UGUALI: tre tick pari
+#  prima dell'8 (2, 4, 6), quindi tre messaggi entrano nella catena e tre devono
+#  uscirne. Sono tenuti separati per salto perche' se uno si perdesse direbbero
+#  DOVE, mentre un contatore solo direbbe soltanto che qualcosa non torna.
+#  Il quarto dipende dai cicli: e' la CPU libera con tre task che dormono.
+#
+#  Il periodo del timer e' 2000 cicli e non i 500 di test_block, perche' un giro
+#  di catena costa quattro commutazioni: a 800 cicli cntC viene 0 -- l'ultimo
+#  anello muore di fame mentre i primi due tengono il passo, che e' la
+#  saturazione di un sistema a priorita' statiche in miniatura. Il commento in
+#  cima al test riporta la soglia misurata.
+# ---------------------------------------------------------------------------
+vasm_object(t_catena SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_catena.vasm
+                     INTERFACES vinc_coda vinc_tcb vinc_mailbox)
+
+vasm_program(test_catena OBJECTS t_catena LINK lib_messaggi lib_kernel)
+
+vasm_check(catena MODE DUMPS PROGRAM test_catena
+           EXPECT "3 3 3 778")
