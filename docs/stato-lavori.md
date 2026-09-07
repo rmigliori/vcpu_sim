@@ -12,10 +12,11 @@
 
 > ### ▶ RIPRENDI DA QUI (08/09/2026 o dopo)
 >
-> `ctest` **26/26**. Fino a `90c29fd` (§3.32) tutto è committato e **pushato** su
-> `origin/master`; §3.33 (`rtos/gestore_timeout/`, `timeout_scaduto`,
-> `test_gestore`) e §3.34 (`tools/traccia.py`) sono **solo in locale**.
-> Il push si chiede comunque, non si fa.
+> `ctest` **26/26**, working tree pulito, **tutto pushato** su `origin/master`
+> fino a `2c97bf6` — cioè tutta la giornata del 07/09, §3.34 compresa. Fuori
+> resta solo l'aggiornamento di questo riquadro, che non può nominare il proprio
+> hash. Il push l'ha chiesto l'utente a fine sessione, come deve essere: resta
+> **una richiesta da rifare ogni volta**.
 >
 > ### ▶▶ §3.28 È CHIUSA: LA SIMULAZIONE COMPLETA GIRA
 >
@@ -393,17 +394,19 @@ Branch `master`, pubblicato su `git@github.com:rmigliori/vcpu_sim.git` (remote
 `origin`, HTTPS + credential helper `git-credential-libsecret` configurato,
 push senza prompt).
 
-**Pushato fino a `c890c22`, cioè tutto il 07/09 fino a §3.31 compresa.** Prima
-era `798ae67`; il 06/09/2026 `origin/master` era passato da `e2955ff` a
+**Pushato fino a `2c97bf6`, cioè tutto il 07/09.** Tre push in giornata, tutti e
+tre chiesti dall'utente: `90c29fd` (§3.32, la catena), poi `2c97bf6` a fine
+sessione con §3.33, §3.34 e la riscrittura di §6. Prima era `c890c22`, e prima
+ancora `798ae67`; il 06/09/2026 `origin/master` era passato da `e2955ff` a
 `1806f5a` — **venti commit**, cioè §3.18-§3.23 del 05/09 più i dodici del 06/09
 che sono §3.24, §3.25 e la loro documentazione — poi altri due di handoff fino a
 `798ae67`. Ogni push **l'ha chiesto l'utente** («forse è ora di fare push?»),
 come deve essere.
 
-**Fuori da `origin/master` c'è solo §3.32** (`rtos/test/test_catena.vasm`, la
-sua voce nel `CMakeLists.txt` di `rtos/test/` e l'aggiornamento di questo
-documento). Il paragrafo che qui diceva «i commit del 07/09 sono committati e
-non pushati» valeva per §3.26 ed è stato superato dal push successivo.
+**Fuori da `origin/master` non c'è più niente** salvo il commit che aggiorna
+questo paragrafo. I paragrafi che qui hanno detto, in momenti diversi della
+giornata, «i commit del 07/09 sono solo in locale» valevano ognuno per il
+proprio pezzo, e sono stati superati dal push successivo.
 
 Perché quel momento e non un altro, visto che se ne è discusso: i commit della
 ristrutturazione sono **verdi uno per uno**, non solo alla fine — ognuno chiude
