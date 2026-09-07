@@ -1,8 +1,8 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **7 settembre 2026** (§3.27 il blocco `LINK` e
-> `MAILBOX.count`; §3.26 §13.8 sciolta, il taglio sulla mailbox,
-> `enqueue_dopo_nc` e `coda_api.vinc`)
+> Ultimo aggiornamento: **7 settembre 2026** (§3.30 lo scheduler completo:
+> priorità, slot, rotazione e blocco; §3.29 il test nuovo; §3.28 il dispatcher
+> con input; §3.27 il blocco `LINK` e `MAILBOX.count`)
 > Scopo: fotografia dello stato per riprendere il lavoro a distanza di giorni
 > senza dover ricostruire il contesto.
 
@@ -2465,6 +2465,81 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `TESTA` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.30 Il blocco, la rotazione, e il criterio che non serviva (07/09/2026, quinta parte)
+
+**Lo scheduler è completo**: priorità, slot, rotazione fra pari e blocco
+volontario. `ctest` 23/23. Erano i punti 1, 2 e 4 dei quattro elencati come
+percorso critico; resta il 3, la simulazione.
+
+#### `hal_ctx_block`, e la separazione che l'ha resa possibile
+
+§8.8 eseguita: l'HAL scrive `epc` (l'indirizzo di ripresa) ed `epsw` (`PSW_IE`),
+poi chiama **`ctx_save` invariata**, che li rilegge come farebbe in una trap. Il
+frame è quello di sempre, prodotto da una sorgente diversa.
+
+Ma `task_block` non era scrivibile così com'era il kernel, e la ragione è
+istruttiva: **`scheduler` metteva sempre l'uscente nello slot**. Un task che si
+blocca è già accodato dove verrà ritrovato, quindi lo slot lo avrebbe rimesso in
+gioco — due posizioni per una coppia di link sola (§7.5). La correzione è §2
+alla lettera, «dove va l'uscente lo decide chi lo toglie dalla CPU»: lo scheduler
+non lo tocca più, e le tre destinazioni le conosce solo chi provoca l'uscita.
+
+Effetto collaterale **misurato**, non previsto: `74 29 59` → `76 30 59`. Il TCB
+uscente era già in `r1` e lo scheduler lo rileggeva da `current` con `li`+`lw` —
+lo stesso difetto che §12.3 aveva tolto per il dispatcher, ricomparso un piano
+sopra.
+
+`task_ready` è il primo posto in cui la convenzione di §4 e l'invariante di §7.3
+pagano **insieme**: il confronto di priorità è una `blt` sui puntatori ai PCB,
+senza indici da convertire e senza leggere nessun numero.
+
+#### La rotazione: il criterio emerge dalla scansione
+
+La distinzione di §2 sembrava richiedere di sapere *chi* avesse fatto rientrare
+nel kernel — il tick o un evento. **Non serve**:
+
+> La scansione trova qualcuno **prima** del livello dell'uscente → esiste un più
+> prioritario, era preemption vera, l'uscente non ha consumato il turno: **slot**.
+> La scansione arriva al suo livello senza trovare nessuno sopra → l'uscente è
+> ancora il più prioritario, quindi nessuno gli ha tolto niente: era il tick,
+> cioè fine turno. **In fondo alla sua coda**, e tocca a un pari.
+
+È SCHED_RR, e senza quanto perché **il tick è il quanto**. Nasce `sched_preempt`
+(politica completa per un'uscita involontaria); `scheduler` resta la scansione
+nuda per chi non ha un uscente da mettere via, cioè `task_block`.
+
+**Un ramo che vale il 34%**: se al proprio livello non c'è nessun pari, l'uscente
+non si muove. Ruotare con nessuno sono due `call` sprecate — la coda
+restituirebbe lui stesso dopo averlo accodato — ed è il caso *normale* in un
+sistema ben dimensionato. Senza quel test di vacuità i contatori scendevano del
+34%.
+
+#### `lib_messaggi` non sceglie più il kernel
+
+Il primo link dopo `task_block` è fallito con `duplicate global`, ed era il
+momento previsto da giorni nel `CMakeLists` della mailbox: `test_mailbox` **si
+fingeva il kernel** e ora il kernel esiste. La soluzione non è stata far usare al
+test il kernel vero — resta un test **unitario**, il cui stub di `task_block`
+esegue la send che lo sveglia invece di commutare — ma togliere `lib_kernel` dal
+`LINK` di `lib_messaggi`: una libreria non deve scegliere quale implementazione
+del kernel useranno i suoi clienti. I due simboli restano `.extern`, cioè il
+contratto, e chi costruisce il programma decide chi li fornisce. `test_mailbox`
+ora si finge il kernel **fino in fondo**: definisce anche `current`.
+
+#### Il test cresce a quattro numeri, e uno vale più degli altri
+
+`74 5 10 59` — H, M, **D**, idle. D è **pari di M**, ed è ciò che rende la
+rotazione verificata invece che scritta:
+
+> Senza rotazione `cntD` varrebbe **esattamente zero**: M finirebbe nello slot a
+> ogni tick, lo slot batte la coda, e D non uscirebbe mai.
+
+Che `cntD != cntM` non è un difetto: i due turni non sono simmetrici — il primo
+si porta dietro l'attivazione di entrambi — e ciò che il test asserisce è che il
+**testimone sia passato**, non che le fette siano uguali.
 
 ---
 
