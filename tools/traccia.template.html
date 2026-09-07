@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Traccia temporale — __PROGRAMMA__</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground:   #f2f4f2;
+    --surface:  #fbfcfb;
+    --sunk:     #e7eae7;
+    --ink:      #16201c;
+    --ink-2:    #4d5a55;
+    --ink-3:    #7d8a85;
+    --rule:     #d3d9d5;
+    --rule-2:   #c0c8c3;
+    --accent:   #1c6470;
+
+    --c-gestore: 176,116,22;
+    --c-A:       47,105,158;
+    --c-idle:    134,148,139;
+    --c-ISR:     162,54,74;
+    --c-boot:    104,113,122;
+
+    --hatch-op: .50;
+    --fill-op:  .16;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:  #0e1416;
+      --surface: #151d20;
+      --sunk:    #0a1012;
+      --ink:     #e4ece9;
+      --ink-2:   #9fb0ab;
+      --ink-3:   #6f807b;
+      --rule:    #24312f;
+      --rule-2:  #33423f;
+      --accent:  #58b3bf;
+
+      --c-gestore: 226,163,68;
+      --c-A:       106,163,214;
+      --c-idle:    128,146,136;
+      --c-ISR:     216,105,124;
+      --c-boot:    132,143,152;
+
+      --hatch-op: .55;
+      --fill-op:  .20;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:  #0e1416;
+    --surface: #151d20;
+    --sunk:    #0a1012;
+    --ink:     #e4ece9;
+    --ink-2:   #9fb0ab;
+    --ink-3:   #6f807b;
+    --rule:    #24312f;
+    --rule-2:  #33423f;
+    --accent:  #58b3bf;
+
+    --c-gestore: 226,163,68;
+    --c-A:       106,163,214;
+    --c-idle:    128,146,136;
+    --c-ISR:     216,105,124;
+    --c-boot:    132,143,152;
+
+    --hatch-op: .55;
+    --fill-op:  .20;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 40px 28px 80px;
+    display: flex;
+    flex-direction: column;
+    gap: 52px;
+  }
+
+  h1, h2, h3 { font-family: "IBM Plex Sans Condensed", ui-sans-serif, sans-serif; text-wrap: balance; margin: 0; }
+  h1 { font-size: 33px; font-weight: 700; letter-spacing: -.015em; line-height: 1.15; }
+  h2 { font-size: 21px; font-weight: 600; letter-spacing: -.005em; }
+  h3 { font-size: 15px; font-weight: 600; }
+  p  { margin: 0; max-width: 66ch; }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px; font-weight: 500;
+    letter-spacing: .14em; text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .lede { color: var(--ink-2); }
+  code, .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  code { font-size: .9em; background: var(--sunk); padding: .1em .35em; border-radius: 2px; }
+
+  /* ---------- masthead ---------- */
+  header { display: flex; flex-direction: column; gap: 14px; }
+  .head-rule { height: 2px; background: var(--ink); opacity: .85; }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+  }
+  .stat { background: var(--surface); padding: 13px 15px; display: flex; flex-direction: column; gap: 3px; }
+  .stat .v {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 22px; font-weight: 500; letter-spacing: -.02em;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat .k { font-size: 11.5px; color: var(--ink-3); letter-spacing: .03em; }
+
+  /* ---------- sezioni ---------- */
+  section { display: flex; flex-direction: column; gap: 18px; }
+  .sec-head { display: flex; flex-direction: column; gap: 7px; border-top: 1px solid var(--rule-2); padding-top: 14px; }
+
+  /* ---------- diagramma ---------- */
+  .scope { overflow-x: auto; }
+  .scope-in { min-width: 720px; }
+
+  .axis {
+    position: relative; height: 19px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 10px; color: var(--ink-3);
+    margin-left: 74px;
+  }
+  .axis .t { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+
+  .lanes { border-top: 1px solid var(--rule-2); border-bottom: 1px solid var(--rule-2); }
+  .lane { display: flex; align-items: stretch; border-bottom: 1px solid var(--rule); }
+  .lane:last-child { border-bottom: 0; }
+
+  .lane-key {
+    width: 74px; flex: none;
+    padding: 7px 10px 7px 0;
+    display: flex; flex-direction: column; gap: 1px;
+    align-items: flex-end; text-align: right;
+  }
+  .lane-key .n { font-family: "IBM Plex Sans Condensed", sans-serif; font-weight: 600; font-size: 13.5px; }
+  .lane-key .p {
+    font-family: "IBM Plex Mono", monospace; font-size: 9.5px;
+    letter-spacing: .06em; color: var(--ink-3); text-transform: uppercase;
+  }
+
+  .track { position: relative; flex: 1; min-height: 34px; background: var(--sunk); }
+  .track .tickline { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--rule-2); }
+
+  .band { position: absolute; top: 6px; bottom: 6px; border-radius: 1px; min-width: 1px; }
+  .band.task   { background: rgb(var(--c)); }
+  .band.kernel {
+    background-color: rgba(var(--c), var(--fill-op));
+    background-image: repeating-linear-gradient(45deg,
+      rgba(var(--c), var(--hatch-op)) 0 1.5px, transparent 1.5px 5px);
+  }
+  .band:hover, .band:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: center; font-size: 12.5px; color: var(--ink-2); }
+  .legend .item { display: flex; align-items: center; gap: 7px; }
+  .swatch { width: 26px; height: 12px; border-radius: 1px; }
+  .swatch.task { background: rgb(var(--c)); }
+  .swatch.kernel {
+    background-color: rgba(var(--c), var(--fill-op));
+    background-image: repeating-linear-gradient(45deg,
+      rgba(var(--c), var(--hatch-op)) 0 1.5px, transparent 1.5px 5px);
+  }
+
+  .readout {
+    font-family: "IBM Plex Mono", monospace; font-size: 12px;
+    background: var(--surface); border: 1px solid var(--rule);
+    padding: 9px 12px; min-height: 40px; color: var(--ink-2);
+    display: flex; flex-wrap: wrap; gap: 4px 18px; align-items: center;
+  }
+  .readout b { color: var(--ink); font-weight: 600; }
+
+  /* ---------- budget ---------- */
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: start; }
+  @media (max-width: 760px) { .cols { grid-template-columns: 1fr; gap: 34px; } }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { text-align: right; padding: 7px 4px; border-bottom: 1px solid var(--rule); }
+  th { font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-3); font-weight: 500; }
+  td.name, th.name { text-align: left; }
+  td.num { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; }
+  tr.tot td { border-bottom: 0; border-top: 2px solid var(--rule-2); font-weight: 600; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: rgb(var(--c)); margin-right: 7px; vertical-align: baseline; }
+
+  .rt { display: flex; flex-direction: column; gap: 5px; }
+  .rt-row { display: grid; grid-template-columns: 148px 1fr 52px; gap: 10px; align-items: center; font-size: 12.5px; }
+  .rt-row .rn { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rt-bar { height: 9px; background: var(--sunk); position: relative; }
+  .rt-bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); opacity: .72; }
+  .rt-row .rv { font-family: "IBM Plex Mono", monospace; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+
+  .note { border-left: 3px solid var(--rule-2); padding-left: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .note p { font-size: 13.5px; color: var(--ink-2); }
+  .kicker { font-weight: 600; color: var(--ink); }
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">vcpu_sim · __PROGRAMMA__ · <span id="ntick"></span> tick</div>
+    <h1>Chi gira, e da quando a quando</h1>
+    <div class="head-rule"></div>
+    <p class="lede">La traccia ciclo per ciclo della simulazione completa: il gestore dei
+    timeout a priorità&nbsp;0, il suo cliente a&nbsp;1, l'idle a&nbsp;7. Il proprietario non
+    sta nel trace — <code>current</code> vive in memoria — quindi è dedotto: cambia solo
+    quando il <span class="mono">pc</span> entra nel corpo di un task o dell'ISR, e tutto
+    ciò che sta in mezzo è kernel a carico di chi girava.</p>
+    <div class="stats" id="stats"></div>
+  </header>
+
+  <section>
+    <div class="sec-head">
+      <div class="eyebrow">Il diagramma</div>
+      <h2>Le corsie sono i livelli di priorità</h2>
+      <p class="lede">Dall'alto verso il basso, in ordine di precedenza. Una preemption si
+      legge come un salto verso l'alto: al tick l'ISR prende la macchina, sveglia il gestore,
+      e il controllo scende di corsia in corsia solo quando chi sta sopra si blocca.</p>
+    </div>
+    <div class="legend" id="legend"></div>
+    <div class="scope">
+      <div class="scope-in">
+        <div class="axis" id="axis"></div>
+        <div class="lanes" id="lanes"></div>
+      </div>
+    </div>
+    <div class="readout" id="readout"><span>Passa sopra una fascia per vedere le routine che ci girano dentro.</span></div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <div class="eyebrow">Zoom</div>
+      <h2>Un tick, fascia per fascia</h2>
+      <p class="lede">Lo stesso diagramma su un solo periodo, dove la sequenza si legge per
+      intero: trap, ISR, gestore che alloca e consegna, il cliente che conta e riarma,
+      e l'idle che si prende tutto il resto.</p>
+    </div>
+    <div class="scope">
+      <div class="scope-in">
+        <div class="axis" id="zaxis"></div>
+        <div class="lanes" id="zlanes"></div>
+      </div>
+    </div>
+    <div class="readout" id="zseq"></div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <div class="eyebrow">Il bilancio</div>
+      <h2>Dove vanno i cicli</h2>
+    </div>
+    <div class="cols">
+      <div>
+        <h3 style="margin-bottom:10px">Per proprietario</h3>
+        <table id="tab-own">
+          <thead><tr>
+            <th class="name">chi</th><th>nel task</th><th>nel kernel</th><th>totale</th><th>quota</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+        <p style="font-size:13px;color:var(--ink-2);margin-top:14px">
+          Il gestore spende il <b id="q-gest"></b> del proprio tempo <em>fuori</em> dal
+          corpo del task: il suo ciclo è quattro chiamate — <code>receive</code>,
+          <code>buf_alloc</code>, <code>timeout_scaduto</code>, <code>send_s</code> — e il
+          lavoro sta tutto lì dentro.
+        </p>
+      </div>
+      <div>
+        <h3 style="margin-bottom:10px">Per routine</h3>
+        <div class="rt" id="rt"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <div class="eyebrow">Come leggerlo</div>
+      <h2>Tre cose che il diagramma dice e i contatori no</h2>
+    </div>
+    <div class="note">
+      <p><span class="kicker">Il costo del cambio di contesto è misurabile a colpo d'occhio.</span>
+      <code>ctx_save</code> e <code>ctx_restore</code> insieme fanno <b id="n-ctx"></b> cicli
+      su <b id="n-tot"></b>, cioè il <b id="q-ctx"></b> della corsa, su <b id="n-sw"></b>
+      commutazioni. È il numero che §3.28 stimava a ~120 cicli l'una per giustificare gli otto
+      livelli di priorità: la stima regge.</p>
+
+      <p><span class="kicker">L'idle non «conta il doppio»: ha fasce più lunghe.</span>
+      L'anomalia annotata in §3.29 — l'idle che conta più degli altri per tick — qui si vede
+      per quello che è: il suo contatore gira in fasce da migliaia di cicli senza una sola
+      chiamata, mentre gli altri task alternano poche istruzioni proprie a lunghi tratti di
+      kernel. Non è il kernel che si prende tempo che non gli spetta.</p>
+
+      <p><span class="kicker">L'attribuzione è dedotta, e va saputo.</span>
+      Il trace non dice chi sia <code>current</code>: il proprietario di una fascia è l'ultimo
+      corpo di task in cui il <span class="mono">pc</span> è entrato. È corretto perché una
+      libreria si esegue sempre per conto di chi l'ha chiamata, ma vuol dire che le fasce
+      tratteggiate sono un'inferenza — solida, non una lettura.</p>
+    </div>
+  </section>
+
+</div>
+
+<script>
+const D = /*__DATI__*/{};
+
+const ORDINE = [
+  {k:"ISR",     n:"ISR",     p:"trap"},
+  {k:"gestore", n:"gestore", p:"prio 0"},
+  {k:"A",       n:"A",       p:"prio 1"},
+  {k:"idle",    n:"idle",    p:"prio 7"},
+  {k:"boot",    n:"boot",    p:"pre-tick"}
+];
+const N = new Intl.NumberFormat("it-IT");
+
+/* ---------- masthead ---------- */
+const own = {};
+for (const [o, l, c] of D.own) { (own[o] ||= {task:0, kernel:0})[l] += c; }
+const gran = D.own.reduce((s, r) => s + r[2], 0);
+const rtMap = Object.fromEntries(D.rt);
+const ctx = D.ctx.ctx_save + D.ctx.ctx_restore;
+const nsw = Math.round((rtMap["ctx_restore"] || 0) / 84);
+
+document.getElementById("ntick").textContent = D.tick.length;
+document.getElementById("stats").innerHTML = [
+  ["cicli simulati", N.format(D.fine)],
+  ["tick di timer", D.tick.length],
+  ["fasce di esecuzione", D.fasce.length],
+  ["commutazioni", nsw],
+  ["CPU libera", Math.round(100 * (own.idle.task + own.idle.kernel) / gran) + "%"]
+].map(([k, v]) => `<div class="stat"><span class="v">${v}</span><span class="k">${k}</span></div>`).join("");
+
+/* ---------- legenda ---------- */
+document.getElementById("legend").innerHTML =
+  ORDINE.map(o => `<span class="item" style="--c:var(--c-${o.k})">
+      <span class="swatch task"></span><span>${o.n}</span></span>`).join("") +
+  `<span class="item" style="--c:var(--c-idle);margin-left:auto">
+      <span class="swatch kernel"></span><span>tratteggio = kernel e librerie per conto suo</span></span>`;
+
+/* ---------- diagramma ---------- */
+function disegna(axisEl, lanesEl, b0, b1, tickLabel) {
+  const span = b1 - b0;
+  const pc = x => ((x - b0) / span) * 100;
+
+  axisEl.innerHTML = D.tick
+    .filter(t => t >= b0 && t <= b1)
+    .map((t, i) => `<span class="t" style="left:${pc(t)}%">${tickLabel(t, i)}</span>`)
+    .join("");
+
+  lanesEl.innerHTML = ORDINE.map(o => {
+    const bande = D.fasce.filter(f => f[2] === o.k && f[1] > b0 && f[0] < b1);
+    if (!bande.length) return "";
+    const rules = D.tick.filter(t => t > b0 && t < b1)
+      .map(t => `<span class="tickline" style="left:${pc(t)}%"></span>`).join("");
+    const bb = bande.map(f => {
+      const a = Math.max(f[0], b0), z = Math.min(f[1], b1);
+      const dett = f[4].map(([r, c]) => `${r} ${c}`).join(" · ");
+      return `<span class="band ${f[3]}" tabindex="0"
+        style="left:${pc(a)}%;width:${Math.max(pc(z) - pc(a), 0.08)}%"
+        data-o="${o.n}" data-l="${f[3]}" data-b="${f[0]}" data-e="${f[1]}"
+        data-r="${dett.replace(/"/g, "&quot;")}"></span>`;
+    }).join("");
+    return `<div class="lane" style="--c:var(--c-${o.k})">
+        <div class="lane-key"><span class="n">${o.n}</span><span class="p">${o.p}</span></div>
+        <div class="track">${rules}${bb}</div>
+      </div>`;
+  }).join("");
+}
+
+disegna(document.getElementById("axis"), document.getElementById("lanes"),
+        0, D.fine, (t, i) => "t" + (i + 1));
+
+/* ---------- readout ---------- */
+const readout = document.getElementById("readout");
+function mostra(el) {
+  const d = el.dataset;
+  readout.innerHTML =
+    `<span><b>${d.o}</b> · ${d.l === "task" ? "codice del task" : "kernel per suo conto"}</span>` +
+    `<span>cicli <b>${N.format(d.b)} → ${N.format(d.e)}</b> (${N.format(d.e - d.b)})</span>` +
+    `<span>${d.r}</span>`;
+}
+document.addEventListener("mouseover", e => {
+  const b = e.target.closest(".band"); if (b) mostra(b);
+});
+document.addEventListener("focusin", e => {
+  const b = e.target.closest(".band"); if (b) mostra(b);
+});
+
+/* ---------- zoom: il tick con piu' fasce ---------- */
+let best = 0, bestN = -1;
+for (let i = 0; i < D.tick.length - 1; i++) {
+  const n = D.fasce.filter(f => f[1] > D.tick[i] && f[0] < D.tick[i + 1]).length;
+  if (n > bestN) { bestN = n; best = i; }
+}
+const z0 = D.tick[best] - 60, z1 = D.tick[best + 1] + 40;
+disegna(document.getElementById("zaxis"), document.getElementById("zlanes"),
+        z0, z1, t => "tick @ " + N.format(t));
+
+document.getElementById("zseq").innerHTML =
+  D.fasce.filter(f => f[1] > z0 && f[0] < z1)
+    .filter(f => f[1] - f[0] >= 25)
+    .map(f => `<span><b>${f[2]}</b> ${N.format(f[1] - f[0])} <span style="color:var(--ink-3)">${f[4][0][0]}</span></span>`)
+    .join("");
+
+/* ---------- bilancio ---------- */
+const tb = document.querySelector("#tab-own tbody");
+tb.innerHTML = ORDINE
+  .filter(o => own[o.k])
+  .sort((a, b) => (own[b.k].task + own[b.k].kernel) - (own[a.k].task + own[a.k].kernel))
+  .map(o => {
+    const t = own[o.k].task, k = own[o.k].kernel, s = t + k;
+    return `<tr style="--c:var(--c-${o.k})">
+      <td class="name"><span class="dot"></span>${o.n}</td>
+      <td class="num">${N.format(t)}</td>
+      <td class="num">${N.format(k)}</td>
+      <td class="num">${N.format(s)}</td>
+      <td class="num">${(100 * s / gran).toFixed(1)}%</td></tr>`;
+  }).join("") +
+  `<tr class="tot"><td class="name">totale</td>
+    <td class="num">${N.format(D.own.filter(r => r[1] === "task").reduce((s, r) => s + r[2], 0))}</td>
+    <td class="num">${N.format(D.own.filter(r => r[1] === "kernel").reduce((s, r) => s + r[2], 0))}</td>
+    <td class="num">${N.format(gran)}</td><td class="num">100%</td></tr>`;
+
+document.getElementById("q-gest").textContent =
+  Math.round(100 * own.gestore.kernel / (own.gestore.task + own.gestore.kernel)) + "%";
+
+const rtVis = D.rt.filter(([n]) => n !== "loopI").slice(0, 11);
+const rtMax = rtVis[0][1];
+document.getElementById("rt").innerHTML = rtVis.map(([n, c]) =>
+  `<div class="rt-row"><span class="rn" title="${n}">${n}</span>
+     <span class="rt-bar"><i style="width:${100 * c / rtMax}%"></i></span>
+     <span class="rv">${N.format(c)}</span></div>`).join("") +
+  `<div class="rt-row" style="margin-top:6px;color:var(--ink-3)">
+     <span class="rn">loopI (idle)</span>
+     <span class="rt-bar"><i style="width:100%;opacity:.28"></i></span>
+     <span class="rv">${N.format(rtMap["loopI"])}</span></div>`;
+
+document.getElementById("n-ctx").textContent = N.format(ctx);
+document.getElementById("n-tot").textContent = N.format(D.fine);
+document.getElementById("q-ctx").textContent = (100 * ctx / D.fine).toFixed(1) + "%";
+document.getElementById("n-sw").textContent = nsw;
+</script>
+
+</body>
+</html>

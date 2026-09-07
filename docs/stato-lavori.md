@@ -13,8 +13,8 @@
 > ### ▶ RIPRENDI DA QUI (08/09/2026 o dopo)
 >
 > `ctest` **26/26**. Fino a `90c29fd` (§3.32) tutto è committato e **pushato** su
-> `origin/master`; §3.33 — `rtos/gestore_timeout/`, `timeout_scaduto`,
-> `rtos/test/test_gestore.vasm` e questo aggiornamento — è **solo in locale**.
+> `origin/master`; §3.33 (`rtos/gestore_timeout/`, `timeout_scaduto`,
+> `test_gestore`) e §3.34 (`tools/traccia.py`) sono **solo in locale**.
 > Il push si chiede comunque, non si fa.
 >
 > ### ▶▶ §3.28 È CHIUSA: LA SIMULAZIONE COMPLETA GIRA
@@ -43,6 +43,9 @@
 >   che attraversa livelli popolati — e, misurando, ha mostrato la
 >   **saturazione**: a 800 cicli di periodo l'ultimo anello muore di fame senza
 >   che nessuna asserzione scatti;
+> - **§3.34** `tools/traccia.py`, la **traccia temporale**: chi gira e in quale
+>   intervallo, e quanto di quel tempo è kernel per suo conto. Chiude il debito
+>   aperto da §3.29, che adesso ha una risposta;
 > - **§3.33** `rtos/gestore_timeout/`, il **primo task di sistema** del progetto
 >   (cartella nuova, decisa dall'utente), e `test_gestore`: §8, §9 e §10 girano
 >   per la prima volta insieme sotto lo scheduler vero. **§3.28 è chiusa.** E
@@ -72,10 +75,9 @@
 >   in fondo a quella sezione dice quali e dove;
 > - `SEMAFORO.risorse` è **deciso nella forma** (un `.equ` derivato da
 >   `TESTA.count`) e non scritto, perché il semaforo non ha ancora codice;
-> - **la traccia temporale** nel simulatore: oggi non sappiamo spiegare perché
->   l'idle conti circa il doppio degli altri task per tick (§3.29), e senza uno
->   strumento che dica *chi gira e da quando a quando* ogni numero resta
->   un'osservazione invece di una misura;
+> - ~~**la traccia temporale**~~ — **FATTA** (§3.34): `tools/traccia.py` dice chi
+>   gira e in quale intervallo, e la domanda di §3.29 ha una risposta (l'idle non
+>   conta il doppio, ha **fasce** molto più lunghe);
 > - il **linker/locator** (`.align`, `.section`, regioni e mappa) e la domanda
 >   sul **contesto vettoriale** nel context switch: entrambi in coda a §3.27, ed
 >   entrambi fuori dal kernel ma rilevanti.
@@ -117,6 +119,7 @@
 >               messaggio (formato) + i suoi test
 > rtos/         cio' che lo USA: scheduler, servizi/mailbox,
 >               gestore_timeout (il task di sistema), demo, test
+> tools/        strumenti di analisi: la traccia temporale (§3.34)
 > tests/        i tre test che verificano il SIMULATORE, non l'RTOS
 > src/ include/ il simulatore in C
 > ```
@@ -2482,6 +2485,75 @@ il contratto scritto.
 
 ---
 
+### 3.34 La traccia temporale: chi gira, e da quando a quando (07/09/2026, nona parte)
+
+Il debito che §3.29 aveva aperto — «senza uno strumento che dica *chi gira e da
+quando a quando* ogni numero resta un'osservazione invece di una misura» — è
+chiuso. **`tools/traccia.py`**, cartella nuova al primo livello decisa
+dall'utente, produce una pagina HTML autosufficiente:
+
+```bash
+python3 tools/traccia.py out/vasm/test_gestore.vx      # -> out/traccia.html
+```
+
+`out/` è già ignorato da git, quindi la pagina non sporca il working tree; il
+modello del disegno è `tools/traccia.template.html`, che si modifica senza
+toccare lo script.
+
+#### Il proprietario non è nel trace: si deduce
+
+Il simulatore stampa `pc` e ciclo per ogni istruzione, e basta — `current` vive
+in memoria. La regola è una sola: **il proprietario cambia solo quando il `pc`
+entra nel corpo di un task o dell'ISR**, e tutto ciò che sta in mezzo è kernel a
+carico di chi girava. È corretto perché una libreria si esegue sempre per conto
+di chi l'ha chiamata, ma resta un'inferenza, e la pagina lo dice.
+
+Due cose hanno richiesto più cura di quanto sembrasse:
+
+- **`nm` non basta.** Pubblica i soli `.global`, e con quelli `ctx_save` — che
+  globale non è — finisce contata dentro `_trap_entry`, e i rami dello scheduler
+  dentro il simbolo che li precede. Ogni modulo si ri-assembla con
+  `--emit-expanded` per averne le etichette, e la base di ciascuno si ricava da
+  un simbolo globale presente sia nel listato sia nel programma linkato;
+- **dove finisce un corpo.** Deve fermarsi al primo simbolo **pubblicato** che lo
+  segue, non a fine modulo. Il caso che lo dimostra è `gestore_tick`: sta nello
+  stesso modulo di `gestore_task` ma gira **dentro l'ISR**, e attribuendolo al
+  gestore spostava 1.800 cicli dalla corsia sbagliata. Le etichette interne
+  (`loopI`, `gestore_drena`, `isr_manda`) sono locali e restano dentro il corpo,
+  che è esattamente la distinzione che serve.
+
+L'applicazione, a differenza delle librerie, non si può indovinare: **ogni test
+definisce `main` a indice 0**, quindi prenderle tutte darebbe a tutte la stessa
+base. Si ricava dal nome del `.vx`, che è l'unico legame affidabile.
+
+#### Cosa si vede, che i contatori non dicevano
+
+| | `test_gestore` |
+|---|---|
+| idle | 27.187 (54,7%) |
+| gestore | 11.268 (22,7%) |
+| ISR | 5.609 (11,3%) |
+| A | 4.291 (8,6%) |
+| boot | 1.375 (2,8%) |
+
+- **il cambio di contesto è il 9,7%**: `ctx_save` + `ctx_restore` fanno 4.806
+  cicli su 49.730, in 29 commutazioni, cioè **~166 cicli l'una**. §3.28 ne aveva
+  stimati ~120 per giustificare gli otto livelli di priorità — l'ordine di
+  grandezza regge, la stima era ottimista di un terzo;
+- **la domanda di §3.29 ha una risposta**: l'idle non «conta il doppio», ha
+  **fasce molto più lunghe**. Il suo contatore gira in tratti da migliaia di
+  cicli senza una sola chiamata, mentre gli altri task alternano poche istruzioni
+  proprie a lunghi tratti di kernel. Non è il kernel che si prende tempo che non
+  gli spetta;
+- **il gestore spende il 97% del proprio tempo fuori dal proprio corpo** (353
+  cicli in `gestore_task`, 11.268 in tutto): il suo ciclo sono quattro chiamate,
+  e il lavoro sta dentro quelle.
+
+Funziona anche su `test_catena` (96 fasce, i tre anelli a 13,8/13,4/11,7%) e su
+`test_block` (50 fasce, l'ISR al 46,6% perché il programma è corto e il boot pesa).
+
+---
+
 ### 3.33 Il gestore dei timeout è un task, e §9.2 aveva un test che non poteva funzionare (07/09/2026, ottava parte)
 
 **26 test. §3.28 è chiusa**: la simulazione completa gira. `test_gestore` è il
@@ -2798,8 +2870,14 @@ che è la forma vera; qui la si ottiene facendo partire il sistema vuoto.
 
 `76 30 59`: i tre numeri dipendono dai cicli, e ciò che il test asserisce è che
 siano **tutti e tre > 0 e prodotti in fasi disgiunte**. Il loro rapporto — l'idle
-conta ~30 per tick contro i ~15-18 degli altri — **non è spiegato**, ed è da
-guardare quando ci sarà la traccia temporale.
+conta ~30 per tick contro i ~15-18 degli altri — era **non spiegato**, ed è da
+guardare con la traccia temporale.
+
+> **Risposto il 07/09/2026 (§3.34).** Non conta il doppio perché gira il doppio:
+> ha **fasce molto più lunghe**. Il suo contatore avanza in tratti da migliaia di
+> cicli senza una sola chiamata, mentre gli altri task alternano poche istruzioni
+> proprie a lunghi tratti di kernel — che è la stessa cosa detta al contrario:
+> l'idle è l'unico task il cui lavoro *sia* il proprio corpo.
 
 #### Due bug trovati eseguendo, che il ragionamento non aveva visto
 
