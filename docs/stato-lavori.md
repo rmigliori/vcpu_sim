@@ -1,6 +1,7 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **6 settembre 2026** (§3.24 l'albero, §3.25 il ceiling)
+> Ultimo aggiornamento: **7 settembre 2026** (§3.26 §13.8 sciolta, il taglio
+> sulla mailbox, `enqueue_dopo_nc` e `coda_api.vinc`)
 > Scopo: fotografia dello stato per riprendere il lavoro a distanza di giorni
 > senza dover ricostruire il contesto.
 
@@ -8,10 +9,32 @@
 
 ## 0. STATO ATTUALE — DA DOVE SI RIPRENDE
 
-> ### ▶ RIPRENDI DA QUI (07/09/2026 o dopo)
+> ### ▶ RIPRENDI DA QUI (08/09/2026 o dopo)
 >
-> **Working tree pulito, tutto committato e tutto pushato.** Il 06/09/2026 ha
-> avuto due metà, e servono a cose diverse:
+> **Working tree pulito e tutto committato, ma NON pushato:** i commit del
+> 07/09 (§3.26) sono solo in locale. Il push si chiede, non si fa.
+>
+> Il **07/09/2026** (§3.26) ha sciolto la decisione che bloccava tutto e ha
+> scritto i primi due pezzi. In una riga ciascuno:
+>
+> - **§13.8 non si sceglieva, si deduceva.** Il timeout è una consegna in
+>   mailbox (§9, decisa, con §10 implementato sotto), un task accodato a un
+>   semaforo non è nella propria mailbox, dunque **`sem_wait` non ha timeout**.
+>   La seconda uscita di §13.8 non era un ramo alternativo: era una riapertura
+>   di §9;
+> - **la mailbox è tagliata**: un solo TCB in attesa, il contatore si incrementa
+>   per i messaggi. Invariante `count >= -1`;
+> - **il ceiling non ha una direzione conservativa** — per eccesso è inversione
+>   di priorità dichiarata come politica, ed è per questo che §13.5 deve
+>   esistere;
+> - **codice**: `enqueue_dopo_nc` (§13.6) e `coda_api.vinc`, l'interfaccia che
+>   pubblica anche le entry col contratto di chiamata;
+> - **scoperta che ferma il mutex**: le priorità non esistono ancora. Vedi sotto.
+>
+> Niente delle decisioni è ancora nella proposta: l'elenco di cosa riportare, e
+> dove, è la tabella in fondo a §3.26.
+>
+> Il 06/09/2026 aveva avuto due metà, e servono a cose diverse:
 >
 > - **§3.24 — l'albero**, dieci commit. `ctest` 23/23 e gli stessi identici
 >   numeri a ogni commit, verificati confrontando i `.vx` byte per byte;
@@ -35,21 +58,27 @@
 >
 > #### I due fronti sono indipendenti, e non hanno la stessa forma
 >
-> **A) Il kernel — una decisione, e sta davanti a tutto il resto.**
+> **A) Il kernel — e il prossimo passo NON è §13.**
 >
-> Non è lavoro incrementale: finché non è presa, scrivere codice di semaforo
-> significa scrivere sopra una decisione aperta.
+> La decisione che bloccava è presa (§13.8, sopra). Il mutex e il semaforo però
+> non sono scrivibili, e il motivo è a monte di §13:
 >
-> > Il semaforo **blocca**, quindi «la mailbox è l'unico punto di blocco di un
-> > task» (§1, §7.5 della proposta) non è più vero — e con esso cade il modo in
-> > cui i timeout raggiungono chi aspetta: il messaggio di scadenza arriva in
-> > una casella su cui nessuno è in ascolto.
+> > **Le priorità non esistono ancora.** `TCB` è `{fwd, bwd, sp, state}` senza
+> > nessun campo di priorità, `ready:` è **una sola** coda, lo scheduler è
+> > round-robin, e `PCB` non compare in nessun sorgente. Il modello di §3 e §4
+> > della proposta è specificato e **non costruito**.
 >
-> Le due uscite sono in **§13.8**, e non costano uguale: o `sem_wait` non ha
-> timeout (e allora esistono attese non limitabili, che è ciò che §7.5 voleva
-> evitare), oppure il timeout diventa «sgancia il task da dove sta e
-> restituiscigli un esito» — e in quel caso **il pool resta senza clienti**, è
-> oggi l'unico ed è nato per quello. C'è una formula pronta in §6.
+> `mutex_lock` *è* «scrivi la priorità del task corrente al ceiling» e
+> `prio_prec` *è* «la priorità di prima»: non c'è niente da scrivere e niente da
+> salvare. Ferma anche il semaforo, perché l'inserimento ordinato di §13.6 deve
+> confrontare le priorità dei TCB accodati.
+>
+> Quindi: **§3/§4 prima** — i PCB, una coda per livello, il campo nel TCB, e la
+> politica dello scheduler da round-robin a «il livello non vuoto più alto».
+> Mutex e semaforo dopo, e a quel punto sono corti.
+>
+> Che `task_ready`/`task_block` esistano solo come stub in `test_mailbox.vasm`
+> **non** è un blocco per il mutex: quel debito la mailbox l'ha già preso.
 >
 > Dietro a questa, e solo dopo: **§8.7**, la commutazione volontaria, da cui
 > dipendono i due debiti noti (il dispatcher che deve prendere il TCB in input,
@@ -78,9 +107,15 @@
 >    Preesistente, ma rende faticoso leggere proprio gli errori che il nuovo
 >    vincolo sui `-I` produrrà.
 >
-> **Tutto pushato**, questo aggiornamento compreso (§2): il 06/09/2026 sono
-> usciti §3.18-§3.25 e la loro documentazione. Il push l'ha chiesto l'utente,
-> come deve essere — e resta **una richiesta da rifare ogni volta**.
+> **C) La proposta è indietro rispetto alle decisioni.** Tutto §3.26 è
+> verbalizzato solo qui: la tabella in fondo a quella sezione dice cosa va
+> riportato in `proposta-kernel-realtime.md` e dove. È lavoro di sola scrittura,
+> indipendente da (A) e (B), e conviene farlo prima che la memoria di come ci si
+> è arrivati sbiadisca.
+>
+> **Pushato fino a `798ae67`** (06/09). I commit del 07/09 — §3.26, il codice e
+> questo aggiornamento — sono **solo in locale**. Il push l'ha sempre chiesto
+> l'utente, come deve essere, e resta **una richiesta da rifare ogni volta**.
 
 Il **30/08/2026** ci sono state **tre sessioni**, non una:
 §3.9 (il TCB e i timeout), §3.10 (la mailbox, progettata e implementata) e §3.11
@@ -286,10 +321,15 @@ Branch `master`, pubblicato su `git@github.com:rmigliori/vcpu_sim.git` (remote
 `origin`, HTTPS + credential helper `git-credential-libsecret` configurato,
 push senza prompt).
 
-**Tutto pushato.** Il 06/09/2026 `origin/master` è passato da `e2955ff` a
-`1806f5a`: **venti commit**, cioè §3.18-§3.23 del 05/09 più i dodici del 06/09
-che sono §3.24, §3.25 e la loro documentazione. Il push **l'ha chiesto l'utente**
-(«forse è ora di fare push?»), come deve essere.
+**Pushato fino a `798ae67`, e il 07/09 è rimasto in locale.** Il 06/09/2026
+`origin/master` era passato da `e2955ff` a `1806f5a` — **venti commit**, cioè
+§3.18-§3.23 del 05/09 più i dodici del 06/09 che sono §3.24, §3.25 e la loro
+documentazione — poi altri due di handoff fino a `798ae67`. Il push **l'ha
+chiesto l'utente** («forse è ora di fare push?»), come deve essere.
+
+I commit del **07/09** (§3.26: `enqueue_dopo_nc`, `coda_api.vinc` e l'handoff)
+sono committati e non pushati: la sessione si è chiusa con «salva tutto», che è
+un commit e non un push.
 
 Perché quel momento e non un altro, visto che se ne è discusso: i commit della
 ristrutturazione sono **verdi uno per uno**, non solo alla fine — ognuno chiude
@@ -2030,6 +2070,347 @@ per quello.
 
 ---
 
+### 3.26 §13.8 sciolta, la mailbox tagliata, e il primo codice di §13 (07/09/2026)
+
+**Sessione mista: cinque decisioni e due pezzi di codice.** Nessuna delle
+decisioni è ancora nella proposta — vivono solo qui, e riportarle in
+`proposta-kernel-realtime.md` è la prima cosa da fare (elenco in fondo).
+
+#### La tensione sui timeout non si sceglieva: si deduceva
+
+§13.8 la presentava come due uscite di pari dignità. **Non lo sono**, e l'ha
+detto l'utente in una riga: *«il timeout deve essere notificato con un
+messaggio, non era questa la decisione?»*. Sì — §9 apre con «un timeout resta
+una consegna in mailbox che avviene più tardi», §9.5 è marcata DECISA, e sotto
+c'è §10 implementato il 04/09, il pool, che esiste **solo** per dare un buffer a
+un cliente che dorme.
+
+Quindi la seconda uscita di §13.8 («il timeout sgancia il task da dove sta») non
+è un ramo alternativo: è **una riapertura di §9 e §10**. E una cosa decisa si
+riapre solo se non esiste una via che non lo richieda. Esiste:
+
+> Il timeout è una consegna in mailbox (§9). Un task accodato a un semaforo non
+> è nella propria mailbox. Dunque **`sem_wait` non ha timeout** — non per
+> convenzione, come lo scriveva §7.5, ma perché è l'unica forma compatibile con
+> una decisione già presa.
+
+§13.8 è formulata male anche su un secondo punto: presenta «il pool resta senza
+clienti» come il *costo* di quella uscita, mentre è il **sintomo** che quella
+uscita smonta il modello sotto. Un'uscita che lascia senza clienti un
+sottosistema implementato tre giorni prima non sta pagando un prezzo.
+
+**La giustificazione, che trasforma la prima uscita da concessione a principio:**
+
+> La mailbox è dove aspetti **il mondo**, e il mondo può non rispondere:
+> quell'attesa vuole un orologio. Il semaforo è dove aspetti che **un altro task
+> qui dentro** restituisca una risorsa presa per un tempo analizzabile:
+> quell'attesa è limitata dall'analisi, non da un clock.
+
+È lo stesso principio di §13.5 applicato una seconda volta — là un ceiling
+dichiarato male si aggiusta nella dichiarazione, non nel runtime; qui un'attesa
+su semaforo che ha bisogno di un timeout è un semaforo il cui conteggio o il cui
+tempo di tenuta non sono stati analizzati. Da cui la regola d'uso, nella forma
+di quella di §13.2:
+
+> **Aspetti qualcosa che può non arrivare? Mailbox, e un timeout. Aspetti una
+> risorsa che qualcuno qui dentro restituirà entro un tempo calcolabile?
+> Semaforo, e nessun timeout.**
+
+Gli altri tre punti di §13.8 si chiudono come **corollari**, non come decisioni
+separate: la variante di *segnalazione* non esiste (un `post` che si perde è
+un'attesa di evento, e gli eventi passano dalla mailbox); il semaforo davanti al
+pool è il caso canonico della regola; e l'ultimo punto è §13.4 e non una regola
+nuova — bloccarsi su un semaforo tenendo un mutex è bloccarsi tenendolo.
+
+**La porta lasciata aperta, col prezzo già misurato.** Se un giorno servisse
+davvero un'attesa a tempo su una risorsa, la strada **non** è appendere un
+timeout a `sem_wait`: è far consegnare al semaforo nella mailbox
+dell'attendente, dove §9 sa già arrivare. Costa un pool che non possa
+esaurirsi, dimensionato staticamente, perché una `post` che fallisce col pool
+vuoto non ha una mossa — non è il gestore dei timeout, non può ripassare al tick
+dopo.
+
+#### Il principio che ha tagliato via tre proposte
+
+> *«Non stiamo progettando uno scheduler realtime che sia in grado di ovviare ai
+> bachi che uno sviluppatore può codificare, lo sviluppatore deve sapere cosa
+> sta facendo.»*
+
+La riga, detta in modo che si possa applicare:
+
+> Il kernel controlla ciò che, non controllato, **corromperebbe le proprie
+> strutture**. Non controlla se l'uso che ne fai ha senso.
+
+Il pool ne è la prova: `coda.vasm` verifica `fwd == bwd == 0` non per proteggere
+chi scrive, ma perché un `enqueue` di un nodo già in lista distrugge una lista
+che appartiene anche ad altri — e infatti §10.3 non ferma la macchina,
+restituisce `CODA_LINKED` e lascia all'applicativo la decisione di continuare.
+Il controllo è per giunta gratis, perché quei due link la primitiva li sta già
+guardando.
+
+Sono cadute tre cose che erano state proposte in questa stessa sessione:
+
+- **il tetto del contatore del semaforo**. Un `post` di troppo non corrompe
+  niente — il contatore non è dereferenziato e non indicizza niente — è una
+  risorsa restituita due volte, cioè un errore di costruzione di un sistema che
+  è statico proprio perché quelle cose si chiudono prima di girare. Il secondo
+  punto di §13.8 si chiude con **no**, non con un valore;
+- il **contatore diagnostico** della profondità negativa;
+- il controllo «mi sto bloccando su un semaforo con un timeout armato».
+
+E una lettura sbagliata da correggere in §13.1: «sotto non c'è rete» **non è una
+richiesta di rete**. «Un solo scrittore e un'invariante dichiarata» è disciplina
+nel codice del kernel, cioè il lato buono della riga.
+
+#### Il ceiling non ha una direzione conservativa
+
+L'utente ha proposto, **come esperimento e dichiarandolo poi un baco
+concettuale**: e se il ceiling fosse sempre definito sopra la priorità del task
+più prioritario del sistema? Sembra una semplificazione enorme — §13.5 perde la
+ragione di esistere per costruzione (la premessa (2) non può cadere), la coda del
+mutex diventa irraggiungibile, spariscono `count`, la `TESTA` e persino `owner`,
+24 byte diventano 8.
+
+**È un baco, e sta nella parola «conservativo».** Il valore del ceiling *è*
+l'insieme dei task esclusi: non è un margine, come si dimensiona un buffer un po'
+più grande per stare tranquilli. Per difetto rompe la mutua esclusione (ed è
+§13.5). Per eccesso rompe la garanzia temporale, e la rompe **sempre, su ogni
+sezione critica**: il task più prioritario aspetta la sezione critica del meno
+prioritario, cioè l'inversione di priorità che §7.4 esiste per limitare,
+dichiarata come politica.
+
+Da cui, e non era scritto da nessuna parte, **perché §13.5 deve esistere**: se
+sovradichiarare fosse la direzione sicura, nessuno scriverebbe mai un ceiling
+sbagliato — si metterebbe il massimo dappertutto. §13.5 è il prezzo di una
+grandezza che deve essere **esatta**. Ed è la parola «per risorsa» della lista
+dei decisi: il limite non è un'ottimizzazione sopra il mutex, è ciò che lo rende
+un mutex invece che una sospensione dello scheduler.
+
+Il danno concreto si misura su §9.2: lì si è comprata di proposito la proprietà
+«la latenza di interrupt non dipende da quanti timeout sono armati», spostando
+la scansione in un task a priorità massima. Un ceiling universale la ridà
+indietro un piano sotto — la latenza del servizio di kernel torna a dipendere
+dalla più lunga sezione critica applicativa, scritta da chiunque.
+
+Sopravvive una cosa sola, e va tenuta al suo posto: `sched_lock`/`sched_unlock`
+è una primitiva legittima dove serve escludere *tutti* i task e non una
+sottoclasse, ma è il gemello di `cli` un piano più in su, non un mutex
+economico, e non è il default di niente.
+
+#### Dove si scrive chi usa un mutex
+
+Né nel mutex né nel TCB, a runtime. Nel mutex sta il **risultato** (`ceiling`,
+§13.3) e nel TCB non sta niente, come §13.3 già dice. L'insieme degli utenti è
+l'**ingresso** del calcolo: non lo legge nessuno mentre la macchina gira, quindi
+sta nel sorgente — nel `.vinc` del modulo che possiede il dato protetto, perché
+per §8.6 chi può chiamare quel servizio è chi include quel `.vinc`.
+
+La forma, verificata sull'assembler: `.equ NOME valore` accetta «un intero o una
+costante già definita» ([manual.md:511](manual.md#L511)) e non ci sono
+espressioni, quindi `max(...)` non è scrivibile. **Ma non serve: il massimo di un
+insieme è uno dei suoi elementi**, quindi quello che si scrive è *quale task è
+l'utente più prioritario*:
+
+```asm
+.equ MTX_POOL_CEILING  PRIO_GESTORE_TIMEOUT   ; utenti: gestore timeout, log, sensore
+```
+
+Un `.word 7` sarebbe un numero che nessuno può ri-derivare; un nome è
+un'affermazione rileggibile, e segue da sola se cambia il valore numerico di
+quella priorità. Grandezza **derivata**, non asserita — la stessa distinzione del
+ceiling universale, dal lato giusto.
+
+Corollario secco: il ceiling si calcola su chi **può** prendere il mutex, non su
+chi lo prende. Un task che include l'interfaccia di un servizio che poi non
+chiama alza il ceiling per niente, quindi **«non includere ciò che non usi»
+smette di essere igiene e diventa una proprietà temporale.**
+
+E il limite, detto per intero: niente di questo lo **verifica**. L'assembler non
+può sapere quale task esegue una data `mutex_lock` — è un fatto sul grafo delle
+chiamate, e un grafo delle chiamate non c'è. Metterlo nel `.vinc` non lo rende
+controllato: lo mette dove lo vedrà chi dovrebbe cambiarlo.
+
+#### La mailbox: il taglio
+
+L'utente ha spinto su due punti, e il primo era già vero nel codice:
+
+1. **un task può aspettare eventi da più sorgenti di interruzione, e i messaggi
+   si accumulano prima che giri.** Vero e funzionante: `messageHandling.vasm:113`
+   è un incremento vero. Il `li r4, 1` di `:135` è il ramo della **consegna**,
+   dove il conto valeva −1 e dopo in lista c'è esattamente un messaggio. Quei due
+   `li` (a `:135` e `:188`) sono il posto dove l'ipotesi «un ricevente per
+   mailbox» di §8.1 è compilata dentro due istruzioni invece di stare in un
+   commento;
+2. **con due task sulla stessa mailbox si dovrebbe decrementare, non assegnare
+   −1.** Aritmeticamente giusto, e infatti lo scenario proposto — arriva il
+   messaggio del secondo, si sveglia il primo, vede che non è suo, lo rimanda e
+   torna in `receive` — **funziona**, perché il secondo è davanti nella coda e
+   chi torna si rimette dietro.
+
+Ma con il destinatario **non in attesa** il giro non si chiude: chi si sveglia
+rimanda il messaggio in una lista vuota, torna in `receive`, e **riprende lo
+stesso messaggio**. Se è più prioritario del destinatario, quello non gira mai:
+è il livelock di §13.5, stessa forma. E accodare il TCB *prima* di testare il
+contatore non lo chiude — mette in lista un messaggio e un TCB insieme con
+`count == 0`, cioè esattamente la finestra per cui §8.2 ha **rifiutato** la
+convenzione contabile.
+
+La radice: con N riceventi **qualcuno deve scegliere il destinatario**, e il solo
+che sa a chi è indirizzato il messaggio è chi lo manda, perché l'indirizzo sta
+nel payload che il kernel non guarda (§8.4).
+
+> **IL TAGLIO, deciso dall'utente:** un solo TCB in attesa per mailbox; il
+> contatore si incrementa per accodare messaggi.
+
+Ne segue l'invariante `count >= -1` — **−1 è l'unico negativo possibile** — che
+regge per costruzione: `receive` decide su un test a tre vie e accoda il proprio
+TCB solo nel ramo `count == 0`, e `send` non decrementa mai. Quindi il `li r4,
+-1` **è** quell'invariante scritta in un'istruzione, e la proposta di
+sostituirlo con un `addi` **è ritirata**: sotto il taglio sarebbe generalità
+morta.
+
+Due cose da scrivere: §8.1 ha oggi l'argomento debole («servirebbe l'inserimento
+ordinato», che è un costo) e va sostituito con quello forte — *con più riceventi
+nessuno può scegliere il destinatario* — e i due `li` vogliono il motivo
+accanto. E il taglio regge anche §9: con un ricevente solo il messaggio di
+scadenza **non può essere prelevato da nessun altro**.
+
+#### Il codice: `enqueue_dopo_nc`
+
+La primitiva agnostica di §13.6, e **non è codice nuovo**: è una seconda
+etichetta sullo stesso indirizzo di `enqueue_testa_nc` — `nm` le dà entrambe a
+`31`. Il corpo di `r1` legge solo `fwd`/`bwd`, che sentinella e nodo
+condividono, quindi «dopo la sentinella» e «in testa» sono la stessa istruzione:
+la proprietà di §13.6 («la primitiva nuova le contiene») non è raccontata in un
+commento, è il modo in cui è compilata.
+
+Tre commenti del corpo generalizzati (`next = prec.fwd`, `nodo.bwd = prec`,
+`prec.fwd = nodo`), che col contratto vecchio erano veri solo per metà. In testa
+al file i tre vincoli di §13.6, e uno va ricordato perché è ciò che si perde:
+**la testa non è un argomento**, quindi la primitiva non può verificare che
+`prec` appartenga alla lista che il chiamante ha in mente. Verifica ciò che può,
+ed è il controllo che conta: l'invariante dei link sul nodo che entra.
+
+Variante contata **non scritta**, con la ragione accanto: l'unico cliente in
+vista è la coda del mutex, che per §13.3 potrebbe adottare le `_nc` comunque.
+
+Test: quattro sezioni nuove, sette valori attesi in più (`ctest` 23/23). La (10)
+costruisce `[n1, n2]` e infila `n3` con `prec = n1` — l'inserimento in mezzo, che
+è l'unica cosa che le due primitive vecchie non sanno esprimere. La (11)
+verifica che con `prec` = sentinella si torni all'inserimento in testa: il
+«contiene» controllato invece che assunto. In quelle sezioni la testa è gestita
+con le `_nc` e il contatore resta a 0 — una sola disciplina per testa, anche in
+un test, altrimenti l'esempio insegnerebbe la cosa sbagliata.
+
+#### Il codice: `coda_api.vinc`, e l'interfaccia che pubblica le entry
+
+Osservazione dell'utente: `coda.vinc` non dichiara gli `.extern` delle
+primitive, quindi **l'interfaccia non è completa**. Vero, e contraddiceva §8.6
+della proposta, che dice che un fornitore pubblica «gli indirizzi delle entry se
+è un'API»; la regola opposta stava scritta in `hal.vinc` («qui ci sono solo
+costanti, come in ogni `.vinc`»), ed è quella che ha ceduto.
+
+Tre fatti verificati sull'assembler, e il secondo è quello che decide la forma:
+
+- un `.extern` dichiarato e **mai referenziato non costa niente**: assembla,
+  linka, non tira dentro nessuna libreria. Quindi mettere gli `.extern` in un
+  header incluso da tutti non ha un costo di link;
+- `.global X` + `.extern X` nello stesso modulo è un **errore secco**
+  (`'X' is both defined and .extern`). E il fornitore include la propria
+  interfaccia per gli offset: quindi **un file solo non è scrivibile**;
+- `.extern` **non è idempotente** (stesso errore su due `.extern` uguali). È
+  precisamente il difetto che `.include` aveva fino a §3.16 — ma la divisione lo
+  rende irraggiungibile, quindi la toolchain non si tocca.
+
+Da cui due file e due regole:
+
+```
+coda.vinc      i TIPI            lo include il FORNITORE e gli header i cui
+                                 nodi sono liste (tcb, messaggio, pool)
+coda_api.vinc  i tipi + le ENTRY lo include CHI CHIAMA — un file solo
+```
+
+> 1. un modulo include il `.vinc` dei **tipi** del proprio fornitore e l'`_api`
+>    **degli altri**. Mai il proprio `_api`;
+> 2. un `_api` include solo i tipi del proprio modulo, **mai l'`_api` di un
+>    altro** — altrimenti potrebbe rimettere in circolo per via indiretta quello
+>    di chi sta compilando, e il messaggio d'errore non dice da quale catena di
+>    `.include` arriva.
+
+La (2) ha un effetto voluto: **la lista degli `.include` torna a essere la lista
+delle dipendenze**, che era il ruolo degli `.extern` scritti a mano in cima a
+ogni sorgente e che si sarebbe perso spostandoli nell'header.
+
+Il guadagno vero non sono gli `.extern`: è il **contratto di chiamata** —
+argomenti, ritorno, e quali registri sporca ogni entry — che prima si trovava
+solo aprendo l'implementazione. Con due dettagli che stavano fra le righe:
+`dequeue_testa` non restituisce un `CODA_*` (la coda vuota è un esito, non un
+errore) e lascia `r3` intatto; i wrapper `_s` non sono foglia e sporcano `r5`
+oltre a ciò che sporca la raw.
+
+Sei clienti aggiornati (`pool`, `messageHandling`, `scheduler`, la demo,
+`test_coda`, `test_mailbox`): una riga di `.include` al posto della lista di
+`.extern`. **Due commenti riscritti perché la divisione li ha resi falsi**, ed è
+la parte che vale la pena ricordare:
+
+- [`rtos/scheduler/impl/src/CMakeLists.txt`](../rtos/scheduler/impl/src/CMakeLists.txt)
+  documentava *questo esatto caso* come la giustificazione di due parole chiave
+  invece di una: «il kernel LINKa le code ma non ne dichiara l'interfaccia,
+  perché `scheduler.vasm` chiama `enqueue_coda` senza aver bisogno di una sola
+  costante di `coda.vinc`». Non è più vero. La distinzione non muore ma si
+  sposta: **chi chiama include**, quindi LINK e INTERFACES coincidono per i
+  chiamanti diretti e divergono solo su ciò che si linka per conto di qualcun
+  altro — oggi `lib_hal`, e solo perché l'HAL non ha ancora il suo `_api`;
+- [`hal.vinc`](../hal/interface/hal/hal.vinc) enunciava la regola di tutto il
+  progetto. Ora è marcata come **lacuna** e non come regola.
+
+#### La scoperta che ferma il mutex
+
+Il mutex **non è scrivibile oggi**, e il blocco non sta in §13:
+
+```
+.struct TCB          fwd, bwd, sp, state    — 16 byte, nessuna priorità
+ready:  .res TESTA   UNA sola coda di ready — non una per livello
+scheduler            round-robin
+```
+
+Il modello di §3 e §4 — i PCB, una coda per livello, `TCB.pcb` (§7.3), lo slot
+`preemptato` — **non è costruito**: `PCB` non compare in nessun sorgente, e
+[`scheduler.vasm:28`](../rtos/scheduler/impl/src/scheduler.vasm#L28) lo dice al
+futuro («si cambia politica RR → priorità riscrivendo solo `scheduler`»).
+
+`mutex_lock` **è** «scrivi la priorità del task corrente al ceiling» e
+`prio_prec` **è** «la priorità di prima»: sono operazioni su una grandezza che
+non esiste ancora. Scriverlo adesso vorrebbe dire inventare la rappresentazione
+della priorità come effetto collaterale. Ferma anche il **semaforo**, per una
+via diversa: §13.6 vuole l'inserimento ordinato, e la camminata deve confrontare
+le priorità dei TCB accodati.
+
+Che `task_block`/`task_ready` esistano solo come stub in `test_mailbox.vasm`
+**non** è il blocco: quel debito la mailbox l'ha già preso, sono `.extern` con
+il contratto scritto.
+
+> **Il prossimo passo del kernel è §3/§4, non §13**: i PCB, una coda per
+> livello, il campo nel TCB, e la politica dello scheduler da round-robin a «il
+> livello non vuoto più alto». Mutex e semaforo vengono dopo, e sono corti,
+> perché tutto il resto è deciso.
+
+#### Cosa resta da scrivere (niente di quanto sopra è nella proposta)
+
+| Dove | Cosa |
+|---|---|
+| §13.8 | riscritta come **deduzione da §9**, più la regola d'uso, i corollari, il tetto chiuso con un no, e la porta lasciata aperta col suo prezzo |
+| §7.5 | emendata: la mailbox è l'unico punto di blocco **raggiungibile da un timeout**, e il semaforo è un secondo punto di blocco proprio per questo privo di timeout |
+| §8.1 | l'argomento vero: con più riceventi nessuno può scegliere il destinatario |
+| §13.5 | il ceiling non ha una direzione conservativa, e perché la sezione deve esistere |
+| §13.3 | la forma della dichiarazione del ceiling (`.equ` che nomina l'utente più prioritario, nel `.vinc` del fornitore) |
+| §13.1 | «sotto non c'è rete» non chiede una rete |
+| `messageHandling.vasm` | il motivo accanto ai due `li` (`count >= -1`) |
+| — | il terzo campo di `TESTA` nominato dal proprietario (`MAILBOX.count`, `SEMAFORO.risorse`): **proposto e non deciso** |
+| — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
 ## 4. Invarianti di regressione — come verificare che nulla si sia rotto
 
 > ### Si fa con `ctest`, ed è l'unico modo che resta (§3.17, §3.24)
@@ -2462,16 +2843,17 @@ Aprire Claude Code nella cartella del progetto e scrivere una di queste:
 Leggi docs/stato-lavori.md e riprendi da lì.
 ```
 
-> Le due formule qui sotto non sono intercambiabili. La **prima** riapre tutto
-> il filo di disegno su semafori, mutex e mailbox — serve se si vuole
-> discutere. La **seconda** è chirurgica: carica solo la decisione che blocca,
-> e serve se la si vuole prendere e basta.
+> Le tre formule qui sotto non sono intercambiabili. La **prima** riapre il filo
+> di disegno su semafori, mutex e mailbox — serve se si vuole discutere. La
+> **seconda** è la sola che produca codice di kernel adesso. La **terza** è di
+> sola scrittura e non richiede decisioni.
 
 **Per riprendere il disegno di semafori, mutex e mailbox — tutto il filo:**
 ```
 Leggi docs/proposta-kernel-realtime.md §13 per intero (semafori e mutex), poi
-§8 (la mailbox, gia' implementata) e §7.4 (perche' il ceiling). Come ci si e'
-arrivati sta in docs/stato-lavori.md §3.25.
+§8 (la mailbox) e §7.4 (perche' il ceiling). Come ci si e' arrivati sta in
+docs/stato-lavori.md §3.25 e §3.26 -- e §3.26 contiene decisioni che nella
+proposta NON ci sono ancora.
 
 DECISO, da non riaprire senza una ragione nuova:
   - priority ceiling, non ereditarieta' (§7.4);
@@ -2482,22 +2864,39 @@ DECISO, da non riaprire senza una ragione nuova:
   - la coda del mutex esiste per far DEGRADARE un ceiling sbagliato invece
     che appendere, non per essere usata (§13.5);
   - l'ordinamento per priorita' e' del chiamante: coda.vasm prende una
-    enqueue_dopo agnostica e non sa perche' la si chiama (§13.6).
+    enqueue_dopo agnostica e non sa perche' la si chiama (§13.6);
+  - sem_wait NON ha timeout: e' una deduzione da §9 (il timeout e' una
+    consegna in mailbox), non una scelta fra due uscite (§3.26);
+  - un solo TCB in attesa per mailbox, contatore che si incrementa per i
+    messaggi, invariante count >= -1 (§3.26);
+  - il ceiling non ha una direzione conservativa: per eccesso e' inversione
+    di priorita' dichiarata come politica (§3.26);
+  - il kernel controlla cio' che corromperebbe le proprie strutture, non se
+    l'uso che ne fai ha senso (§3.26).
 
-APERTO: §13.8, e la voce grossa e' la tensione sui timeout. Niente codice di
-semaforo prima che quella sia sciolta.
+APERTO: il terzo campo di TESTA nominato dal proprietario (MAILBOX.count,
+SEMAFORO.risorse) -- proposto e non deciso.
 ```
 
-**Per la tensione sui timeout, senza rileggere tutto — è la decisione di
-disegno che sta davanti a tutto il resto del kernel:**
+**Per il prossimo passo del kernel, che NON è §13 — le priorità non esistono
+ancora, ed è ciò che blocca mutex e semaforo:**
 ```
-Leggi docs/stato-lavori.md §3.25 e docs/proposta-kernel-realtime.md §13.8.
-Il semaforo blocca, quindi "la mailbox e' l'unico punto di blocco di un task"
-(§1, §7.5) non e' piu' vero, e con esso cade il modo in cui i timeout
-raggiungono chi aspetta. Le due uscite sono in §13.8: o sem_wait non ha
-timeout, o il timeout diventa "sgancia il task da dove sta e restituiscigli
-un esito" -- e in quel caso il pool resta senza clienti. Non scrivere codice
-prima che la decisione sia presa.
+Leggi docs/stato-lavori.md §3.26 (la sezione "La scoperta che ferma il mutex")
+e docs/proposta-kernel-realtime.md §3, §4 e §7.3. Oggi TCB e' {fwd,bwd,sp,
+state} senza priorita', ready: e' UNA sola coda, lo scheduler e' round-robin
+e PCB non compare in nessun sorgente: il modello a priorita' e' specificato e
+non costruito. Vanno fatti i PCB, una coda per livello, il campo nel TCB e la
+politica "il livello non vuoto piu' alto". Mutex e semaforo vengono dopo.
+Alla fine ctest deve dare 23/23.
+```
+
+**Per riportare nella proposta le decisioni del 07/09 (sola scrittura):**
+```
+Leggi docs/stato-lavori.md §3.26 e la tabella in fondo "Cosa resta da
+scrivere". Le decisioni di quel giorno sono verbalizzate solo nell'handoff:
+vanno riportate in docs/proposta-kernel-realtime.md nelle sezioni che la
+tabella indica (§13.8, §7.5, §8.1, §13.5, §13.3, §13.1) piu' i due commenti
+in messageHandling.vasm. Non c'e' niente da decidere: e' trascrizione.
 ```
 
 **Per le intestazioni dei test — il pezzo rimasto di §3.24, e l'unico che
