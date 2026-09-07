@@ -1,0 +1,67 @@
+; gestore_timeout/gestore_timeout.vinc — le tre entry del TASK che fa scadere i
+; timeout (§9.2), e il contratto con cui si chiamano.
+;
+; Non pubblica nessun tipo, e non e' una dimenticanza: qui non c'e' niente da
+; dichiarare. Il DESCRITTORE e i TMO_* sono di generic/timeout (timeout.vinc),
+; il formato del messaggio di scadenza e' di generic/messaggio, e la mailbox del
+; gestore e' PRIVATA -- ci scrive solo gestore_tick, che sta dentro il modulo.
+; Un cliente non ne ha bisogno: chiede un timeout con timeout_arm e lo riceve
+; nella PROPRIA mailbox, che e' tutto il rapporto che ha con questo task.
+;
+; --- PERCHE' UN MODULO A PARTE, E PERCHE' QUI ---
+; Il gestore e' UN TASK, ed e' il primo task di sistema del progetto. Non poteva
+; stare in generic/timeout accanto a arm/cancel: chiama receive e send, che sono
+; simboli di rtos/, e la regola di generic/CMakeLists.txt e' letterale -- un
+; modulo che nomina un simbolo di rtos/ non e' generic. E non e' un "servizio"
+; nel senso di rtos/servizi/, la cui firma e' "chiama task_ready e task_block":
+; il gestore non blocca nessuno, si blocca lui sulla propria mailbox come un
+; task qualunque. Da qui una cartella sua al primo livello di rtos/.
+;
+; La divisione che ne esce e' netta e vale la pena tenerla a mente:
+;
+;   generic/timeout        il VETTORE e la sua disciplina: arm, cancel, e la
+;                          scadenza prelevata in sezione critica
+;   rtos/gestore_timeout   il TASK: la propria mailbox, il buffer dal pool, la
+;                          consegna al cliente, e il tick che entra dall'ISR
+
+; --------------------------------------------------------------------------
+;  gestore_init()
+;
+;  Inizializza la mailbox del gestore. Va chiamata al boot, PRIMA di irq_enable:
+;  gestore_tick manda su quella mailbox al primo tick, e una TESTA vuota non e'
+;  fatta di zeri (fwd = bwd = &se stessa), quindi il .data non puo' produrla.
+;  Non e' il task a farlo da se' come prima istruzione, e la ragione e' proprio
+;  quella: il primo tick puo' arrivare prima che il task sia mai girato.
+;
+;  Sporca: r1 (e cio' che sporca coda_init).
+; --------------------------------------------------------------------------
+  .extern gestore_init
+
+; --------------------------------------------------------------------------
+;  gestore_task — il CICLO del task, da passare a ctx_init come punto di
+;  partenza. Non ritorna mai. Va messo a PRIO_MAX (livello 0), e §9.2 dice
+;  perche': la scansione delle N caselle deve uscire dal tempo a interrupt
+;  disabilitati, e la latenza del sistema non deve dipendere da quanti timeout
+;  sono armati.
+;
+;  A ogni tick: preleva un buffer dal pool, chiede una scadenza, la manda al
+;  cliente, e ripete finche' ce ne sono. Se il pool e' vuoto lascia tutto armato
+;  e riprova al tick dopo -- il timeout arriva TARDI invece di non arrivare.
+; --------------------------------------------------------------------------
+  .extern gestore_task
+
+; --------------------------------------------------------------------------
+;  gestore_tick() — da chiamare DENTRO l'ISR del tick, a IE gia' 0.
+;
+;  Fa due cose: incrementa il contatore assoluto dei tick (tmo_now, che e' la
+;  base dei tempi del gestore) e sveglia il task mandandogli il messaggio di
+;  tick. Il messaggio e' UNO STATICO e va COALESCATO: se e' ancora in mailbox,
+;  riaccodarlo sfascerebbe la lista (§8.3, "un oggetto, una lista"). Nessun tick
+;  si perde comunque, perche' il gestore legge il contatore ASSOLUTO e non
+;  assume "ne e' passato uno".
+;
+;  Non-foglia. Sporca r1..r5 e r7 (e' quello che sporca la send raw, che chiama
+;  a sua volta task_ready): un'ISR che chiama questa tenga il proprio contesto
+;  in r6, come fanno tutte quelle del progetto.
+; --------------------------------------------------------------------------
+  .extern gestore_tick

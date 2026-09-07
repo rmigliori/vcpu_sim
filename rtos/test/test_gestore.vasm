@@ -1,0 +1,282 @@
+; rtos/test/test_gestore.vasm — IL GESTORE DEI TIMEOUT COME TASK: l'ultimo passo
+; della simulazione di §3.28, e il primo programma che mette insieme TUTTO.
+;
+; Era stato tenuto per ultimo apposta: e' l'unico pezzo che tira dentro anche il
+; pool (§10), quindi se qualcosa non torna tutto il resto e' gia' verificato --
+; lo scheduler a priorita' (test_scheduler), il blocco volontario (test_block) e
+; la catena di mailbox fra task (test_catena).
+;
+; --- CHI GIRA ---
+;   G  livello 0   il GESTORE (rtos/gestore_timeout), a PRIO_MAX come vuole §9.2
+;   A  livello 1   il cliente: arma un timeout, si blocca, riceve la scadenza,
+;                  verifica che sia la SUA, restituisce il buffer al pool e
+;                  riarma con il tag successivo
+;   I  livello 7   l'idle
+;
+; --- IL GIRO COMPLETO, CHE E' POI IL DISEGNO DI §9 ---
+;   A          timeout_arm(fra 2 tick, tag) -> una casella del vettore
+;   A          receive sulla propria mailbox: si blocca, come si bloccherebbe
+;              comunque aspettando un evento vero
+;   ISR tick   gestore_tick: incrementa tmo_now e sveglia G (coalescando il
+;              messaggio di tick, che e' uno statico)
+;   G          buf_alloc dal pool, timeout_scaduto (formatta e libera la
+;              casella), send_s alla mailbox di A
+;   A          riparte, riconosce il tag, buf_free, riarma
+;
+; --- COSA VERIFICA CHE NESSUN ALTRO TEST TOCCA ---
+;   1. LA CATENA COMPLETA timeout -> pool -> mailbox -> scheduler in un
+;      programma solo. §8, §9 e §10 sono implementati da giorni e non erano mai
+;      girati insieme sotto lo scheduler vero;
+;   2. IL BUFFER TORNA. cntErr conta anche gli esiti di buf_free diversi da
+;      POOL_OK, ma la prova vera e' cntA: la classe da 16 ha DIECI blocchi, e se
+;      il giro ne perdesse uno per volta il gestore resterebbe senza buffer dopo
+;      dieci scadenze e i risvegli si fermerebbero. Un contatore che continua a
+;      crescere e' l'assenza di leak, misurata;
+;   3. IL clientTag CORRELA (§9.4). A confronta il tag ricevuto con quello che
+;      ha armato, e li fa crescere: un messaggio dell'attesa precedente
+;      arriverebbe con il tag vecchio e finirebbe in cntErr invece di passare
+;      per buono;
+;   4. LA PRIORITA' 0 DEL GESTORE. G preempta A a ogni tick -- e' la ragione per
+;      cui §9.2 lo vuole li': la latenza del sistema non deve dipendere da
+;      quanti timeout sono armati.
+;
+; --- I VALORI ATTESI ---
+; cntErr deve essere ESATTAMENTE 0: e' l'unico numero del test che non dipende
+; dai cicli, e ognuno dei tre modi in cui puo' salire e' un difetto diverso
+; (arm rifiutato, tag sbagliato, buffer rifiutato dal pool).
+;
+; cntA vale 5, ed e' DERIVABILE PER INTERO: A arma a +2 tick e riarma dentro lo
+; stesso tick in cui si sveglia, quindi le scadenze cadono ai tick 2, 4, 6, 8 e
+; 10; quella armata al 10 scadrebbe al 12, ma il 12o tick e' quello in cui l'ISR
+; ferma la simulazione, e il gestore non arriva a girare. Cinque.
+;
+; E' un valore piu' forte di quelli degli altri test, perche' NON DIPENDE DAL
+; PERIODO DEL TIMER: si conta sull'orologio logico (tmo_now, il contatore
+; assoluto dei tick), non sui cicli. Verificato -- a 2000, 4000 e 8000 cicli di
+; periodo cntA resta 5 e si muove solo cntI. Il periodo serve soltanto a far
+; stare un giro dentro un tick: sotto le 2000 il giro non si chiude e cntA crolla
+; a 0, che e' la stessa saturazione misurata in §3.32 con la catena.
+;
+; cntI e' la CPU libera: qui e' la piu' vera di tutte, perche' fra un tick e
+; l'altro dormono DUE task (A aspetta la scadenza, G aspetta il tick).
+
+.include "tcb/tcb.vinc"
+.include "coda/coda_api.vinc"
+.include "mailbox/mailbox.vinc"
+.include "messaggio/messaggio.vinc"
+.include "timeout/timeout.vinc"
+.include "gestore_timeout/gestore_timeout.vinc"
+
+.equ COD_SCADENZA  77     ; il messageCode che A si fa recapitare. Opaco per
+                          ; tutti tranne che per A: il gestore lo ricopia dal
+                          ; descrittore senza leggerlo
+
+  .data
+
+cntA:   .word 0        ; scadenze ricevute con il tag giusto
+cntErr: .word 0        ; DEVE restare 0: arm rifiutato, tag sbagliato, o buffer
+                       ; che il pool non riprende
+cntI:   .word 0        ; giri dell'idle: la CPU libera con due task che dormono
+tagA:   .word 1        ; il clientTag corrente di A, monotono per attesa (§9.4).
+                       ; Sta in memoria e non in un registro perche' deve
+                       ; sopravvivere a un blocco, cioe' a un context switch
+
+mbA:    .res MAILBOX   ; la mailbox di A: la sua identita' (§8.6)
+
+tcbG:   .res TCB
+tcbA:   .res TCB
+tcbI:   .res TCB
+
+stackG: .space 64      ; parole: 256 byte a testa
+stackG_top:
+stackA: .space 64
+stackA_top:
+stackI: .space 64
+stackI_top:
+
+  .text
+
+  .global main
+  .extern current
+  .extern pcb0
+  .extern pcb1
+  .extern pcb7
+  .extern sched_init
+  .extern sched_isr_exit
+  .extern receive
+  .extern timeout_arm
+  .extern tmo_now
+  .extern pool_init
+  .extern buf_free
+  .extern ctx_init
+  .extern irq_install
+  .extern timer_init
+  .extern irq_arm
+  .extern irq_enable
+
+; ==========================================================================
+;  BOOT. Tre inizializzazioni prima di qualunque task, e nessuna e' rinviabile:
+;
+;    pool_init      i blocchi vanno incatenati nelle sei free-list
+;    gestore_init   la mailbox del gestore, che gestore_tick usa al PRIMO tick
+;    coda_init(mbA) la mailbox di A
+;
+;  Il vettore dei timeout invece NON si inizializza: nasce tutto TMO_FREE perche'
+;  il .data e' azzerato e TMO_FREE vale 0 (§9.1).
+; ==========================================================================
+main:
+  li r14, stackA_top       ; PRIMA di ogni call: pool_init e sched_init non sono
+                           ; foglia. Puo' essere lo stack del task che partira'
+                           ; a freddo, che e' A
+  call sched_init
+  call pool_init
+  call gestore_init
+
+  li r1, mbA
+  call coda_init
+
+  ; --- G (il gestore, livello 0): READY, in coda ---
+  li r1, stackG_top
+  li r2, gestore_task
+  call ctx_init
+  li r3, tcbG
+  sw r1, TCB.sp(r3)
+  li r4, pcb0
+  sw r4, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r1, r4               ; &pcb == &pcb.coda
+  mov r2, r3
+  call enqueue_coda
+
+  ; --- I (idle, livello 7): READY, in coda ---
+  li r1, stackI_top
+  li r2, taskI
+  call ctx_init
+  li r3, tcbI
+  sw r1, TCB.sp(r3)
+  li r4, pcb7
+  sw r4, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r1, r4
+  mov r2, r3
+  call enqueue_coda
+
+  ; --- A (livello 1): parte a freddo, quindi RUNNING e fuori da ogni coda ---
+  li r3, tcbA
+  li r4, pcb1
+  sw r4, TCB.pcb(r3)
+  li r1, current
+  sw r3, 0(r1)             ; current = A: la sua receive accodera' QUESTO TCB
+  li r5, RUNNING
+  sw r5, TCB.state(r3)
+
+  li r1, timer_isr
+  call irq_install
+  call irq_arm
+  li r1, 4000              ; il giro e' piu' lungo di quello di test_catena: il
+                           ; tick sveglia G, che preempta A, alloca, consegna e
+                           ; si riblocca, e solo dopo A riprende. Vedi la
+                           ; tabella delle soglie in §3.32 dell'handoff per il
+                           ; modo di sceglierlo
+  call timer_init
+  call irq_enable
+  li r5, taskA
+  jr r5                    ; cold start di A
+
+; ==========================================================================
+;  A: il CLIENTE. E' scritto come si scrive un task che aspetta un evento con un
+;  tempo massimo -- arma, si blocca, e al risveglio guarda cosa ha ricevuto --
+;  con l'unica differenza che qui l'evento vero non arriva mai, quindi ogni
+;  risveglio e' una scadenza.
+; ==========================================================================
+taskA:
+  li r5, tagA
+  lw r2, 0(r5)             ; r2 = clientTag: l'attesa corrente
+  li r1, 2                 ; fra due tick
+  li r3, COD_SCADENZA
+  li r4, mbA               ; dove consegnare: la mia mailbox
+  call timeout_arm         ; r2 = TMO_OK | TMO_FULL | TMO_DUP
+  beq r2, r0, a_armato     ; TMO_OK == 0
+  li r1, cntErr
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+
+a_armato:
+  li r1, mbA
+  call receive             ; r2 = il buffer di scadenza, che viene dal POOL
+
+  ; --- e' la MIA attesa? Il tag lo dice, e nient'altro potrebbe (§9.4) ---
+  addi r3, r2, MESSAGGIO.payload
+  lw r4, PAYLOAD.clientTag(r3)
+  li r5, tagA
+  lw r5, 0(r5)
+  beq r4, r5, a_giusto
+  li r1, cntErr
+  lw r3, 0(r1)
+  addi r3, r3, 1
+  sw r3, 0(r1)
+
+a_giusto:
+  ; --- il buffer e' una risorsa di sistema IN PRESTITO: si rende subito ---
+  call buf_free            ; r2 = buffer (resta intatto), r1 = esito
+  beq r1, r0, a_liberato   ; POOL_OK == 0
+  li r1, cntErr
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+
+a_liberato:
+  li r1, cntA
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  li r1, tagA
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)             ; il tag cresce: l'attesa successiva e' un'altra cosa
+  j taskA
+
+taskI:
+  li r1, cntI
+loopI:
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  j loopI
+
+; ==========================================================================
+;  timer_isr(r1 = contesto opaco): chiama gestore_tick e basta.
+;
+;  E' l'ISR di §9.2 alla lettera -- "l'ISR fa una cosa sola" -- e la brevita' e'
+;  il punto: la scansione delle caselle non e' qui dentro, quindi la latenza di
+;  interrupt non dipende da quanti timeout sono armati.
+;
+;  La condizione di arresto legge tmo_now, cioe' il contatore che gestore_tick
+;  ha appena incrementato, invece di tenerne uno suo: e' lo stesso orologio su
+;  cui A misura le proprie scadenze, quindi "fermarsi al 12o tick" e "A ha armato
+;  a +2" si leggono sulla stessa scala.
+; ==========================================================================
+timer_isr:
+  mov r6, r1               ; il contesto: gestore_tick sporca r1..r5 e r7
+  call gestore_tick        ; incrementa tmo_now e sveglia il gestore
+
+  li r1, tmo_now
+  lw r2, 0(r1)
+  li r3, 12
+  blt r2, r3, isr_go
+  li r1, cntA
+  lw r5, 0(r1)
+  dumps r5                 ; > 0 e stabile: il giro completo si e' chiuso tante
+                           ; volte, e nessun buffer si e' perso per strada
+  li r1, cntErr
+  lw r5, 0(r1)
+  dumps r5                 ; DEVE essere 0: arm, tag e buf_free tutti a posto
+  li r1, cntI
+  lw r5, 0(r1)
+  dumps r5                 ; > 0: la CPU libera mentre A e G dormono entrambi
+  halt
+
+isr_go:
+  mov r1, r6
+  j sched_isr_exit

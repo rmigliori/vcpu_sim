@@ -1,0 +1,178 @@
+; rtos/gestore_timeout/impl/src/gestore_timeout.vasm — IL GESTORE DEI TIMEOUT E'
+; UN TASK (§9.2), non l'ISR del tick.
+;
+; L'ISR fa una cosa sola -- incrementa la base dei tempi e manda un messaggio di
+; tick -- e tutto il resto e' questo task, a priorita' massima. Il guadagno non
+; e' il buffer: e' che LA SCANSIONE O(N) ESCE DAL TEMPO A INTERRUPT DISABILITATI.
+; Con il gestore dentro l'ISR la latenza di interrupt del sistema dipenderebbe da
+; quanti timeout sono armati; da task no. In un kernel realtime quell'argomento
+; batte il costo di un cambio di contesto per tick.
+;
+; Il secondo guadagno arriva gratis: IL POOL VUOTO SMETTE DI ESSERE UN VICOLO
+; CIECO. Nell'ISR, se alla scadenza non c'e' un buffer, non esiste una mossa --
+; non ci si puo' bloccare, e il cliente resta in attesa per sempre. Da task si
+; lascia il descrittore armato e si riprova al tick successivo: il timeout arriva
+; TARDI invece di non arrivare.
+;
+; --- DOVE FINISCE QUESTO MODULO E DOVE COMINCIA generic/timeout ---
+; Il vettore dei descrittori, arm, cancel e il prelievo di una scadenza stanno in
+; generic/timeout, che non nomina un solo simbolo di rtos/. Qui c'e' cio' che ne
+; fa un task: una mailbox, un buffer dal pool, la consegna, e il tick che entra
+; dall'ISR. La riga di confine e' timeout_scaduto, che formatta ma non manda.
+;
+; --- LA COALESCENZA DEL TICK, E UN "count == 0" CHE NON POTEVA FUNZIONARE ---
+; Il messaggio di tick e' uno statico: se l'ISR lo rispedisse mentre e' ancora
+; accodato, riaccoderebbe un nodo gia' in lista e sfascerebbe la mailbox (§8.3).
+; Si manda quindi solo se in mailbox non c'e' gia' un tick non consumato.
+;
+; §9.2 dice "count == 0 e' il test", e SAREBBE SBAGLIATO scritto cosi': il caso
+; NORMALE e' che il gestore sia bloccato nella propria mailbox in attesa del
+; prossimo tick, e allora count vale -1 (§8.2, il contatore descrittivo col
+; segno). Con "count == 0" l'ISR non manderebbe proprio quando c'e' un task da
+; svegliare, cioe' sempre. Il test giusto e' count > 0 -- "c'e' gia' un messaggio
+; in lista" -- e comprende i due casi in cui si manda: mailbox vuota (0) e
+; ricevente in attesa (-1).
+
+.include "coda/coda_api.vinc"
+.include "mailbox/mailbox.vinc"
+.include "messaggio/messaggio.vinc"
+.include "pool/pool.vinc"
+.include "timeout/timeout.vinc"
+
+  .data
+
+; La mailbox del gestore, PRIVATA: ci scrive solo gestore_tick, qui sotto. Non e'
+; .global perche' nessun cliente ha motivo di nominarla -- un timeout si chiede
+; con timeout_arm e si riceve nella propria, di mailbox.
+mbox_gestore: .res MAILBOX
+
+; Il messaggio di tick: due sole parole, cioe' i soli link. Non ha payload e non
+; ne ha bisogno -- porta il FATTO che un tick sia passato, non quanti: il tempo
+; sta in tmo_now, che e' un contatore assoluto. E' anche il motivo per cui
+; coalescarlo non perde niente.
+msg_tick:     .space 2
+
+  .text
+
+  .global gestore_init
+  .global gestore_task
+  .global gestore_tick
+
+  .extern timeout_scaduto
+  .extern tmo_now
+  .extern buf_alloc
+  .extern buf_free
+  .extern send
+  .extern send_s
+  .extern receive
+
+; ==========================================================================
+;  gestore_init(): la mailbox del gestore, vuota.
+;
+;  Sta qui e non come prima istruzione del task perche' il primo tick puo'
+;  arrivare prima che il task sia mai girato: gestore_tick manderebbe su una
+;  TESTA fatta di zeri, che non e' una lista vuota (fwd = bwd = &se stessa).
+;
+;  Non-foglia, corpo lineare, un solo ret, API pubblica -> .proc/.endproc.
+; ==========================================================================
+  .proc gestore_init
+  li r1, mbox_gestore
+  call coda_init
+  .endproc gestore_init
+
+; ==========================================================================
+;  gestore_task: il ciclo. Non ritorna mai -- e' un task, non una procedura.
+;
+;  --- L'ORDINE E' L'INVARIANTE: PRIMA IL BUFFER, POI LA SCADENZA ---
+;  buf_alloc viene prima di timeout_scaduto, e non e' un dettaglio di scrittura.
+;  Cosi' una scadenza non puo' essere consumata senza un posto dove metterla: se
+;  il pool e' vuoto non si guarda nemmeno il vettore, tutto resta armato, e il
+;  "arriva tardi invece di non arrivare" di §9.2 e' STRUTTURALE invece che un
+;  ramo da ricordarsi. Il prezzo e' un alloc + free per ogni tick in cui non
+;  scade niente: due O(1) su una free-list, che e' il prezzo giusto da pagare
+;  per non avere un ordine da rispettare a memoria.
+;
+;  --- PERCHE' UN CICLO INTERNO ---
+;  Piu' timeout possono scadere allo stesso tick, e anche piu' tick possono
+;  essere stati coalescati in un messaggio solo. Si drena finche' timeout_scaduto
+;  dice TMO_NONE: e' la condizione di uscita, non un errore.
+; ==========================================================================
+gestore_task:
+  li r1, mbox_gestore
+  call receive             ; r2 = il messaggio di tick. Non si legge e non si
+                           ; libera: e' lo statico qui sopra, non un buffer
+
+gestore_drena:
+  li r1, POOL_D16          ; la taglia del PAYLOAD senza specifiche, che
+                           ; messaggio.vinc osserva essere esattamente la classe
+                           ; piu' piccola. E' scritta come costante e non come
+                           ; differenza perche' .equ prende un intero o una
+                           ; costante, non un'espressione: la derivazione resta
+                           ; un commento invece di essere verificata
+  call buf_alloc           ; r1 = esito, r2 = buffer
+  bne r1, r0, gestore_task ; niente buffer: tutto resta armato, si riprova al
+                           ; tick prossimo (§9.2). Vale sia per POOL_VUOTO sia
+                           ; per POOL_ENORME -- il secondo non succedera' mai,
+                           ; ma trattarlo come "riprova" non costa una riga
+
+  addi r14, r14, -4
+  sw r2, 0(r14)            ; il buffer deve sopravvivere alle call
+  mov r1, r2
+  call timeout_scaduto     ; r2 = TMO_OK | TMO_NONE. Formatta nel buffer E libera
+                           ; la casella, in una sezione critica sola
+  lw r3, 0(r14)            ; il buffer: timeout_scaduto sporca r3, quindi si
+                           ; rilegge DOPO la call
+  addi r14, r14, 4
+  bne r2, r0, gestore_nulla    ; TMO_OK == 0
+
+  ; --- una scadenza: si consegna al cliente ---
+  addi r4, r3, MESSAGGIO.payload
+  lw r1, PAYLOAD.replyMailbox(r4)  ; dove mandarlo sta nel messaggio stesso: la
+                                   ; mailbox E' l'identita' del cliente (§8.6)
+  mov r2, r3
+  call send_s              ; da TASK, con IE = 1: il wrapper e' obbligatorio, e
+                           ; qui la sezione critica serve davvero -- fra il test
+                           ; del contatore e l'accodamento ci puo' arrivare il
+                           ; tick successivo
+  j gestore_drena          ; ce ne puo' essere un'altra allo stesso tick
+
+  ; --- nessuna scadenza: il buffer di scorta torna al pool e si aspetta ---
+gestore_nulla:
+  mov r2, r3
+  call buf_free
+  j gestore_task
+
+; ==========================================================================
+;  gestore_tick(): il pezzo che gira DENTRO l'ISR del tick, e che deve restare
+;  corto per la stessa ragione per cui il gestore e' un task.
+;
+;  L'incremento di tmo_now e' qui perche' la base dei tempi appartiene al
+;  percorso del tick: e' l'unica parola di generic/timeout che qualcun altro
+;  scrive, e questo e' quel qualcun altro.
+;
+;  Non-foglia, con salti -> prologo/epilogo a mano.
+; ==========================================================================
+gestore_tick:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+
+  li r1, tmo_now
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)             ; il contatore ASSOLUTO dei tick
+
+  li r1, mbox_gestore
+  lw r2, MAILBOX.count(r1)
+  blt r0, r2, tick_fine    ; count > 0: un tick e' gia' in lista, si coalesce.
+                           ; Il test NON e' "count == 0" (§9.2): il caso normale
+                           ; e' il gestore bloccato, cioe' count == -1, e li' si
+                           ; deve mandare
+  li r2, msg_tick
+  call send                ; raw: siamo in ISR, IE e' gia' 0 (§8.5). La consegna
+                           ; diretta sveglia il gestore e chiede la preemption,
+                           ; perche' il livello 0 batte chiunque
+
+tick_fine:
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret

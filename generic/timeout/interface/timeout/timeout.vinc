@@ -52,9 +52,16 @@
 .equ TMO_FREE   0
 .equ TMO_ARMED  1
 
-; Esito delle due chiamate.
-;   timeout_arm    -> TMO_OK | TMO_FULL | TMO_DUP
-;   timeout_cancel -> TMO_OK | TMO_NONE
+; Esito delle tre chiamate.
+;   timeout_arm     -> TMO_OK | TMO_FULL | TMO_DUP
+;   timeout_cancel  -> TMO_OK | TMO_NONE
+;   timeout_scaduto -> TMO_OK | TMO_NONE
+;
+; La terza e' del solo gestore, non dei clienti: prende UNA scadenza passata, la
+; formatta nel buffer che le si porta e libera la casella, tutto in una sezione
+; critica sola. TMO_NONE e' la sua condizione di uscita normale ("adesso non
+; scade niente"), non un errore -- lo stesso valore con lo stesso senso della
+; cancel: "nessuna casella che corrisponda".
 ;
 ; TMO_NONE non e' un errore: e' l'informazione che serve al cliente. Vuol dire
 ; "il timeout e' gia' scattato, il messaggio e' nella tua mailbox o ci sta

@@ -106,3 +106,43 @@ vasm_program(test_catena OBJECTS t_catena LINK lib_messaggi lib_kernel)
 
 vasm_check(catena MODE DUMPS PROGRAM test_catena
            EXPECT "3 3 3 778")
+
+# ---------------------------------------------------------------------------
+#  test_gestore — il gestore dei timeout come TASK: l'ultimo passo di §3.28.
+#
+#  Tenuto per ultimo apposta: e' l'unico che tira dentro anche il pool (§10),
+#  quindi arriva quando lo scheduler a priorita', il blocco volontario e la
+#  catena di mailbox sono gia' verificati da tre test loro.
+#
+#  E' il primo programma che compone QUATTRO librerie -- kernel, messaggi,
+#  timeout e pool -- ed e' l'unico posto in cui §8, §9 e §10 girano insieme
+#  sotto lo scheduler vero: A arma, si blocca, l'ISR sveglia il gestore, il
+#  gestore prende un buffer dal pool e consegna, A riconosce il tag e rende il
+#  buffer.
+#
+#  Due numeri su tre non dipendono dai cicli, ed e' il test piu' stretto della
+#  serie. cntA vale 5 e si DERIVA sull'orologio logico: A arma a +2 tick, le
+#  scadenze cadono ai tick 2, 4, 6, 8, 10, e la successiva non fa in tempo
+#  perche' al 12o l'ISR ferma tutto. Verificato che resti 5 a 2000, 4000 e 8000
+#  cicli di periodo -- si muove solo cntI. cntErr deve essere esattamente 0, e i
+#  tre modi in cui puo' salire sono tre difetti diversi (timeout_arm rifiutato,
+#  clientTag disallineato, buf_free che non riprende il buffer).
+#
+#  cntA e' anche la prova che non ci sia un leak: la classe da 16 ha dieci
+#  blocchi, e un giro che ne perdesse uno per volta si fermerebbe dopo dieci
+#  scadenze.
+#
+#  Il periodo e' 4000 cicli: sotto i 2000 il giro (tick -> gestore -> pool ->
+#  mailbox -> A -> riarmo) non si chiude dentro un tick e cntA crolla a 0, che
+#  e' la saturazione gia' misurata su test_catena.
+# ---------------------------------------------------------------------------
+vasm_object(t_gestore SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_gestore.vasm
+                      INTERFACES vinc_coda vinc_tcb vinc_mailbox vinc_messaggio
+                                 vinc_timeout vinc_gestore_timeout)
+
+vasm_program(test_gestore OBJECTS t_gestore
+             LINK lib_gestore_timeout lib_messaggi lib_kernel lib_pool
+                  lib_timeout)
+
+vasm_check(gestore MODE DUMPS PROGRAM test_gestore
+           EXPECT "5 0 2609")

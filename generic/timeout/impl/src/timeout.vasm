@@ -36,20 +36,27 @@
 ; irq_save/irq_restore sono componibili, quindi le due chiamate sono corrette
 ; anche da IE=0 (boot).
 ;
-; --- Cosa NON c'e' ancora in questo file ---
-; La scansione delle scadenze e la consegna: hanno bisogno di buf_alloc, cioe'
-; del pool, che e' ancora in discussione. Il ciclo del task-gestore ha in piu'
-; bisogno della commutazione volontaria (§8.7) e dello scheduler a priorita'
-; (§7.4). Quando arriveranno, la transizione ARMED -> FREE della scadenza dovra'
-; stare NELLA STESSA sezione critica in cui si decide di consegnare: leggere i
+; --- La scansione c'e', la CONSEGNA no, ed e' il confine della cartella ---
+; timeout_scaduto (in fondo) trova la prima scadenza, la formatta nel buffer che
+; il chiamante gli porta e libera la casella. Non manda niente: send e receive
+; stanno in rtos/, e un modulo di generic/ che li nominasse smetterebbe di essere
+; generic (la regola sta in generic/CMakeLists.txt). Il ciclo del task-gestore
+; sta quindi in rtos/gestore_timeout/, e questo file resta con i soli irq_save/
+; irq_restore, la stessa firma esatta di coda.vasm.
+;
+; Quello che NON si poteva spezzare e' il motivo per cui la primitiva formatta
+; invece di limitarsi a restituire i campi: la transizione ARMED -> FREE deve
+; stare NELLA STESSA sezione critica in cui si decide di consegnare. Leggere i
 ; campi, uscire, mandare e solo dopo liberare riaprirebbe qui dentro esattamente
-; il bug del riciclo dell'handle.
+; il bug del riciclo dell'handle. Il formato del payload e' generic (§8.4,
+; generic/messaggio), quindi formattare non porta dentro niente di rtos.
 ;
 ; Convenzione registri: r1..r4 argomenti, r2 esito, r5..r8 scratch. NON tocca
 ; r9..r13, cosi' un chiamante che scandisce o accumula puo' tenerci il proprio
 ; stato attraverso la call.
 
 .include "timeout/timeout.vinc"
+.include "messaggio/messaggio.vinc"   ; il formato che timeout_scaduto compone
 
   .data
 
@@ -82,6 +89,7 @@ tmo_fine:
 
   .global timeout_arm
   .global timeout_cancel
+  .global timeout_scaduto
   .extern irq_save
   .extern irq_restore
 
@@ -202,6 +210,101 @@ can_avanti:
 
 can_uscita:
   mov r2, r6
+  lw r5, 0(r14)
+  addi r14, r14, 4
+  call irq_restore
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; ==========================================================================
+;  timeout_scaduto(r1 = &buffer) -> r2 = TMO_OK | TMO_NONE
+;
+;  UNA scadenza per chiamata: trova la prima casella armata la cui scadenza e'
+;  passata, ci formatta sopra il messaggio nel buffer del chiamante, e libera la
+;  casella. TMO_NONE vuol dire "nessuna scadenza adesso", che non e' un errore ma
+;  la condizione di uscita del ciclo di chi drena.
+;
+;  --- PERCHE' FORMATTA, INVECE DI RESTITUIRE I CAMPI ---
+;  Perche' la transizione ARMED -> FREE deve stare nella STESSA sezione critica
+;  in cui si decide di consegnare. Restituire i campi al chiamante e lasciare a
+;  lui la liberazione vorrebbe dire uscire dalla sezione critica con una casella
+;  ancora armata e gia' promessa: da li' un secondo giro la troverebbe di nuovo,
+;  e una timeout_cancel del cliente cancellerebbe un timeout gia' consegnato.
+;  E' il bug del riciclo dell'handle (§9.5) rientrato dalla finestra.
+;
+;  Formattare non porta qui dentro niente di rtos: il formato del payload e'
+;  generic/messaggio (§8.4), e il messaggio non viene MANDATO da qui -- ci pensa
+;  il task di rtos/gestore_timeout, che legge dal payload appena scritto anche
+;  dove mandarlo.
+;
+;  --- IL BUFFER ARRIVA GIA' PRESO, E NON E' UN DETTAGLIO ---
+;  Il chiamante fa buf_alloc PRIMA di chiedere una scadenza. Cosi' una scadenza
+;  non puo' essere consumata senza un posto dove metterla, e il "pool vuoto: il
+;  timeout arriva tardi invece di non arrivare" di §9.2 diventa strutturale
+;  invece che un ramo da ricordarsi: senza buffer non si arriva nemmeno a
+;  guardare il vettore.
+;
+;  PAYLOAD.pool NON si scrive: quella parola e' BLOCCO.pool, l'ha scritta
+;  pool_init e dice la provenienza del buffer (messaggio.vinc). Il formato
+;  comincia dopo.
+;
+;  Non-foglia, con salti -> prologo/epilogo a mano.
+;  Clobber: r2 (esito), r3, r4, r5, r6, r7, r8. r1 (il buffer) intatto.
+; ==========================================================================
+timeout_scaduto:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  call irq_save
+  addi r14, r14, -4
+  sw r5, 0(r14)
+
+  li r5, tmo_now
+  lw r5, 0(r5)            ; adesso. Si legge QUI dentro: e' l'ISR del tick a
+                          ; muoverlo, ed e' l'unica parola di questo modulo che
+                          ; qualcun altro scrive
+  li r6, tmo_vettore
+  li r7, tmo_fine
+  li r2, TMO_NONE         ; esito finche' non si trova
+
+sca_scan:
+  beq r6, r7, sca_uscita
+  lw r8, DESCRITTORE.stato(r6)
+  beq r8, r0, sca_avanti        ; TMO_FREE: non c'e' niente da far scadere
+  lw r8, DESCRITTORE.scadenza(r6)
+  sub r8, r8, r5                ; LA DIFFERENZA, mai i valori (§9.3): al wrap del
+                                ; contatore i confronti diretti invertono
+                                ; l'ordine delle scadenze
+  blt r0, r8, sca_avanti        ; scadenza ancora nel futuro
+                                ; (differenza <= 0 => e' passata, o e' adesso)
+
+  ; --- scaduta: si formatta il messaggio nel buffer del chiamante ---
+  addi r3, r1, MESSAGGIO.payload  ; la testa comune del payload (§8.4). Serve un
+                                  ; registro perche' .equ non fa espressioni:
+                                  ; MESSAGGIO.payload + PAYLOAD.x non e'
+                                  ; scrivibile, la somma si fa a runtime
+  li r4, MSG_REPLY                ; una scadenza e' una RISPOSTA: il cliente l'ha
+                                  ; chiesta con timeout_arm
+  sw r4, PAYLOAD.messageType(r3)
+  lw r4, DESCRITTORE.clientTag(r6)
+  sw r4, PAYLOAD.clientTag(r3)    ; e' con questo che il cliente riconosce un
+                                  ; messaggio stantio (§9.4)
+  lw r4, DESCRITTORE.messageCode(r6)
+  sw r4, PAYLOAD.messageCode(r3)
+  lw r4, DESCRITTORE.replyMailbox(r6)
+  sw r4, PAYLOAD.replyMailbox(r3) ; anche DOVE va: il chiamante lo rilegge da qui
+                                  ; invece di riceverlo in un registro, cosi' il
+                                  ; messaggio e' autosufficiente
+
+  sw r0, DESCRITTORE.stato(r6)    ; TMO_FREE, PRIMA di uscire dalla sezione
+                                  ; critica: e' l'invariante di tutta la routine
+  li r2, TMO_OK
+  j sca_uscita
+sca_avanti:
+  addi r6, r6, DESCRITTORE.size
+  j sca_scan
+
+sca_uscita:
   lw r5, 0(r14)
   addi r14, r14, 4
   call irq_restore
