@@ -1,7 +1,8 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **7 settembre 2026** (§3.26 §13.8 sciolta, il taglio
-> sulla mailbox, `enqueue_dopo_nc` e `coda_api.vinc`)
+> Ultimo aggiornamento: **7 settembre 2026** (§3.27 il blocco `LINK` e
+> `MAILBOX.count`; §3.26 §13.8 sciolta, il taglio sulla mailbox,
+> `enqueue_dopo_nc` e `coda_api.vinc`)
 > Scopo: fotografia dello stato per riprendere il lavoro a distanza di giorni
 > senza dover ricostruire il contesto.
 
@@ -11,8 +12,36 @@
 
 > ### ▶ RIPRENDI DA QUI (08/09/2026 o dopo)
 >
-> **Working tree pulito e tutto committato, ma NON pushato:** i commit del
-> 07/09 (§3.26) sono solo in locale. Il push si chiede, non si fa.
+> **I commit del 07/09 (§3.26, §3.27) sono solo in locale.** Il push si chiede,
+> non si fa.
+>
+> ### ▶▶ IL PROSSIMO PASSO È DECISO: scheduler e dispatcher
+>
+> Cioè **§3 e §4 della proposta**, che è ciò che §3.26 aveva già indicato come
+> l'unico ordine possibile — mutex e semaforo sono corti *perché* tutto il resto
+> è deciso, ma poggiano su una grandezza che non esiste: **le priorità non sono
+> costruite**. Oggi `TCB` è `pointers, sp, state` (16 byte, nessuna priorità),
+> `ready` è **una** sola `TESTA`, e `scheduler.vasm` è round-robin. `PCB` non
+> compare in nessun sorgente. Da fare, in quest'ordine di dipendenza: il campo
+> della priorità nel TCB, i PCB con lo slot `preemptato` (§3), una coda di ready
+> per livello, la politica «il livello non vuoto più alto» (§4), e la divisione
+> di §12.3 fra **scheduler** (politica) e **dispatcher** (meccanismo, con un
+> input).
+>
+> Restano fuori, e sono scritti in coda a §3.27 per non perderli: il
+> **linker/locator** (`.align`, `.section`, regioni e mappa) e la domanda sul
+> **contesto vettoriale** nel context switch.
+>
+> **§3.27, seconda parte del 07/09 — un difetto vecchio trovato discutendo
+> d'altro.** Dieci `.struct` ridichiaravano `fwd`/`bwd`: venti righe copiate che
+> dovevano coincidere e che niente verificava. Ora esiste `.struct LINK` in
+> `coda.vinc` e ogni nodo la **annida** (`.field pointers LINK.size`) invece di
+> ricopiarla — l'annidamento per valore del C, quindi zero indirezione, e regge
+> sul contratto di §7.5 che tiene i link a offset 0. Insieme, il punto che §3.26
+> lasciava aperto si chiude: il terzo campo di `TESTA` prende il nome del
+> proprietario con un `.equ` **derivato** (`MAILBOX.count`), non con una `.struct`
+> propria che sarebbe stata lo stesso difetto per un campo solo. `ctest` 23/23 e
+> i sei `.vx` **identici byte per byte**: nessun offset si è mosso.
 >
 > Il **07/09/2026** (§3.26) ha sciolto la decisione che bloccava tutto e ha
 > scritto i primi due pezzi. In una riga ciascuno:
@@ -2405,9 +2434,255 @@ il contratto scritto.
 | §13.5 | il ceiling non ha una direzione conservativa, e perché la sezione deve esistere |
 | §13.3 | la forma della dichiarazione del ceiling (`.equ` che nomina l'utente più prioritario, nel `.vinc` del fornitore) |
 | §13.1 | «sotto non c'è rete» non chiede una rete |
-| `messageHandling.vasm` | il motivo accanto ai due `li` (`count >= -1`) |
-| — | il terzo campo di `TESTA` nominato dal proprietario (`MAILBOX.count`, `SEMAFORO.risorse`): **proposto e non deciso** |
+| ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
+| ~~—~~ | ~~il terzo campo di `TESTA` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.27 I link in un posto solo, e il campo che prende il nome del proprietario (07/09/2026, seconda parte)
+
+**Sessione di sola discussione, finita in codice.** Nessuna decisione di kernel:
+si è chiuso il punto lasciato aperto da §3.26 — il terzo campo di `TESTA`
+nominato dal proprietario — e nel farlo è emerso un difetto più grosso di quello
+che si stava discutendo. `ctest` 23/23, i sei `.vx` **identici byte per byte**.
+
+#### La domanda da cui è partita, e la risposta sbagliata
+
+L'utente ha chiesto perché `coda.vasm` non offra `incrementa`/`decrementa`/`testa`
+sul contatore, così che chi ne ha una convenzione propria non debba conoscere la
+struttura della testa. Non era mai stato deciso — anzi §8.3 dice l'opposto, «la
+contabilità è del chiamante».
+
+La risposta è no, e la ragione non è quella che sembra. `coda.vasm` **l'aritmetica
+la fa**: `addi 1`, `addi -1`, e `beq r5, r0` per la vacuità. Ma quel test è
+corretto solo perché sulle sue teste `count >= 0` — e i due clienti che vorrebbero
+l'accessor sono precisamente quelli per cui è falso: sulla mailbox `count == -1`
+con la lista **non** vuota, sul semaforo `count == 5` con la lista **vuota**,
+perché quelle risorse non sono nodi (§13.1). Un `count_zero` esportato sarebbe
+sbagliato in entrambi i punti in cui verrebbe chiamato. Lo stesso vale per
+l'incremento: nella `send` accompagna un inserimento, in una `sem_post` con
+attendenti accompagna uno **sfilamento**. Stessa istruzione, direzione opposta.
+
+Da cui la formulazione che vale oltre il caso:
+
+> Un modulo non esporta le funzioni che sa calcolare, esporta le operazioni di
+> cui **garantisce un'invariante**. In `enqueue_coda` l'incremento non è una
+> routine chiamata dallo splice: sono tre istruzioni che ci **cadono dentro** con
+> una `j`, apposta perché non esista un percorso in cui una avviene senza l'altro.
+
+#### L'obiezione che ha spostato la discussione
+
+Alla difesa «la `.struct` incapsula già il layout» l'utente ha risposto: *se per
+regole di codifica cambiassero i nomi dei campi, perché dovrei cambiare delle
+funzioni del kernel?* È giusta, e distingue una cosa che si stava confondendo:
+**la `.struct` incapsula l'offset, non il nome.**
+
+E ha aperto il difetto vero, che non riguardava la mailbox: **dieci `.struct`
+ridichiaravano `fwd`/`bwd`** — `TESTA`, `TCB`, `MESSAGGIO`, `BLOCCO` e le sei
+`BLOCCOnn` — venti righe copiate che dovevano coincidere e che niente verificava.
+`messaggio.vinc` lo documentava perfino come idioma. Controprova eseguita:
+invertendo l'ordine dentro `TESTA`, una `.struct` parallela ha continuato a dire
+8 dove la prima diceva 4, **senza un errore di assemblaggio**.
+
+#### La soluzione è dell'utente, ed è l'annidamento
+
+> *«In C un messaggio avrebbe `t_pointers pointers;` e scriverebbe
+> `mex.pointers.fwd`, che è esattamente `altromessaggio.fwd` visto che importi
+> una struttura e non il puntatore a una struttura.»*
+
+Scrivibile qui, e verificato: `.field` risolve la dimensione con `const_value`
+([`assembler.c:153`](../src/assembler.c#L153)), quindi `.field pointers LINK.size`
+riserva il blocco senza ridichiararlo. `.struct` annidate l'assembler le rifiuta
+(`nested .struct`); il blocco opaco ottiene la stessa cosa.
+
+```asm
+.struct LINK
+  .field fwd
+  .field bwd
+.ends
+
+.struct MESSAGGIO
+  .field pointers  LINK.size   ; i link, non ridichiarati
+  .field payload
+.ends
+```
+
+L'accesso ai link di **qualunque** nodo è `LINK.fwd(r2)`, e non aggiunge
+indirezione perché il membro è incorporato: `&nodo.pointers == &nodo`. Che è la
+stessa frase del contratto di §7.5 — «il puntatore al link *è* il puntatore al
+buffer, niente `container_of`».
+
+**Il vincolo, ed è l'unico che l'assembler non verifica:** funziona perché il
+blocco è il **primo** campo. Qui non ci sono espressioni (`.equ` accetta un intero
+o una costante, non una somma), quindi `LINK.fwd(r)` usa un offset interno al
+blocco come offset assoluto. In C l'annidamento funzionerebbe a qualsiasi offset,
+perché il compilatore somma: **il modello è più generale della forma in cui lo
+possiamo scrivere**, e la restrizione coincide con una decisione già presa invece
+che aggiungerne una.
+
+Prova di robustezza: invertendo `fwd`/`bwd` dentro `LINK`, `LINK.fwd` è passato a
+4 **in tutte e dieci le strutture insieme**, e `TESTA.count`/`MESSAGGIO.payload`
+sono rimasti a 8 perché il blocco conserva la sua dimensione.
+
+#### Il terzo campo: `.equ` derivato, non `.struct` propria
+
+Il punto lasciato aperto da §3.26 si chiude, e **non** nella forma in cui era
+stato proposto. Una `.struct MAILBOX` propria sarebbe stata una seconda
+dichiarazione dello stesso layout, cioè il difetto appena tolto rimesso dentro
+per un campo solo. La forma giusta è la derivazione:
+
+```asm
+.equ MAILBOX.count  TESTA.count   ; non copia: E' quel numero con un altro nome
+.equ MAILBOX.size   TESTA.size    ; e ".res MAILBOX" alloca
+```
+
+L'utente ha chiuso da sé l'obiezione residua: *questo introduce una dipendenza dai
+nomi dei campi, ma il kernel dipende già dai nomi delle procedure, quindi è ok*.
+Sì — **un'interfaccia è un insieme di nomi** — con la precisazione che il guadagno
+non è togliere la dipendenza ma cambiarne la forma: da cablata in sette istruzioni
+a **dichiarata in una riga e verificata dal compilatore**, perché se `TESTA`
+rinominasse il campo l'`.equ` non assembla (`invalid value`) invece di produrre un
+offset sbagliato in silenzio. Ed è la risposta letterale alla domanda di partenza:
+le funzioni del kernel non cambiano, cambia la riga che dichiara la derivazione.
+
+#### Perché sui dati sì e sulle procedure no
+
+Chiesto se si potesse aliasare allo stesso modo i nomi delle entry. **No, e non è
+un limite aggirabile:** `.equ push pippo` fallisce anche su un'etichetta *locale*
+(verificato), perché le costanti e le etichette sono due spazi di nomi risolti in
+momenti diversi — numeri all'assemblaggio, indirizzi al link. Il meccanismo esiste
+ma sta dal lato del **fornitore**: sono le due `.global` sullo stesso indirizzo di
+`enqueue_dopo_nc`/`enqueue_testa_nc` (§13.6). Un campo lo ribattezza il cliente,
+una procedura solo chi la implementa.
+
+E non lo si vorrebbe comunque, per una ragione di significato:
+
+> Sui **dati** l'alias aggiunge informazione — `MAILBOX.count` dice di chi è la
+> semantica del contatore. Sulle **procedure** la toglierebbe: nel punto di
+> chiamata il nome della primitiva è l'unica cosa che dice quale disciplina è in
+> vigore, e `mailbox_accoda` nasconderebbe che è la variante non contata.
+
+#### Le vtable, e perché non servono qui
+
+Proposte come modo di non dipendere dai nomi, e la critica dell'utente
+all'implementazione C++ è fondata: l'override **lega il nome**, mentre una tabella
+in stile C (`{.push = pippo}`) disaccoppia lo slot dall'implementazione, che è ciò
+che conta se il contratto è il prototipo. Ma qui non servirebbero: una vtable
+disaccoppia *quale implementazione gira*, non *come si chiama un campo*, e a
+runtime non esiste più di un'implementazione — il progetto è statico per
+decisione. Si pagherebbe indirezione, nel percorso delle code, per una varietà
+eliminata apposta.
+
+E il polimorfismo che serve c'è già in due forme, entrambe risolte
+all'assemblaggio: quello **di struttura** (`coda.vasm` opera su ogni nodo che
+abbia i link al posto convenuto — `LINK` gli dà finalmente un nome invece di
+lasciarlo come coincidenza fra dieci dichiarazioni) e quello **di nome** (due
+`.global` sullo stesso indirizzo). È il caso raro in cui si prende il vantaggio
+del meccanismo senza il suo prezzo.
+
+#### Cosa è stato scritto
+
+| Dove | Cosa |
+|---|---|
+| [`coda.vinc`](../generic/coda/interface/coda/coda.vinc) | `.struct LINK` e i due vincoli in testa; `TESTA` annida invece di ridichiarare |
+| `tcb.vinc`, `messaggio.vinc`, `pool.vinc` | le altre nove strutture annidano `LINK`; i commenti che documentavano l'idioma vecchio riscritti |
+| `coda.vasm`, `pool.vasm`, `test_coda.vasm` | 44 accessi da `TESTA.fwd/bwd` (e 2 da `BLOCCO.fwd/bwd`) a `LINK.fwd/bwd` |
+| [`mailbox.vinc`](../rtos/servizi/mailbox/interface/mailbox/mailbox.vinc) **(nuovo)** | il tipo `MAILBOX` come `.equ` derivati, col perché della derivazione contro la copia |
+| `mailbox/CMakeLists.txt` | nasce `interface/`, e la nota che lo prevedeva («il giorno che la mailbox avesse dei codici di esito propri») aveva indovinato il quando e sbagliato il cosa: non codici, un **tipo** |
+| `messageHandling.vasm` | sette accessi a `MAILBOX.count`, e il motivo accanto ai due `li` — la voce che §3.26 lasciava aperta |
+| `tests/test_include.vasm` | il commento nominava `duplicate constant TCB.fwd`, che non esiste più |
+
+**Zero cambiamenti binari**: sei `.vx` confrontati byte per byte con quelli di
+prima, tutti identici. Era prevedibile e va detto perché è ciò che rende il
+passaggio a costo nullo — gli offset non si sono mossi (`TESTA.count` = 8,
+`TESTA.size` = 12, `TCB.sp` = 8, `MESSAGGIO.payload` = 8): è cambiato **da dove
+vengono**, non quanto valgono.
+
+#### Cosa resta
+
+- **`SEMAFORO.risorse` non è scritto**, e di proposito: il semaforo non ha ancora
+  un `.vinc` perché non ha ancora codice, e il blocco resta quello di §3.26 — la
+  priorità nel TCB non esiste. La forma però è decisa: sarà un `.equ` derivato da
+  `TESTA.count`, con accanto il motivo per cui il nome è diverso (contabile, non
+  descrittivo);
+- **niente di questa sessione è nella proposta.** Sono due voci: `LINK` come
+  idioma di dichiarazione dei nodi (tocca §3, che elenca le strutture) e il campo
+  nominato dal proprietario (§8.2 e §13.3). La tabella di §3.26 resta valida per
+  tutto il resto;
+- il campo si chiama `pointers` e la struttura `LINK`, presi dall'esempio in C
+  dell'utente e dai test. Nessuno dei due è stato discusso come nome.
+
+#### Coda della sessione: dove sta andando la toolchain, e perché conta
+
+La discussione è finita su tre osservazioni che non riguardano il kernel e che
+vale la pena non perdere, perché cambiano l'ordine di ciò che conviene fare.
+
+**1. L'assembler è già mezzo front-end, e si vede dove si ferma.** Le direttive
+non sono comodità di scrittura, sono le categorie che un compilatore deve
+emettere: `.struct`/`.field` sono tipi record, `.res TIPO` è storage tipizzato,
+`.include` idempotente più `-I` è un sistema di header, `.global`/`.extern` è il
+linkage, e le due forme di oggi — l'`.equ` derivato e `.field pointers LINK.size`
+— sono `typedef` e membro incorporato, cioè roba di front-end. In più la ABI è
+**scritta** (`coda_api.vinc`: argomenti, esito, scratch, chi è foglia), ed è la
+specifica da cui un generatore di codice partirebbe.
+
+Il confine fra i due strati si vede rotto in un punto preciso, ed è il debito di
+§8.7: `.proc` fa liveness analysis sul corpo e salva i registri che scrive
+([`assembler.c:815-827`](../src/assembler.c#L815-L827)), ma «*does NOT see what a
+callee clobbers*». `send_s` promette più di quanto dia **per quel motivo**. Non è
+un baco: è il punto in cui l'assembler ha provato a fare il mestiere del
+compilatore senza avere ciò che lo distingue, il grafo delle chiamate.
+
+Cosa manca per salire davvero: i tipi ci sono sulla **memoria** ma non sui
+**registri** (niente vieta di leggere `MAILBOX.count` da un TCB), e manca
+l'allocazione dei registri — che qui non serve solo perché le variabili vive sono
+quelle tenute a mano in `r1`/`r2`/`r3` per convenzione.
+
+**2. C'è un linker, non c'è un locator.** [`toolchain.c:336`](../src/toolchain.c#L336)
+assegna le basi dei moduli «*in command order*», concatena, risolve i simboli e
+rialloca. Due sezioni cablate, `text` e `data`; nessuna nozione di regione di
+memoria, nessun allineamento, nessun controllo di traboccamento, nessuna mappa in
+uscita. Su una macchina con memorie a costi diversi — scratchpad veloce, finestra
+DMA, program memory — nessuna delle tre cose che servono è esprimibile.
+
+I tre pezzi, nell'ordine in cui converrebbe farli:
+
+- **`.align N`**, e la garanzia che il linker non rompa l'allineamento quando
+  concatena i moduli — oggi lo farebbe, perché la base del modulo successivo è la
+  fine del precedente. È il pezzo che una macchina **vettoriale** rende
+  obbligatorio, ed è piccolo abbastanza da provare su di esso la disciplina dei
+  `.vx` byte per byte;
+- **`.section nome`** al posto dei due nomi cablati: è il prerequisito di tutto
+  il resto (senza un nome un modulo non può dire dove vuole finire) ed è il più
+  invasivo, perché tocca assembler, formato `.vo` e linker;
+- **regioni e mappa**: un file di collocazione che dichiara le memorie, il link
+  che **fallisce** se una regione trabocca invece di scrivere oltre, e un `.map`
+  che dice dove è finito ogni simbolo e quanto spazio resta.
+
+Due clienti già pronti nel kernel, che tengono il lavoro fuori dall'astratto: gli
+**stack dei task** (una regione propria, riempita di un pattern per misurare il
+consumo massimo) e le **sei classi del pool**, che sono già partizionate per
+taglia e sarebbero da partizionare per memoria.
+
+**3. Il contesto vettoriale nel context switch è la domanda non fatta.**
+[`machine.vasm:17-19`](../hal/impl/src/machine.vasm#L17-L19) dichiara i registri
+vettoriali (`v*`, `vl`, `vmask`) **volatili** attraverso la preemption, e lo
+motiva con «la trap arriva solo al confine d'istruzione: nessuna corsia viva da
+salvare». La motivazione risponde a una domanda diversa da quella che conta:
+esclude di dover salvare uno stato **parziale** — vero, ed è il regalo di una
+macchina senza pipeline — ma non che ci sia un **valore** vivo. Un task con `v0`
+carico dentro un loop, preemptato, al ritorno trova `v0` di qualcun altro.
+
+Quindi «volatili» è un vincolo sul **codice applicativo**: nessun valore
+vettoriale attraversa un punto di preemption. Regge qui; su una macchina vera,
+dove il file vettoriale è dell'ordine dei kilobyte, diventa la scelta centrale di
+latenza — salvarlo sempre domina il costo dello switch, non salvarlo impone una
+disciplina che chi scrive il DSP non rispetterà. Le uscite note sono il
+**salvataggio pigro** (flag nel TCB, si salva solo se il task entrante lo usa) e
+la **partizione dichiarata** fra task vettoriali e non. Nessuna delle due è nel
+modello, e sono le uniche parti che **non** si deducono da ciò che è già deciso:
+servono i numeri della macchina.
 
 ---
 
