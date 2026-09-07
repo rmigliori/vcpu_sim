@@ -80,7 +80,7 @@
 ; decide il suo proprietario. Mescolarle sulla stessa testa fa derivare il
 ; contatore in silenzio.
 
-; Layout come struttura: offset simbolici (TESTA.fwd/bwd/count) invece di 0/4/8.
+; Layout come struttura: offset simbolici (LINK.fwd/bwd/count) invece di 0/4/8.
 ; La struct descrive la TESTA (sentinella); il nodo condivide i primi due campi
 ; (fwd,bwd) -> stesso codice di insert/remove. Da qui arrivano anche i CODA_*.
 .include "coda/coda.vinc"
@@ -107,8 +107,8 @@
   .extern irq_restore
 
 coda_init:                ; coda_init(r1=&testa)
-  sw r1, TESTA.fwd(r1)    ; fwd = &testa
-  sw r1, TESTA.bwd(r1)    ; bwd = &testa
+  sw r1, LINK.fwd(r1)    ; fwd = &testa
+  sw r1, LINK.bwd(r1)    ; bwd = &testa
   sw r0, TESTA.count(r1)  ; count = 0
   ret
 
@@ -120,8 +120,8 @@ coda_init:                ; coda_init(r1=&testa)
 ; call in nessuno dei due percorsi: restano FOGLIA.
 
 enqueue_coda:             ; enqueue_coda(r1=&testa, r2=&nodo) -- in fondo (FIFO)
-  lw r3, TESTA.fwd(r2)
-  lw r4, TESTA.bwd(r2)
+  lw r3, LINK.fwd(r2)
+  lw r4, LINK.bwd(r2)
   or r3, r3, r4
   bne r3, r0, enq_linked  ; link non nulli: il nodo sta gia' in una lista
   lw r5, TESTA.count(r1)
@@ -129,22 +129,22 @@ enqueue_coda:             ; enqueue_coda(r1=&testa, r2=&nodo) -- in fondo (FIFO)
   sw r5, TESTA.count(r1)  ; count++
   j enq_coda_splice
 enqueue_coda_nc:          ; enqueue_coda_nc(r1=&testa, r2=&nodo) -- senza contatore
-  lw r3, TESTA.fwd(r2)
-  lw r4, TESTA.bwd(r2)
+  lw r3, LINK.fwd(r2)
+  lw r4, LINK.bwd(r2)
   or r3, r3, r4
   bne r3, r0, enq_linked
 enq_coda_splice:
-  lw r4, TESTA.bwd(r1)    ; prev = testa.bwd (ultimo)
-  sw r1, TESTA.fwd(r2)    ; nodo.fwd = &testa
-  sw r4, TESTA.bwd(r2)    ; nodo.bwd = prev
-  sw r2, TESTA.fwd(r4)    ; prev.fwd = nodo
-  sw r2, TESTA.bwd(r1)    ; testa.bwd = nodo
+  lw r4, LINK.bwd(r1)    ; prev = testa.bwd (ultimo)
+  sw r1, LINK.fwd(r2)    ; nodo.fwd = &testa
+  sw r4, LINK.bwd(r2)    ; nodo.bwd = prev
+  sw r2, LINK.fwd(r4)    ; prev.fwd = nodo
+  sw r2, LINK.bwd(r1)    ; testa.bwd = nodo
   li r3, CODA_OK
   ret
 
 enqueue_testa:            ; enqueue_testa(r1=&testa, r2=&nodo) -- in testa (LIFO)
-  lw r3, TESTA.fwd(r2)
-  lw r4, TESTA.bwd(r2)
+  lw r3, LINK.fwd(r2)
+  lw r4, LINK.bwd(r2)
   or r3, r3, r4
   bne r3, r0, enq_linked
   lw r5, TESTA.count(r1)
@@ -159,16 +159,16 @@ enqueue_testa:            ; enqueue_testa(r1=&testa, r2=&nodo) -- in testa (LIFO
 ; l'unica riga che li tiene veri.
 enqueue_testa_nc:         ; enqueue_testa_nc(r1=&testa, r2=&nodo) -- senza contatore
 enqueue_dopo_nc:          ; enqueue_dopo_nc(r1=&prec, r2=&nodo)   -- dopo un nodo qualsiasi
-  lw r3, TESTA.fwd(r2)
-  lw r4, TESTA.bwd(r2)
+  lw r3, LINK.fwd(r2)
+  lw r4, LINK.bwd(r2)
   or r3, r3, r4
   bne r3, r0, enq_linked
 enq_testa_splice:
-  lw r4, TESTA.fwd(r1)    ; next = prec.fwd   (la sentinella e' il prec del primo)
-  sw r4, TESTA.fwd(r2)    ; nodo.fwd = next
-  sw r1, TESTA.bwd(r2)    ; nodo.bwd = prec
-  sw r2, TESTA.bwd(r4)    ; next.bwd = nodo
-  sw r2, TESTA.fwd(r1)    ; prec.fwd = nodo
+  lw r4, LINK.fwd(r1)    ; next = prec.fwd   (la sentinella e' il prec del primo)
+  sw r4, LINK.fwd(r2)    ; nodo.fwd = next
+  sw r1, LINK.bwd(r2)    ; nodo.bwd = prec
+  sw r2, LINK.bwd(r4)    ; next.bwd = nodo
+  sw r2, LINK.fwd(r1)    ; prec.fwd = nodo
   li r3, CODA_OK
   ret
 
@@ -191,13 +191,13 @@ dequeue_testa:            ; dequeue_testa(r1=&testa) -> r2 = nodo (0 se vuota)
   addi r5, r5, -1
   sw r5, TESTA.count(r1) ; count--, poi cade nel corpo
 dequeue_testa_nc:         ; dequeue_testa_nc(r1=&testa) -> r2 = nodo (0 se vuota)
-  lw r2, TESTA.fwd(r1)   ; nodo = testa.fwd
+  lw r2, LINK.fwd(r1)   ; nodo = testa.fwd
   beq r2, r1, deq_empty  ; fwd == &testa -> lista vuota (uscita condivisa)
-  lw r4, TESTA.fwd(r2)   ; new = nodo.fwd
-  sw r4, TESTA.fwd(r1)   ; testa.fwd = new
-  sw r1, TESTA.bwd(r4)   ; new.bwd = &testa
-  sw r0, TESTA.fwd(r2)   ; il nodo e' uscito: glielo diciamo (invariante dei link)
-  sw r0, TESTA.bwd(r2)
+  lw r4, LINK.fwd(r2)   ; new = nodo.fwd
+  sw r4, LINK.fwd(r1)   ; testa.fwd = new
+  sw r1, LINK.bwd(r4)   ; new.bwd = &testa
+  sw r0, LINK.fwd(r2)   ; il nodo e' uscito: glielo diciamo (invariante dei link)
+  sw r0, LINK.bwd(r2)
   ret
 deq_empty:
   li r2, 0             ; coda vuota -> puntatore nullo
@@ -207,8 +207,8 @@ deq_empty:
 ; scriverebbe su 0(r0) attraverso i link nulli, quindi il controllo qui pretende
 ; l'opposto — link NON nulli.
 remove_buffer:            ; remove_buffer(r1=&nodo, r2=&testa) -- unlink O(1)
-  lw r3, TESTA.fwd(r1)
-  lw r4, TESTA.bwd(r1)
+  lw r3, LINK.fwd(r1)
+  lw r4, LINK.bwd(r1)
   or r3, r3, r4
   beq r3, r0, rem_unlinked
   lw r6, TESTA.count(r2)
@@ -216,17 +216,17 @@ remove_buffer:            ; remove_buffer(r1=&nodo, r2=&testa) -- unlink O(1)
   sw r6, TESTA.count(r2) ; count-- (la testa la conosce il chiamante)
   j rem_splice
 remove_buffer_nc:         ; remove_buffer_nc(r1=&nodo) -- senza contatore
-  lw r3, TESTA.fwd(r1)
-  lw r4, TESTA.bwd(r1)
+  lw r3, LINK.fwd(r1)
+  lw r4, LINK.bwd(r1)
   or r3, r3, r4
   beq r3, r0, rem_unlinked
 rem_splice:
-  lw r4, TESTA.bwd(r1)   ; prev = nodo.bwd
-  lw r5, TESTA.fwd(r1)   ; next = nodo.fwd
-  sw r5, TESTA.fwd(r4)   ; prev.fwd = next
-  sw r4, TESTA.bwd(r5)   ; next.bwd = prev
-  sw r0, TESTA.fwd(r1)   ; il nodo e' uscito
-  sw r0, TESTA.bwd(r1)
+  lw r4, LINK.bwd(r1)   ; prev = nodo.bwd
+  lw r5, LINK.fwd(r1)   ; next = nodo.fwd
+  sw r5, LINK.fwd(r4)   ; prev.fwd = next
+  sw r4, LINK.bwd(r5)   ; next.bwd = prev
+  sw r0, LINK.fwd(r1)   ; il nodo e' uscito
+  sw r0, LINK.bwd(r1)
   li r3, CODA_OK
   ret
 rem_unlinked:

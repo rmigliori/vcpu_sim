@@ -16,13 +16,12 @@
 ; payload e' un indirizzo, non un campo: l'array parte sempre da payload[0] e la
 ; sua lunghezza la decide chi compone il messaggio. Ne segue che MESSAGGIO.size
 ; NON e' la dimensione di un messaggio e ".res MESSAGGIO" non va usata: si
-; riserva lo spazio che serve, oppure si dichiara una .struct propria che comincia
-; con fwd/bwd (stesso idioma con cui TCB ridichiara i due link invece di
-; annidare TESTA).
+; riserva lo spazio che serve, oppure si dichiara una .struct propria che
+; comincia con ".field pointers LINK.size" (stesso idioma con cui TCB e TESTA
+; annidano i link).
 .struct MESSAGGIO
-  .field fwd              ; +0  link (idioma list_head, come TESTA e TCB)
-  .field bwd              ; +4
-  .field payload          ; +8  payload[0]: primo byte del contenuto
+  .field pointers  LINK.size   ; +0  i link (idioma list_head, come TESTA e TCB)
+  .field payload               ; +8  payload[0]: primo byte del contenuto
 .ends
 
 ; Testa comune del payload: convenzione fra clienti e fornitori di servizi, NON

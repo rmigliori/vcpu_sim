@@ -70,9 +70,9 @@
 ;  blocco e ".res BLOCCO" non va usata — si usano le BLOCCOnn qui sotto.
 ; --------------------------------------------------------------------------
 .struct BLOCCO
-  .field fwd              ; +0  <- l'indirizzo consegnato
-  .field bwd              ; +4
-  .field pool             ; +8  taglia dell'area dati, scritta a pool_init e mai
+  .field pointers LINK.size ; +0  i link, annidati da coda.vinc <- l'indirizzo
+                            ;     consegnato e' questo, cioe' &blocco.pointers
+  .field pool               ; +8  taglia dell'area dati, scritta a pool_init e mai
                           ;     piu' toccata: e' una proprieta' permanente del
                           ;     blocco, non uno stato. Vale anche come stride
                           ;     rispetto a BLOCCO.dati.
@@ -81,43 +81,37 @@
 
 ; Le sei taglie fisiche: 12 byte di testa piu' l'area dati.
 .struct BLOCCO16
-  .field fwd
-  .field bwd
+  .field pointers LINK.size
   .field pool
   .field dati  POOL_D16
 .ends                     ; 28
 
 .struct BLOCCO32
-  .field fwd
-  .field bwd
+  .field pointers LINK.size
   .field pool
   .field dati  POOL_D32
 .ends                     ; 44
 
 .struct BLOCCO64
-  .field fwd
-  .field bwd
+  .field pointers LINK.size
   .field pool
   .field dati  POOL_D64
 .ends                     ; 76
 
 .struct BLOCCO128
-  .field fwd
-  .field bwd
+  .field pointers LINK.size
   .field pool
   .field dati  POOL_D128
 .ends                     ; 140
 
 .struct BLOCCO256
-  .field fwd
-  .field bwd
+  .field pointers LINK.size
   .field pool
   .field dati  POOL_D256
 .ends                     ; 268
 
 .struct BLOCCO512
-  .field fwd
-  .field bwd
+  .field pointers LINK.size
   .field pool
   .field dati  POOL_D512
 .ends                     ; 524

@@ -95,8 +95,8 @@ main:
   li r5, n1
   sub r5, r2, r5
   dumps r5                ; 0 = e' proprio n1
-  lw r5, TESTA.fwd(r2)
-  lw r6, TESTA.bwd(r2)
+  lw r5, LINK.fwd(r2)
+  lw r6, LINK.bwd(r2)
   or r5, r5, r6
   dumps r5                ; 0 = link azzerati
 
@@ -125,8 +125,8 @@ main:
   lw r5, TESTA.count(r1)
   dumps r5                ; 0
   li r1, n1
-  lw r5, TESTA.fwd(r1)
-  lw r6, TESTA.bwd(r1)
+  lw r5, LINK.fwd(r1)
+  lw r6, LINK.bwd(r1)
   or r5, r5, r6
   dumps r5                ; 0 = link azzerati anche qui
 
@@ -182,7 +182,7 @@ main:
   call enqueue_dopo_nc
   dumps r3                ; 0 = CODA_OK
   li r1, testa
-  lw r5, TESTA.fwd(r1)
+  lw r5, LINK.fwd(r1)
   li r6, n1
   sub r5, r5, r6
   dumps r5                ; 0 = n1 e' il primo

@@ -13,7 +13,7 @@
 ; .include e' un no-op.
 ;
 ; I due modi in cui questo test fallisce:
-;   senza idempotenza  -> asm error: duplicate constant TCB.fwd
+;   senza idempotenza  -> asm error: duplicate constant TCB.pointers
 ;   senza il -I giusto -> cannot open include 'tcb/tcb.vinc'
 ;
 ; Il secondo e' diventato il punto della cosa dal 06/09/2026. Prima tutti i

@@ -1,0 +1,49 @@
+; mailbox/mailbox.vinc — il TIPO mailbox: una TESTA di cui il proprietario e' la
+; mailbox, non le code.
+;
+; Nato il 07/09/2026, e la ragione non e' l'ordine dei file. Una mailbox E' una
+; TESTA — stessi link, stesso terzo campo, stessa dimensione — ma il terzo campo
+; NON ha la semantica che coda.vasm gli da':
+;
+;   sulle teste CONTATE   count >= 0 e' il numero di nodi. Lo scrive coda.vasm;
+;   sulla mailbox         count e' DESCRITTIVO col segno (§8.2): >0 messaggi in
+;                         lista, -1 un TCB in attesa, 0 vuota. Lo scrive SOLO
+;                         messageHandling.vasm, che per questo usa lo strato _nc.
+;
+; Fino a ieri messageHandling.vasm scriveva "TESTA.count", cioe' nominava il
+; campo col nome della struttura generica mentre lo usava con una convenzione
+; propria: era l'unico punto in cui la regola "una sola disciplina per testa"
+; (§8.3) era affermata in un commento e contraddetta dal codice.
+;
+; --- PERCHE' UN .equ DERIVATO E NON UNA .struct PROPRIA ---
+;
+; Una ".struct MAILBOX { pointers, count }" avrebbe dato lo stesso nome e sarebbe
+; stata una SECONDA dichiarazione dello stesso layout: il giorno che TESTA
+; cambiasse, resterebbe indietro in SILENZIO — verificato, dava 8 dove TESTA
+; diceva 4, senza un errore di assemblaggio. Il .equ non copia, DERIVA: e' quello
+; stesso numero con un secondo nome, quindi segue TESTA per costruzione, e se il
+; campo di TESTA venisse rinominato questa riga non assembla piu' e indica dove
+; guardare. La dipendenza dal nome resta — un'interfaccia E' un insieme di nomi,
+; e il kernel dipende gia' da enqueue_coda_nc e da CODA_OK — ma da sparsa su
+; sette istruzioni diventa dichiarata in un punto e verificata dal compilatore.
+;
+; E' lo stesso meccanismo delle due .global sullo stesso indirizzo di
+; enqueue_dopo_nc/enqueue_testa_nc (§13.6): un nome pubblico che punta a
+; un'implementazione con un altro nome, risolto pero' all'assemblaggio, dove non
+; costa un'istruzione. Sui DATI aggiunge informazione (dice di chi e' la
+; semantica del contatore); sulle PROCEDURE la toglierebbe, ed e' per questo che
+; le entry di coda si continuano a chiamare col loro nome: in "addi" + "call
+; enqueue_coda_nc" il nome della primitiva e' l'unica cosa che dice quale
+; disciplina e' in vigore.
+;
+; .equ risolve al momento della definizione, quindi coda.vinc va incluso PRIMA:
+; da §3.16 .include e' idempotente, includerlo qui non collide con chi lo ha gia'
+; incluso a monte.
+
+.include "coda/coda.vinc"
+
+.equ MAILBOX.count     TESTA.count   ; il contatore descrittivo con segno (§8.2)
+.equ MAILBOX.size      TESTA.size    ; ".res MAILBOX" alloca una mailbox
+
+; I link si leggono con i nomi di LINK, come su ogni nodo (coda.vinc): non c'e'
+; nessun MAILBOX.fwd, perche' quella non e' una convenzione della mailbox.

@@ -9,11 +9,59 @@
 ; dipendere ogni modulo da tutto (§12.6, passo 4). Il pool si portava dietro TCB
 ; e MESSAGGIO senza nominarli mai.
 
-; Testa di coda (sentinella): condivide fwd/bwd con i nodi (idioma list_head).
-.struct TESTA
+; --------------------------------------------------------------------------
+;  I LINK, IN UN POSTO SOLO
+;
+;  Ogni nodo di lista di questo progetto — TESTA, TCB, MESSAGGIO, le sette
+;  BLOCCO del pool — comincia con la stessa coppia di puntatori. Fino al
+;  07/09/2026 ognuno se li RIDICHIARAVA: dieci .struct, venti righe copiate che
+;  dovevano coincidere e che niente verificava. Cambiare l'ordine di fwd/bwd qui
+;  avrebbe lasciato indietro le altre nove, e il primo sintomo sarebbe stato una
+;  lista corrotta — non un errore di assemblaggio.
+;
+;  Ora i link esistono UNA VOLTA, e ogni nodo li ANNIDA riservando il blocco:
+;
+;      .struct MESSAGGIO
+;        .field pointers  LINK.size    ; i link, non ridichiarati
+;        .field payload
+;      .ends
+;
+;  E' l'annidamento per valore dei linguaggi ad alto livello — "mex.pointers.fwd"
+;  con la struttura importata, non un puntatore a struttura — quindi non aggiunge
+;  nessuna indirezione: il campo sta fisicamente li'. Si accede ai link di
+;  QUALUNQUE nodo con i nomi di LINK, perche' il blocco sta a offset 0 e
+;  &nodo.pointers == &nodo:
+;
+;      lw r3, LINK.fwd(r2)           ; r2 = messaggio, TCB, blocco, testa...
+;
+;  DUE VINCOLI, e il primo e' l'unico che l'assembler non verifica:
+;
+;  1. il blocco dei link deve essere il PRIMO campo. Qui non ci sono espressioni
+;     (.equ accetta un intero o una costante, non una somma), quindi
+;     "LINK.fwd(r)" usa un offset interno al blocco come offset assoluto: e' un
+;     accesso corretto solo finche' il blocco sta a zero. Non e' una restrizione
+;     nuova — e' il contratto di §7.5 della proposta, "il puntatore al link E' il
+;     puntatore al buffer, niente container_of" — ma qui diventa la condizione
+;     che tiene in piedi la notazione, non solo una comodita';
+;  2. il campo si chiama "pointers" ovunque, cosi' "&nodo.pointers" e' scrivibile
+;     con lo stesso nome in ogni struttura. Serve di rado: quasi sempre si usa
+;     direttamente LINK.fwd/LINK.bwd sull'indirizzo del nodo.
+;
+;  Gli offset non sono cambiati di un byte rispetto alla forma ridichiarata
+;  (TESTA.count = 8, TESTA.size = 12, TCB.sp = 8, MESSAGGIO.payload = 8): il
+;  passaggio e' stato verificato a .vx identici byte per byte.
+; --------------------------------------------------------------------------
+.struct LINK
   .field fwd              ; +0
   .field bwd              ; +4
-  .field count            ; +8
+.ends                     ; 8
+
+; Testa di coda (sentinella): condivide i link con i nodi (idioma list_head), ed
+; e' per questo che "dopo la sentinella" e "in testa" sono la stessa operazione
+; (enqueue_dopo_nc, §13.6).
+.struct TESTA
+  .field pointers  LINK.size   ; +0
+  .field count                 ; +8
 .ends
 
 ; Esito delle primitive di coda (kernel/coda.vasm), restituito in r3.

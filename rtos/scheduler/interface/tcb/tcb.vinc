@@ -2,9 +2,11 @@
 ; stati. E' quello che mailbox, semafori e mutex devono conoscere del kernel per
 ; parlargli, e nient'altro.
 ;
-; Include coda.vinc perche' il TCB E' un nodo di lista: ridichiara fwd/bwd a
-; offset 0 invece di annidare una TESTA, cosi' il puntatore al TCB E' il
-; puntatore ai link e coda.vasm non ha bisogno di nessun container_of.
+; Include coda.vinc perche' il TCB E' un nodo di lista: annida il blocco LINK a
+; offset 0, cosi' il puntatore al TCB E' il puntatore ai link e coda.vasm non ha
+; bisogno di nessun container_of. Fino al 07/09/2026 i due link erano
+; ridichiarati qui a mano, con l'obbligo non verificato di restare allineati a
+; TESTA.
 ;
 ; Nato il 05/09/2026 spezzando types.vinc (§12.6, passo 4).
 ;
@@ -18,10 +20,9 @@
 
 ; Descrittore di task.
 .struct TCB
-  .field fwd              ; +0
-  .field bwd              ; +4
-  .field sp               ; +8  contesto opaco salvato
-  .field state            ; +12 stato corrente
+  .field pointers  LINK.size   ; +0  i link, annidati da coda.vinc
+  .field sp                    ; +8  contesto opaco salvato
+  .field state                 ; +12 stato corrente
 .ends
 
 ; Stati del task (campo TCB.state).
