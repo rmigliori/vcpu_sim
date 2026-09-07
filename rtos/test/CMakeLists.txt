@@ -31,9 +31,12 @@ vasm_check(mailbox MODE DUMPS PROGRAM test_mailbox
 #  per priorita', lo slot di §2 (il preemptato non riparte da solo) e che la
 #  scansione non raggiunga mai l'idle.
 #
-#  Dei tre numeri attesi solo il TERZO e' derivabile senza eseguire, ed e' il
-#  piu' importante: cntI deve essere ESATTAMENTE 0. I primi due dipendono dai
-#  cicli e vanno letti come "entrambi hanno girato, e M si e' fermato".
+#  Il sistema parte con la sola IDLE, e M e H entrano al 2o e al 4o tick. Non e'
+#  una complicazione: se tutti fossero eseguibili dall'inizio l'idle non
+#  girerebbe mai e il suo contatore -- che e' la STATISTICA DI CPU LIBERA --
+#  varrebbe 0 per costruzione, senza misurare niente.
+#  I tre numeri dipendono dai cicli; cio' che il test asserisce e' che siano
+#  TUTTI E TRE > 0 e prodotti in fasi disgiunte.
 # ---------------------------------------------------------------------------
 vasm_object(t_scheduler SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_scheduler.vasm
                         INTERFACES vinc_coda vinc_tcb)
@@ -41,4 +44,4 @@ vasm_object(t_scheduler SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_scheduler.vasm
 vasm_program(test_scheduler OBJECTS t_scheduler LINK lib_kernel)
 
 vasm_check(scheduler MODE DUMPS PROGRAM test_scheduler
-           EXPECT "74 106 0")
+           EXPECT "74 29 59")

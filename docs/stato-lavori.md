@@ -2472,22 +2472,32 @@ sopravvive al modello che verificava passa, e dice il falso**. Al suo posto
 
 #### Cosa verifica, e l'unico numero che vale davvero
 
-Tre task, e H **entra in gioco a metà simulazione** (l'ISR lo rende eseguibile al
-4° tick): è quello che rende la preemption *osservabile* invece di doverla
-dedurre da due contatori che crescono insieme.
+Il sistema **parte con la sola idle**, e i task entrano a scaglioni: M al 2°
+tick, H al 4°. Tre fasi disgiunte, e ogni ingresso è una preemption osservabile
+invece che dedotta da contatori che crescono insieme.
 
-| | livello | atteso |
+| | livello | quando conta |
 |---|---|---|
-| H | 1 | conta **solo dopo** il 4° tick |
-| M | 2 | conta **solo prima**: preemptato, resta nello slot di `pcb2` e non riparte |
-| I (idle) | 7 | **esattamente 0** |
+| I (idle) | 7 | i primi due tick |
+| M | 2 | dal 2° al 4°, poi si ferma: preemptato, resta nello slot di `pcb2` |
+| H | 1 | dal 4° in poi |
 
-`74 106 0`, e dei tre solo l'ultimo si deriva senza eseguire — ma è il più
-informativo: se fosse `> 0` vorrebbe dire che la scansione ha raggiunto il
-livello 7 mentre qualcuno sopra era pronto. I primi due vanno letti come
-«entrambi hanno girato, e in tempi disgiunti»; il loro rapporto (74 contro 106 su
-quattro tick per uno) **non è stato spiegato fino in fondo** e vale la pena
-guardarlo quando ci sarà la traccia temporale.
+**Perché il sistema parte dalla sola idle, ed è una correzione dell'utente.** La
+prima stesura aveva i tre task eseguibili da subito e dichiarava «`cntI` deve
+valere esattamente 0» come se fosse la proprietà più forte. Era una
+**tautologia**: se nessuno si blocca e c'è sempre qualcuno di eseguibile, l'idle
+non gira per costruzione e il suo contatore non misura niente. Ma quel contatore
+non è un controllo di sanità — **è la statistica di CPU libera**, la misura che
+in un RTOS dice se il sistema regge. Un idle che non gira non la può dare, e in
+più nasconde qualunque errore nell'ultimo livello della scansione.
+
+Nella simulazione completa (§3.28) la CPU libera verrà dai task che **dormono**,
+che è la forma vera; qui la si ottiene facendo partire il sistema vuoto.
+
+`74 29 59`: i tre numeri dipendono dai cicli, e ciò che il test asserisce è che
+siano **tutti e tre > 0 e prodotti in fasi disgiunte**. Il loro rapporto — l'idle
+conta ~30 per tick contro i ~15-18 degli altri — **non è spiegato**, ed è da
+guardare quando ci sarà la traccia temporale.
 
 #### Due bug trovati eseguendo, che il ragionamento non aveva visto
 
@@ -2966,7 +2976,7 @@ Le sequenze attese, per chi deve leggerle senza aprire il build:
 | verifica | atteso | dove sta il numero |
 |---|---|---|
 | `saxpy` — istruzioni / vec-elem-ops / cicli | `17 40 94` | `CMakeLists.txt` |
-| `scheduler` — priorità: H sopra M, l'idle mai | `74 106 0` | `rtos/test/` |
+| `scheduler` — priorità, tre fasi disgiunte, idle > 0 | `74 29 59` | `rtos/test/` |
 | `multi` — link con inclusione selettiva | `18 40 95` | `CMakeLists.txt` |
 | `coda` — invariante dei link (§3.14) | `0 1 1 1 0 0 0 2 1 0 0 0 0` | `generic/test/` |
 | `pool` — sei classi, alloc/free (§3.15) | `10 4 0 0 9 0 32 3 2 0 0 4 4 4 3 0 0 1 4` | `generic/test/` |
