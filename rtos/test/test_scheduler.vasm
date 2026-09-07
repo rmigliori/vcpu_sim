@@ -1,0 +1,212 @@
+; rtos/test/test_scheduler.vasm — verifica lo SCHEDULER A PRIORITA' STATICHE
+; con PCB (§3, §4 della proposta). Sostituisce rtos/demo/scheduler_demo.vasm,
+; ritirato il 07/09/2026.
+;
+; --- PERCHE' IL VECCHIO E' STATO RITIRATO, E NON ADATTATO ---
+; scheduler_demo verificava che due task si ALTERNASSERO a ogni tick, e i suoi
+; numeri (98/65) misuravano quello. Con le priorita' quel comportamento non
+; esiste piu': l'uscente al tick va nello slot del suo livello e lo slot batte
+; la coda (§4), quindi due pari non si alternano -- la rotazione arrivera' con
+; la distinzione fra "turno finito" e "preemption vera" (§2), che non e' ancora
+; implementata. Un test che sopravvive al modello che verificava e' peggio di
+; nessun test: passa, e dice il falso.
+;
+; --- COSA VERIFICA QUESTO, E COSA NO ---
+; E' il PRIMO STRATO del test descritto in §3.28 dell'handoff. Quello completo
+; -- idle, due task in cima che si mandano messaggi via timeout, uno sotto che
+; li conta -- si regge sul BLOCCO, quindi su task_block, che non esiste ancora
+; (§8.8). Qui non si blocca nessuno: tutti e tre i task sono loop infiniti, e le
+; sole transizioni sono quelle che il tick provoca.
+;
+; Tre task e tre proprieta':
+;
+;   H  livello 1  entra in gioco a META' SIMULAZIONE (l'ISR lo rende eseguibile
+;                 al 4o tick). Da quel momento gira sempre lui.
+;   M  livello 2  parte a freddo ed e' l'unico eseguibile fino al 4o tick.
+;   I  livello 7  l'IDLE: eseguibile da sempre, non si blocca mai.
+;
+;   1. PRECEDENZA: dal 4o tick in poi H gira e M no. Il contatore di M si ferma.
+;   2. LO SLOT (§2): M non e' andato in fondo a una coda quando H l'ha
+;      preemptato -- e' nello slot di pcb2, identificato. Se lo scheduler lo
+;      avesse perso o riaccodato male, riprenderebbe e il suo contatore
+;      ripartirebbe: l'osservabile e' che NON riparte.
+;   3. LA SCANSIONE TERMINA, e l'idle non ruba CPU: cntI deve valere ESATTAMENTE
+;      ZERO, perche' a ogni istante c'e' sempre almeno un task piu' prioritario
+;      eseguibile. E' l'unico dei tre numeri che si deriva senza eseguire, ed e'
+;      anche il piu' informativo: se fosse > 0 vorrebbe dire che la scansione ha
+;      raggiunto il livello 7 mentre qualcuno sopra era pronto.
+;
+; L'ISR fa a mano cio' che fara' task_ready (accoda + chiedi preemption): quel
+; simbolo nel kernel non c'e' ancora, ed e' lo stesso debito per cui
+; test_mailbox si scrive i propri stub.
+
+.include "tcb/tcb.vinc"
+.include "coda/coda_api.vinc"
+
+  .data
+
+cntH:   .word 0        ; contatori applicativi, FUORI dai TCB
+cntM:   .word 0
+cntI:   .word 0
+ticks:  .word 0        ; tick contati dall'ISR
+
+tcbH:   .res TCB
+tcbM:   .res TCB
+tcbI:   .res TCB
+
+stackH: .space 64
+stackH_top:
+stackM: .space 64
+stackM_top:
+stackI: .space 64
+stackI_top:
+
+  .text
+
+  .global main
+  .extern current
+  .extern pcb1
+  .extern pcb2
+  .extern pcb7
+  .extern sched_init
+  .extern irq_install
+  .extern request_preempt
+  .extern sched_isr_exit
+  .extern ctx_init
+  .extern timer_init
+  .extern irq_arm
+  .extern irq_enable
+
+; ==========================================================================
+;  BOOT. main non e' un task: non ha TCB e non torna mai.
+;
+;  Ogni TCB vuole TRE cose prima di essere eseguibile: il contesto iniziale
+;  (ctx_init), il PCB del suo livello, e la posizione fisica che corrisponde al
+;  suo stato (§5) — in coda se READY, fuori da tutto se RUNNING.
+;
+;  TCB.pcb e' un INDIRIZZO, non un indice (§7.3): si scrive &pcbN e basta.
+;  E l'accodamento passa &pcbN direttamente a enqueue_coda, senza conversione,
+;  perche' la TESTA e' annidata a offset 0 nel PCB: &pcb == &pcb.coda.
+; ==========================================================================
+main:
+  li r14, stackM_top       ; PRIMA di ogni call: sched_init non e' foglia e senza
+                           ; stack scriverebbe a -4. Puo' usare lo stack di M
+                           ; perche' M e' il task che main diventera' col cold
+                           ; start in fondo -- come nella vecchia demo, dove
+                           ; pero' l'unica call di boot (coda_init) era foglia e
+                           ; il problema non si vedeva.
+  call sched_init          ; le otto code vuote e gli slot liberi
+
+  ; --- I (idle, livello 7): READY, in coda ---
+  li r1, stackI_top
+  li r2, taskI
+  call ctx_init
+  li r3, tcbI
+  sw r1, TCB.sp(r3)
+  li r4, pcb7
+  sw r4, TCB.pcb(r3)
+  sw r0, TCB.state(r3)     ; READY
+  mov r1, r4               ; &pcb7 == &pcb7.coda
+  mov r2, r3
+  call enqueue_coda
+
+  ; --- H (livello 1): pronto ma NON eseguibile. Lo attivera' l'ISR al 4o tick,
+  ;     ed e' cio' che rende osservabile la preemption invece di doverla
+  ;     dedurre da due contatori che crescono insieme.
+  li r1, stackH_top
+  li r2, taskH
+  call ctx_init
+  li r3, tcbH
+  sw r1, TCB.sp(r3)
+  li r4, pcb1
+  sw r4, TCB.pcb(r3)
+  sw r0, TCB.state(r3)     ; READY, ma in nessuna coda: invisibile allo scheduler
+
+  ; --- M (livello 2): parte a freddo, quindi RUNNING e fuori da ogni coda ---
+  li r3, tcbM
+  li r4, pcb2
+  sw r4, TCB.pcb(r3)
+  li r1, current
+  sw r3, 0(r1)             ; current = M
+  li r5, RUNNING
+  sw r5, TCB.state(r3)
+
+  li r1, timer_isr
+  call irq_install
+  call irq_arm
+  li r1, 500
+  call timer_init          ; un tick ogni 500 cicli
+  call irq_enable          ; r14 e' gia' lo stack di M, armato in cima a main
+  li r5, taskM
+  jr r5                    ; cold start di M
+
+; ==========================================================================
+;  I tre task: loop infiniti che incrementano il proprio contatore. Nessuno si
+;  blocca e nessuno cede: le uniche transizioni sono quelle decise dal tick.
+; ==========================================================================
+taskH:
+  li r1, cntH
+loopH:
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  j loopH
+
+taskM:
+  li r1, cntM
+loopM:
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  j loopM
+
+taskI:
+  li r1, cntI
+loopI:
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  j loopI
+
+; ==========================================================================
+;  timer_isr(r1 = contesto opaco): ISR applicativa del timer (§12.2).
+;  Non ritorna: esce saltando a sched_isr_exit col contesto in r1 (§12.4, caso 2).
+;
+;  Tre compiti, in ordine di tick:
+;    4o  attiva H — accoda il suo TCB nella coda del livello 1. E' quello che
+;        fara' task_ready quando esistera' (§8.8); qui e' a mano, come gli stub
+;        di test_mailbox.
+;    8o  stampa i tre contatori e ferma.
+;    ogni tick, chiede comunque la preemption: e' l'ISR a decidere, non il
+;    kernel (un handler che non la chiede non provoca nessuno switch).
+; ==========================================================================
+timer_isr:
+  mov r6, r1               ; il contesto: r1 sta per essere sporcato
+  li r1, ticks
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+
+  li r3, 8
+  blt r2, r3, isr_check4   ; meno di 8: si continua
+  li r1, cntH              ; --- fine: i tre contatori, poi stop ---
+  lw r5, 0(r1)
+  dumps r5
+  li r1, cntM
+  lw r5, 0(r1)
+  dumps r5
+  li r1, cntI
+  lw r5, 0(r1)
+  dumps r5                 ; DEVE essere 0: l'idle non ha mai girato
+  halt
+
+isr_check4:
+  li r3, 4
+  bne r2, r3, isr_go       ; solo AL QUARTO tick si attiva H
+  li r1, pcb1              ; &pcb1 == &pcb1.coda
+  li r2, tcbH
+  call enqueue_coda        ; H diventa visibile allo scheduler
+isr_go:
+  call request_preempt     ; arma il need_resched
+  mov r1, r6               ; il kernel vuole il contesto in r1
+  j sched_isr_exit         ; §12.4 caso 2: rifai la scelta

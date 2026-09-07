@@ -82,20 +82,11 @@ vasm_check(saxpy      MODE STATS EXPECT "17 40 94"
            SOURCE ${CMAKE_SOURCE_DIR}/standalone/saxpy.vasm)
 vasm_check(multi      MODE STATS EXPECT "18 40 95"  PROGRAM multi)
 
-# 98/65 dal 07/09/2026 (era 97/64): il dispatcher prende il TCB in INPUT e fa lui
-# il commit di 'current' (§12.3). Non e' un cambio di politica -- resta
-# round-robin -- ma di COSTO, e i due numeri sono quante iterazioni i due task
-# infilano in 8 tick, quindi misurano cio' che il kernel NON si prende:
-#   con preemption   -3 cicli: lo scheduler perde due sw e due li (non scrive
-#                    piu' current ne' lo stato) e guadagna un mov; il dispatcher
-#                    ne aggiunge 5; sched_isr_exit 1
-#   senza preemption +6 cicli: il commit nel dispatcher e' idempotente e si paga
-#                    lo stesso. E' il prezzo dell'invariante "current lo scrive
-#                    solo il dispatcher", su un percorso in cui non succede
-#                    niente -- la latenza che conta e' l'altra
-# Le istruzioni totali salgono (1787 -> 1794) perche' sono le iterazioni in piu'
-# dei task: lavoro utile, non kernel.
-vasm_check(scheduler_demo MODE DUMPS EXPECT "98 65" PROGRAM scheduler_demo)
+# scheduler_demo RITIRATO il 07/09/2026 insieme alla sua invariante (97/64, poi
+# 98/65): verificava l'alternanza al tick, che con lo scheduler a priorita' non
+# e' piu' il comportamento atteso. Il suo posto lo prende test_scheduler, il cui
+# vasm_check sta in rtos/test/ -- accanto al programma che lo produce, come tutti
+# quelli nati dopo §3.24.
 
 vasm_check(proc       MODE DUMPS EXPECT "100 200 300"
            SOURCE ${CMAKE_SOURCE_DIR}/tests/test_proc.vasm)
@@ -108,7 +99,11 @@ vasm_check(proc       MODE DUMPS EXPECT "100 200 300"
 #
 # Resta legacy di proposito: e' il test dell'assemblatore, e passargli i -I a
 # mano e' proprio cio' che verifica. Le tre righe sono la sua asserzione.
-vasm_check(include    MODE DUMPS EXPECT "16 12 16 512 1"
+# "20 16" dal 07/09/2026 (era "16 12"): il TCB ha guadagnato il campo pcb (§7.3),
+# quindi TCB.size passa da 16 a 20 e TCB.state da +12 a +16. Il test non e'
+# cambiato -- stampa gli offset che l'assembler produce -- e i due numeri nuovi
+# sono la prova che li ha presi dalla dichiarazione e non da una copia.
+vasm_check(include    MODE DUMPS EXPECT "20 16 16 512 1"
            IFLAGS -I$<TARGET_PROPERTY:vinc_tcb,INTERFACE_INCLUDE_DIRECTORIES>
                   -I$<TARGET_PROPERTY:vinc_pool,INTERFACE_INCLUDE_DIRECTORIES>
                   -I$<TARGET_PROPERTY:vinc_coda,INTERFACE_INCLUDE_DIRECTORIES>

@@ -44,10 +44,45 @@
 
   .data
 
-  .global ready
+  .global pcb0
+  .global pcb1
+  .global pcb2
+  .global pcb3
+  .global pcb4
+  .global pcb5
+  .global pcb6
+  .global pcb7
   .global current
 
-ready:     .res TESTA     ; ready queue (sentinella): fwd/bwd/count
+; --------------------------------------------------------------------------
+;  LA TABELLA DEI PCB — otto livelli, 0 il piu' prioritario (§4).
+;
+;  Scritti uno per uno e NON con una .space: l'ordine di dichiarazione non e' un
+;  dettaglio di scrittura, e' l'INVARIANTE PORTANTE di §7.3. TCB.pcb contiene un
+;  indirizzo, non un indice, e i confronti di priorita' si fanno con una blt sui
+;  puntatori: funziona solo perche' la tabella e' contigua e in ordine, quindi
+;  l'indirizzo cresce al CALARE della priorita'. Otto righe consecutive rendono
+;  quell'ordine leggibile; una .space lo nasconderebbe dentro un'aritmetica.
+;
+;  Chi un domani ne inserisce uno in mezzo o li riordina rompe TUTTI i confronti
+;  senza che niente lo segnali: e' il difetto che si manifesta come inversione di
+;  priorita' sporadica sei mesi dopo (§7.3).
+;
+;  Nessuno di questi nasce inizializzato: una TESTA vuota ha fwd = bwd = &se
+;  stessa, che un .word non puo' scrivere perche' non accetta etichette. Ci
+;  pensa sched_init, ed e' il motivo per cui §6 ("strutture gia' inizializzate
+;  staticamente al link") non e' mai stata del tutto vera -- gia' oggi la vecchia
+;  'ready' passava da coda_init.
+; --------------------------------------------------------------------------
+pcb0:      .res PCB       ; PRIO_MAX — il gestore dei timeout (§9.2)
+pcb1:      .res PCB
+pcb2:      .res PCB
+pcb3:      .res PCB
+pcb4:      .res PCB
+pcb5:      .res PCB
+pcb6:      .res PCB
+pcb7:      .res PCB       ; PRIO_IDLE — l'idle, che non si blocca mai
+
 current:   .word 0        ; &TCB del task RUNNING (0 = nessuno, boot)
 g_resched: .word 0        ; need_resched: !=0 => switch a uscita IRQ
 
@@ -55,7 +90,39 @@ g_resched: .word 0        ; need_resched: !=0 => switch a uscita IRQ
 
   .global sched_isr_exit
   .global request_preempt
+  .global sched_init
   .extern ctx_restore
+
+; ==========================================================================
+;  sched_init(): svuota le otto code di ready e i loro slot.
+;
+;  Esiste perche' una TESTA vuota non e' fatta di zeri (fwd = bwd = &se stessa),
+;  quindi il .data non puo' produrla. Lo slot invece nasce corretto a zero, ma
+;  azzerarlo esplicitamente costa un'istruzione e rende il codice leggibile
+;  senza sapere com'e' fatto il segmento dati.
+;
+;  Cicla sulla tabella per indirizzo -- da pcb0 fino a oltre pcb7 -- il che vale
+;  come verifica implicita dell'invariante di §7.3: se i PCB non fossero
+;  contigui e in ordine, questo ciclo non li toccherebbe tutti.
+;
+;  Non-foglia (chiama coda_init), corpo con salti -> prologo a mano.
+; ==========================================================================
+sched_init:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  li r5, pcb0            ; r5 = PCB corrente
+  li r6, pcb7            ; r6 = ultimo: il ciclo si ferma DOPO averlo fatto
+sched_init_loop:
+  mov r1, r5
+  call coda_init         ; &pcb == &pcb.coda: nessuna conversione (§7.5)
+  sw r0, PCB.preemptato(r5)
+  beq r5, r6, sched_init_done
+  addi r5, r5, PCB.size
+  j sched_init_loop
+sched_init_done:
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
 
 ; ==========================================================================
 ;  request_preempt: arma il need_resched. Chiamata dall'handler quando vuole uno
@@ -106,11 +173,16 @@ sched_isr_exit_done:
   call dispatcher        ; MECCANISMO: mette in esecuzione r1, SEMPRE
 
 ; ==========================================================================
-;  scheduler (POLITICA, interno) -> r1 = TCB scelto: round-robin a coda singola.
-;  Rimette in coda il task uscente e sceglie il prossimo. E' la SOLA cosa da
-;  riscrivere per cambiare politica (RR -> priorita'): HAL, sched_isr_exit e
-;  dispatcher restano intatti. Non e' un'API generica (un solo chiamante:
-;  sched_isr_exit) -> scritta a mano, non .proc. Non-foglia -> salva r15.
+;  scheduler (POLITICA, interno) -> r1 = TCB scelto: PRIORITA' STATICHE con PCB
+;  (§3, §4). Mette via l'uscente e sceglie il prossimo. Non e' un'API generica
+;  (un solo chiamante: sched_isr_exit) -> scritta a mano, non .proc. Non-foglia.
+;
+;  Dal 07/09/2026 non e' piu' round-robin a coda singola, ed e' il passaggio che
+;  la separazione mechanism/policy prometteva: HAL, sched_isr_exit e dispatcher
+;  NON sono stati toccati. Cambia solo questa routine e le strutture che legge.
+;
+;  Due meta', e la prima e' quella che porta il peso del modello (§2): dove va
+;  l'uscente lo decide chi lo toglie dalla CPU, non chi sceglie il prossimo.
 ;
 ;  NON scrive 'current' e NON scrive lo stato del task scelto: RESTITUISCE un
 ;  TCB, e il commit e' del dispatcher (§12.3). E' la differenza fra applicare una
@@ -122,25 +194,48 @@ sched_isr_exit_done:
 scheduler:
   addi r14, r14, -4
   sw r15, 0(r14)         ; non-foglia: preserva il ritorno a sched_isr_exit
+
+  ; --- 1. l'uscente va nel SUO slot, non in fondo a una coda (§2) ---
+  ; Ha lasciato la CPU controvoglia -- e' arrivato un tick, non ha ceduto lui --
+  ; quindi riprendera' da dove stava e non paga un'interruzione che non ha
+  ; chiesto. Lo slot e' per livello, e "al massimo un task per livello puo'
+  ; essere a meta' esecuzione" e' garantito dalla preferenza slot-su-coda del
+  ; punto 2: finche' lo slot e' pieno, dalla coda di quel livello non esce
+  ; nessuno (§4).
   li r6, current
   lw r4, 0(r6)           ; r4 = TCB uscente
-  sw r0, TCB.state(r4)   ; stato uscente = READY
-  li r1, ready
-  mov r2, r4
-  call enqueue_coda      ; uscente in fondo alla ready queue. L'esito in r3 e'
-                         ; IGNORATO: giriamo dentro la trap, non c'e' nessun
-                         ; chiamante a cui restituirlo (sched_isr_exit non ha un
-                         ; ritorno proprio). Stesso nodo aperto della receive,
-                         ; §8.7. Qui il controllo non puo' comunque scattare: il
-                         ; TCB uscente e' RUNNING, cioe' fuori da ogni coda, e da
-                         ; quando la rimozione azzera i link quella dichiarazione
-                         ; e' vera nei fatti e non solo nel commento sopra.
-  li r1, ready
-  call dequeue_testa     ; r2 = prossimo TCB (esce con i link azzerati)
-  mov r1, r2             ; valore di ritorno: il TCB scelto
+  lw r5, TCB.pcb(r4)     ; r5 = il suo PCB (un indirizzo, non un indice: §7.3)
+  sw r4, PCB.preemptato(r5)
+  li r3, PREEMPTED
+  sw r3, TCB.state(r4)
+
+  ; --- 2. scansione dall'alto: a ogni livello lo slot batte la coda (§4) ---
+  ; Il PCB corrente sta in r7 e NON in uno scratch: dequeue_testa sporca r2, r4
+  ; e r5 (lo dichiara coda_api.vinc), quindi tenerlo in r5 lo farebbe avanzare
+  ; da un indirizzo spazzatura dalla seconda iterazione in poi. E' un bug che
+  ; non si vede su un solo livello: lo scan si ferma sempre al primo giro finche'
+  ; c'e' un preemptato in cima.
+  li r7, pcb0            ; si parte da 0, che e' la priorita' PIU' ALTA
+sched_scan:
+  lw r1, PCB.preemptato(r7)
+  beq r1, r0, sched_scan_coda
+  sw r0, PCB.preemptato(r7)  ; lo slot si svuota: quel task torna a girare
+  j sched_scan_done
+sched_scan_coda:
+  mov r1, r7             ; &pcb == &pcb.coda (§7.5 un livello sopra)
+  call dequeue_testa     ; r2 = TCB, 0 se il livello e' vuoto
+  mov r1, r2
+  bne r1, r0, sched_scan_done
+  addi r7, r7, PCB.size  ; livello successivo, cioe' meno prioritario
+  j sched_scan
+sched_scan_done:
+  ; La scansione TERMINA SEMPRE e non ha il caso "nessuno eseguibile": l'idle
+  ; sta a PRIO_IDLE e non si blocca mai, quindi l'ultimo livello e' pronto per
+  ; costruzione (§4). Se un giorno lo fosse, si uscirebbe da qui oltre pcb7 con
+  ; r1 = 0 -- ed e' un errore di costruzione del sistema, non un caso da gestire.
   lw r15, 0(r14)
   addi r14, r14, 4
-  ret
+  ret                    ; r1 = TCB scelto
 
 ; ==========================================================================
 ;  dispatcher(r1 = &TCB) (MECCANISMO puro, interno): mette in esecuzione il task

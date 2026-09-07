@@ -15,18 +15,19 @@
 > **I commit del 07/09 (§3.26, §3.27) sono solo in locale.** Il push si chiede,
 > non si fa.
 >
-> ### ⚠ IL WORKING TREE HA LAVORO NON COMMITTATO CHE NON LINKA
+> ### ▶▶ LO SCHEDULER A PRIORITÀ GIRA (§3.29)
 >
-> `tcb.vinc` e `scheduler.vasm` hanno il **modello a PCB già scritto** — TCB a 20
-> byte, `PCB` con la `TESTA` annidata, otto livelli, `sched_init`, la scansione di
-> §4 — ma **`rtos/demo/scheduler_demo.vasm` cerca ancora `ready`**, che non esiste
-> più, quindi il link fallisce. Non è un lavoro a metà da recuperare: la demo
-> **va riscritta come il test di §3.28**, e ha senso farlo dopo `task_block`.
+> Il modello a PCB è **scritto, girato e verificato**: TCB a 20 byte con `pcb`,
+> `PCB` con la `TESTA` annidata, otto livelli, `sched_init`, la scansione di §4
+> con lo slot che batte la coda. `scheduler_demo` è stato **ritirato** — non
+> adattato — e al suo posto c'è `rtos/test/test_scheduler.vasm`. `ctest` 23/23.
 >
-> **Il primo passo della prossima sessione è §8.8**, appena scritta nella
-> proposta: `hal_ctx_block` nell'HAL, poi `task_block`/`task_ready` nel kernel,
-> poi la demo diventa la simulazione a quattro task, e a quel punto il modello a
-> PCB si verifica davvero invece di stare fermo in un tree che non compila.
+> **Il primo passo della prossima sessione è §8.8**: `hal_ctx_block` nell'HAL
+> (scrive `epc`/`epsw` e riusa `ctx_save` invariata), poi `task_block` e
+> `task_ready` nel kernel. Da lì il test cresce fino alla simulazione a quattro
+> task, e con essa entra la **rotazione fra pari** — che ha una decisione ancora
+> aperta: come lo scheduler distingue «tick, turno finito» da «preemption vera»
+> (argomento del chiamante, o confronto fra uscente e subentrante).
 >
 > §3.28 ha fissato anche la convenzione: **0 è la priorità più alta**, e
 > `dispatcher(TCB)` prende il TCB in input (§12.3).
@@ -2454,6 +2455,65 @@ il contratto scritto.
 
 ---
 
+### 3.29 Lo scheduler a priorità gira, e il vecchio test è stato ritirato (07/09/2026, quarta parte)
+
+Il modello a PCB non è più fermo in un tree che non compila: **gira, ed è
+verificato**. `ctest` 23/23.
+
+#### Il test vecchio si ritira, non si adatta
+
+`scheduler_demo` verificava che due task si **alternassero** a ogni tick, e i
+suoi numeri misuravano quello. Con le priorità quel comportamento non esiste
+più: al tick l'uscente va nello slot e lo slot batte la coda. Adattarlo avrebbe
+conservato un'aspettativa scritta per un'altra politica — e **un test che
+sopravvive al modello che verificava passa, e dice il falso**. Al suo posto
+[`rtos/test/test_scheduler.vasm`](../rtos/test/test_scheduler.vasm); la cartella
+`rtos/demo/` resta vuota, con dentro il perché.
+
+#### Cosa verifica, e l'unico numero che vale davvero
+
+Tre task, e H **entra in gioco a metà simulazione** (l'ISR lo rende eseguibile al
+4° tick): è quello che rende la preemption *osservabile* invece di doverla
+dedurre da due contatori che crescono insieme.
+
+| | livello | atteso |
+|---|---|---|
+| H | 1 | conta **solo dopo** il 4° tick |
+| M | 2 | conta **solo prima**: preemptato, resta nello slot di `pcb2` e non riparte |
+| I (idle) | 7 | **esattamente 0** |
+
+`74 106 0`, e dei tre solo l'ultimo si deriva senza eseguire — ma è il più
+informativo: se fosse `> 0` vorrebbe dire che la scansione ha raggiunto il
+livello 7 mentre qualcuno sopra era pronto. I primi due vanno letti come
+«entrambi hanno girato, e in tempi disgiunti»; il loro rapporto (74 contro 106 su
+quattro tick per uno) **non è stato spiegato fino in fondo** e vale la pena
+guardarlo quando ci sarà la traccia temporale.
+
+#### Due bug trovati eseguendo, che il ragionamento non aveva visto
+
+1. **`sched_init` è non-foglia, e il boot la chiamava senza stack.** La vecchia
+   demo se la cavava perché la sua unica chiamata di boot (`coda_init`) è foglia;
+   con `r14 = 0` il prologo scrive a `-4`. Lo stack va armato **per primo** in
+   `main`, e può essere quello del task che partirà a freddo.
+2. **La scansione teneva il PCB corrente in `r5`, che `dequeue_testa` sporca** —
+   lo dichiara `coda_api.vinc`. Dalla seconda iterazione avanzava da un indirizzo
+   spazzatura. Ora sta in `r7`. È un bug che **non si vede con un livello solo**:
+   finché in cima c'è un preemptato lo scan si ferma al primo giro, e il test
+   dava `0 392 0` — H mai eseguito — senza nessun errore.
+
+Il secondo è la ragione per cui il primo strato del test valeva la pena adesso e
+non dopo: nessuna rilettura del codice l'avrebbe trovato.
+
+#### Invarianti mosse, entrambe spiegate
+
+- `include`: `16 12 …` → **`20 16 …`**. Il test non è cambiato: stampa gli offset
+  che l'assembler produce, e i due numeri nuovi sono la prova che li prende dalla
+  dichiarazione del TCB (cresciuto di `pcb`) e non da una copia;
+- `scheduler_demo` sparisce dalle invarianti, `scheduler` la sostituisce — e il
+  suo `vasm_check` sta in `rtos/test/`, accanto al programma che lo produce.
+
+---
+
 ### 3.28 Il dispatcher prende il TCB in input, e 0 è la priorità più alta (07/09/2026, terza parte)
 
 **Primo passo verso §3/§4**, scelto perché è l'unico che *non* dipende dalle
@@ -2906,14 +2966,14 @@ Le sequenze attese, per chi deve leggerle senza aprire il build:
 | verifica | atteso | dove sta il numero |
 |---|---|---|
 | `saxpy` — istruzioni / vec-elem-ops / cicli | `17 40 94` | `CMakeLists.txt` |
-| `scheduler_demo` — 8 tick, due task che si alternano | `98 65` | `CMakeLists.txt` |
+| `scheduler` — priorità: H sopra M, l'idle mai | `74 106 0` | `rtos/test/` |
 | `multi` — link con inclusione selettiva | `18 40 95` | `CMakeLists.txt` |
 | `coda` — invariante dei link (§3.14) | `0 1 1 1 0 0 0 2 1 0 0 0 0` | `generic/test/` |
 | `pool` — sei classi, alloc/free (§3.15) | `10 4 0 0 9 0 32 3 2 0 0 4 4 4 3 0 0 1 4` | `generic/test/` |
 | `timeout` — vettore di descrittori (§3.13) | `3 0 150 1 2 0 0 0 3 0 1` | `generic/test/` |
 | `mailbox` — send/receive con blocco (§3.10) | `0 1 2 11 22 0 33 0 0` | `rtos/test/` |
 | `proc` — `.proc`/`.endproc` (§3.6) | `100 200 300` | `CMakeLists.txt` |
-| `include` — `-I` e idempotenza (§3.16, §3.24) | `16 12 16 512 1` | `CMakeLists.txt` |
+| `include` — `-I` e idempotenza (§3.16, §3.24) | `20 16 16 512 1` | `CMakeLists.txt` |
 | `epsw` — `mfepsw`/`mtepsw` (§3.19) | `1 0 0 7` | `CMakeLists.txt` |
 
 Più i 13 programmi di `standalone/`, per cui si verifica che nessuno vada in

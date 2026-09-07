@@ -22,10 +22,53 @@
 .struct TCB
   .field pointers  LINK.size   ; +0  i link, annidati da coda.vinc
   .field sp                    ; +8  contesto opaco salvato
-  .field state                 ; +12 stato corrente
+  .field pcb                   ; +12 INDIRIZZO del PCB del suo livello (§7.3)
+  .field state                 ; +16 stato corrente
 .ends
 
-; Stati del task (campo TCB.state).
+; --------------------------------------------------------------------------
+;  PCB — un descrittore per livello di priorita' (§3, §4 della proposta).
+;
+;  La TESTA e' ANNIDATA, non puntata: §3 lo lasciava "da valutare" e la forma
+;  e' quella di LINK in coda.vinc. Costa zero e rende vere due cose:
+;
+;    - si risparmia una lw per ogni livello scandito, e la scansione e' il
+;      percorso piu' caldo del kernel;
+;    - la coda sta a offset 0, quindi &pcb == &pcb.coda e il PCB si passa
+;      DIRETTAMENTE a enqueue_coda/dequeue_testa senza nessuna conversione.
+;      E' il contratto di §7.5 ("il puntatore al link E' il puntatore al
+;      buffer") applicato un livello sopra.
+;
+;  Un puntatore servirebbe solo se piu' PCB dovessero condividere una coda, che
+;  in un sistema statico non ha nessun cliente.
+; --------------------------------------------------------------------------
+.struct PCB
+  .field coda        TESTA.size ; +0  la coda di ready di QUESTO livello
+  .field preemptato             ; +12 TCB interrotto qui, 0 = nessuno (§2)
+.ends
+
+; --------------------------------------------------------------------------
+;  Livelli di priorita': 0 e' la PIU' ALTA (§4).
+;
+;  Otto, e il numero e' una scelta di COSTO, non di gusto. La scansione di §4 e'
+;  lineare -- e deve esserlo: in questa ISA non c'e' nessuna istruzione di
+;  conteggio bit (verificato sul repertorio), quindi una bitmap dei livelli non
+;  vuoti richiederebbe comunque un loop di shift, senza diventare O(1) e con in
+;  piu' l'onere di tenerla coerente a ogni enqueue. Un livello vuoto costa 12
+;  cicli (due lw da 4, due beq, addi, j), quindi il caso peggiore -- solo l'idle
+;  eseguibile -- e' 8 x 12 = 96 cicli, che resta SOTTO il costo di un context
+;  switch completo (ctx_save + ctx_restore: 26 accessi a memoria, ~120 cicli).
+;  A 32 livelli la scansione dominerebbe lo switch di tre volte.
+;
+;  Alzarlo e' cambiare questo numero e aggiungere altrettante righe alla tabella
+;  in scheduler.vasm; il prezzo e' dichiarato qui sopra.
+; --------------------------------------------------------------------------
+.equ N_LIVELLI  8
+.equ PRIO_MAX   0             ; la piu' alta: e' qui che sta il gestore timeout
+.equ PRIO_IDLE  7             ; l'ultima: l'idle, che non si blocca MAI (§4)
+
+; Stati del task (campo TCB.state) — quattro valori (§7.2).
 .equ READY     0
 .equ RUNNING   1
 .equ SUSPENDED 2
+.equ PREEMPTED 3              ; nello slot PCB.preemptato, non in una coda
