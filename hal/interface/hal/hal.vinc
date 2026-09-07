@@ -7,9 +7,17 @@
 ; senza un posto dove pubblicarli finivano scritti come numeri magici — dentro
 ; l'HAL stesso, o peggio duplicati fuori.
 ;
-; Qui ci sono solo COSTANTI, come in ogni .vinc: le procedure dell'HAL si
-; importano con .extern, che e' un'altra cosa. E' un file FOGLIA (non include
-; niente) perche' non ha niente da chiedere a nessuno: sta al fondo del grafo.
+; Qui ci sono solo COSTANTI, e dal 07/09/2026 e' una LACUNA e non piu' la
+; regola. Diceva "come in ogni .vinc: le procedure si importano con .extern, che
+; e' un'altra cosa", e contraddiceva §8.6 della proposta, per cui un fornitore
+; pubblica anche "gli indirizzi delle entry se e' un'API". Ha ceduto la regola:
+; generic/coda ha ora un coda_api.vinc con le entry e il contratto di chiamata,
+; e l'HAL e' il prossimo — finche' non ce l'ha, chi chiama irq_save o
+; ctx_restore continua a scriversi gli .extern a mano e a scoprire da
+; machine.vasm in quali registri passano gli argomenti.
+;
+; E' un file FOGLIA (non include niente) perche' non ha niente da chiedere a
+; nessuno: sta al fondo del grafo.
 
 ; --------------------------------------------------------------------------
 ;  La parola di stato (PSW).

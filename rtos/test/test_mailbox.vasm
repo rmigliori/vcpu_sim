@@ -29,7 +29,7 @@
 ;
 ; Atteso, in ordine:  0  1  2  11  22  0  33  0  0
 
-.include "coda/coda.vinc"
+.include "coda/coda_api.vinc"
 .include "tcb/tcb.vinc"
 .include "messaggio/messaggio.vinc"
 
@@ -49,7 +49,6 @@ stack_top:
   .global main
   .global task_ready
   .global task_block
-  .extern coda_init
   .extern send
   .extern receive
   .extern current         ; la vera variabile del kernel (kernel/scheduler.vasm)

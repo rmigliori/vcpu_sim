@@ -54,7 +54,7 @@
 ;                          di lui. Non facciamo ipotesi su come lasci IE: la
 ;                          receive ristabilisce la sezione critica da sola.
 
-.include "coda/coda.vinc"
+.include "coda/coda_api.vinc"
 .include "tcb/tcb.vinc"
 
   .text
@@ -63,8 +63,6 @@
   .global send_s
   .global receive
 
-  .extern enqueue_coda_nc
-  .extern dequeue_testa_nc
   .extern irq_save
   .extern irq_restore
   .extern task_ready

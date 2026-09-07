@@ -48,7 +48,7 @@
 ; no-op da quando .include e' idempotente (§3.16), che e' anche cio' che ha reso
 ; scrivibile un .vinc che ne include un altro.
 .include "pool/pool.vinc"
-.include "coda/coda.vinc"
+.include "coda/coda_api.vinc"
 
   .data
 
@@ -106,10 +106,7 @@ pool_b32_fine:
   .global pool_init
   .global buf_alloc
   .global buf_free
-  .extern coda_init
-  .extern enqueue_coda
-  .extern enqueue_coda_s
-  .extern dequeue_testa_s
+  ; Le entry delle code arrivano da coda_api.vinc, col loro contratto.
 
 ; ==========================================================================
 ;  pool_init(): inizializza le sei teste e incatena i blocchi che esistono.

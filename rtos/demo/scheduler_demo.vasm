@@ -21,6 +21,7 @@
 
 ; Tipi comuni (TCB, stati) condivisi col kernel: stessa sorgente di verita'.
 .include "tcb/tcb.vinc"
+.include "coda/coda_api.vinc"
 
   .data
 
@@ -41,8 +42,6 @@ stackB_top:
   .global main
   .extern ready
   .extern current
-  .extern coda_init
-  .extern enqueue_coda
   .extern irq_install
   .extern request_preempt
   .extern sched_isr_exit

@@ -4,6 +4,6 @@
 # e non la lista dei moduli da linkare. E' la sorgente dell'invariante 97/64.
 vasm_object(demo_main
   SOURCE     ${CMAKE_CURRENT_SOURCE_DIR}/scheduler_demo.vasm
-  INTERFACES vinc_tcb)
+  INTERFACES vinc_tcb vinc_coda)
 
 vasm_program(scheduler_demo OBJECTS demo_main LINK lib_kernel)

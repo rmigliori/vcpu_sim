@@ -39,7 +39,7 @@
 ;
 ; Atteso, in ordine:  0 1 1 1 0 0 0 2 1 0 0 0 0 0 1 0 0 0 0 0
 
-.include "coda/coda.vinc"
+.include "coda/coda_api.vinc"
 
 ; Il nodo di questo test. Le code non sanno cosa sia un nodo oltre ai due link
 ; in testa (l'idioma list_head, lo stesso di TESTA, TCB, MESSAGGIO e BLOCCO):
@@ -64,13 +64,7 @@ stack_top:
   .text
 
   .global main
-  .extern coda_init
-  .extern enqueue_coda
-  .extern dequeue_testa
-  .extern remove_buffer
-  .extern enqueue_coda_nc
-  .extern enqueue_dopo_nc
-  .extern dequeue_testa_nc
+  ; Le entry delle code arrivano da coda_api.vinc, col loro contratto.
 
 main:
   li r14, stack_top

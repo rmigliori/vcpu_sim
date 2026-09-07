@@ -38,6 +38,7 @@
 
 ; Tipi comuni (TESTA, TCB, stati) condivisi con l'app: single source of truth.
 .include "tcb/tcb.vinc"
+.include "coda/coda_api.vinc"
 
   .data
 
@@ -52,8 +53,6 @@ g_resched: .word 0        ; need_resched: !=0 => switch a uscita IRQ
 
   .global sched_isr_exit
   .global request_preempt
-  .extern enqueue_coda
-  .extern dequeue_testa
   .extern ctx_restore
 
 ; ==========================================================================

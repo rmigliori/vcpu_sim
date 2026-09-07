@@ -1,0 +1,78 @@
+; coda/coda_api.vinc — INTERFACCIA DI CHIAMATA di generic/coda: le entry e il
+; contratto con cui si chiamano. I tipi stanno accanto, in coda.vinc, ed e'
+; questo file a includerli: un cliente ne include UNO SOLO e ha tutto.
+;
+; Nato il 07/09/2026. Prima gli .extern se li scriveva ogni cliente a mano, e
+; l'interfaccia pubblicava i tipi ma non le procedure: per sapere che
+; enqueue_coda vuole la testa in r1 e restituisce l'esito in r3 bisognava aprire
+; l'implementazione. §8.6 della proposta lo chiedeva gia' ("gli indirizzi delle
+; entry se e' un'API"); hal.vinc scriveva la regola opposta ("qui ci sono solo
+; costanti"), ed e' quella che cede.
+;
+; --- PERCHE' DUE FILE E NON UNO ---
+; Un .vinc unico non e' scrivibile, e non per gusto: il fornitore include la
+; propria interfaccia per gli offset di TESTA, e un .extern di un simbolo che lo
+; stesso modulo dichiara .global e' un errore secco dell'assembler
+; ("'enqueue_coda' is both defined and .extern"). Quindi:
+;
+;   coda.vinc      i TIPI            lo include il FORNITORE (coda.vasm) e gli
+;                                    altri header i cui nodi sono liste —
+;                                    tcb.vinc, messaggio.vinc, pool.vinc:
+;                                    vogliono TESTA, non le procedure
+;   coda_api.vinc  i TIPI + le ENTRY lo include CHI CHIAMA
+;
+; Ne discendono due regole, e la seconda serve a rendere la prima impossibile da
+; violare per sbaglio:
+;
+;   1. un modulo include il .vinc dei TIPI del proprio fornitore e l'_api DEGLI
+;      ALTRI. Mai il proprio _api;
+;   2. un _api include solo i tipi del proprio modulo, mai l'_api di un altro.
+;      Senza la (2) un _api potrebbe rimettere in circolo, per via indiretta,
+;      quello di chi sta compilando — e il messaggio d'errore non dice da quale
+;      catena di .include arriva.
+;
+; La (2) ha un effetto voluto: la lista degli .include di un modulo torna a
+; essere la sua lista di dipendenze, leggibile a colpo d'occhio. E' il ruolo che
+; prima avevano gli .extern scritti a mano in cima a ogni sorgente, e che
+; sarebbe andato perso spostandoli qui dentro se gli _api si concatenassero.
+
+.include "coda/coda.vinc"
+
+; --------------------------------------------------------------------------
+;  CONVENZIONE DEI REGISTRI
+;
+;  r1, r2 argomenti; r3 esito (CODA_*); r4, r5, r6 scratch.
+;
+;  Le RAW e le _nc sono FOGLIA: non toccano r14 (sp) ne' r15 (ra), quindi sono
+;  chiamabili anche dentro un'ISR. I wrapper _s NON sono foglia — usano stack e
+;  r15 — e in piu' sporcano r5, che e' dove irq_save consegna la psw.
+;
+;  dequeue_testa e dequeue_testa_nc NON restituiscono un CODA_*: la coda vuota
+;  non e' un errore ma un esito normale, e il valore di ritorno e' il nodo
+;  (0 = vuota). r3 arriva intatto al chiamante.
+;
+;  Le tre discipline — contate, _nc (contatore al chiamante), _s (protette) —
+;  e la regola "una sola disciplina per testa" stanno in cima a coda.vasm, che
+;  e' il posto dove si spiegano; qui c'e' come si chiamano.
+; --------------------------------------------------------------------------
+
+; --- CONTATE: sulla loro testa count >= 0 = numero di nodi ---
+  .extern coda_init         ; (r1=&testa)                       sporca: niente
+  .extern enqueue_coda      ; (r1=&testa, r2=&nodo) -> r3 esito  sporca: r3 r4 r5
+  .extern enqueue_testa     ; (r1=&testa, r2=&nodo) -> r3 esito  sporca: r3 r4 r5
+  .extern dequeue_testa     ; (r1=&testa) -> r2 nodo, 0 se vuota sporca: r2 r4 r5
+  .extern remove_buffer     ; (r1=&nodo, r2=&testa) -> r3 esito  sporca: r3 r4 r5 r6
+
+; --- NON CONTATE: i link e basta, la contabilita' e' del chiamante ---
+  .extern enqueue_coda_nc   ; (r1=&testa, r2=&nodo) -> r3 esito  sporca: r3 r4
+  .extern enqueue_testa_nc  ; (r1=&testa, r2=&nodo) -> r3 esito  sporca: r3 r4
+  .extern enqueue_dopo_nc   ; (r1=&prec,  r2=&nodo) -> r3 esito  sporca: r3 r4
+  .extern dequeue_testa_nc  ; (r1=&testa) -> r2 nodo, 0 se vuota sporca: r2 r4
+  .extern remove_buffer_nc  ; (r1=&nodo)            -> r3 esito  sporca: r3 r4 r5
+
+; --- PROTETTE: la raw dentro irq_save/irq_restore, per l'uso da TASK (IE=1) ---
+; Non foglia, e sporcano r5 oltre a cio' che sporca la raw corrispondente.
+  .extern enqueue_coda_s    ; (r1=&testa, r2=&nodo) -> r3 esito
+  .extern enqueue_testa_s   ; (r1=&testa, r2=&nodo) -> r3 esito
+  .extern dequeue_testa_s   ; (r1=&testa) -> r2 nodo, 0 se vuota
+  .extern remove_buffer_s   ; (r1=&nodo, r2=&testa) -> r3 esito
