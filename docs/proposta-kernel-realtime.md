@@ -831,6 +831,42 @@ possibile dall'invariante di §7.3 col verso fissato in §4.
 > un task che sta girando **adesso**. Stesso formato, stessa `psw`, due sorgenti
 > diverse per l'`epc` — e in mezzo `ctx_save`, che lo stesso frame lo riempie
 > leggendo i CSR. Tre modi di produrre un contesto, uno solo di riprenderlo.
+
+#### La forma dell'implementazione: scrivere i CSR, non duplicare `ctx_save`
+
+Il frame è 16 parole (`CTX_FRAME_SIZE = 64`): `epc` a +0, `psw` a +4, `r13..r1`
+da +8 a +56, `r15` a +60. La tentazione è scrivere una seconda `ctx_save` che al
+posto di `mfepc`/`mfepsw` usa dei registri — ma il corpo è **26 push**, e
+duplicarli significa avere due copie del layout del frame che devono restare
+uguali: esattamente il difetto che §3.27 ha tolto dalle dichiarazioni dei nodi.
+
+La via pulita usa una cosa che c'è già: **`epc` ed `epsw` sono scrivibili**, ed
+`mtepsw` è nell'ISA dal 05/09 (§12.5).
+
+```
+hal_ctx_block:            ; (r1 = ripresa) -> r1 = contesto
+    mtepc  r1             ; l'epc che ctx_save leggera'
+    li     rX, PSW_IE
+    mtepsw rX             ; ... e la psw
+    push   r15            ; come _trap_entry: PRIMA di ogni call
+    call   ctx_save       ; invariata: legge i CSR che abbiamo appena scritto
+    ret                   ; r1 = contesto, gia' pronto
+```
+
+`ctx_save` **non si tocca**: continua a leggere i CSR, e siamo noi a preparare
+ciò che troverà. Scrivere quei due CSR fuori da una trap è sicuro perché
+`task_block` gira con `IE = 0` — nessuna trap può arrivare a usarli prima che li
+abbiamo consumati.
+
+È anche la seconda volta che `mtepsw` paga: era stato aggiunto per far ritornare
+un'ISR a codice di kernel (§12.5), e serve di nuovo qui per una ragione diversa.
+Una lacuna dell'ISA colmata una volta e usata due.
+
+Un dettaglio da non cercare di far tornare: il valore di `r15` che finisce nel
+frame è il ritorno interno a `task_block`, non quello del task. Non importa e non
+va aggiustato — al risveglio `ctx_restore` lo ripristina, ma `reti` atterra dentro
+`receive`, che il proprio `r15` lo rilegge dallo stack. Lo slot deve **esistere**
+perché il frame abbia la forma giusta; il suo contenuto è indifferente.
 - **`receive` legge `current`** direttamente: il modulo dei messaggi conosce una
   variabile dello scheduler. Va dietro il hook.
 - **L'`halt`** sul secondo ricevente: fermare la macchina è una politica, e non è
