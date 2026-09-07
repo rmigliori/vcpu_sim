@@ -1,8 +1,8 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **7 settembre 2026** (§3.30 lo scheduler completo:
-> priorità, slot, rotazione e blocco; §3.29 il test nuovo; §3.28 il dispatcher
-> con input; §3.27 il blocco `LINK` e `MAILBOX.count`)
+> Ultimo aggiornamento: **7 settembre 2026** (§3.31 un task che dorme davvero;
+> §3.30 lo scheduler completo: priorità, slot, rotazione e blocco; §3.29 il test
+> nuovo; §3.28 il dispatcher con input; §3.27 il blocco `LINK`)
 > Scopo: fotografia dello stato per riprendere il lavoro a distanza di giorni
 > senza dover ricostruire il contesto.
 
@@ -12,69 +12,59 @@
 
 > ### ▶ RIPRENDI DA QUI (08/09/2026 o dopo)
 >
-> **I commit del 07/09 (§3.26, §3.27) sono solo in locale.** Il push si chiede,
-> non si fa.
+> **Tutto committato e pushato** su `origin/master`, working tree pulito,
+> `ctest` **24/24**. Il push si chiede comunque, non si fa.
 >
-> ### ▶▶ LO SCHEDULER È COMPLETO: PRIORITÀ, SLOT, ROTAZIONE E BLOCCO (§3.30)
+> ### ▶▶ LO SCHEDULER È COMPLETO, E UN TASK DORME DAVVERO
 >
-> `task_block`/`task_ready` esistono (§8.8 eseguita), la **rotazione fra pari**
-> c'è, e la distinzione di §2 è risolta senza sapere chi ha chiamato: se la
-> scansione trova qualcuno **prima** del livello dell'uscente era preemption
-> (slot), se arriva al suo livello senza trovare nessuno era fine turno (in
-> fondo alla coda). Il tick è il quanto. `ctest` 23/23.
+> Il 07/09 ha portato lo scheduler da round-robin a coda singola a **priorità
+> statiche con PCB**, e poi fino al blocco volontario. In ordine di lettura:
 >
-> **Il primo passo del punto 3 è fatto** (§3.31): `test_block` — un task che si
-> blocca su una mailbox vuota, l'ISR che gli consegna, e l'idle che gira
-> *mentre lui dorme*. `task_block` e `hal_ctx_block` non sono più codice mai
-> eseguito. **24 test.**
+> - **§3.27** i link dei nodi in un posto solo (`.struct LINK` annidata), e
+>   `MAILBOX.count` come `.equ` **derivato** invece che copiato;
+> - **§3.28** `dispatcher(TCB)` con l'input esplicito (§12.3), e la convenzione
+>   **0 = priorità più alta**, da cui il verso dei confronti fra PCB;
+> - **§3.29** il modello a PCB gira; `scheduler_demo` **ritirato** e sostituito
+>   da `rtos/test/test_scheduler.vasm`;
+> - **§3.30** `task_block`/`task_ready` (§8.8), e la **rotazione fra pari** — la
+>   distinzione di §2 si risolve senza sapere chi ha chiamato: se la scansione
+>   trova qualcuno **prima** del livello dell'uscente era preemption (slot), se
+>   arriva al suo livello senza trovare nessuno era fine turno (in fondo alla
+>   coda). **Il tick è il quanto**;
+> - **§3.31** `test_block`: un task che si blocca su una mailbox vuota, l'ISR
+>   che gli consegna, e l'idle che gira **mentre lui dorme** — la CPU libera
+>   misurata sul serio.
 >
-> Restano i due passi grossi: la **catena A→B→C** (due salti di mailbox, e la
-> preemption provocata da un risveglio fra livelli diversi), poi il **gestore
-> dei timeout come task**, che è l'unico pezzo che tira dentro anche il pool
-> (§10) e per questo va per ultimo.
+> ### ▶▶▶ IL PROSSIMO PASSO
 >
-> ### (storico) LO SCHEDULER A PRIORITÀ GIRA (§3.29)
+> Completare il **punto 3**, la simulazione di §3.28, in due passi e non in uno:
 >
-> Il modello a PCB è **scritto, girato e verificato**: TCB a 20 byte con `pcb`,
-> `PCB` con la `TESTA` annidata, otto livelli, `sched_init`, la scansione di §4
-> con lo slot che batte la coda. `scheduler_demo` è stato **ritirato** — non
-> adattato — e al suo posto c'è `rtos/test/test_scheduler.vasm`. `ctest` 23/23.
+> 1. **la catena A→B→C** — A svegliato dall'ISR manda a B, B manda a C, C conta.
+>    Aggiunge due salti di mailbox e la preemption provocata da un **risveglio**
+>    fra livelli diversi, percorso che nessun test tocca ancora;
+> 2. **il gestore dei timeout come task**, con la sua mailbox e l'ISR del tick
+>    che gli consegna, e A che passa da `timeout_arm`. Va **per ultimo** perché è
+>    l'unico pezzo che tira dentro anche il pool (§10): se qualcosa non torna,
+>    tutto il resto è già verificato.
 >
-> **Il primo passo della prossima sessione è §8.8**: `hal_ctx_block` nell'HAL
-> (scrive `epc`/`epsw` e riusa `ctx_save` invariata), poi `task_block` e
-> `task_ready` nel kernel. Da lì il test cresce fino alla simulazione a quattro
-> task, e con essa entra la **rotazione fra pari** — che ha una decisione ancora
-> aperta: come lo scheduler distingue «tick, turno finito» da «preemption vera»
-> (argomento del chiamante, o confronto fra uscente e subentrante).
+> Poi **mutex e semaforo** (§13), che §3.26 dà per corti perché tutto è deciso e
+> che erano fermi solo perché mancavano le priorità.
 >
-> §3.28 ha fissato anche la convenzione: **0 è la priorità più alta**, e
-> `dispatcher(TCB)` prende il TCB in input (§12.3).
+> ### ⚠ COSE CHE NON SONO NELLA PROPOSTA, E ALTRI DEBITI
 >
-> Cioè **§3 e §4 della proposta**, che è ciò che §3.26 aveva già indicato come
-> l'unico ordine possibile — mutex e semaforo sono corti *perché* tutto il resto
-> è deciso, ma poggiano su una grandezza che non esiste: **le priorità non sono
-> costruite**. Oggi `TCB` è `pointers, sp, state` (16 byte, nessuna priorità),
-> `ready` è **una** sola `TESTA`, e `scheduler.vasm` è round-robin. `PCB` non
-> compare in nessun sorgente. Da fare, in quest'ordine di dipendenza: il campo
-> della priorità nel TCB, i PCB con lo slot `preemptato` (§3), una coda di ready
-> per livello, la politica «il livello non vuoto più alto» (§4), e la divisione
-> di §12.3 fra **scheduler** (politica) e **dispatcher** (meccanismo, con un
-> input).
+> - **cinque voci di §3.26** non sono ancora riportate nella proposta: la tabella
+>   in fondo a quella sezione dice quali e dove;
+> - `SEMAFORO.risorse` è **deciso nella forma** (un `.equ` derivato da
+>   `TESTA.count`) e non scritto, perché il semaforo non ha ancora codice;
+> - **la traccia temporale** nel simulatore: oggi non sappiamo spiegare perché
+>   l'idle conti circa il doppio degli altri task per tick (§3.29), e senza uno
+>   strumento che dica *chi gira e da quando a quando* ogni numero resta
+>   un'osservazione invece di una misura;
+> - il **linker/locator** (`.align`, `.section`, regioni e mappa) e la domanda
+>   sul **contesto vettoriale** nel context switch: entrambi in coda a §3.27, ed
+>   entrambi fuori dal kernel ma rilevanti.
 >
-> Restano fuori, e sono scritti in coda a §3.27 per non perderli: il
-> **linker/locator** (`.align`, `.section`, regioni e mappa) e la domanda sul
-> **contesto vettoriale** nel context switch.
->
-> **§3.27, seconda parte del 07/09 — un difetto vecchio trovato discutendo
-> d'altro.** Dieci `.struct` ridichiaravano `fwd`/`bwd`: venti righe copiate che
-> dovevano coincidere e che niente verificava. Ora esiste `.struct LINK` in
-> `coda.vinc` e ogni nodo la **annida** (`.field pointers LINK.size`) invece di
-> ricopiarla — l'annidamento per valore del C, quindi zero indirezione, e regge
-> sul contratto di §7.5 che tiene i link a offset 0. Insieme, il punto che §3.26
-> lasciava aperto si chiude: il terzo campo di `TESTA` prende il nome del
-> proprietario con un `.equ` **derivato** (`MAILBOX.count`), non con una `.struct`
-> propria che sarebbe stata lo stesso difetto per un campo solo. `ctest` 23/23 e
-> i sei `.vx` **identici byte per byte**: nessun offset si è mosso.
+> ### (storico) Come si è arrivati qui
 >
 > Il **07/09/2026** (§3.26) ha sciolto la decisione che bloccava tutto e ha
 > scritto i primi due pezzi. In una riga ciascuno:
@@ -2470,6 +2460,46 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `TESTA` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.31 Un task che dorme davvero (07/09/2026, sesta parte)
+
+**24 test.** `test_block` è il primo uso *vero* di `task_block` e
+`hal_ctx_block`, che fino a §3.30 erano codice scritto e mai eseguito.
+
+#### Perché questo prima della simulazione completa
+
+Il test di §3.28 metterebbe in gioco cinque cose nuove insieme, e il pezzo più
+rischioso è il **frame costruito a mano**: se è sbagliato non dà un test rosso,
+dà corruzione che si manifesta altrove. Qui c'è un percorso solo — due task, una
+mailbox, l'ISR del tick che consegna — e se rompe si sa dove guardare.
+
+Verifica tre cose che nessun test toccava:
+
+1. **il frame sincrono regge**: W riprende esattamente dentro `receive`, e con
+   `IE = 1`. Se la `psw` scritta da `hal_ctx_block` fosse sbagliata il sistema si
+   fermerebbe al primo blocco — quindi anche l'argomento di §12.5 («si torna a un
+   task, quindi IE:1 senza leggerla») è ora verificato e non solo sostenuto;
+2. **il risveglio attraversa tutto il kernel**: la `send` sfila il TCB, chiama
+   `task_ready`, che accoda al livello 2 e chiede la preemption perché 2 batte il
+   7 dell'idle. Nessuno di quei passi è saltabile;
+3. **la CPU libera è misurata sul serio**: `cntI` conta mentre W **dorme**. In
+   `test_scheduler` l'idle girava solo perché il sistema non era ancora partito —
+   qui gira perché non c'è niente da fare, che è la forma vera della statistica.
+
+È anche il primo programma che compone le due metà, `lib_messaggi` per la
+mailbox e `lib_kernel` per lo scheduler: la ragione per cui in §3.30
+`lib_messaggi` ha smesso di nominare `lib_kernel` nel proprio `LINK`.
+
+#### `3 28`, e un valore atteso derivato male
+
+Il primo numero è derivabile, e la prima stesura lo aveva derivato **sbagliato**:
+«8 tick / 2 = 4». L'ISR manda sui tick **pari** e l'8° non manda, ferma — quindi
+i tick utili sono 2, 4, 6, cioè **tre**. Il codice era giusto e il conto no, ed è
+annotato nel test perché è il modo esatto in cui un valore atteso si sbaglia:
+contando un bordo che non c'è. Aggiustare il codice per farlo tornare a 4 avrebbe
+rotto una cosa che funzionava.
 
 ---
 
