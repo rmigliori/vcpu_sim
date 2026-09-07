@@ -979,13 +979,48 @@ Due dettagli che il modello a task porta con sé:
 
 - **Il messaggio di tick è uno statico, e va coalescato.** Se l'ISR lo rispedisce
   mentre è ancora accodato, riaccoda un nodo già in lista e sfascia la mailbox
-  (§8.3, «un oggetto, una lista»). L'ISR lo manda **solo se la mailbox del
-  gestore è vuota** — lì arrivano solo tick, quindi `count == 0` è il test — e il
-  gestore legge il **contatore assoluto** dei tick invece di assumere «ne è
-  passato uno». Così un tick coalescato non si perde.
+  (§8.3, «un oggetto, una lista»). L'ISR lo manda **solo se in mailbox non c'è
+  già un tick non consumato**, cioè se `count <= 0` — e il gestore legge il
+  **contatore assoluto** dei tick invece di assumere «ne è passato uno». Così un
+  tick coalescato non si perde.
+
+  > **Corretto il 07/09/2026, implementando.** Questo punto diceva «`count == 0`
+  > è il test», e sarebbe stato **sbagliato nel caso normale**: il gestore passa
+  > la vita bloccato nella propria mailbox in attesa del tick, e allora `count`
+  > vale **−1** per la convenzione col segno di §8.2, non 0. Con `count == 0`
+  > l'ISR non manda proprio quando c'è un task da svegliare, cioè sempre.
+  > Misurato: `test_gestore` scritto così dà `cntA = 0` — nessuna scadenza
+  > consegnata mai — e l'idle si prende tutta la macchina. Il test giusto,
+  > `count > 0` per coalescare, comprende i due casi in cui si manda: mailbox
+  > vuota (0) e ricevente in attesa (−1).
 - **Essere un task non serializza niente da solo.** `timeout_arm` e
   `timeout_cancel` girano nei task clienti e toccano lo stesso vettore che il
   gestore scandisce: arm, cancel e scansione stanno in sezione critica.
+
+> ### Dove sta il codice — **IMPLEMENTATO** il 07/09/2026
+>
+> Il gestore è un task, quindi chiama `receive` e `send`: non poteva stare in
+> `generic/timeout` accanto ad `arm`/`cancel`, perché un modulo di `generic/`
+> che nomina un simbolo di `rtos/` non è più generic. Ed è il primo **task di
+> sistema** del progetto: non è nemmeno un «servizio» di `rtos/servizi/`, la cui
+> firma è «chiama `task_ready` e `task_block»` — il gestore non blocca nessuno,
+> si blocca lui. Da qui una cartella sua, `rtos/gestore_timeout/`.
+>
+> | dove | cosa |
+> |---|---|
+> | `generic/timeout` | il vettore e la sua disciplina: `timeout_arm`, `timeout_cancel`, `timeout_scaduto` |
+> | `rtos/gestore_timeout` | il task: `gestore_init`, `gestore_task`, `gestore_tick` |
+>
+> La riga di confine è **`timeout_scaduto`**, che prende una scadenza passata, la
+> formatta nel buffer che le si porta e libera la casella — ma **non manda**. È
+> lì perché la transizione `ARMED → FREE` deve stare nella stessa sezione critica
+> in cui si decide di consegnare (§9.5); formattare non porta dentro niente di
+> `rtos/`, perché il formato del payload è `generic/messaggio` (§8.4).
+>
+> Il buffer si prende **prima** di chiedere la scadenza, e così il «pool vuoto ⇒
+> il timeout arriva tardi invece di non arrivare» di questa sezione diventa
+> strutturale invece che un ramo da ricordarsi: senza buffer non si arriva
+> nemmeno a guardare il vettore.
 
 ### 9.3 Perché un vettore e non una lista
 

@@ -12,12 +12,12 @@
 
 > ### ▶ RIPRENDI DA QUI (08/09/2026 o dopo)
 >
-> `ctest` **25/25**. Fino a `c890c22` (§3.31) tutto è committato e **pushato** su
-> `origin/master`; §3.32 — `rtos/test/test_catena.vasm`, la sua voce nel
-> `CMakeLists.txt` di `rtos/test/` e questo aggiornamento — è **solo in locale**.
+> `ctest` **26/26**. Fino a `90c29fd` (§3.32) tutto è committato e **pushato** su
+> `origin/master`; §3.33 — `rtos/gestore_timeout/`, `timeout_scaduto`,
+> `rtos/test/test_gestore.vasm` e questo aggiornamento — è **solo in locale**.
 > Il push si chiede comunque, non si fa.
 >
-> ### ▶▶ LO SCHEDULER È COMPLETO, E LA CATENA GIRA
+> ### ▶▶ §3.28 È CHIUSA: LA SIMULAZIONE COMPLETA GIRA
 >
 > Il 07/09 ha portato lo scheduler da round-robin a coda singola a **priorità
 > statiche con PCB**, poi fino al blocco volontario, poi fino alla catena di
@@ -42,26 +42,29 @@
 >   `send_s` da task, il ramo di `task_ready` che **non** preempta, la scansione
 >   che attraversa livelli popolati — e, misurando, ha mostrato la
 >   **saturazione**: a 800 cicli di periodo l'ultimo anello muore di fame senza
->   che nessuna asserzione scatti.
+>   che nessuna asserzione scatti;
+> - **§3.33** `rtos/gestore_timeout/`, il **primo task di sistema** del progetto
+>   (cartella nuova, decisa dall'utente), e `test_gestore`: §8, §9 e §10 girano
+>   per la prima volta insieme sotto lo scheduler vero. **§3.28 è chiusa.** E
+>   §9.2 aveva un test che non poteva funzionare — `count == 0` mentre il caso
+>   normale è `count == −1` — corretto e misurato.
 >
 > ### ▶▶▶ IL PROSSIMO PASSO
 >
-> Chiudere il **punto 3**, cioè il secondo e ultimo passo della simulazione di
-> §3.28: **il gestore dei timeout come task**, con la sua mailbox e l'ISR del
-> tick che gli consegna, e A che passa da `timeout_arm`. Era stato messo per
-> ultimo perché è l'unico pezzo che tira dentro anche il pool (§10): adesso
-> tutto il resto è verificato, quindi se qualcosa non torna si sa dove guardare.
+> **Mutex e semaforo** (§13). §3.26 li dà per corti perché tutto è deciso, ed
+> erano fermi solo perché mancavano le priorità: adesso ci sono, e con loro
+> `enqueue_dopo_nc` (§13.6), il confronto fra `TCB.pcb` che l'inserimento
+> ordinato richiede, e `task_block`/`task_ready` che i due servizi useranno come
+> li usa la mailbox. Nascono in `rtos/servizi/`, accanto alla mailbox, che è la
+> forma che quella cartella dichiara.
 >
-> Due cose che §3.32 lascia in mano a chi lo scrive:
+> Due cose da sapere prima di cominciare:
 >
-> - **il livello 0 è libero e lo aspetta** (§9.2), e `test_catena` non lo usa
->   apposta: la tabella dei PCB è già quella giusta;
-> - **il periodo del timer va ridichiarato**, non ereditato. `test_catena` ha
->   dovuto passare da 500 a 2000 cicli, e col gestore dei timeout la catena si
->   allunga ancora: la tabella delle soglie in §3.32 è il modo di sceglierlo.
->
-> Poi **mutex e semaforo** (§13), che §3.26 dà per corti perché tutto è deciso e
-> che erano fermi solo perché mancavano le priorità.
+> - `SEMAFORO.risorse` è **deciso nella forma** (un `.equ` derivato da
+>   `TESTA.count`, come `MAILBOX.count` in §3.27) e non ancora scritto;
+> - **§13.5 è stata riscritta** in §3.28 con la convenzione «0 = più alta»: il
+>   ceiling si promuove a un **minimo**, non a un massimo. È esattamente il verso
+>   che si sbaglia rileggendo.
 >
 > ### ⚠ COSE CHE NON SONO NELLA PROPOSTA, E ALTRI DEBITI
 >
@@ -112,7 +115,8 @@
 > hal/          la macchina, e il solo strato che la conosce
 > generic/      tutto cio' che NON usa lo scheduler: coda, pool, timeout,
 >               messaggio (formato) + i suoi test
-> rtos/         cio' che lo USA: scheduler, servizi/mailbox, demo, test
+> rtos/         cio' che lo USA: scheduler, servizi/mailbox,
+>               gestore_timeout (il task di sistema), demo, test
 > tests/        i tre test che verificano il SIMULATORE, non l'RTOS
 > src/ include/ il simulatore in C
 > ```
@@ -351,7 +355,7 @@ livello.
 | CLI `asm/ld/run/nm/ar` | completo | [`src/main.c`](../src/main.c) |
 | HAL | completo (§3.21) | [`hal/`](../hal/) |
 | Code, pool, timeout, formato messaggi | completo, indipendente dallo scheduler (§3.24) | [`generic/`](../generic/) |
-| Kernel + scheduler a priorità + mailbox | completo: PCB, slot, rotazione fra pari, blocco volontario (§3.28–§3.32). Restano mutex e semaforo (§13) | [`rtos/`](../rtos/) |
+| Kernel + scheduler a priorità + mailbox + gestore timeout | completo: PCB, slot, rotazione fra pari, blocco volontario, task di sistema (§3.28–§3.33). Restano mutex e semaforo (§13) | [`rtos/`](../rtos/) |
 | Linguaggio alto livello `vc` | **da fare** — solo progettato | [`docs/proposta-linguaggio-alto-livello.md`](proposta-linguaggio-alto-livello.md) |
 
 Macchina: 16 registri scalari `r0..r15` (`r0` = 0), 16 float `f0..f15`, 8
@@ -2478,6 +2482,99 @@ il contratto scritto.
 
 ---
 
+### 3.33 Il gestore dei timeout è un task, e §9.2 aveva un test che non poteva funzionare (07/09/2026, ottava parte)
+
+**26 test. §3.28 è chiusa**: la simulazione completa gira. `test_gestore` è il
+primo programma in cui **§8, §9 e §10 girano insieme sotto lo scheduler vero** —
+mailbox, timeout e pool erano implementati da giorni e non si erano mai
+incontrati nello stesso binario.
+
+#### Il taglio: `generic/timeout` non poteva ospitare il task
+
+La decisione l'ha presa l'utente sulla base di due regole già scritte, e la
+seconda è quella che ha aperto una cartella nuova:
+
+- `generic/CMakeLists.txt` dice che **un modulo che nomina un simbolo di
+  `rtos/` non è generic**. Il ciclo del gestore chiama `receive` e `send`:
+  fuori. Il commento in `timeout.vasm` che si aspettava lì la scansione era
+  anteriore alla ristrutturazione di §3.24, ed è la regola nuova a vincere;
+- `rtos/servizi/` dice che **un servizio si riconosce da una firma sola: chiama
+  `task_ready` e `task_block`**. Il gestore non li chiama — non blocca nessuno,
+  si blocca lui sulla propria mailbox come un task qualunque. È il primo **task
+  di sistema** del progetto, una terza specie dopo il kernel e i servizi, e ha
+  una cartella sua: `rtos/gestore_timeout/`.
+
+| dove | cosa |
+|---|---|
+| `generic/timeout` | il vettore e la sua disciplina: `timeout_arm`, `timeout_cancel`, **`timeout_scaduto`** |
+| `rtos/gestore_timeout` | il task: `gestore_init`, `gestore_task`, `gestore_tick` |
+
+La riga di confine è `timeout_scaduto`, e **formatta senza mandare**. Non è un
+compromesso: la transizione `ARMED → FREE` deve stare nella stessa sezione
+critica in cui si decide di consegnare — restituire i campi e lasciare al
+chiamante la liberazione riaprirebbe il bug del riciclo dell'handle (§9.5) — e
+formattare non porta dentro niente di `rtos/`, perché il formato del payload è
+`generic/messaggio`.
+
+#### Il buffer prima della scadenza, e un invariante che smette di essere un ramo
+
+`gestore_task` fa `buf_alloc` **prima** di chiedere una scadenza. Così una
+scadenza non può essere consumata senza un posto dove metterla, e il «pool vuoto
+⇒ il timeout arriva tardi invece di non arrivare» di §9.2 diventa **strutturale**
+invece che un ramo da ricordarsi: senza buffer non si arriva nemmeno a guardare
+il vettore. Il prezzo è un `alloc` + `free` per ogni tick in cui non scade
+niente — due O(1) su una free-list — e vale la pena pagarlo per non avere un
+ordine da rispettare a memoria.
+
+#### `count == 0` era il test sbagliato, e sbagliava nel caso normale
+
+§9.2 diceva che l'ISR manda il messaggio di tick «solo se la mailbox del gestore
+è vuota — lì arrivano solo tick, quindi `count == 0` è il test». **Non poteva
+funzionare**: il caso normale è il gestore **bloccato** nella propria mailbox in
+attesa del tick, e allora `count` vale **−1** per la convenzione col segno di
+§8.2. Con `count == 0` l'ISR non manda proprio quando c'è un task da svegliare,
+cioè sempre.
+
+Non è un ragionamento, è misurato — il test scritto con la versione di §9.2 dà:
+
+```
+cntA = 0    cntErr = 0    cntI = 4432
+```
+
+Nessuna scadenza consegnata mai, e l'idle che si prende tutta la macchina. Il
+test giusto è `count > 0` per coalescare, che comprende i due casi in cui si
+manda: mailbox vuota (0) e ricevente in attesa (−1). §9.2 della proposta è
+corretta, con il numero accanto.
+
+Nota onesta sulla copertura: il ramo che **coalesce** non viene mai eseguito in
+questo test (verificato sulla traccia — le 14 istruzioni di `gestore_tick` girano
+tutte 12 volte), perché con il periodo scelto il gestore drena sempre entro il
+tick. Quello che il test dimostra è che la condizione *opposta* è quella giusta,
+non che la coalescenza funzioni: per quella servirebbe un tick più fitto del giro
+del gestore, cioè la saturazione di §3.32 provocata apposta.
+
+#### `5 0 2609`, e un valore atteso più forte degli altri
+
+`cntA = 5` è **derivabile per intero e non dipende dal periodo del timer**: A
+arma a +2 tick e riarma dentro lo stesso tick in cui si sveglia, quindi le
+scadenze cadono ai tick 2, 4, 6, 8 e 10; quella armata al 10 scadrebbe al 12, ma
+è il tick in cui l'ISR ferma tutto. Si conta sull'**orologio logico** (`tmo_now`,
+il contatore assoluto), non sui cicli — verificato a 2000, 4000 e 8000 cicli di
+periodo: `cntA` resta 5 e si muove solo `cntI`. È una proprietà più forte di
+quella di §3.32, dove i tre numeri della catena dipendevano dal drenaggio.
+
+`cntErr = 0` è l'altro numero che non dipende dai cicli, e i tre modi in cui può
+salire sono tre difetti diversi: `timeout_arm` rifiutato, `clientTag`
+disallineato (§9.4), `buf_free` che non riprende il buffer. E `cntA` è anche la
+prova che **non ci sia un leak**: la classe da 16 ha dieci blocchi, quindi un
+giro che ne perdesse uno per volta si fermerebbe dopo dieci scadenze.
+
+Sotto i 2000 cicli di periodo `cntA` crolla a 0: è la stessa saturazione di
+§3.32, con un giro più lungo perché ci sono dentro anche il pool e una
+preemption in più.
+
+---
+
 ### 3.32 La catena A→B→C, e la saturazione che si è vista misurando (07/09/2026, settima parte)
 
 **25 test.** [`rtos/test/test_catena.vasm`](../rtos/test/test_catena.vasm) è il
@@ -3139,10 +3236,10 @@ servono i numeri della macchina.
 > cmake -B out -S . && cmake --build out -j && ctest --test-dir out
 > ```
 >
-> 25 test: le tre invarianti storiche, gli otto test mirati (`coda`, `pool`,
-> `timeout`, `mailbox`, `scheduler`, `block`, `catena`, più `proc`/`include`/
-> `epsw` sulla toolchain), e i 13 programmi di `standalone/` che devono
-> continuare a girare da soli. I numeri
+> 26 test: le tre invarianti storiche, i nove test mirati (`coda`, `pool`,
+> `timeout`, `mailbox`, `scheduler`, `block`, `catena`, `gestore`, più
+> `proc`/`include`/`epsw` sulla toolchain), e i 13 programmi di `standalone/`
+> che devono continuare a girare da soli. I numeri
 > attesi stanno **ognuno accanto al programma che lo produce** — nel
 > `CMakeLists.txt` di `generic/test/`, di `rtos/test/`, o in quello di primo
 > livello per ciò che resta suo — e comunque in **un posto solo**: è `ctest` a
@@ -3167,7 +3264,7 @@ servono i numeri della macchina.
 >
 > ```bash
 > ctest --test-dir out -R coda --output-on-failure   # un test solo, con l'output
-> ctest --test-dir out -N                            # elenca i 25 senza eseguirli
+> ctest --test-dir out -N                            # elenca i 26 senza eseguirli
 > cmake --build out -j --verbose                     # i comandi asm/ld esatti
 > ```
 >
@@ -3191,6 +3288,7 @@ Le sequenze attese, per chi deve leggerle senza aprire il build:
 | `mailbox` — send/receive con blocco (§3.10) | `0 1 2 11 22 0 33 0 0` | `rtos/test/` |
 | `block` — un task che DORME, e la CPU libera vera | `3 28` | `rtos/test/` |
 | `catena` — A→B→C, `send_s` da task, risveglio che non preempta | `3 3 3 778` | `rtos/test/` |
+| `gestore` — timeout+pool+mailbox sotto lo scheduler (§3.33) | `5 0 2609` | `rtos/test/` |
 | `proc` — `.proc`/`.endproc` (§3.6) | `100 200 300` | `CMakeLists.txt` |
 | `include` — `-I` e idempotenza (§3.16, §3.24) | `20 16 16 512 1` | `CMakeLists.txt` |
 | `epsw` — `mfepsw`/`mtepsw` (§3.19) | `1 0 0 7` | `CMakeLists.txt` |
