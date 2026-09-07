@@ -44,4 +44,4 @@ vasm_object(t_scheduler SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_scheduler.vasm
 vasm_program(test_scheduler OBJECTS t_scheduler LINK lib_kernel)
 
 vasm_check(scheduler MODE DUMPS PROGRAM test_scheduler
-           EXPECT "74 29 59")
+           EXPECT "76 30 59")

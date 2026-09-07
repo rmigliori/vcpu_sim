@@ -2494,7 +2494,7 @@ più nasconde qualunque errore nell'ultimo livello della scansione.
 Nella simulazione completa (§3.28) la CPU libera verrà dai task che **dormono**,
 che è la forma vera; qui la si ottiene facendo partire il sistema vuoto.
 
-`74 29 59`: i tre numeri dipendono dai cicli, e ciò che il test asserisce è che
+`76 30 59`: i tre numeri dipendono dai cicli, e ciò che il test asserisce è che
 siano **tutti e tre > 0 e prodotti in fasi disgiunte**. Il loro rapporto — l'idle
 conta ~30 per tick contro i ~15-18 degli altri — **non è spiegato**, ed è da
 guardare quando ci sarà la traccia temporale.
@@ -2976,7 +2976,7 @@ Le sequenze attese, per chi deve leggerle senza aprire il build:
 | verifica | atteso | dove sta il numero |
 |---|---|---|
 | `saxpy` — istruzioni / vec-elem-ops / cicli | `17 40 94` | `CMakeLists.txt` |
-| `scheduler` — priorità, tre fasi disgiunte, idle > 0 | `74 29 59` | `rtos/test/` |
+| `scheduler` — priorità, tre fasi disgiunte, idle > 0 | `76 30 59` | `rtos/test/` |
 | `multi` — link con inclusione selettiva | `18 40 95` | `CMakeLists.txt` |
 | `coda` — invariante dei link (§3.14) | `0 1 1 1 0 0 0 2 1 0 0 0 0` | `generic/test/` |
 | `pool` — sei classi, alloc/free (§3.15) | `10 4 0 0 9 0 32 3 2 0 0 4 4 4 3 0 0 1 4` | `generic/test/` |

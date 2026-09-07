@@ -10,7 +10,7 @@
 ; Il percorso di CONSEGNA DIRETTA (send che trova un TCB accodato, lo sfila, mette
 ; il messaggio al suo posto e chiama task_ready) viene cosi' esercitato davvero.
 ;
-; scheduler.vasm entra nel link per UNA ragione sola: e' lui a definire current,
+; scheduler.vasm NON entra piu' nel link (07/09/2026): definiva current,
 ; che receive legge (§8.7: e' uno dei difetti aperti). La seconda ragione — che
 ; machine.vasm si tirasse dietro il kernel via sched_dispatch — non esiste piu'
 ; dal 05/09/2026: l'HAL non nomina nessun simbolo di kernel (§12.2 della
@@ -37,6 +37,7 @@
 
 mbox:      .res TESTA     ; la mailbox E' una testa di coda
 svegliato: .word 0        ; ultimo TCB passato a task_ready
+current:   .word 0        ; stub della variabile del kernel: vedi sopra
 tcb0:      .res TCB       ; unico task del test
 msg1:      .space 3       ; fwd, bwd, payload[0..3]: la taglia la decide chi lo
 msg2:      .space 3       ; compone, non MESSAGGIO.size (payload e' un indirizzo)
@@ -51,7 +52,12 @@ stack_top:
   .global task_block
   .extern send
   .extern receive
-  .extern current         ; la vera variabile del kernel (kernel/scheduler.vasm)
+  .global current         ; STUB, dal 07/09/2026: era .extern e la forniva
+                          ; scheduler.vasm, ma da quando il kernel definisce
+                          ; davvero task_block/task_ready (§8.8) linkarlo qui
+                          ; darebbe "duplicate global". Un test unitario che si
+                          ; finge il kernel deve fingerlo TUTTO -- e la
+                          ; definizione sta in .data, qui sotto.
 
 main:
   li r14, stack_top

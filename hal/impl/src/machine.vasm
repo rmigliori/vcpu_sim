@@ -43,6 +43,7 @@ g_handler: .word 0        ; puntatore all'ISR applicativa (indice istruzione)
   .global _trap_entry
   .global ctx_restore
   .global ctx_init
+  .global hal_ctx_block
   .global timer_init
   .global irq_arm
   .global irq_install
@@ -163,6 +164,43 @@ ctx_restore:
   lw r15, 0(r14)
   addi r14, r14, 4
   reti                    ; pc = epc; psw = quella del frame -> il task riparte
+
+; ==========================================================================
+;  hal_ctx_block(r1 = indirizzo di ripresa) -> r1 = contesto opaco
+;
+;  Il context switch SINCRONO: non lo provoca un'interruzione, lo chiede il task
+;  stesso chiamando task_block (§8.8 della proposta). Nell'ISA non c'e' trap
+;  software, quindi il frame va costruito a mano -- ma NON duplicando ctx_save,
+;  che sono 26 push: duplicarli vorrebbe dire due copie del layout del frame da
+;  tenere allineate, cioe' il difetto che §3.27 ha tolto dalle strutture.
+;
+;  La via e' che epc ed epsw sono SCRIVIBILI: si prepara cio' che ctx_save
+;  trovera' e la si chiama INVARIATA. I due sostituti non sono un espediente --
+;  senza istruzione interrotta l'epc E' un indirizzo di ritorno, e IE:1 discende
+;  da §12.5 perche' si torna a un TASK (il caso che §12.5 dovette smontare era il
+;  ritorno a codice di kernel, che qui non si da').
+;
+;  Scrivere i due CSR fuori da una trap e' sicuro perche' task_block gira con
+;  IE = 0: nessuna trap puo' arrivare a usarli prima che siano consumati.
+;
+;  E' la SECONDA volta che mtepsw paga: aggiunto all'ISA il 05/09 per far
+;  ritornare un'ISR a codice di kernel, serve di nuovo qui per un motivo diverso.
+;
+;  Il r15 che finisce nel frame e' il ritorno INTERNO a task_block, non quello
+;  del task. Non importa e non va aggiustato: al risveglio ctx_restore lo
+;  ripristina, ma reti atterra dentro receive, che il proprio r15 lo rilegge
+;  dallo stack. Lo slot deve ESISTERE perche' il frame abbia la forma giusta.
+; ==========================================================================
+hal_ctx_block:
+  mtepc  r1               ; l'epc che ctx_save leggera': dove il task riprendera'
+  li     r2, PSW_IE
+  mtepsw r2               ; ... e la psw: un task riprende sempre interrompibile
+  addi r14, r14, -4
+  sw r15, 0(r14)          ; slot r15, come _trap_entry: PRIMA di ogni call
+  call ctx_save           ; HAL, invariata: legge i CSR appena scritti
+  lw r15, 60(r1)          ; il nostro ritorno, che la call ha distrutto: sta nel
+                          ; frame, all'offset dello slot r15 (CTX_FRAME_SIZE-4)
+  ret                     ; r1 = contesto opaco, gia' pronto per il kernel
 
 ; ==========================================================================
 ;  ctx_init(r1 = cima dello stack, r2 = entry del task) -> r1 = sp iniziale.

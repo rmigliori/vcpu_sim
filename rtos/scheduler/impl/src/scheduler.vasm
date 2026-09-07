@@ -91,7 +91,10 @@ g_resched: .word 0        ; need_resched: !=0 => switch a uscita IRQ
   .global sched_isr_exit
   .global request_preempt
   .global sched_init
+  .global task_block
+  .global task_ready
   .extern ctx_restore
+  .extern hal_ctx_block
 
 ; ==========================================================================
 ;  sched_init(): svuota le otto code di ready e i loro slot.
@@ -120,6 +123,69 @@ sched_init_loop:
   addi r5, r5, PCB.size
   j sched_init_loop
 sched_init_done:
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; ==========================================================================
+;  task_block(): cede la CPU e non ritorna finche' task_ready non risveglia il
+;  chiamante. E' il contratto che messageHandling.vasm dichiara da giorni come
+;  .extern, e il PERCORSO VOLONTARIO che §12.6 lasciava come ultimo aperto.
+;
+;  PRECONDIZIONE, e non e' verificabile da qui: il chiamante si e' GIA' accodato
+;  dove verra' ritrovato (la propria mailbox, la coda di un semaforo). Per questo
+;  qui non si accoda niente e non si tocca PCB.preemptato: il TCB e' gia' in una
+;  lista, e metterlo anche nello slot lo renderebbe eseguibile pur essendo in
+;  attesa -- due posizioni per una coppia di link sola (§7.5).
+;
+;  L'indirizzo di ripresa e' il NOSTRO r15, cioe' il ritorno al chiamante, e va
+;  passato esplicitamente: dentro hal_ctx_block r15 sara' gia' un altro (§8.8).
+;
+;  Non ritorna per la via normale: cade nel dispatcher, che chiude nell'HAL con
+;  ctx_restore/reti. Il ritorno vero avviene molto dopo, quando lo scheduler
+;  riscegliera' questo TCB e reti atterrera' all'indirizzo che abbiamo salvato.
+; ==========================================================================
+task_block:
+  mov r1, r15            ; l'indirizzo di ripresa: il ritorno al chiamante
+  call hal_ctx_block     ; r1 = contesto opaco del chiamante
+  li r2, current
+  lw r3, 0(r2)
+  sw r1, TCB.sp(r3)      ; il contesto vive nel TCB, come dopo una trap
+  li r4, SUSPENDED
+  sw r4, TCB.state(r3)
+  call scheduler         ; la scelta va rifatta (§12.4 caso 2), IE e' gia' 0
+  j dispatcher           ; e da li' non si torna
+
+; ==========================================================================
+;  task_ready(r1 = &TCB): rende eseguibile un task e valuta la preemption.
+;
+;  Le due meta' sono separate di proposito: accodare e' meccanismo, chiedere la
+;  preemption e' politica -- e la politica qui e' una riga sola, perche' la
+;  convenzione di §4 (0 = piu' alta) e l'invariante di §7.3 (tabella dei PCB in
+;  ordine) rendono il confronto fra priorita' una blt SUI PUNTATORI. Nessun
+;  indice da convertire, nessun numero da leggere: il PCB del risvegliato sta a
+;  un indirizzo piu' basso di quello di current se e solo se e' piu' prioritario.
+;
+;  NON commuta: arma il flag e lascia decidere al percorso di uscita (§6). Vale
+;  anche quando la chiama un'ISR, ed e' il motivo per cui esiste request_preempt.
+; ==========================================================================
+task_ready:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  mov r2, r1             ; r2 = il nodo da accodare
+  lw r7, TCB.pcb(r2)     ; r7 = il suo PCB. Sopravvive alle call (r4/r5 no)
+  sw r0, TCB.state(r2)   ; READY
+  mov r1, r7             ; &pcb == &pcb.coda: nessuna conversione (§7.5)
+  call enqueue_coda
+  li r2, current
+  lw r2, 0(r2)
+  lw r3, TCB.pcb(r2)     ; il PCB di chi sta girando
+  blt r7, r3, task_ready_preempt   ; indirizzo minore = piu' prioritario (§4)
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+task_ready_preempt:
+  call request_preempt
   lw r15, 0(r14)
   addi r14, r14, 4
   ret
@@ -168,6 +234,16 @@ sched_isr_exit:
   lw r4, 0(r2)
   beq r4, r0, sched_isr_exit_done
   sw r0, 0(r2)           ; consuma il need_resched
+
+  ; L'uscente ha perso la CPU CONTROVOGLIA: va nello slot del suo livello, non
+  ; in fondo a una coda, cosi' riprendera' da dove stava senza pagare
+  ; un'interruzione che non ha chiesto (§2). Lo fa chi lo toglie dalla CPU --
+  ; qui -- e non lo scheduler, che le altre due destinazioni non le conosce.
+  lw r4, TCB.pcb(r1)     ; r1 = TCB uscente; r4 = il suo PCB (§7.3)
+  sw r1, PCB.preemptato(r4)
+  li r3, PREEMPTED
+  sw r3, TCB.state(r1)
+
   call scheduler         ; POLITICA: sceglie il prossimo -> r1 = TCB scelto
 sched_isr_exit_done:
   call dispatcher        ; MECCANISMO: mette in esecuzione r1, SEMPRE
@@ -181,8 +257,20 @@ sched_isr_exit_done:
 ;  la separazione mechanism/policy prometteva: HAL, sched_isr_exit e dispatcher
 ;  NON sono stati toccati. Cambia solo questa routine e le strutture che legge.
 ;
-;  Due meta', e la prima e' quella che porta il peso del modello (§2): dove va
-;  l'uscente lo decide chi lo toglie dalla CPU, non chi sceglie il prossimo.
+;  NON tocca l'uscente, ed e' §2 alla lettera: "dove va l'uscente lo decide chi
+;  lo toglie dalla CPU, non chi sceglie il prossimo". Le tre destinazioni sono
+;  incompatibili fra loro e le conosce solo chi provoca l'uscita:
+;
+;    preemptato da un tick  -> PCB.preemptato,  lo mette sched_isr_exit
+;    si e' bloccato          -> gia' accodato altrove (mailbox, semaforo): NESSUNO
+;                               deve toccarlo, ed e' per questo che questa
+;                               routine non puo' avere una regola sua
+;    turno finito            -> in fondo a PCB.coda (rotazione, non implementata)
+;
+;  Se lo scheduler mettesse l'uscente nello slot "per default", un task che si
+;  blocca tornerebbe eseguibile subito dopo essersi messo in attesa: sarebbe
+;  nella coda della mailbox E nello slot del suo livello, cioe' in due posti,
+;  con una coppia di link sola (§7.5).
 ;
 ;  NON scrive 'current' e NON scrive lo stato del task scelto: RESTITUISCE un
 ;  TCB, e il commit e' del dispatcher (§12.3). E' la differenza fra applicare una
@@ -195,21 +283,7 @@ scheduler:
   addi r14, r14, -4
   sw r15, 0(r14)         ; non-foglia: preserva il ritorno a sched_isr_exit
 
-  ; --- 1. l'uscente va nel SUO slot, non in fondo a una coda (§2) ---
-  ; Ha lasciato la CPU controvoglia -- e' arrivato un tick, non ha ceduto lui --
-  ; quindi riprendera' da dove stava e non paga un'interruzione che non ha
-  ; chiesto. Lo slot e' per livello, e "al massimo un task per livello puo'
-  ; essere a meta' esecuzione" e' garantito dalla preferenza slot-su-coda del
-  ; punto 2: finche' lo slot e' pieno, dalla coda di quel livello non esce
-  ; nessuno (§4).
-  li r6, current
-  lw r4, 0(r6)           ; r4 = TCB uscente
-  lw r5, TCB.pcb(r4)     ; r5 = il suo PCB (un indirizzo, non un indice: §7.3)
-  sw r4, PCB.preemptato(r5)
-  li r3, PREEMPTED
-  sw r3, TCB.state(r4)
-
-  ; --- 2. scansione dall'alto: a ogni livello lo slot batte la coda (§4) ---
+  ; --- scansione dall'alto: a ogni livello lo slot batte la coda (§4) ---
   ; Il PCB corrente sta in r7 e NON in uno scratch: dequeue_testa sporca r2, r4
   ; e r5 (lo dichiara coda_api.vinc), quindi tenerlo in r5 lo farebbe avanzare
   ; da un indirizzo spazzatura dalla seconda iterazione in poi. E' un bug che
