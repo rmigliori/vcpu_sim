@@ -20,10 +20,10 @@
 ;
 ; Tre task e tre proprieta':
 ;
-;   I  livello 7  l'IDLE, e il sistema PARTE con lui solo: e' l'unico eseguibile
-;                 fino al 2o tick.
-;   M  livello 2  l'ISR lo rende eseguibile al 2o tick.
-;   H  livello 1  l'ISR lo rende eseguibile al 4o. Da li' gira sempre lui.
+;   I     livello 7  l'IDLE, e il sistema PARTE con lui solo: e' l'unico
+;                    eseguibile fino al 2o tick.
+;   M, D  livello 2  PARI fra loro. L'ISR li rende eseguibili al 2o tick.
+;   H     livello 1  l'ISR lo rende eseguibile al 4o. Da li' gira sempre lui.
 ;
 ; --- PERCHE' L'IDLE DEVE GIRARE ---
 ; La prima stesura aveva i tre task tutti eseguibili dall'inizio, e dichiarava
@@ -46,6 +46,12 @@
 ;   3. LA SCANSIONE RAGGIUNGE IL FONDO: cntI > 0 prova che il livello 7 e'
 ;      davvero raggiungibile. Con l'idle sempre a zero un errore nell'ultimo
 ;      livello della scansione non si vedrebbe.
+;   4. LA ROTAZIONE FRA PARI: cntD > 0. E' il numero che vale di piu' di tutti,
+;      perche' senza rotazione varrebbe ESATTAMENTE ZERO -- M finirebbe nello
+;      slot di pcb2 a ogni tick, lo slot batte la coda, e D non uscirebbe mai.
+;      Che sia diverso da cntM non e' un difetto: i due turni non sono simmetrici
+;      (il primo si porta dietro l'attivazione di entrambi), e cio' che il test
+;      asserisce e' che il testimone sia PASSATO, non che le fette siano uguali.
 ;
 ; L'ISR fa a mano cio' che fara' task_ready (accoda + chiedi preemption): quel
 ; simbolo nel kernel non c'e' ancora, ed e' lo stesso debito per cui
@@ -59,11 +65,13 @@
 cntH:   .word 0        ; contatori applicativi, FUORI dai TCB
 cntM:   .word 0
 cntI:   .word 0
+cntD:   .word 0        ; D e' PARI di M: serve a vedere la rotazione
 ticks:  .word 0        ; tick contati dall'ISR
 
 tcbH:   .res TCB
 tcbM:   .res TCB
 tcbI:   .res TCB
+tcbD:   .res TCB
 
 stackH: .space 64
 stackH_top:
@@ -71,6 +79,8 @@ stackM: .space 64
 stackM_top:
 stackI: .space 64
 stackI_top:
+stackD: .space 64
+stackD_top:
 
   .text
 
@@ -135,6 +145,15 @@ main:
   sw r4, TCB.pcb(r3)
   sw r0, TCB.state(r3)     ; READY, ma in nessuna coda
 
+  li r1, stackD_top
+  li r2, taskD
+  call ctx_init
+  li r3, tcbD
+  sw r1, TCB.sp(r3)
+  li r4, pcb2              ; PARI di M: stesso livello, stessa coda
+  sw r4, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+
   ; --- I (idle, livello 7): parte a freddo, quindi RUNNING e fuori da ogni coda ---
   li r3, tcbI
   li r4, pcb7
@@ -173,6 +192,14 @@ loopM:
   sw r2, 0(r1)
   j loopM
 
+taskD:
+  li r1, cntD
+loopD:
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  j loopD
+
 taskI:
   li r1, cntI
 loopI:
@@ -208,6 +235,9 @@ timer_isr:
   li r1, cntM
   lw r5, 0(r1)
   dumps r5
+  li r1, cntD
+  lw r5, 0(r1)
+  dumps r5                 ; ~ cntM: M e D sono pari e hanno RUOTATO
   li r1, cntI
   lw r5, 0(r1)
   dumps r5                 ; > 0: la CPU libera dei primi due tick
@@ -218,6 +248,9 @@ isr_check4:
   bne r2, r3, isr_check_h  ; al SECONDO tick entra M
   li r1, pcb2              ; &pcb2 == &pcb2.coda
   li r2, tcbM
+  call enqueue_coda
+  li r1, pcb2              ; ... e D, suo PARI: da qui devono RUOTARE
+  li r2, tcbD
   call enqueue_coda
   j isr_go
 isr_check_h:

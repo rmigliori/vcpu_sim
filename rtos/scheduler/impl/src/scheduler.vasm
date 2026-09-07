@@ -235,16 +235,7 @@ sched_isr_exit:
   beq r4, r0, sched_isr_exit_done
   sw r0, 0(r2)           ; consuma il need_resched
 
-  ; L'uscente ha perso la CPU CONTROVOGLIA: va nello slot del suo livello, non
-  ; in fondo a una coda, cosi' riprendera' da dove stava senza pagare
-  ; un'interruzione che non ha chiesto (§2). Lo fa chi lo toglie dalla CPU --
-  ; qui -- e non lo scheduler, che le altre due destinazioni non le conosce.
-  lw r4, TCB.pcb(r1)     ; r1 = TCB uscente; r4 = il suo PCB (§7.3)
-  sw r1, PCB.preemptato(r4)
-  li r3, PREEMPTED
-  sw r3, TCB.state(r1)
-
-  call scheduler         ; POLITICA: sceglie il prossimo -> r1 = TCB scelto
+  call sched_preempt     ; POLITICA: mette via l'uscente e sceglie -> r1
 sched_isr_exit_done:
   call dispatcher        ; MECCANISMO: mette in esecuzione r1, SEMPRE
 
@@ -279,9 +270,99 @@ sched_isr_exit_done:
 ;  un'interfaccia. Quello che resta qui e' politica pura: dove va l'uscente
 ;  (round-robin: in fondo) e chi e' il prossimo.
 ; ==========================================================================
+; ==========================================================================
+;  sched_preempt(r1 = TCB uscente) -> r1 = TCB scelto: la POLITICA COMPLETA per
+;  un'uscita involontaria. Mette via l'uscente E sceglie, e le due cose non sono
+;  separabili perche' DOVE va l'uscente dipende da chi lo sostituisce.
+;
+;  --- LA DISTINZIONE DI §2, E PERCHE' NON SERVE SAPERE CHI HA CHIAMATO ---
+;  §2 dice che un task preemptato va nello slot (riprendera' da dove stava) e uno
+;  che ha finito il turno va in fondo alla coda (tocca a un pari). Sembrava
+;  servisse un modo di sapere se a far rientrare nel kernel fosse stato il tick o
+;  un evento. Non serve: la differenza EMERGE DALLA SCANSIONE.
+;
+;    la scansione trova qualcuno PRIMA del livello dell'uscente
+;        -> esiste un piu' prioritario: era una preemption vera, e l'uscente non
+;           ha consumato il suo turno. Slot.
+;    la scansione arriva al livello dell'uscente senza trovare nessuno sopra
+;        -> l'uscente e' ancora il piu' prioritario, quindi il rientro nel kernel
+;           non era per colpa di nessuno: era il tick, cioe' fine turno. Va in
+;           fondo alla SUA coda e tocca a un pari -- se non c'e' nessun pari,
+;           la coda restituisce lui stesso e nulla cambia.
+;
+;  E' esattamente SCHED_RR, e senza un quanto: IL TICK E' IL QUANTO, perche' il
+;  timer scandisce gia' il tempo e non serve un contatore per misurare cio' che
+;  il periodo del timer misura da se'.
+;
+;  Non-foglia -> salva r15. r7 tiene il PCB corrente perche' dequeue_testa sporca
+;  r2/r4/r5, r8 il PCB dell'uscente.
+; ==========================================================================
+sched_preempt:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  addi r14, r14, -4
+  sw r1, 0(r14)          ; l'uscente, che deve sopravvivere alle call
+  lw r8, TCB.pcb(r1)     ; r8 = il livello dell'uscente: il confine della corsa
+
+  li r7, pcb0
+sp_scan:
+  beq r7, r8, sp_mio_livello   ; arrivato al mio livello senza trovare nessuno
+  lw r1, PCB.preemptato(r7)
+  beq r1, r0, sp_coda
+  sw r0, PCB.preemptato(r7)
+  j sp_preempted
+sp_coda:
+  mov r1, r7
+  call dequeue_testa
+  mov r1, r2
+  bne r1, r0, sp_preempted
+  addi r7, r7, PCB.size
+  j sp_scan
+
+  ; --- trovato uno PIU' PRIORITARIO: l'uscente e' stato preemptato (§2) ---
+sp_preempted:
+  lw r2, 0(r14)          ; l'uscente
+  sw r2, PCB.preemptato(r8)
+  li r3, PREEMPTED
+  sw r3, TCB.state(r2)
+  j sp_done
+
+  ; --- nessuno sopra: era FINE TURNO. L'uscente in fondo alla sua coda, e la
+  ;     testa della coda e' il prossimo. Se e' solo al suo livello riprende lui,
+  ;     e la rotazione degenera nel non fare niente -- che e' corretto.
+sp_mio_livello:
+  lw r2, 0(r14)
+  lw r3, TESTA.count(r8)       ; ci sono PARI in attesa a questo livello?
+  beq r3, r0, sp_solo          ; no: ruotare con nessuno e' due call sprecate
+  sw r0, TCB.state(r2)         ; READY
+  mov r1, r8                   ; &pcb == &pcb.coda
+  call enqueue_coda            ; in FONDO: il round-robin e' il FIFO del livello
+  mov r1, r8
+  call dequeue_testa           ; il primo dei pari
+  mov r1, r2
+  j sp_done
+  ; Il caso "solo al mio livello" e' quello NORMALE in un sistema ben
+  ; dimensionato, e senza questo ramo costava enqueue + dequeue a ogni tick:
+  ; -34% sui contatori del test. Qui l'uscente non si muove e resta RUNNING --
+  ; non e' un'ottimizzazione di comodo, e' che ruotare con nessuno non e' una
+  ; rotazione: la coda restituirebbe lui stesso dopo averlo accodato.
+sp_solo:
+  mov r1, r2
+
+sp_done:
+  addi r14, r14, 4       ; scarta l'uscente
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; ==========================================================================
+;  scheduler (POLITICA, interno) -> r1 = TCB scelto: la scansione NUDA, per chi
+;  non ha un uscente da mettere via -- oggi task_block, il cui chiamante si e'
+;  gia' accodato altrove.
+; ==========================================================================
 scheduler:
   addi r14, r14, -4
-  sw r15, 0(r14)         ; non-foglia: preserva il ritorno a sched_isr_exit
+  sw r15, 0(r14)         ; non-foglia: preserva il ritorno
 
   ; --- scansione dall'alto: a ogni livello lo slot batte la coda (§4) ---
   ; Il PCB corrente sta in r7 e NON in uno scratch: dequeue_testa sporca r2, r4

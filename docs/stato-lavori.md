@@ -15,7 +15,20 @@
 > **I commit del 07/09 (§3.26, §3.27) sono solo in locale.** Il push si chiede,
 > non si fa.
 >
-> ### ▶▶ LO SCHEDULER A PRIORITÀ GIRA (§3.29)
+> ### ▶▶ LO SCHEDULER È COMPLETO: PRIORITÀ, SLOT, ROTAZIONE E BLOCCO (§3.30)
+>
+> `task_block`/`task_ready` esistono (§8.8 eseguita), la **rotazione fra pari**
+> c'è, e la distinzione di §2 è risolta senza sapere chi ha chiamato: se la
+> scansione trova qualcuno **prima** del livello dell'uscente era preemption
+> (slot), se arriva al suo livello senza trovare nessuno era fine turno (in
+> fondo alla coda). Il tick è il quanto. `ctest` 23/23.
+>
+> **Resta il punto 3**: la simulazione completa di §3.28 — A e B che si mandano
+> messaggi via timeout, C che li conta, l'idle che misura la CPU libera *dai
+> task che dormono*. È il primo programma in cui §8, §9, §10 e lo scheduler
+> girerebbero insieme, ed è anche il primo uso vero di `task_block`.
+>
+> ### (storico) LO SCHEDULER A PRIORITÀ GIRA (§3.29)
 >
 > Il modello a PCB è **scritto, girato e verificato**: TCB a 20 byte con `pcb`,
 > `PCB` con la `TESTA` annidata, otto livelli, `sched_init`, la scansione di §4
@@ -2976,7 +2989,7 @@ Le sequenze attese, per chi deve leggerle senza aprire il build:
 | verifica | atteso | dove sta il numero |
 |---|---|---|
 | `saxpy` — istruzioni / vec-elem-ops / cicli | `17 40 94` | `CMakeLists.txt` |
-| `scheduler` — priorità, tre fasi disgiunte, idle > 0 | `76 30 59` | `rtos/test/` |
+| `scheduler` — priorità, rotazione fra pari, idle > 0 | `74 5 10 59` | `rtos/test/` |
 | `multi` — link con inclusione selettiva | `18 40 95` | `CMakeLists.txt` |
 | `coda` — invariante dei link (§3.14) | `0 1 1 1 0 0 0 2 1 0 0 0 0` | `generic/test/` |
 | `pool` — sei classi, alloc/free (§3.15) | `10 4 0 0 9 0 32 3 2 0 0 4 4 4 3 0 0 1 4` | `generic/test/` |
