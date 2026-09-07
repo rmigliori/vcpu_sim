@@ -15,7 +15,14 @@
 > **I commit del 07/09 (§3.26, §3.27) sono solo in locale.** Il push si chiede,
 > non si fa.
 >
-> ### ▶▶ IL PROSSIMO PASSO È DECISO: scheduler e dispatcher
+> ### ▶▶ IN CORSO: scheduler e dispatcher
+>
+> **§3.28 ha fatto il primo passo** — `dispatcher(TCB)` con l'input esplicito
+> (§12.3) — e ha fissato la convenzione: **0 è la priorità più alta**. Restano
+> due cose prima di poter scrivere il modello a livelli: **quanti livelli**
+> (numero non deciso, dimensiona il vettore statico dei PCB) e il **PCB con la
+> `TESTA` annidata** invece che puntata, che §3 lasciava «da valutare» e che ora
+> è scrivibile.
 >
 > Cioè **§3 e §4 della proposta**, che è ciò che §3.26 aveva già indicato come
 > l'unico ordine possibile — mutex e semaforo sono corti *perché* tutto il resto
@@ -2440,6 +2447,76 @@ il contratto scritto.
 
 ---
 
+### 3.28 Il dispatcher prende il TCB in input, e 0 è la priorità più alta (07/09/2026, terza parte)
+
+**Primo passo verso §3/§4**, scelto perché è l'unico che *non* dipende dalle
+priorità: si può verificare con i `.vx` prima che il modello a livelli li faccia
+cambiare comunque.
+
+#### `dispatcher(TCB)` — §12.3, e il debito era scritto nel codice
+
+`scheduler` ora **restituisce** un TCB in `r1` e non scrive più né `current` né
+lo stato: il commit è del **dispatcher**, che è l'unico punto da cui un task
+entra in esecuzione e quindi l'unico che possa dichiararlo. `sched_isr_exit`
+mette l'uscente in `r1` **prima** di consultare il flag, e quel `mov` è la forma
+esatta di «senza preemption riprende chi girava»: se nessuno sceglie, non è lo
+scheduler a doverlo dire.
+
+Il guadagno non è estetico. Finché il TCB passava per `current` — scritto dalla
+politica e riletto due istruzioni dopo dal meccanismo — il confine era una
+convenzione, e **il terzo ritorno da un'ISR di §12.4 non era nemmeno
+esprimibile**: non c'era un posto dove mettere il TCB.
+
+#### I numeri si sono mossi, ed è la prima volta in questa serie
+
+`scheduler_demo`: **97/64 → 98/65**, cioè i due task fanno un'iterazione in più
+a testa. Non è un cambio di politica (resta round-robin), è di **costo**, e va
+letto sapendo che i due numeri misurano ciò che il kernel *non* si prende. Col
+modello di costo della macchina (memoria 4 cicli, ALU 1):
+
+| percorso | cicli | perché |
+|---|---|---|
+| **con** preemption | **−3** | lo scheduler perde due `sw` e due `li` (non scrive più `current` né lo stato) e guadagna un `mov`; il dispatcher ne aggiunge 5; `sched_isr_exit` 1 |
+| **senza** preemption | **+6** | il commit nel dispatcher è idempotente e si paga lo stesso |
+
+Il `+6` è il prezzo dell'invariante «`current` lo scrive **solo** il
+dispatcher», su un percorso in cui non succede niente: **la latenza che conta è
+l'altra**, ed è migliorata. Le istruzioni totali salgono (1787 → 1794) perché
+sono le iterazioni in più dei task — lavoro utile, non kernel.
+
+Il numero nuovo sta nel `CMakeLists.txt` col conto accanto, non solo aggiornato.
+`test_mailbox.vx` cambia anche lui e non è un mistero: `lib_messaggi` linka
+`lib_kernel`, quindi il codice dello scheduler finisce nel suo binario.
+
+#### La numerazione delle priorità: **0 è la più alta** — decisa dall'utente
+
+«Come farebbe uno scheduler realtime serio». È anche ciò che rende la scansione
+di §4 un incremento e «più prioritario» una `blt`. Scritta in §4 della proposta,
+e ne discende il **verso** che mancava all'invariante di §7.3: la tabella dei PCB
+parte dal livello 0, quindi l'indirizzo cresce al calare della priorità e
+`blt pcb_a, pcb_b` è letteralmente «`a` è più prioritario di `b`» — un confronto
+fra `TCB.pcb`, senza leggere nessun numero.
+
+**§13.5 è stata riscritta**, e non era cosmesi: ragionava con numeri in cui 10
+batteva 7, cioè con la convenzione opposta a quella appena decisa. Ora `T` sta a
+2, `S` a 4, il ceiling mal dichiarato è 5, e la promozione al ceiling è un
+**minimo** invece che un massimo. La dimostrazione usa le parole («almeno
+prioritario quanto») invece dei simboli, perché il verso dei confronti è
+esattamente la cosa che si sbaglia rileggendo.
+
+#### Cosa resta prima di §3/§4
+
+- **quanti livelli**: non è deciso e non è deducibile. È il primo numero del
+  sistema, dimensiona il vettore statico dei PCB ed è il caso peggiore della
+  scansione. Vincoli noti: il gestore dei timeout a 0 (§9.2), l'idle in fondo;
+- **il PCB con la `TESTA` annidata**, che §3 lasciava «da valutare» e che
+  §3.27 rende scrivibile: `.field coda TESTA.size`, l'idioma di `LINK`. In più,
+  con la testa a offset 0 vale `&pcb == &pcb.coda`, quindi il PCB si passa
+  **direttamente** a `enqueue_coda` — il contratto di §7.5 un livello sopra, e
+  una `lw` in meno per ogni livello scandito.
+
+---
+
 ### 3.27 I link in un posto solo, e il campo che prende il nome del proprietario (07/09/2026, seconda parte)
 
 **Sessione di sola discussione, finita in codice.** Nessuna decisione di kernel:
@@ -2736,7 +2813,7 @@ Le sequenze attese, per chi deve leggerle senza aprire il build:
 | verifica | atteso | dove sta il numero |
 |---|---|---|
 | `saxpy` — istruzioni / vec-elem-ops / cicli | `17 40 94` | `CMakeLists.txt` |
-| `scheduler_demo` — 8 tick, due task che si alternano | `97 64` | `CMakeLists.txt` |
+| `scheduler_demo` — 8 tick, due task che si alternano | `98 65` | `CMakeLists.txt` |
 | `multi` — link con inclusione selettiva | `18 40 95` | `CMakeLists.txt` |
 | `coda` — invariante dei link (§3.14) | `0 1 1 1 0 0 0 2 1 0 0 0 0` | `generic/test/` |
 | `pool` — sei classi, alloc/free (§3.15) | `10 4 0 0 9 0 32 3 2 0 0 4 4 4 3 0 0 1 4` | `generic/test/` |

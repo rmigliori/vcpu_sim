@@ -82,7 +82,20 @@ vasm_check(saxpy      MODE STATS EXPECT "17 40 94"
            SOURCE ${CMAKE_SOURCE_DIR}/standalone/saxpy.vasm)
 vasm_check(multi      MODE STATS EXPECT "18 40 95"  PROGRAM multi)
 
-vasm_check(scheduler_demo MODE DUMPS EXPECT "97 64" PROGRAM scheduler_demo)
+# 98/65 dal 07/09/2026 (era 97/64): il dispatcher prende il TCB in INPUT e fa lui
+# il commit di 'current' (§12.3). Non e' un cambio di politica -- resta
+# round-robin -- ma di COSTO, e i due numeri sono quante iterazioni i due task
+# infilano in 8 tick, quindi misurano cio' che il kernel NON si prende:
+#   con preemption   -3 cicli: lo scheduler perde due sw e due li (non scrive
+#                    piu' current ne' lo stato) e guadagna un mov; il dispatcher
+#                    ne aggiunge 5; sched_isr_exit 1
+#   senza preemption +6 cicli: il commit nel dispatcher e' idempotente e si paga
+#                    lo stesso. E' il prezzo dell'invariante "current lo scrive
+#                    solo il dispatcher", su un percorso in cui non succede
+#                    niente -- la latenza che conta e' l'altra
+# Le istruzioni totali salgono (1787 -> 1794) perche' sono le iterazioni in piu'
+# dei task: lavoro utile, non kernel.
+vasm_check(scheduler_demo MODE DUMPS EXPECT "98 65" PROGRAM scheduler_demo)
 
 vasm_check(proc       MODE DUMPS EXPECT "100 200 300"
            SOURCE ${CMAKE_SOURCE_DIR}/tests/test_proc.vasm)

@@ -295,9 +295,28 @@ mascherare costerebbe materializzare la maschera in un registro.
 
 ## 4. La regola di selezione
 
-Lo scheduler scandisce i livelli dal più alto al più basso. A ogni livello **lo
-slot batte la coda**: se c'è un task interrotto qui, tocca a lui riprendere, non
-a un suo pari che stava solo aspettando.
+> ### La numerazione: **0 è la priorità più alta** — DECISA (07/09/2026)
+>
+> È la convenzione degli RTOS seri (POSIX, RTEMS) e non è una preferenza di
+> stile: è ciò che rende la scansione di §4 un **incremento** invece che un
+> decremento, e «più prioritario» una `blt`. Da qui in avanti, in tutto il
+> documento, **un numero più piccolo è una priorità più alta**: il gestore dei
+> timeout (§9.2) sta a 0, l'idle al livello massimo.
+>
+> Si compone con l'invariante di §7.3 — la tabella dei PCB è disposta in ordine
+> di priorità — e ne fissa il **verso**, che «monotòno» da solo non diceva: la
+> tabella parte dal livello 0, quindi **l'indirizzo del PCB cresce al calare
+> della priorità** e `blt pcb_a, pcb_b` è letteralmente «`a` è più prioritario di
+> `b`». Il confronto fra due task è un confronto fra i loro `TCB.pcb`, senza
+> conversioni e senza leggere nessun numero.
+>
+> §13.5 è stata riscritta di conseguenza: ragionava con numeri in cui 10 batteva
+> 7, e con la convenzione opposta sarebbe diventata una trappola per chi la
+> legge dopo aver letto qui.
+
+Lo scheduler scandisce i livelli dal più alto al più basso, cioè **da 0 in su**.
+A ogni livello **lo slot batte la coda**: se c'è un task interrotto qui, tocca a
+lui riprendere, non a un suo pari che stava solo aspettando.
 
 ```mermaid
 flowchart TD
@@ -474,7 +493,9 @@ dereferenzierà, non un indice da convertire.
 > Con un puntatore il confronto non è possibile — **a meno che la tabella dei
 > PCB non sia disposta in memoria in ordine di priorità**. Se lo è, l'indirizzo
 > è monotòno nella priorità e una `blt` sui puntatori *è* il confronto, senza
-> conversioni.
+> conversioni. Il **verso** lo fissa §4: la tabella parte dal livello 0, che è la
+> priorità più alta, quindi l'indirizzo cresce al calare della priorità e
+> `blt pcb_a, pcb_b` significa «`a` è più prioritario di `b`».
 >
 > Essendo tutto statico quella disposizione ci sarà comunque, ma va scritta come
 > invariante esplicita: lega la correttezza dei confronti all'**ordine di
@@ -1632,16 +1653,23 @@ Sotto ICPP vale questo:
 > Se un task `T` sta girando e prova a prendere il mutex `M`, **`M` è libero**.
 
 La dimostrazione è in due righe. Supponiamo `M` tenuto da `L`. Siccome `T` può
-prendere `M`, per definizione di ceiling `ceiling(M) >= prio(T)`. Ma `L`, avendo
-preso `M`, gira a `max(prio(L), ceiling(M)) >= prio(T)`. Un task eseguibile a
-priorità maggiore o uguale a quella di `T` esclude che `T` stia girando. Assurdo.
+prendere `M`, per definizione di ceiling `ceiling(M)` è **almeno prioritario
+quanto** `T`. Ma `L`, avendo preso `M`, gira al più prioritario fra `prio(L)` e
+`ceiling(M)`, quindi almeno quanto `T`. Un task eseguibile a priorità maggiore o
+uguale a quella di `T` esclude che `T` stia girando. Assurdo.
+
+> Con la numerazione di §4 — **0 è la più alta** — «almeno prioritario quanto»
+> si scrive `ceiling(M) <= prio(T)`, e la promozione al ceiling è un **minimo**,
+> non un massimo. Il testo qui sotto usa le parole invece dei simboli proprio
+> perché il verso dei confronti è la cosa che si sbaglia rileggendo.
 
 Ne segue che **la coda d'attesa del mutex non si usa mai**. Ma la dimostrazione
 ha tre premesse, e ognuna può cadere:
 
 1. **monoprocessore** — qui è vero per costruzione;
-2. **il ceiling è dichiarato correttamente**, cioè è davvero il massimo delle
-   priorità dei task che possono prendere quel mutex;
+2. **il ceiling è dichiarato correttamente**, cioè è davvero la **più alta**
+   fra le priorità dei task che possono prendere quel mutex — col verso di §4,
+   il numero più piccolo;
 3. **`L` è eseguibile**, cioè nessuno si blocca tenendo un mutex (§13.4).
 
 Il passaggio «un task eseguibile a priorità ≥ esclude che `T` giri» usa la (3):
@@ -1653,13 +1681,14 @@ copre due regole.
 
 #### Cosa succede se cade la (2), coi numeri
 
-`M` ha `ceiling = 5`, ma esiste un task `T` a priorità 10 che può prenderlo: il
-ceiling è dichiarato male, perché avrebbe dovuto essere almeno 10.
+`M` ha `ceiling = 5`, ma esiste un task `T` a priorità **2** che può prenderlo —
+e 2 è più prioritario di 5. Il ceiling è dichiarato male: avrebbe dovuto essere
+al più 2.
 
-1. `S`, priorità 7, prende `M`. Gira a `max(7, 5) = 7`: il ceiling non lo alza,
-   perché è più basso di lui. **Qui la protezione ha già smesso di funzionare**,
-   e nessuno se n'è accorto.
-2. `T`, priorità 10, diventa eseguibile e preempta `S` — 10 batte 7.
+1. `S`, priorità 4, prende `M`. Gira a `min(4, 5) = 4`: il ceiling non lo alza,
+   perché è **meno** prioritario di lui. **Qui la protezione ha già smesso di
+   funzionare**, e nessuno se n'è accorto.
+2. `T`, priorità 2, diventa eseguibile e preempta `S` — 2 batte 4.
 3. `T` prova a prendere `M` e **lo trova occupato**.
 
 #### La risposta sbagliata: rimettere `T` nella sua coda di ready
@@ -1667,9 +1696,9 @@ ceiling è dichiarato male, perché avrebbe dovuto essere almeno 10.
 È la reazione istintiva — «non può prenderlo adesso, lo riprova dopo» — ed è
 l'unica che trasforma un errore di dichiarazione in un sistema che non va avanti:
 
-1. `T` viene riaccodato alla coda del livello 10;
+1. `T` viene riaccodato alla coda del livello 2;
 2. lo scheduler cerca il più prioritario fra gli eseguibili: è `T`, perché `S`
-   sta a 7;
+   sta a 4;
 3. `T` riparte, riprova, trova ancora occupato, si riaccoda;
 4. torna al punto 2.
 
@@ -1689,7 +1718,7 @@ non è vero.
    prioritario fra gli attendenti — e lo rende `READY`;
 4. `T` riparte e prende `M`.
 
-L'inversione di priorità c'è: `T` a priorità 10 ha aspettato `S` a priorità 7. Ma
+L'inversione di priorità c'è: `T` a priorità 2 ha aspettato `S` a priorità 4. Ma
 è **limitata dalla lunghezza della sezione critica di `S`**, che è la garanzia
 minima accettabile e la stessa che darebbe un mutex senza nessun protocollo.
 

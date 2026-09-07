@@ -16,9 +16,11 @@
 ;   sched_isr_exit  uscita da ISR  registra il contesto uscente nel TCB, decide
 ;                                  se consultare lo scheduler, chiama SEMPRE il
 ;                                  dispatcher
-;   scheduler       POLITICA       chi e' il prossimo: round-robin
-;   dispatcher      DISPATCHER     mette in esecuzione 'current': chiama l'HAL
-;                                  (ctx_restore) e non ritorna mai
+;   scheduler       POLITICA       chi e' il prossimo: round-robin. RESTITUISCE
+;                                  un TCB, non lo mette in esecuzione
+;   dispatcher      MECCANISMO     riceve un TCB IN INPUT, fa il commit di
+;                                  'current' e chiama l'HAL (ctx_restore); non
+;                                  ritorna mai
 ;
 ; sched_isr_exit e scheduler non sono API generiche (non le chiama "chiunque"):
 ; hanno un solo chiamante per costruzione, quindi restano scritte a mano invece
@@ -90,21 +92,32 @@ sched_isr_exit:
   li r2, current
   lw r3, 0(r2)
   sw r1, TCB.sp(r3)      ; current.sp = contesto uscente (opaco)
+  mov r1, r3             ; r1 = TCB per il dispatcher. Il DEFAULT e' l'uscente,
+                         ; ed e' la forma esatta di "senza preemption riprende
+                         ; chi girava": senza switch nessuno sceglie niente,
+                         ; quindi non e' lo scheduler a doverlo dire
 
-  li r1, g_resched
-  lw r2, 0(r1)
-  beq r2, r0, sched_isr_exit_done
-  sw r0, 0(r1)           ; consuma il need_resched
-  call scheduler         ; POLITICA: sceglie il prossimo, current = next
+  li r2, g_resched
+  lw r4, 0(r2)
+  beq r4, r0, sched_isr_exit_done
+  sw r0, 0(r2)           ; consuma il need_resched
+  call scheduler         ; POLITICA: sceglie il prossimo -> r1 = TCB scelto
 sched_isr_exit_done:
-  call dispatcher        ; MECCANISMO: mette in esecuzione current, SEMPRE
+  call dispatcher        ; MECCANISMO: mette in esecuzione r1, SEMPRE
 
 ; ==========================================================================
-;  scheduler (POLITICA, interno): round-robin a coda singola. Rimette in coda
-;  il task uscente e sceglie il prossimo current. E' la SOLA cosa da riscrivere
-;  per cambiare politica (RR -> priorita'): HAL, sched_isr_exit e dispatcher
-;  restano intatti. Non e' un'API generica (un solo chiamante: sched_isr_exit)
-;  -> scritta a mano, non .proc. Non-foglia -> salva r15.
+;  scheduler (POLITICA, interno) -> r1 = TCB scelto: round-robin a coda singola.
+;  Rimette in coda il task uscente e sceglie il prossimo. E' la SOLA cosa da
+;  riscrivere per cambiare politica (RR -> priorita'): HAL, sched_isr_exit e
+;  dispatcher restano intatti. Non e' un'API generica (un solo chiamante:
+;  sched_isr_exit) -> scritta a mano, non .proc. Non-foglia -> salva r15.
+;
+;  NON scrive 'current' e NON scrive lo stato del task scelto: RESTITUISCE un
+;  TCB, e il commit e' del dispatcher (§12.3). E' la differenza fra applicare una
+;  politica e mettere in esecuzione — finche' scriveva 'current' faceva tutte e
+;  due, e il confine fra i due algoritmi era una convenzione invece che
+;  un'interfaccia. Quello che resta qui e' politica pura: dove va l'uscente
+;  (round-robin: in fondo) e chi e' il prossimo.
 ; ==========================================================================
 scheduler:
   addi r14, r14, -4
@@ -124,26 +137,38 @@ scheduler:
                          ; e' vera nei fatti e non solo nel commento sopra.
   li r1, ready
   call dequeue_testa     ; r2 = prossimo TCB (esce con i link azzerati)
-  li r6, current
-  sw r2, 0(r6)           ; current = prossimo
-  li r5, RUNNING
-  sw r5, TCB.state(r2)   ; stato prossimo = RUNNING
+  mov r1, r2             ; valore di ritorno: il TCB scelto
   lw r15, 0(r14)
   addi r14, r14, 4
   ret
 
 ; ==========================================================================
-;  dispatcher (MECCANISMO puro, interno): mette in esecuzione il task
-;  puntato da 'current', switch o no — chiama l'HAL (ctx_restore) e non sa
-;  ne' vuole sapere come sono fatti i registri. Non ritorna mai (ctx_restore
-;  chiude con reti): niente da salvare. Non e' un'API generica (un solo
-;  chiamante: sched_isr_exit) -> scritta a mano.
+;  dispatcher(r1 = &TCB) (MECCANISMO puro, interno): mette in esecuzione il task
+;  che riceve IN INPUT, switch o no — chiama l'HAL (ctx_restore) e non sa ne'
+;  vuole sapere come sono fatti i registri. Non ritorna mai (ctx_restore chiude
+;  con reti): niente da salvare. Non e' un'API generica (un solo chiamante:
+;  sched_isr_exit) -> scritto a mano.
 ;
-;  DA FARE (§12.3): deve prendere il TCB in INPUT invece di rileggerlo da
-;  'current' — lo scheduler ce l'ha gia' in un registro quando lo sceglie.
+;  L'INPUT ESPLICITO e' §12.3, e ha chiuso il debito che stava scritto qui.
+;  Prima il TCB passava fra i due algoritmi attraverso 'current': lo scheduler
+;  ce l'aveva in un registro, lo scriveva in memoria, e due istruzioni dopo il
+;  dispatcher lo rileggeva. Il confine non era un'interfaccia, era una
+;  convenzione — e finche' era cosi' il terzo ritorno da un'ISR (§12.4, "salta
+;  al dispatcher perche' la scelta e' gia' fatta") non era nemmeno esprimibile:
+;  non c'era un posto dove mettere il TCB.
+;
+;  Ed e' QUI che si scrivono 'current' e lo stato RUNNING, non nella politica:
+;  il dispatcher e' l'unico punto da cui un task entra in esecuzione, quindi e'
+;  l'unico che possa dichiararlo. Sul percorso senza preemption la scrittura e'
+;  idempotente (current gia' puntava li', lo stato era gia' RUNNING) e costa due
+;  istruzioni: si paga perche' l'invariante "current lo scrive solo il
+;  dispatcher" vale piu' di due istruzioni per tick — e' cio' che rende vero,
+;  invece che sperato, che nessun altro possa mettere in esecuzione un task.
 ; ==========================================================================
 dispatcher:
   li r2, current
-  lw r2, 0(r2)
-  lw r1, TCB.sp(r2)      ; r1 = sp di current (invariato se non c'e' stato switch)
+  sw r1, 0(r2)           ; COMMIT: current = il TCB che sta per girare
+  li r3, RUNNING
+  sw r3, TCB.state(r1)   ; ... ed e' RUNNING per definizione di dispatcher
+  lw r1, TCB.sp(r1)      ; r1 = contesto opaco da riprendere
   call ctx_restore       ; HAL: ripristina i registri e cede il controllo
