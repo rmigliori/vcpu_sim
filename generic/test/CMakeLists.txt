@@ -28,7 +28,7 @@ vasm_program(test_pool    OBJECTS t_pool    LINK lib_pool)
 vasm_program(test_timeout OBJECTS t_timeout LINK lib_timeout)
 
 vasm_check(coda    MODE DUMPS PROGRAM test_coda
-           EXPECT "0 1 1 1 0 0 0 2 1 0 0 0 0")
+           EXPECT "0 1 1 1 0 0 0 2 1 0 0 0 0 0 1 0 0 0 0 0")
 vasm_check(pool    MODE DUMPS PROGRAM test_pool
            EXPECT "10 4 0 0 9 0 32 3 2 0 0 4 4 4 3 0 0 1 4")
 vasm_check(timeout MODE DUMPS PROGRAM test_timeout

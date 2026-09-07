@@ -37,7 +37,7 @@
 ;                       build/scheduler.vo build/machine.vo -o build/test_coda.vx
 ;   ./build/vcpu_sim run build/test_coda.vx
 ;
-; Atteso, in ordine:  0 1 1 1 0 0 0 2 1 0 0 0 0
+; Atteso, in ordine:  0 1 1 1 0 0 0 2 1 0 0 0 0 0 1 0 0 0 0 0
 
 .include "coda/coda.vinc"
 
@@ -56,6 +56,8 @@
 testa:  .res TESTA
 n1:     .res NODO
 n2:     .res NODO
+n3:     .res NODO           ; il terzo serve solo a (8): per infilare FRA due
+                            ; nodi ce ne vogliono due gia' in lista
 stack:  .space 64
 stack_top:
 
@@ -66,6 +68,9 @@ stack_top:
   .extern enqueue_coda
   .extern dequeue_testa
   .extern remove_buffer
+  .extern enqueue_coda_nc
+  .extern enqueue_dopo_nc
+  .extern dequeue_testa_nc
 
 main:
   li r14, stack_top
@@ -135,4 +140,56 @@ main:
   li r1, testa
   call dequeue_testa
   dumps r2                ; 0
+
+  ; --- (8) enqueue_dopo_nc: l'inserimento che le altre due non sanno esprimere.
+  ;         Da qui in giu' la testa e' gestita con le _nc e il contatore resta
+  ;         fermo a 0: una sola disciplina per testa, anche dentro un test.
+  ;         Costruisco [n1, n2] e infilo n3 FRA i due, passando n1 come prec ---
+  li r1, testa
+  li r2, n1
+  call enqueue_coda_nc
+  li r1, testa
+  li r2, n2
+  call enqueue_coda_nc
+  li r1, n1               ; prec e' un NODO, non la sentinella
+  li r2, n3
+  call enqueue_dopo_nc
+  dumps r3                ; 0 = CODA_OK
+
+  ; --- (9) l'invariante dei link vale anche da questa porta: il controllo non
+  ;         e' della singola entry, e' del corpo che tutte condividono ---
+  li r1, n1
+  li r2, n3
+  call enqueue_dopo_nc
+  dumps r3                ; 1 = CODA_LINKED
+
+  ; --- (10) l'ordine e' [n1, n3, n2], e lo si legge svuotando ---
+  li r1, testa
+  call dequeue_testa_nc
+  li r5, n1
+  sub r5, r2, r5
+  dumps r5                ; 0
+  li r1, testa
+  call dequeue_testa_nc
+  li r5, n3
+  sub r5, r2, r5
+  dumps r5                ; 0 = n3 e' finito FRA n1 e n2
+  li r1, testa
+  call dequeue_testa_nc
+  li r5, n2
+  sub r5, r2, r5
+  dumps r5                ; 0
+
+  ; --- (11) con prec = sentinella e' l'inserimento in testa. E' la proprieta'
+  ;          "la primitiva nuova contiene le vecchie", verificata invece che
+  ;          assunta: se un giorno i due ingressi divergessero, si vede qui ---
+  li r1, testa
+  li r2, n1
+  call enqueue_dopo_nc
+  dumps r3                ; 0 = CODA_OK
+  li r1, testa
+  lw r5, TESTA.fwd(r1)
+  li r6, n1
+  sub r5, r5, r6
+  dumps r5                ; 0 = n1 e' il primo
   halt

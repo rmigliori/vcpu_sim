@@ -46,6 +46,35 @@
 ; la sezione critica deve comprendere anche l'aritmetica del contatore e quindi
 ; appartiene per forza al chiamante.
 ;
+; --- LA TERZA FORMA DELL'INSERIMENTO ---
+; enqueue_dopo_nc(prec, nodo) mette il nodo DOPO un predecessore qualsiasi. Non
+; e' una disciplina in piu': siccome la TESTA e' una SENTINELLA dentro una lista
+; circolare, "in testa" e' "dopo la sentinella" e "in coda" e' "dopo testa.bwd".
+; Questa forma CONTIENE le altre due, e infatti condivide con enqueue_testa_nc
+; la stessa identica riga di codice: cambia solo come il chiamante legge r1.
+;
+; Serve all'inserimento ORDINATO per priorita' (§13.6 della proposta), dove la
+; camminata che cerca il punto di inserimento sta nel CHIAMANTE. E' la stessa
+; divisione di sched_dispatch (meccanismo) contro scheduler (politica): il
+; gestore delle code non sa, e non deve sapere, perche' gli si chieda di
+; accodare in testa, in fondo o fra due elementi. Una enqueue_prio che leggesse
+; la priorita' dal nodo dovrebbe sapere che il nodo e' un TCB, cioe' far
+; includere tcb.vinc a generic/coda: generic/ dipenderebbe da rtos/ e la
+; cartella smetterebbe di essere sollevabile.
+;
+; Due conseguenze del contratto, da non lasciare implicite:
+;   - non c'e' e non ci sara' una variante _s. Vale la regola gia' scritta sopra
+;     per le _nc, e qui pesa di piu': la sezione critica deve comprendere anche
+;     la CAMMINATA, non solo l'aritmetica del contatore;
+;   - la testa non e' un argomento, quindi la primitiva non ha modo di
+;     verificare che 'prec' appartenga alla lista che il chiamante ha in mente.
+;     Verifica cio' che puo', ed e' la parte che conta: l'invariante dei link
+;     sul nodo che entra.
+;
+; La variante CONTATA non c'e': l'unico cliente in vista — la coda d'attesa di
+; un mutex (§13.3) — potrebbe adottare le _nc comunque, visto che la camminata
+; e' del chiamante. Si aggiunge in tre istruzioni il giorno che serva davvero.
+;
 ; REGOLA: una sola disciplina per testa. Una testa gestita con le contate ha
 ; count >= 0 = numero di nodi; una gestita con le _nc ha la convenzione che
 ; decide il suo proprietario. Mescolarle sulla stessa testa fa derivare il
@@ -66,6 +95,7 @@
 
   .global enqueue_coda_nc
   .global enqueue_testa_nc
+  .global enqueue_dopo_nc
   .global dequeue_testa_nc
   .global remove_buffer_nc
 
@@ -121,17 +151,24 @@ enqueue_testa:            ; enqueue_testa(r1=&testa, r2=&nodo) -- in testa (LIFO
   addi r5, r5, 1
   sw r5, TESTA.count(r1)  ; count++
   j enq_testa_splice
+; Le due etichette stanno sullo STESSO indirizzo, e non e' un espediente: sono
+; la stessa operazione chiamata con due contratti diversi su r1. "Dopo la
+; sentinella" e "in testa" sono la stessa cosa perche' la sentinella e' un nodo,
+; e il corpo qui sotto legge di r1 solo fwd/bwd, che testa e nodo condividono.
+; Due nomi e una copia sola: se un giorno divergessero, divergerebbe anche
+; l'unica riga che li tiene veri.
 enqueue_testa_nc:         ; enqueue_testa_nc(r1=&testa, r2=&nodo) -- senza contatore
+enqueue_dopo_nc:          ; enqueue_dopo_nc(r1=&prec, r2=&nodo)   -- dopo un nodo qualsiasi
   lw r3, TESTA.fwd(r2)
   lw r4, TESTA.bwd(r2)
   or r3, r3, r4
   bne r3, r0, enq_linked
 enq_testa_splice:
-  lw r4, TESTA.fwd(r1)    ; next = testa.fwd
+  lw r4, TESTA.fwd(r1)    ; next = prec.fwd   (la sentinella e' il prec del primo)
   sw r4, TESTA.fwd(r2)    ; nodo.fwd = next
-  sw r1, TESTA.bwd(r2)    ; nodo.bwd = &testa
+  sw r1, TESTA.bwd(r2)    ; nodo.bwd = prec
   sw r2, TESTA.bwd(r4)    ; next.bwd = nodo
-  sw r2, TESTA.fwd(r1)    ; testa.fwd = nodo
+  sw r2, TESTA.fwd(r1)    ; prec.fwd = nodo
   li r3, CODA_OK
   ret
 
