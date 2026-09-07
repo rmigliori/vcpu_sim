@@ -12,13 +12,16 @@
 
 > ### ▶ RIPRENDI DA QUI (08/09/2026 o dopo)
 >
-> **Tutto committato e pushato** su `origin/master`, working tree pulito,
-> `ctest` **24/24**. Il push si chiede comunque, non si fa.
+> `ctest` **25/25**. Fino a `c890c22` (§3.31) tutto è committato e **pushato** su
+> `origin/master`; §3.32 — `rtos/test/test_catena.vasm`, la sua voce nel
+> `CMakeLists.txt` di `rtos/test/` e questo aggiornamento — è **solo in locale**.
+> Il push si chiede comunque, non si fa.
 >
-> ### ▶▶ LO SCHEDULER È COMPLETO, E UN TASK DORME DAVVERO
+> ### ▶▶ LO SCHEDULER È COMPLETO, E LA CATENA GIRA
 >
 > Il 07/09 ha portato lo scheduler da round-robin a coda singola a **priorità
-> statiche con PCB**, e poi fino al blocco volontario. In ordine di lettura:
+> statiche con PCB**, poi fino al blocco volontario, poi fino alla catena di
+> §3.28. In ordine di lettura:
 >
 > - **§3.27** i link dei nodi in un posto solo (`.struct LINK` annidata), e
 >   `MAILBOX.count` come `.equ` **derivato** invece che copiato;
@@ -33,19 +36,29 @@
 >   coda). **Il tick è il quanto**;
 > - **§3.31** `test_block`: un task che si blocca su una mailbox vuota, l'ISR
 >   che gli consegna, e l'idle che gira **mentre lui dorme** — la CPU libera
->   misurata sul serio.
+>   misurata sul serio;
+> - **§3.32** `test_catena`: A→B→C, cioè il **primo dei due passi** della
+>   simulazione di §3.28. Mette in gioco tre percorsi mai eseguiti prima —
+>   `send_s` da task, il ramo di `task_ready` che **non** preempta, la scansione
+>   che attraversa livelli popolati — e, misurando, ha mostrato la
+>   **saturazione**: a 800 cicli di periodo l'ultimo anello muore di fame senza
+>   che nessuna asserzione scatti.
 >
 > ### ▶▶▶ IL PROSSIMO PASSO
 >
-> Completare il **punto 3**, la simulazione di §3.28, in due passi e non in uno:
+> Chiudere il **punto 3**, cioè il secondo e ultimo passo della simulazione di
+> §3.28: **il gestore dei timeout come task**, con la sua mailbox e l'ISR del
+> tick che gli consegna, e A che passa da `timeout_arm`. Era stato messo per
+> ultimo perché è l'unico pezzo che tira dentro anche il pool (§10): adesso
+> tutto il resto è verificato, quindi se qualcosa non torna si sa dove guardare.
 >
-> 1. **la catena A→B→C** — A svegliato dall'ISR manda a B, B manda a C, C conta.
->    Aggiunge due salti di mailbox e la preemption provocata da un **risveglio**
->    fra livelli diversi, percorso che nessun test tocca ancora;
-> 2. **il gestore dei timeout come task**, con la sua mailbox e l'ISR del tick
->    che gli consegna, e A che passa da `timeout_arm`. Va **per ultimo** perché è
->    l'unico pezzo che tira dentro anche il pool (§10): se qualcosa non torna,
->    tutto il resto è già verificato.
+> Due cose che §3.32 lascia in mano a chi lo scrive:
+>
+> - **il livello 0 è libero e lo aspetta** (§9.2), e `test_catena` non lo usa
+>   apposta: la tabella dei PCB è già quella giusta;
+> - **il periodo del timer va ridichiarato**, non ereditato. `test_catena` ha
+>   dovuto passare da 500 a 2000 cicli, e col gestore dei timeout la catena si
+>   allunga ancora: la tabella delle soglie in §3.32 è il modo di sceglierlo.
 >
 > Poi **mutex e semaforo** (§13), che §3.26 dà per corti perché tutto è deciso e
 > che erano fermi solo perché mancavano le priorità.
@@ -338,7 +351,7 @@ livello.
 | CLI `asm/ld/run/nm/ar` | completo | [`src/main.c`](../src/main.c) |
 | HAL | completo (§3.21) | [`hal/`](../hal/) |
 | Code, pool, timeout, formato messaggi | completo, indipendente dallo scheduler (§3.24) | [`generic/`](../generic/) |
-| Kernel + scheduler RR + mailbox | completo, ridisegnato (§3.5), da riscrivere a priorità (§7.4) | [`rtos/`](../rtos/) |
+| Kernel + scheduler a priorità + mailbox | completo: PCB, slot, rotazione fra pari, blocco volontario (§3.28–§3.32). Restano mutex e semaforo (§13) | [`rtos/`](../rtos/) |
 | Linguaggio alto livello `vc` | **da fare** — solo progettato | [`docs/proposta-linguaggio-alto-livello.md`](proposta-linguaggio-alto-livello.md) |
 
 Macchina: 16 registri scalari `r0..r15` (`r0` = 0), 16 float `f0..f15`, 8
@@ -373,15 +386,17 @@ Branch `master`, pubblicato su `git@github.com:rmigliori/vcpu_sim.git` (remote
 `origin`, HTTPS + credential helper `git-credential-libsecret` configurato,
 push senza prompt).
 
-**Pushato fino a `798ae67`, e il 07/09 è rimasto in locale.** Il 06/09/2026
-`origin/master` era passato da `e2955ff` a `1806f5a` — **venti commit**, cioè
-§3.18-§3.23 del 05/09 più i dodici del 06/09 che sono §3.24, §3.25 e la loro
-documentazione — poi altri due di handoff fino a `798ae67`. Il push **l'ha
-chiesto l'utente** («forse è ora di fare push?»), come deve essere.
+**Pushato fino a `c890c22`, cioè tutto il 07/09 fino a §3.31 compresa.** Prima
+era `798ae67`; il 06/09/2026 `origin/master` era passato da `e2955ff` a
+`1806f5a` — **venti commit**, cioè §3.18-§3.23 del 05/09 più i dodici del 06/09
+che sono §3.24, §3.25 e la loro documentazione — poi altri due di handoff fino a
+`798ae67`. Ogni push **l'ha chiesto l'utente** («forse è ora di fare push?»),
+come deve essere.
 
-I commit del **07/09** (§3.26: `enqueue_dopo_nc`, `coda_api.vinc` e l'handoff)
-sono committati e non pushati: la sessione si è chiusa con «salva tutto», che è
-un commit e non un push.
+**Fuori da `origin/master` c'è solo §3.32** (`rtos/test/test_catena.vasm`, la
+sua voce nel `CMakeLists.txt` di `rtos/test/` e l'aggiornamento di questo
+documento). Il paragrafo che qui diceva «i commit del 07/09 sono committati e
+non pushati» valeva per §3.26 ed è stato superato dal push successivo.
 
 Perché quel momento e non un altro, visto che se ne è discusso: i commit della
 ristrutturazione sono **verdi uno per uno**, non solo alla fine — ognuno chiude
@@ -2463,6 +2478,73 @@ il contratto scritto.
 
 ---
 
+### 3.32 La catena A→B→C, e la saturazione che si è vista misurando (07/09/2026, settima parte)
+
+**25 test.** [`rtos/test/test_catena.vasm`](../rtos/test/test_catena.vasm) è il
+**primo dei due passi** che restavano del test di §3.28: A svegliato dall'ISR
+manda a B, B manda a C, C conta. Resta il secondo, il gestore dei timeout come
+task, che è l'unico a tirare dentro anche il pool (§10).
+
+#### Tre percorsi di kernel che erano scritti e mai eseguiti
+
+Non è «test_block con un task in più»: ognuno dei tre è codice che nessun
+programma aveva mai fatto girare, e il conto sulla traccia lo dice senza
+interpretazioni — **9 `task_ready`, 3 `request_preempt`, 6 `send_s`**:
+
+1. **`send_s`, la send da contesto di task.** In `test_block` manda solo l'ISR,
+   con `IE` già a 0, che è il caso per cui esiste la raw (§8.5). Il wrapper — la
+   `.proc` di §3.5 — non era mai stato eseguito da nessuno: adesso lo è sei
+   volte, e i due usi convivono nello stesso programma. La coppia raw/`_s` non è
+   una scelta fra varianti, sono due **contesti di chiamata**;
+2. **il ramo di `task_ready` che NON preempta.** In `test_block` il risveglio
+   vinceva sempre (2 batte il 7 dell'idle), quindi la `blt` sui puntatori ai PCB
+   prendeva sempre lo stesso ramo. Qui A sveglia B, che gli sta **sotto**: sei
+   risvegli su nove non chiedono niente. È la preemption differita di §6 vista
+   dal lato in cui non succede nulla — svegliare un meno prioritario **non è un
+   evento di scheduling**, è un enqueue;
+3. **la scansione di `task_block` che attraversa livelli popolati** (pcb1 → pcb2
+   → pcb3), invece di trovare solo l'idle sotto al bloccato. Tre TCB dormono
+   contemporaneamente, ognuno nella propria mailbox a `count = -1`: è anche la
+   prima volta che l'ipotesi «una mailbox per task» (§8.1) regge in tre copie.
+
+#### `3 3 3`, e perché tre contatori invece di uno
+
+I primi tre numeri sono **derivabili e devono venire uguali**: i tick pari prima
+dell'8 sono 2, 4, 6, quindi tre messaggi entrano nella catena e tre devono
+uscirne. Tenerli separati per salto non è zelo — se un anello ne perdesse uno,
+i tre numeri direbbero **dove**, mentre un contatore solo direbbe soltanto che
+qualcosa non torna. Ed è servito subito: la prima esecuzione ha dato `3 1 0 0`.
+
+#### La saturazione: il primo numero sbagliato non era nel codice
+
+`3 1 0 0` con il periodo di 500 cicli ereditato da `test_block`. Non c'era
+nessun bug: **un giro di catena costa quattro commutazioni** (tre volontarie e
+una preemption, ~120 cicli l'una solo di `ctx_save`/`ctx_restore`), e se il tick
+torna prima che la catena sia drenata riparte A — che è il più prioritario — e
+la coda della catena non gira mai. L'idle contava 0 non perché il sistema fosse
+occupato a fare qualcosa di utile, ma perché non arrivava mai in fondo.
+
+Misurando la soglia si vede la forma del fenomeno:
+
+| periodo | `cntA cntB cntC cntI` | |
+|---|---|---|
+| 500 | `3 1 0 0` | il sistema non drena mai |
+| 800 | `3 3 0 55` | i due anelli alti tengono, **l'ultimo muore di fame** |
+| 1000 | `3 3 3 75` | passa, con margine nullo |
+| **2000** | **`3 3 3 778`** | scelto: margine per qualche decina di cicli di kernel |
+
+L'`800` è la riga che vale: è la **saturazione di un sistema a priorità statiche
+in miniatura**. Nessuna asserzione scatta, nessun numero è «sbagliato», nessun
+errore viene segnalato — semplicemente il carico non ci sta nel periodo, e a
+pagare è l'ultimo della catena. È lo stesso motivo per cui `cntI` non è un
+controllo di sanità ma **la statistica di CPU libera** (§3.29): un idle a zero
+non dice «il sistema lavora», dice «guarda meglio».
+
+Il periodo è quindi un **parametro del test dichiarato**, con la soglia misurata
+accanto, e non un numero di comodo trovato finché non diventava verde.
+
+---
+
 ### 3.31 Un task che dorme davvero (07/09/2026, sesta parte)
 
 **24 test.** `test_block` è il primo uso *vero* di `task_block` e
@@ -3057,8 +3139,10 @@ servono i numeri della macchina.
 > cmake -B out -S . && cmake --build out -j && ctest --test-dir out
 > ```
 >
-> 23 test: le tre invarianti storiche, i sei test mirati, la demo HAL+kernel, e i
-> 13 programmi di `standalone/` che devono continuare a girare da soli. I numeri
+> 25 test: le tre invarianti storiche, gli otto test mirati (`coda`, `pool`,
+> `timeout`, `mailbox`, `scheduler`, `block`, `catena`, più `proc`/`include`/
+> `epsw` sulla toolchain), e i 13 programmi di `standalone/` che devono
+> continuare a girare da soli. I numeri
 > attesi stanno **ognuno accanto al programma che lo produce** — nel
 > `CMakeLists.txt` di `generic/test/`, di `rtos/test/`, o in quello di primo
 > livello per ciò che resta suo — e comunque in **un posto solo**: è `ctest` a
@@ -3083,7 +3167,7 @@ servono i numeri della macchina.
 >
 > ```bash
 > ctest --test-dir out -R coda --output-on-failure   # un test solo, con l'output
-> ctest --test-dir out -N                            # elenca i 23 senza eseguirli
+> ctest --test-dir out -N                            # elenca i 25 senza eseguirli
 > cmake --build out -j --verbose                     # i comandi asm/ld esatti
 > ```
 >
@@ -3106,6 +3190,7 @@ Le sequenze attese, per chi deve leggerle senza aprire il build:
 | `timeout` — vettore di descrittori (§3.13) | `3 0 150 1 2 0 0 0 3 0 1` | `generic/test/` |
 | `mailbox` — send/receive con blocco (§3.10) | `0 1 2 11 22 0 33 0 0` | `rtos/test/` |
 | `block` — un task che DORME, e la CPU libera vera | `3 28` | `rtos/test/` |
+| `catena` — A→B→C, `send_s` da task, risveglio che non preempta | `3 3 3 778` | `rtos/test/` |
 | `proc` — `.proc`/`.endproc` (§3.6) | `100 200 300` | `CMakeLists.txt` |
 | `include` — `-I` e idempotenza (§3.16, §3.24) | `20 16 16 512 1` | `CMakeLists.txt` |
 | `epsw` — `mfepsw`/`mtepsw` (§3.19) | `1 0 0 7` | `CMakeLists.txt` |
