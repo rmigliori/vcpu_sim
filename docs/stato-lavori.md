@@ -3423,11 +3423,20 @@ stessa alternanza dei task. `asm` pulito su tutti i 20 sorgenti di
 
 ## 5. Prossimi passi possibili
 
+> ### ⚠ Questa sezione è più vecchia di §0 — leggere prima quello
+>
+> È stata scritta quando §7.4 era la decisione aperta che bloccava tutto, e
+> quella premessa **non vale più dal 07/09/2026**: §7.4 è decisa (priority
+> ceiling), lo scheduler a priorità è costruito e verificato, i due debiti di
+> §12.3 sono chiusi, e il gestore dei timeout è un task che gira (§3.28–§3.34).
+> Quello che resta davvero aperto è in cima, nel blocco di ripresa di §0, e le
+> formule per cominciare stanno in §6. Qui sotto sopravvivono le **rifiniture**,
+> che sono ancora tutte valide perché non dipendevano da niente di tutto ciò.
+
 Ci sono quattro fronti. La **ristrutturazione dell'albero** è **fatta** (§3.24) e
-lascia dietro solo rifiniture, elencate qui sotto. Restano: quello dei messaggi,
-arrivato in fondo a ciò che si poteva scrivere; quello fermo in attesa della
-decisione **§7.4**, che è il vero blocco perché da lui dipendono tutti i debiti
-noti; e quello di vecchia data, il front-end `vc`.
+lascia dietro solo rifiniture, elencate qui sotto. Il fronte del kernel non è più
+fermo su §7.4 — è arrivato fino a §13, mutex e semaforo, che è il prossimo passo
+vero. Resta di vecchia data il front-end `vc`.
 
 ### Messaggi e interfacce dei servizi (FRONTE ATTIVO)
 
@@ -3736,24 +3745,28 @@ lunghezza)** a runtime, non lunghezza statica.
 
 ## 6. Come far ripartire Claude
 
-Aprire Claude Code nella cartella del progetto e scrivere una di queste:
+Aprire Claude Code nella cartella del progetto e scrivere una di queste.
 
 **Per riprendere in generale:**
 ```
 Leggi docs/stato-lavori.md e riprendi da lì.
 ```
 
-> Le tre formule qui sotto non sono intercambiabili. La **prima** riapre il filo
-> di disegno su semafori, mutex e mailbox — serve se si vuole discutere. La
-> **seconda** è la sola che produca codice di kernel adesso. La **terza** è di
-> sola scrittura e non richiede decisioni.
+> ### ⚠ Questa sezione si riscrive quando il lavoro si sposta
+>
+> Il 07/09/2026 conteneva ancora otto formule, e metà mandavano su lavoro già
+> fatto: «le priorità non esistono ancora», «riprendi dalla decisione aperta
+> §7.4», «alla fine `ctest` deve dare 23/23». Una formula di ripresa che
+> istruisce il futuro con il passato è peggio di una assente, perché sembra
+> autorevole. Le formule superate sono state tolte, non archiviate: la cronaca
+> di come ci si è arrivati sta in §3, che è il posto giusto per il passato.
 
-**Per riprendere il disegno di semafori, mutex e mailbox — tutto il filo:**
+**Il prossimo passo — semafori e mutex, §13:**
 ```
-Leggi docs/proposta-kernel-realtime.md §13 per intero (semafori e mutex), poi
-§8 (la mailbox) e §7.4 (perche' il ceiling). Come ci si e' arrivati sta in
-docs/stato-lavori.md §3.25 e §3.26 -- e §3.26 contiene decisioni che nella
-proposta NON ci sono ancora.
+Leggi docs/proposta-kernel-realtime.md §13 per intero, poi §8 (la mailbox) e
+§7.4 (perche' il ceiling). Come ci si e' arrivati sta in docs/stato-lavori.md
+§3.25 e §3.26 -- e §3.26 contiene decisioni che nella proposta NON ci sono
+ancora. Nascono in rtos/servizi/, accanto alla mailbox.
 
 DECISO, da non riaprire senza una ragione nuova:
   - priority ceiling, non ereditarieta' (§7.4);
@@ -3767,48 +3780,36 @@ DECISO, da non riaprire senza una ragione nuova:
     enqueue_dopo agnostica e non sa perche' la si chiama (§13.6);
   - sem_wait NON ha timeout: e' una deduzione da §9 (il timeout e' una
     consegna in mailbox), non una scelta fra due uscite (§3.26);
+  - 0 e' la priorita' PIU' ALTA (§3.28), quindi §13.5 promuove al ceiling
+    con un MINIMO, non con un massimo: e' il verso che si sbaglia rileggendo;
   - un solo TCB in attesa per mailbox, contatore che si incrementa per i
-    messaggi, invariante count >= -1 (§3.26);
-  - il ceiling non ha una direzione conservativa: per eccesso e' inversione
-    di priorita' dichiarata come politica (§3.26);
-  - il kernel controlla cio' che corromperebbe le proprie strutture, non se
-    l'uso che ne fai ha senso (§3.26).
+    messaggi, invariante count >= -1 (§3.26).
 
-APERTO: il terzo campo di TESTA nominato dal proprietario (MAILBOX.count,
-SEMAFORO.risorse) -- proposto e non deciso.
-```
+APERTO: SEMAFORO.risorse, il terzo campo di TESTA nominato dal proprietario.
+Deciso nella FORMA (un .equ derivato da TESTA.count, come MAILBOX.count in
+§3.27) e non scritto, perche' il semaforo non ha ancora codice.
 
-**Per il prossimo passo del kernel, che NON è §13 — le priorità non esistono
-ancora, ed è ciò che blocca mutex e semaforo:**
-```
-Leggi docs/stato-lavori.md §3.26 (la sezione "La scoperta che ferma il mutex")
-e docs/proposta-kernel-realtime.md §3, §4 e §7.3. Oggi TCB e' {fwd,bwd,sp,
-state} senza priorita', ready: e' UNA sola coda, lo scheduler e' round-robin
-e PCB non compare in nessun sorgente: il modello a priorita' e' specificato e
-non costruito. Vanno fatti i PCB, una coda per livello, il campo nel TCB e la
-politica "il livello non vuoto piu' alto". Mutex e semaforo vengono dopo.
-Alla fine ctest deve dare 23/23.
+Alla fine ctest deve dare 26/26.
 ```
 
 **Per riportare nella proposta le decisioni del 07/09 (sola scrittura):**
 ```
 Leggi docs/stato-lavori.md §3.26 e la tabella in fondo "Cosa resta da
-scrivere". Le decisioni di quel giorno sono verbalizzate solo nell'handoff:
+scrivere". Cinque voci di quel giorno sono verbalizzate solo nell'handoff:
 vanno riportate in docs/proposta-kernel-realtime.md nelle sezioni che la
-tabella indica (§13.8, §7.5, §8.1, §13.5, §13.3, §13.1) piu' i due commenti
-in messageHandling.vasm. Non c'e' niente da decidere: e' trascrizione.
+tabella indica. Non c'e' niente da decidere: e' trascrizione.
 ```
 
-**Per le intestazioni dei test — il pezzo rimasto di §3.24, e l'unico che
-peggiora col tempo:**
+**Per le intestazioni dei test — l'unico debito che peggiora col tempo:**
 ```
 Leggi docs/stato-lavori.md §3.24 e la sezione di §5 "Ristrutturazione
 dell'albero". L'albero e' fatto; resta la doppia verita' nelle intestazioni
 dei test: le pipeline scritte a mano nominano linked/scheduler/, che non
 esiste piu', e ripetono i numeri attesi. Vanno riscritte con COSA verifica
 il test e PERCHE'; pipeline e numeri se ne vanno dove li esegue la macchina.
-tests/test_include.vasm e' gia' cosi' e vale da modello. Alla fine ctest
-deve dare 23/23 e gli stessi identici numeri.
+tests/test_include.vasm e' gia' cosi' e vale da modello. I quattro test
+dell'RTOS (scheduler, block, catena, gestore) sono gia' scritti bene e
+valgono da modello anche loro. Alla fine ctest 26/26, stessi numeri.
 ```
 
 **Per i difetti minori del build (piccoli e indipendenti):**
@@ -3816,42 +3817,18 @@ deve dare 23/23 e gli stessi identici numeri.
 Leggi docs/stato-lavori.md, punto 2 della sezione di §5 "Ristrutturazione
 dell'albero": CMAKE_SOURCE_DIR dove va PROJECT_SOURCE_DIR, -Wall globale e
 non guardato dal compilatore, file(GLOB) senza CONFIGURE_DEPENDS, la
-collisione fra il programma multi e il test multi. Alla fine ctest 23/23.
-```
-
-**Per il confine HAL/ISR/kernel (non dipende da §7.4):**
-```
-Leggi docs/stato-lavori.md §3.18-§3.22 e docs/proposta-kernel-realtime.md
-§12: e' tutta fatta, sei librerie su un DAG. Restano due debiti (§12.3):
-dispatcher deve prendere il TCB in input, e messageHandling non deve
-scrivere TCB.state. Dipendono da §8.7 e §7.4, quindi la strada e'
-riprendere da §7.4: ereditarieta' di priorita' o priority ceiling.
-```
-
-**Per il build in target CMake — quasi finito:**
-```
-Leggi docs/stato-lavori.md, la sezione di §5 sulla ristrutturazione del
-build. Punti 1, 2 e 4 fatti (§3.16, §3.17): -I, .include idempotente,
-nomi nudi e target CMake con ctest. Resta il punto 3, --emit-deps
+collisione fra il programma multi e il test multi. Resta anche --emit-deps
 nell'assembler, per avere le dipendenze scoperte invece che dichiarate.
-Alla fine `ctest --test-dir out` deve dare 23/23.
+Alla fine ctest 26/26.
 ```
 
-**Per lo scheduler (la decisione che sblocca il kernel):**
+**Per guardare come girano i task (non e' una modifica, e' uno strumento):**
 ```
-Leggi docs/stato-lavori.md e docs/proposta-kernel-realtime.md.
-Mailbox, vettore di descrittori, invariante dei link e pool di buffer sono
-scritti e testati: tutto cio' che non dipende dallo scheduler e' fatto.
-Riprendiamo dalla decisione aperta §7.4: ereditarieta' di priorita' o
-priority ceiling per i mutex.
+python3 tools/traccia.py out/vasm/test_gestore.vx      # -> out/traccia.html
 ```
-
-**Per andare invece sullo scheduler (fermo su una decisione):**
-```
-Leggi docs/stato-lavori.md e docs/proposta-kernel-realtime.md.
-Riprendiamo dalla decisione aperta §7.4: ereditarieta' di priorita' o
-priority ceiling per i mutex.
-```
+Dice chi gira e in quale intervallo, e quanto di quel tempo è kernel per suo
+conto (§3.34). Funziona su qualunque `.vx`; il disegno sta in
+`tools/traccia.template.html`.
 
 **Per andare sul linguaggio ad alto livello:**
 ```
@@ -3863,9 +3840,9 @@ Criterio di successo: saxpy in vc deve dare 17 istruzioni / 40 vec-elem-ops / 94
 
 Utile da sapere: il modello si cambia con `/model`, ed è ora impostato su Opus
 come default in `~/.claude/settings.json`. Il contesto del progetto si
-ricostruisce in fretta perché il repo è piccolo (~6.500 righe totali) e i
-**quattro** documenti in `docs/` sono aggiornati: `stato-lavori.md` (questo),
-`manual.md`, `proposta-kernel-realtime.md` (fronte attivo) e
+ricostruisce in fretta perché il repo è piccolo e i **quattro** documenti in
+`docs/` sono aggiornati: `stato-lavori.md` (questo), `manual.md`,
+`proposta-kernel-realtime.md` (fronte attivo) e
 `proposta-linguaggio-alto-livello.md`.
 
 I sorgenti C sono a **2 spazi** dal 29/08/2026 (§3.7): scrivere nuovo codice
