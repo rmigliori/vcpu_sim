@@ -37,7 +37,7 @@
 ;                       build/scheduler.vo build/machine.vo -o build/test_coda.vx
 ;   ./build/vcpu_sim run build/test_coda.vx
 ;
-; Atteso, in ordine:  0 1 1 1 0 0 0 2 1 0 0 0 0 0 1 0 0 0 0 0
+; Atteso, in ordine:  0 1 1 1 0 0 0 2 1 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0
 
 .include "coda/coda_api.vinc"
 
@@ -186,4 +186,50 @@ main:
   li r6, n1
   sub r5, r5, r6
   dumps r5                ; 0 = n1 e' il primo
+
+  ; --- (12) coda_peek: camminare senza sfilare. Il ciclo e' LIMITATO dal
+  ;          conteggio, che qui e' del test (tre nodi) come nel kernel e' del
+  ;          proprietario della testa: la sentinella non si incontra mai, e la
+  ;          circolarita' della lista resta dentro coda.vasm ---
+  li r1, testa
+  li r2, n2
+  call enqueue_coda_nc
+  li r1, testa
+  li r2, n3
+  call enqueue_coda_nc      ; [n1, n2, n3]
+
+  li r1, testa
+  call coda_peek
+  li r5, n1
+  sub r5, r2, r5
+  dumps r5                ; 0 = col cursore sulla TESTA da' il primo nodo
+  mov r1, r2
+  call coda_peek
+  li r5, n2
+  sub r5, r2, r5
+  dumps r5                ; 0 = e si avanza rimettendole dentro il risultato
+  mov r1, r2
+  call coda_peek
+  li r5, n3
+  sub r5, r2, r5
+  dumps r5                ; 0
+
+  ; --- (13) ... e la lista e' rimasta esattamente com'era. E' la meta' del
+  ;          contratto che non si vede leggendo la primitiva: guarda e non tocca,
+  ;          quindi tre peek di fila non sono tre dequeue ---
+  li r1, testa
+  call dequeue_testa_nc
+  li r5, n1
+  sub r5, r2, r5
+  dumps r5                ; 0
+  li r1, testa
+  call dequeue_testa_nc
+  li r5, n2
+  sub r5, r2, r5
+  dumps r5                ; 0
+  li r1, testa
+  call dequeue_testa_nc
+  li r5, n3
+  sub r5, r2, r5
+  dumps r5                ; 0
   halt

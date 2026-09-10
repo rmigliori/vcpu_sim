@@ -1,0 +1,85 @@
+; mutex/mutex.vinc — il TIPO mutex: una coda d'attesa piu' tre campi, ed e' il
+; PROPRIETARIO a separarlo da un semaforo binario (§13.2).
+;
+; A differenza di mailbox.vinc e semaforo.vinc qui c'e' una .struct vera e non
+; dei .equ derivati, e la differenza non e' di gusto: quelli sono una TESTA e
+; nient'altro — stessa dimensione, un solo campo da ribattezzare — mentre il
+; mutex ha tre campi IN PIU'. La TESTA pero' resta ANNIDATA e non
+; ridichiarata, come fa PCB in tcb.vinc: cosi' il layout dei link vive in un
+; posto solo (§3.27) e &mutex == &mutex.coda, quindi il mutex si passa
+; DIRETTAMENTE alle primitive di coda senza nessuna conversione.
+
+.include "coda/coda.vinc"
+
+.struct MUTEX
+  .field coda       TESTA.size  ; +0  la coda d'attesa: sentinella + contatore.
+                                ;     VUOTA SEMPRE sotto un ceiling corretto
+  .field owner                  ; +12 il TCB che lo tiene, 0 = libero
+  .field prio_prec              ; +16 il PCB del possessore PRIMA della
+                                ;     promozione: il valore di ritorno di
+                                ;     irq_save, un livello sopra (§13.2)
+  .field ceiling                ; +20 il PCB del ceiling, costante dopo l'init
+.ends                           ; 24
+
+; Il contatore della coda d'attesa, col nome che dice cosa conta. Qui la
+; convenzione E' quella generica (numero di nodi, >= 0) e non una propria: il
+; nome serve a portarsi dietro l'invariante, non a cambiare significato.
+;
+;   ATTESE == 0 SEMPRE, sotto un ceiling dichiarato correttamente e con nessuno
+;   che si blocchi tenendo un mutex.
+;
+; E' l'osservabile a costo zero di §13.5: un TCB accodato a un mutex non e' uno
+; stato, e' un'ANOMALIA — o il ceiling di quel mutex e' dichiarato troppo basso,
+; o qualcuno si e' bloccato tenendolo. Le due cause producono lo stesso sintomo,
+; ed e' una fortuna: un solo osservabile copre due regole.
+;
+; Non c'e' nessun contatore diagnostico e nessuna assert (§3.26 dell'handoff: il
+; kernel controlla cio' che, non controllato, corromperebbe le proprie
+; strutture, e questo non corrompe niente). Il campo c'e' comunque perche' la
+; TESTA ce l'ha: chi vuole sorvegliare lo legge, e non costa una istruzione a
+; nessun altro.
+.equ MUTEX.attese  TESTA.count
+
+; --------------------------------------------------------------------------
+;  DOVE SI DICHIARA IL CEILING, E PERCHE' NON QUI
+;
+;  Nel mutex sta il RISULTATO. L'insieme degli utenti e' l'INGRESSO del calcolo,
+;  non lo legge nessuno mentre la macchina gira, e sta quindi nel sorgente — nel
+;  .vinc del modulo che possiede il DATO PROTETTO, perche' per §8.6 chi puo'
+;  chiamare quel servizio e' chi include quel .vinc:
+;
+;      .equ MTX_POOL_CEILING  PRIO_GESTORE_TIMEOUT   ; utenti: gestore timeout,
+;                                                    ; log, sensore
+;
+;  Un ".word 7" sarebbe un numero che nessuno puo' ri-derivare; un NOME e'
+;  un'affermazione rileggibile, e segue da se' se cambia il valore numerico di
+;  quella priorita'. Il massimo di un insieme e' uno dei suoi elementi, quindi
+;  non serve un max(): si scrive QUALE task e' l'utente piu' prioritario.
+;
+;  Il numero diventa l'indirizzo del PCB dentro mutex_init, che chiama prio_pcb
+;  del kernel — l'unico punto in cui una priorita' e' un numero.
+;
+;  DUE COROLLARI, E IL SECONDO NON E' IGIENE:
+;
+;  1. il ceiling si calcola su chi PUO' prendere il mutex, non su chi lo prende.
+;     Un task che include l'interfaccia di un servizio e poi non lo chiama alza
+;     il ceiling per niente, quindi "non includere cio' che non usi" diventa una
+;     proprieta' TEMPORALE;
+;  2. NIENTE DI QUESTO LO VERIFICA. L'assembler non puo' sapere quale task
+;     esegue una data mutex_lock — e' un fatto sul grafo delle chiamate, e un
+;     grafo delle chiamate non c'e'. Metterlo nel .vinc non lo rende
+;     controllato: lo mette dove lo vedra' chi dovrebbe cambiarlo. Chi vuole
+;     sapere se e' giusto guarda MUTEX.attese a macchina ferma.
+;
+;  E NON ESISTE UNA DIREZIONE CONSERVATIVA (§3.26). Il valore del ceiling *e'*
+;  l'insieme dei task esclusi, non un margine come quando si dimensiona un
+;  buffer un po' piu' grande per stare tranquilli. Per DIFETTO rompe la mutua
+;  esclusione (ed e' §13.5); per ECCESSO rompe la garanzia temporale, e la rompe
+;  SEMPRE, su ogni sezione critica — il task piu' prioritario aspetta la sezione
+;  critica del meno prioritario, cioe' l'inversione di priorita' che §7.4 esiste
+;  per limitare, dichiarata come politica. E' per questo che §13.5 deve esistere:
+;  se sovradichiarare fosse sicuro, nessuno scriverebbe mai un ceiling sbagliato
+;  — si metterebbe il massimo dappertutto. §13.5 e' il prezzo di una grandezza
+;  che deve essere ESATTA, ed e' cio' che rende il mutex un mutex invece che una
+;  sospensione dello scheduler.
+; --------------------------------------------------------------------------

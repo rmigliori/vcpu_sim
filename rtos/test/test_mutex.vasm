@@ -1,0 +1,515 @@
+; rtos/test/test_mutex.vasm — il mutex a priority ceiling, e le DUE storie che
+; §13 racconta: cosa succede quando il ceiling e' giusto, e cosa quando e'
+; sbagliato.
+;
+; Servono tutte e due, e la seconda non e' un caso di errore da collaudare per
+; scrupolo: §13.5 esiste perche' il ceiling e' una grandezza che deve essere
+; ESATTA — per difetto rompe la mutua esclusione, per eccesso rompe la garanzia
+; temporale — quindi il modo in cui degrada e' parte della specifica quanto il
+; caso normale.
+;
+;   mtxOK   ceiling = livello 1, ed e' GIUSTO: gli utenti sono T (1) e S (3),
+;           e il piu' prioritario e' T
+;   mtxKO   ceiling = livello 5, ed e' SBAGLIATO APPOSTA: gli utenti sono U (2)
+;           e W (4), quindi sarebbe dovuto essere 2
+;
+; --- STORIA A, il ceiling giusto: LA CODA NON SI USA MAI ---
+;   S (3) prende mtxOK e viene promosso a 1. Mentre e' dentro la sezione
+;   critica l'ISR rende eseguibile T (1), che e' l'utente piu' prioritario.
+;   T NON preempta S — sono allo stesso livello, perche' S sta girando AL
+;   CEILING — e resta in coda di ready. S rilascia, torna a 3, e solo allora T
+;   gira e trova il mutex LIBERO. E' la proprieta' di §13.5 messa in esecuzione:
+;   un task che gira e prova a prendere un mutex lo trova libero.
+;
+; --- STORIA B, il ceiling sbagliato: SI BLOCCA, NON RIPROVA ---
+;   W (4) prende mtxKO. Il ceiling e' 5, MENO prioritario di lui, quindi la
+;   promozione NON scatta: e' il passo 1 di §13.5, "qui la protezione ha gia'
+;   smesso di funzionare e nessuno se n'e' accorto". L'ISR rende eseguibile U
+;   (2), che stavolta W lo preempta davvero, e U trova il mutex occupato.
+;   U si BLOCCA sulla coda del mutex. Se invece si riaccodasse fra gli
+;   eseguibili per riprovare, essendo piu' prioritario di W tornerebbe subito in
+;   esecuzione, riproverebbe, fallirebbe, si riaccoderebbe: W non girerebbe MAI.
+;   E' livelock, con la macchina al 100% che sembra lavorare. Bloccandosi
+;   invece, W riparte, finisce e consegna.
+;
+; --- I CINQUE NUMERI, TUTTI DERIVABILI ---
+;   err      0   i cinque controlli sulla PRIORITA', in un contatore solo:
+;                S promosso a 1 dentro la sezione e tornato a 3 fuori; W NON
+;                promosso (il ceiling e' meno prioritario: la promozione e' un
+;                MINIMO, non un massimo); T gia' al ceiling che ci resta; U che
+;                resta a 2. Un valore diverso da 0 dice che il verso del
+;                confronto e' sbagliato, ed e' l'errore che si fa rileggendo
+;   attOK    0   la coda di mtxOK mentre S la tiene e T e' gia' eseguibile.
+;                E' l'osservabile a costo zero di §13.5: sotto ceiling corretto
+;                un TCB accodato a un mutex e' un'ANOMALIA, non uno stato
+;   attKO    1   la coda di mtxKO nella stessa identica situazione. Un solo
+;                osservabile, due esiti: e' la misura della differenza fra i due
+;                ceiling, non due prove separate
+;   cntT     1   T ha preso mtxOK, e l'ha trovato libero
+;   cntU     1   U ha preso mtxKO DOPO ESSERSI BLOCCATO. E' la prova che non
+;                c'e' livelock: se ci fosse, questo numero resterebbe 0 e il
+;                test non finirebbe
+;
+; --- LE FASI SONO LEGATE ALLO STATO, NON AI TICK ---
+; L'ISR non conta il tempo: guarda MUTEX.owner e MUTEX.attese e agisce solo
+; quando il sistema ha la forma che serve. E' la lezione presa scrivendo
+; test_semaforo, dove le fasi a tick facevano arrivare un task troppo presto e
+; il caso interessante non veniva mai eseguito. Qui in piu' e' l'unico modo di
+; cogliere una finestra che dura una sezione critica.
+;
+; Le due sezioni critiche non hanno una durata: S e W girano su un flag che
+; l'ISR arma, quindi restano dentro esattamente finche' serve. Niente in questo
+; test dipende dal periodo del timer.
+
+.include "tcb/tcb.vinc"
+.include "coda/coda_api.vinc"
+.include "mutex/mutex.vinc"
+.include "mailbox/mailbox.vinc"
+
+; --------------------------------------------------------------------------
+;  LE PRIORITA' COME NOMI, E I DUE CEILING.
+;
+;  E' la forma di §3.26: il ceiling si dichiara nominando il task piu'
+;  prioritario fra gli utenti, non scrivendo un numero. Il massimo di un insieme
+;  e' uno dei suoi elementi, quindi non serve un max() che l'assembler non
+;  saprebbe valutare.
+;
+;  MTX_KO_CEILING e' scritto come numero nudo apposta: e' esattamente il difetto
+;  che §3.26 descrive — "un .word 7 sarebbe un numero che nessuno puo'
+;  ri-derivare" — e qui si vede che il numero nudo e' anche il sintomo, perche'
+;  non c'e' nessun nome accanto a cui verificarlo.
+; --------------------------------------------------------------------------
+.equ PRIO_T  1
+.equ PRIO_U  2
+.equ PRIO_S  3
+.equ PRIO_W  4
+.equ PRIO_I  7
+
+.equ MTX_OK_CEILING  PRIO_T   ; utenti: T (1) e S (3) -> il piu' prioritario e' T
+.equ MTX_KO_CEILING  5        ; utenti: U (2) e W (4) -> DOVEVA ESSERE PRIO_U
+
+  .data
+
+mtxOK:   .res MUTEX
+mtxKO:   .res MUTEX
+
+err:     .word 0         ; i controlli sulla priorita' che NON sono tornati
+attOK:   .word 0         ; la coda di mtxOK col contendente gia' eseguibile
+attKO:   .word 0         ; la coda di mtxKO nella stessa situazione
+cntT:    .word 0         ; T ha preso mtxOK
+cntU:    .word 0         ; U ha preso mtxKO dopo essersi bloccato
+flagA:   .word 0         ; l'ISR: "T e' eseguibile, S puo' guardare la coda"
+flagB:   .word 0         ; l'ISR: "U si e' bloccato, W puo' guardare la coda"
+fase:    .word 0
+ticks:   .word 0
+
+tcbT:    .res TCB
+tcbU:    .res TCB
+tcbS:    .res TCB
+tcbW:    .res TCB
+tcbI:    .res TCB
+
+; Ogni task, finita la sua parte, si parcheggia sulla PROPRIA mailbox e non ne
+; esce piu': nessuno gli manda niente. Una per task, come vuole §8.1 — un
+; secondo ricevente sulla stessa casella e' un errore di costruzione, e la
+; receive si ferma invece di sfilare un TCB scambiandolo per un messaggio.
+mbT:     .res MAILBOX
+mbU:     .res MAILBOX
+mbS:     .res MAILBOX
+mbW:     .res MAILBOX
+
+stackT:  .space 256
+stackT_top:
+stackU:  .space 256
+stackU_top:
+stackS:  .space 256
+stackS_top:
+stackW:  .space 256
+stackW_top:
+stackI:  .space 256
+stackI_top:
+
+  .text
+
+  .global main
+  .extern current
+  .extern sched_init
+  .extern task_ready
+  .extern prio_pcb
+  .extern mutex_init
+  .extern mutex_lock
+  .extern mutex_unlock
+  .extern receive
+  .extern irq_install
+  .extern sched_isr_exit
+  .extern ctx_init
+  .extern timer_init
+  .extern irq_arm
+  .extern irq_enable
+
+; ==========================================================================
+;  BOOT. Le priorita' si assegnano per NOME e passano da prio_pcb: e' l'unico
+;  punto in cui una priorita' e' un numero, e da qui in poi e' un indirizzo.
+;  Prima di prio_pcb qui ci sarebbe stato un "li r4, pcb3", cioe' il numero
+;  cablato in un simbolo che nessuna dichiarazione lega alla priorita' del task.
+; ==========================================================================
+main:
+  li r14, stackS_top       ; PRIMA di ogni call: main diventera' S
+  call sched_init
+
+  li r1, mbT
+  call coda_init
+  li r1, mbU
+  call coda_init
+  li r1, mbS
+  call coda_init
+  li r1, mbW
+  call coda_init
+
+  li r1, mtxOK
+  li r2, MTX_OK_CEILING
+  call mutex_init
+  li r1, mtxKO
+  li r2, MTX_KO_CEILING
+  call mutex_init
+
+  ; --- I (idle, livello 7): l'unico READY oltre a S ---
+  li r1, stackI_top
+  li r2, taskI
+  call ctx_init
+  li r3, tcbI
+  sw r1, TCB.sp(r3)
+  li r1, PRIO_I
+  call prio_pcb
+  sw r1, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r2, r3               ; &pcb == &pcb.coda
+  call enqueue_coda
+
+  ; --- T, U, W: contesto pronto, FUORI da ogni coda. Li rende eseguibili
+  ;     l'ISR, una storia per volta ---
+  li r1, stackT_top
+  li r2, taskT
+  call ctx_init
+  li r3, tcbT
+  sw r1, TCB.sp(r3)
+  li r1, PRIO_T
+  call prio_pcb
+  sw r1, TCB.pcb(r3)
+
+  li r1, stackU_top
+  li r2, taskU
+  call ctx_init
+  li r3, tcbU
+  sw r1, TCB.sp(r3)
+  li r1, PRIO_U
+  call prio_pcb
+  sw r1, TCB.pcb(r3)
+
+  li r1, stackW_top
+  li r2, taskW
+  call ctx_init
+  li r3, tcbW
+  sw r1, TCB.sp(r3)
+  li r1, PRIO_W
+  call prio_pcb
+  sw r1, TCB.pcb(r3)
+
+  ; --- S (livello 3): parte a freddo, quindi RUNNING e fuori da ogni coda ---
+  li r3, tcbS
+  li r1, PRIO_S
+  call prio_pcb
+  sw r1, TCB.pcb(r3)
+  li r1, current
+  sw r3, 0(r1)
+  li r5, RUNNING
+  sw r5, TCB.state(r3)
+
+  li r1, timer_isr
+  call irq_install
+  call irq_arm
+  li r1, 500
+  call timer_init
+  call irq_enable
+  li r5, taskS
+  jr r5                    ; cold start di S
+
+; ==========================================================================
+;  err_piu: un controllo sulla priorita' non e' tornato. Un contatore solo per
+;  tutti e cinque: cio' che conta e' che resti 0, e i casi sono varianti della
+;  stessa domanda — il confronto fra priorita' ha il verso giusto?
+; ==========================================================================
+  .proc err_piu
+  li r1, err
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  .endproc err_piu
+
+; ==========================================================================
+;  S (livello 3), STORIA A: tiene mtxOK mentre T diventa eseguibile.
+; ==========================================================================
+taskS:
+  li r1, mtxOK
+  call mutex_lock
+
+  ; --- dentro la sezione critica: devo girare AL CEILING (livello 1) ---
+  li r1, MTX_OK_CEILING
+  call prio_pcb
+  li r2, current
+  lw r2, 0(r2)
+  lw r3, TCB.pcb(r2)
+  beq r3, r1, ts_promosso
+  call err_piu
+ts_promosso:
+
+  ; --- aspetto che l'ISR renda eseguibile T. Che io sia ancora qui a girare
+  ;     mentre T e' READY E' la proprieta': T sta al ceiling, quindi non mi
+  ;     preempta ---
+  li r1, flagA
+ts_attesa:
+  lw r2, 0(r1)
+  beq r2, r0, ts_attesa
+
+  ; --- e la coda del mutex e' VUOTA: T e' eseguibile e non si e' accodato qui,
+  ;     perche' non e' mai arrivato a chiedere il mutex ---
+  li r1, mtxOK
+  lw r2, MUTEX.attese(r1)
+  li r3, attOK
+  sw r2, 0(r3)
+
+  li r1, mtxOK
+  call mutex_unlock
+
+  ; --- fuori: devo essere tornato alla priorita' PRECEDENTE, non a una
+  ;     "nominale" che nessuno ha mai scritto da nessuna parte ---
+  li r1, PRIO_S
+  call prio_pcb
+  li r2, current
+  lw r2, 0(r2)
+  lw r3, TCB.pcb(r2)
+  beq r3, r1, ts_ripristinato
+  call err_piu
+ts_ripristinato:
+  j parcheggio_S
+
+; ==========================================================================
+;  T (livello 1), STORIA A: l'utente piu' prioritario di mtxOK. Diventa
+;  eseguibile mentre S lo tiene, e proprio per questo lo trova LIBERO.
+; ==========================================================================
+taskT:
+  li r1, mtxOK
+  call mutex_lock          ; sotto ceiling corretto: sempre libero
+
+  ; sono gia' al ceiling, quindi la promozione non deve abbassarmi: e' il
+  ; MINIMO che non scatta, non un ramo mancante
+  li r1, MTX_OK_CEILING
+  call prio_pcb
+  li r2, current
+  lw r2, 0(r2)
+  lw r3, TCB.pcb(r2)
+  beq r3, r1, tt_ok
+  call err_piu
+tt_ok:
+  li r1, cntT
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  li r1, mtxOK
+  call mutex_unlock
+  j parcheggio_T
+
+; ==========================================================================
+;  W (livello 4), STORIA B: tiene mtxKO, che ha il ceiling dichiarato troppo
+;  basso. La promozione non scatta, e la protezione e' gia' finita.
+; ==========================================================================
+taskW:
+  li r1, mtxKO
+  call mutex_lock
+
+  ; --- il ceiling e' 5, io sono 4: sono gia' PIU' prioritario di lui, quindi
+  ;     NON devo essere stato promosso. Se lo fossi, la promozione sarebbe un
+  ;     massimo invece che un minimo e mi avrebbe ABBASSATO ---
+  li r1, PRIO_W
+  call prio_pcb
+  li r2, current
+  lw r2, 0(r2)
+  lw r3, TCB.pcb(r2)
+  beq r3, r1, tw_non_promosso
+  call err_piu
+tw_non_promosso:
+
+  ; --- aspetto che l'ISR mi dica che U si e' bloccato sulla mia coda ---
+  li r1, flagB
+tw_attesa:
+  lw r2, 0(r1)
+  beq r2, r0, tw_attesa
+
+  li r1, mtxKO
+  lw r2, MUTEX.attese(r1)
+  li r3, attKO
+  sw r2, 0(r3)             ; 1: il degrado, osservato dove §13.5 dice di guardare
+
+  li r1, mtxKO
+  call mutex_unlock        ; consegna diretta a U, che e' l'unico in coda
+  j parcheggio_W
+
+; ==========================================================================
+;  U (livello 2), STORIA B: piu' prioritario del ceiling dichiarato, quindi
+;  preempta W e trova il mutex OCCUPATO. Si blocca, e questa call ritorna solo
+;  quando W ha rilasciato.
+; ==========================================================================
+taskU:
+  li r1, mtxKO
+  call mutex_lock
+
+  ; il ceiling e' meno prioritario di me: resto dove sono
+  li r1, PRIO_U
+  call prio_pcb
+  li r2, current
+  lw r2, 0(r2)
+  lw r3, TCB.pcb(r2)
+  beq r3, r1, tu_ok
+  call err_piu
+tu_ok:
+  li r1, cntU
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  li r1, mtxKO
+  call mutex_unlock
+  j parcheggio_U
+
+; ==========================================================================
+;  I quattro parcheggi: una receive su una mailbox in cui non arrivera' mai
+;  niente. Serve un punto di blocco vero — un ciclo a vuoto terrebbe la CPU al
+;  livello del task e affamerebbe tutti quelli sotto, che e' proprio cio' che
+;  questi test devono poter distinguere.
+; ==========================================================================
+parcheggio_S:
+  li r1, mbS
+  call receive
+  j parcheggio_S
+parcheggio_T:
+  li r1, mbT
+  call receive
+  j parcheggio_T
+parcheggio_U:
+  li r1, mbU
+  call receive
+  j parcheggio_U
+parcheggio_W:
+  li r1, mbW
+  call receive
+  j parcheggio_W
+
+taskI:
+  j taskI
+
+; ==========================================================================
+;  timer_isr(r1 = contesto opaco): il regista, e guarda LO STATO.
+;
+;    fase 0  S tiene mtxOK          -> desta T (che NON lo preempta) e arma A
+;    fase 1  T ha preso e rilasciato -> desta W, comincia la storia B
+;    fase 2  W tiene mtxKO          -> desta U (che LO preempta)
+;    fase 3  U e' in coda al mutex  -> arma B, cosi' W puo' guardare e mollare
+;    fase 4  U ha preso mtxKO       -> stampa e ferma
+;
+;  La differenza fra fase 0 e fase 2 e' tutto il test: stessa mossa dell'ISR,
+;  due esiti opposti, e a cambiare e' solo la dichiarazione del ceiling.
+; ==========================================================================
+timer_isr:
+  mov r6, r1               ; il contesto: r1 sta per essere sporcato
+  li r1, ticks
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)             ; diagnostica: non decide niente
+
+  li r1, fase
+  lw r8, 0(r1)
+  beq r8, r0, isr_f0
+  li r3, 1
+  beq r8, r3, isr_f1
+  li r3, 2
+  beq r8, r3, isr_f2
+  li r3, 3
+  beq r8, r3, isr_f3
+  j isr_f4
+
+  ; --- S e' dentro la sezione critica: T diventa eseguibile ADESSO ---
+isr_f0:
+  li r1, mtxOK
+  lw r2, MUTEX.owner(r1)
+  li r3, tcbS
+  bne r2, r3, isr_go
+  li r1, tcbT
+  call task_ready          ; T sta al ceiling, S ci gira sopra: nessuno preempta
+                           ; nessuno, e la blt di task_ready prende il ramo che
+                           ; NON arma il flag
+  li r1, flagA
+  li r2, 1
+  sw r2, 0(r1)
+  j isr_avanza
+
+isr_f1:
+  li r1, cntT
+  lw r2, 0(r1)
+  beq r2, r0, isr_go
+  li r1, tcbW
+  call task_ready
+  j isr_avanza
+
+  ; --- stessa mossa della fase 0, ma qui il ceiling e' dichiarato troppo
+  ;     basso: U (2) e' piu' prioritario di W (4) e lo preempta davvero ---
+isr_f2:
+  li r1, mtxKO
+  lw r2, MUTEX.owner(r1)
+  li r3, tcbW
+  bne r2, r3, isr_go
+  li r1, tcbU
+  call task_ready
+  j isr_avanza
+
+  ; --- U ha trovato il mutex occupato e SI E' BLOCCATO. Se avesse riprovato
+  ;     invece di bloccarsi, W non sarebbe mai ripartito e questa fase non
+  ;     scatterebbe mai: il test non finirebbe, che e' la forma che il livelock
+  ;     prende qui dentro ---
+isr_f3:
+  li r1, mtxKO
+  lw r2, MUTEX.attese(r1)
+  beq r2, r0, isr_go
+  li r1, flagB
+  li r2, 1
+  sw r2, 0(r1)
+  j isr_avanza
+
+isr_f4:
+  li r1, cntU
+  lw r2, 0(r1)
+  beq r2, r0, isr_go
+
+  li r1, err
+  lw r5, 0(r1)
+  dumps r5                 ; 0 = i cinque controlli sulla priorita' tornano
+  li r1, attOK
+  lw r5, 0(r1)
+  dumps r5                 ; 0 = ceiling giusto: la coda non si usa mai
+  li r1, attKO
+  lw r5, 0(r1)
+  dumps r5                 ; 1 = ceiling sbagliato: qualcuno c'e' finito dentro
+  li r1, cntT
+  lw r5, 0(r1)
+  dumps r5                 ; 1 = T ha trovato mtxOK libero
+  li r1, cntU
+  lw r5, 0(r1)
+  dumps r5                 ; 1 = U ha avuto mtxKO dopo essersi bloccato
+  halt
+
+isr_avanza:
+  li r1, fase
+  addi r8, r8, 1
+  sw r8, 0(r1)
+
+isr_go:
+  mov r1, r6
+  j sched_isr_exit

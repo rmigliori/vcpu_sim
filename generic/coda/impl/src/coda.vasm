@@ -75,6 +75,41 @@
 ; un mutex (§13.3) — potrebbe adottare le _nc comunque, visto che la camminata
 ; e' del chiamante. Si aggiunge in tre istruzioni il giorno che serva davvero.
 ;
+; --- LA SCANSIONE: coda_peek ---
+; coda_peek(corrente) -> corrente.fwd, senza sfilare niente. E' l'altra meta' di
+; enqueue_dopo_nc: quella mette il nodo DOVE le si dice, questa permette di
+; CERCARE quel punto.
+;
+; Serve all'inserimento ordinato di §13.6, in cui la camminata sta nel chiamante
+; perche' confronta una chiave che coda.vasm non deve conoscere. Ma "come si
+; passa da un nodo al successivo" e' rappresentazione, non interfaccia, e non ha
+; motivo di uscire da qui. Oggi nessuno la conosce: i quattro moduli che leggono
+; LINK.fwd/bwd fuori di questo file lo fanno su un nodo che sta FUORI da ogni
+; lista, per verificare l'invariante fwd == bwd == 0, e non attraversano niente.
+; Il primo che camminasse a mano sarebbe anche il primo a dipendere dalla forma
+; della lista.
+;
+; UN SOLO ARGOMENTO: la fine del giro la riconosce il chiamante CONTANDO, e non
+; e' una rinuncia. Il numero di nodi e' l'unica cosa che il proprietario della
+; testa sa per definizione (§8.3: la contabilita' e' del chiamante), e un ciclo
+; LIMITATO da un conteggio e' piu' forte di uno che si ferma su un terminatore.
+; §13.6 chiede che il limite della sezione critica sia DICHIARATO invece che
+; implicito: contando diventa strutturale, perche' un ciclo che gira N volte non
+; scappa nemmeno su una lista corrotta, mentre uno che cerca la sentinella
+; girerebbe per sempre. Il chiamante non incontra mai la sentinella e non ha
+; nessuna ragione di sapere che la lista e' circolare.
+;
+; La prima chiamata si fa con corrente = TESTA, ed e' lecito per la ragione di
+; sempre: testa e nodo condividono i link (LINK annidato in TESTA, coda.vinc),
+; quindi "il successore della testa" e "il primo nodo" sono la stessa lettura.
+; E' lo stesso fatto su cui poggiano le due .global sullo stesso indirizzo qui
+; sotto.
+;
+; FUORI DAI DUE ASSI DEI SUFFISSI, e non e' una dimenticanza: non e' _nc perche'
+; il contatore non lo tocca nessuno — legge e basta — e non avra' una _s, per la
+; regola gia' scritta sopra: la sezione critica deve comprendere tutta la
+; camminata, quindi appartiene al chiamante.
+;
 ; REGOLA: una sola disciplina per testa. Una testa gestita con le contate ha
 ; count >= 0 = numero di nodi; una gestita con le _nc ha la convenzione che
 ; decide il suo proprietario. Mescolarle sulla stessa testa fa derivare il
@@ -98,6 +133,7 @@
   .global enqueue_dopo_nc
   .global dequeue_testa_nc
   .global remove_buffer_nc
+  .global coda_peek
 
   .global enqueue_coda_s
   .global enqueue_testa_s
@@ -201,6 +237,13 @@ dequeue_testa_nc:         ; dequeue_testa_nc(r1=&testa) -> r2 = nodo (0 se vuota
   ret
 deq_empty:
   li r2, 0             ; coda vuota -> puntatore nullo
+  ret
+
+; Guarda e non tocca: nessun link cambia, nessun contatore si muove, il nodo
+; resta dov'e'. Chiamata con r1 = &testa da' il primo nodo; rimettendole dentro
+; cio' che ha restituito si avanza di uno. Quante volte, lo sa il chiamante.
+coda_peek:                ; coda_peek(r1=&corrente) -> r2 = corrente.fwd
+  lw r2, LINK.fwd(r1)
   ret
 
 ; Simmetrica dell'inserimento: sfilare un nodo che non sta in nessuna lista

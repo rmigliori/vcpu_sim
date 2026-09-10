@@ -146,3 +146,63 @@ vasm_program(test_gestore OBJECTS t_gestore
 
 vasm_check(gestore MODE DUMPS PROGRAM test_gestore
            EXPECT "5 0 2609")
+
+# ---------------------------------------------------------------------------
+#  test_semaforo — il semaforo contatore, e l'INSERIMENTO ORDINATO di §13.6.
+#
+#  E' il primo test della serie in cui il numero che conta non misura QUANTO ma
+#  IN CHE ORDINE: 'ordine' e' la lista d'attesa letta con coda_peek e resa in
+#  cifre. Serviva perche' un risveglio FIFO su un semaforo e' un'inversione di
+#  priorita' silenziosa — nessun contatore devia, nessuna asserzione scatta, e
+#  a peggiorare e' solo la latenza del task piu' importante.
+#
+#  Sei task, e due di loro (H e F) diventano eseguibili solo quando l'ISR li
+#  desta: e' l'unico modo di farli arrivare al semaforo FUORI dall'ordine di
+#  priorita', visto che lo scheduler sceglie sempre il piu' prioritario fra i
+#  pronti. Con tutti eseguibili dal boot arriverebbero gia' ordinati e la
+#  camminata non farebbe niente, cioe' il test non proverebbe niente.
+#
+#  Tutti e quattro i numeri sono DERIVABILI, nessuno dipende dai cicli — ed e'
+#  il primo test della serie di cui si possa dire. Il periodo del timer non
+#  entra in nessuno di loro: sposta solo QUANDO le cose accadono, non quali.
+# ---------------------------------------------------------------------------
+vasm_object(t_semaforo SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_semaforo.vasm
+                       INTERFACES vinc_coda vinc_tcb vinc_semaforo)
+
+vasm_program(test_semaforo OBJECTS t_semaforo LINK lib_semaforo lib_kernel)
+
+vasm_check(semaforo MODE DUMPS PROGRAM test_semaforo
+           EXPECT "123456 2 1 -6")
+
+# ---------------------------------------------------------------------------
+#  test_mutex — il priority ceiling, e le DUE storie di §13.
+#
+#  Un solo programma con due mutex, e non due test: il valore sta nel
+#  CONFRONTO. L'ISR fa la stessa identica mossa nelle fasi 0 e 2 — rendere
+#  eseguibile l'utente piu' prioritario mentre il mutex e' tenuto — e gli esiti
+#  sono opposti. A cambiare e' solo la dichiarazione del ceiling, che e'
+#  esattamente la tesi di §13.5: il ceiling e' una grandezza che deve essere
+#  ESATTA, e il modo in cui degrada e' parte della specifica.
+#
+#  attOK = 0 e attKO = 1 sono lo STESSO osservabile letto sui due mutex — la
+#  coda d'attesa mentre il contendente e' gia' eseguibile. E' l'anomalia a costo
+#  zero che §13.5 chiede di esporre, e qui e' la misura della differenza fra i
+#  due ceiling invece di due prove separate.
+#
+#  cntU = 1 e' la prova negativa che vale di piu': U prende mtxKO DOPO essersi
+#  bloccato. Con la risposta sbagliata — riaccodarsi fra gli eseguibili e
+#  riprovare — U tornerebbe subito in esecuzione essendo piu' prioritario di W,
+#  riproverebbe, fallirebbe, e W non girerebbe mai. Il test non fallirebbe: non
+#  FINIREBBE, ed e' la forma che il livelock prende qui dentro.
+#
+#  Anche qui le fasi guardano lo stato (MUTEX.owner, MUTEX.attese) e non i tick,
+#  e le due sezioni critiche non hanno durata: S e W girano su un flag che l'ISR
+#  arma. Nessuno dei cinque numeri dipende dal periodo del timer.
+# ---------------------------------------------------------------------------
+vasm_object(t_mutex SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_mutex.vasm
+                    INTERFACES vinc_coda vinc_tcb vinc_mutex vinc_mailbox)
+
+vasm_program(test_mutex OBJECTS t_mutex LINK lib_mutex lib_messaggi lib_kernel)
+
+vasm_check(mutex MODE DUMPS PROGRAM test_mutex
+           EXPECT "0 0 1 1 1")

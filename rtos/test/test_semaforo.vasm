@@ -1,0 +1,420 @@
+; rtos/test/test_semaforo.vasm — il semaforo contatore, e soprattutto
+; L'INSERIMENTO ORDINATO di §13.6: chi affiora al post e' il piu' prioritario.
+;
+; --- COSA VERIFICA, E PERCHE' SEI TASK ---
+; Il rischio vero del semaforo non e' il contatore, e' l'ordine: con N in attesa
+; un risveglio FIFO e' un'inversione di priorita' SILENZIOSA — nessun test
+; fallisce, nessun contatore devia, e a peggiorare e' solo la latenza del task
+; piu' importante. Serve quindi un caso in cui l'ordine di ARRIVO al semaforo
+; sia diverso dall'ordine di PRIORITA', e per costruirlo bastano due task che
+; arrivano in ritardo:
+;
+;   arrivo:    A(2)  D(3)  E(3)  C(4)   poi H(1)   poi F(3)
+;   atteso:    H(1)  A(2)  D(3)  E(3)  F(3)  C(4)
+;
+; H e F non sono in nessuna coda al boot: hanno il contesto pronto ma li rende
+; eseguibili l'ISR. E' l'unico modo di farli arrivare fuori ordine, visto che lo
+; scheduler sceglie sempre il piu' prioritario fra i pronti — se fossero tutti
+; eseguibili dall'inizio arriverebbero gia' ordinati e la camminata non farebbe
+; niente, cioe' il test non proverebbe niente.
+;
+; I tre casi di inserimento ci sono tutti, e sono quelli che una lista ordinata
+; puo' sbagliare separatamente:
+;
+;   in FONDO      D, E, C: ognuno meno prioritario di tutti quelli gia' dentro
+;   in TESTA      H, piu' prioritario del primo -> prec = sentinella, cioe'
+;                 enqueue_dopo_nc che ricade su enqueue_testa_nc
+;   IN MEZZO      F, che scavalca D ed E (suoi PARI) e si ferma davanti a C.
+;                 E' il caso che le due enqueue vecchie non sanno esprimere
+;
+; F verifica anche il FIFO FRA PARI: entra DOPO D ed E, non prima. Entrando
+; prima il livello diventerebbe LIFO e un task potrebbe restare indietro
+; indefinitamente mentre i suoi pari gli passano davanti.
+;
+; --- LE FASI SONO LEGATE ALLO STATO, NON ALL'OROLOGIO, E LA RAGIONE E' UN BACO
+;     CHE QUESTO TEST AVEVA ---
+; La prima stesura destava H al 2o tick e F al 4o. Misurato: al 2o tick E e C
+; non si erano ancora bloccati, quindi l'ordine di arrivo vero era A D H E F C e
+; F finiva IN FONDO — l'inserimento in mezzo, che e' il caso piu' interessante,
+; non veniva mai eseguito. Il test restava verde e verificava una cosa in meno
+; di quella che dichiarava.
+;
+; Ora l'ISR non guarda i tick: guarda 'risorse', che dice quanti sono in lista, e
+; agisce solo quando la lista ha la forma che serve. Ne segue che NIENTE in
+; questo test dipende dal periodo del timer — non i quattro numeri e nemmeno la
+; sequenza degli eventi. Il periodo sposta soltanto quando le cose accadono.
+;
+; --- I SEI TASK SONO LO STESSO CODICE ---
+; Un solo 'taskbody', e l'identita' se la deduce da 'current': i TCB sono
+; dichiarati contigui e l'id e' (tcb - tcbH) / TCB.size + 1. Non e' una
+; scorciatoia di scrittura, e' cio' che rende il test onesto — se i sei task
+; fossero sei routine diverse, un ordine giusto potrebbe venire da come sono
+; scritte invece che da come sono accodate.
+;
+; --- I QUATTRO NUMERI, TUTTI DERIVABILI ---
+;   ordine   123456  la lista letta con coda_peek quando i sei sono tutti in
+;                    attesa. Le cifre sono gli id nell'ordine in cui stanno in
+;                    lista: 1=H 2=A 3=D 4=E 5=F 6=C. E' l'asserzione principale.
+;                    CONTROPROVA ESEGUITA: disattivando il confronto della
+;                    camminata viene 234615, che e' l'ordine di ARRIVO — e le
+;                    due cifre che si muovono dicono quali casi sono coperti.
+;                    H passa dal 5o posto al 1o (inserimento in TESTA) e F dal
+;                    6o al 5o, cioe' scavalca C fermandosi fra E e C
+;                    (inserimento IN MEZZO). D, E, F restano in quest'ordine
+;                    fra loro: e' il FIFO fra pari
+;   cntW     2       quante volte sem_wait e' RITORNATA: una per il cammino
+;                    veloce di A (risorse = 1 al boot, la lista non si tocca) e
+;                    una per il risveglio di H dopo l'unica sem_post. Le altre
+;                    cinque chiamate sono ancora bloccate
+;   sveglia  1       chi ha avuto la risorsa dalla post: H, che e' il PIU'
+;                    PRIORITARIO e non il primo arrivato (col FIFO viene 2, cioe'
+;                    A). Azzerato prima della post, perche' A l'aveva gia'
+;                    firmato tornando dal cammino veloce
+;   risorse  -6      il contatore CONTABILE: 1 iniziale meno 7 wait, e in lista
+;                    ci sono esattamente 6 nodi. E' l'invariante "risorse =
+;                    disponibili - in attesa" confrontata con la lista, cioe'
+;                    l'unica verifica possibile su un campo il cui lato positivo
+;                    non e' testimoniato da niente (§13.1)
+;
+; La consegna della post e' DIRETTA (come la send, §8.5): il conto non torna mai
+; positivo, quindi fra la sveglia di H e la sua esecuzione nessuno puo' rubargli
+; la risorsa. E' per questo che sem_wait non ha il ciclo di ricontrollo che un
+; semaforo "signal and continue" richiederebbe, e cntW = 2 lo mostra: H ritorna
+; una volta sola, senza riprovare.
+
+.include "tcb/tcb.vinc"
+.include "coda/coda_api.vinc"
+.include "semaforo/semaforo.vinc"
+
+  .data
+
+sem:     .res SEMAFORO   ; una risorsa sola al boot: vedi sem_init in main
+
+ordine:  .word 0         ; la lista in cifre, letta a sei in attesa
+cntW:    .word 0         ; quante sem_wait sono RITORNATE
+sveglia: .word 0         ; id del primo servito dalla post
+apri:    .word 0         ; l'ISR lo arma, l'idle fa la post e lo consuma
+fase:    .word 0         ; a che punto e' il test: 0..3
+ticks:   .word 0
+
+; I SEI TCB SONO CONTIGUI E IN QUEST'ORDINE, e l'ordine e' l'atteso: l'id di un
+; task e' la sua distanza da tcbH divisa per TCB.size. Chi ne inserisse uno in
+; mezzo cambierebbe tutti gli id, e il test lo direbbe subito cambiando 'ordine'.
+tcbH:    .res TCB        ; id 1 — livello 1, arriva quando gli altri quattro
+                         ;         sono gia' in attesa
+tcbA:    .res TCB        ; id 2 — livello 2, parte a freddo
+tcbD:    .res TCB        ; id 3 — livello 3
+tcbE:    .res TCB        ; id 4 — livello 3
+tcbF:    .res TCB        ; id 5 — livello 3, arriva per ultimo
+tcbC:    .res TCB        ; id 6 — livello 4
+tcbI:    .res TCB        ; l'idle: non entra mai nel semaforo, quindi sta fuori
+                         ; dalla numerazione ed e' dichiarato per ultimo
+
+; 256 byte a testa: il contesto salvato da hal_ctx_block e' 64 (CTX_FRAME_SIZE)
+; e ci va sopra il frame di sem_wait piu' le call annidate.
+stackH:  .space 256
+stackH_top:
+stackA:  .space 256
+stackA_top:
+stackD:  .space 256
+stackD_top:
+stackE:  .space 256
+stackE_top:
+stackF:  .space 256
+stackF_top:
+stackC:  .space 256
+stackC_top:
+stackI:  .space 256
+stackI_top:
+
+  .text
+
+  .global main
+  .extern current
+  .extern pcb1
+  .extern pcb2
+  .extern pcb3
+  .extern pcb4
+  .extern pcb7
+  .extern sched_init
+  .extern task_ready
+  .extern sem_init
+  .extern sem_wait
+  .extern sem_post
+  .extern irq_install
+  .extern sched_isr_exit
+  .extern ctx_init
+  .extern timer_init
+  .extern irq_arm
+  .extern irq_enable
+
+; ==========================================================================
+;  BOOT.
+; ==========================================================================
+main:
+  li r14, stackA_top       ; PRIMA di ogni call: main diventera' A
+  call sched_init
+
+  li r1, sem
+  li r2, 1                 ; UNA risorsa: la prima wait passa e non si blocca
+  call sem_init
+
+  ; --- I (idle e poster, livello 7): READY, in coda ---
+  li r1, stackI_top
+  li r2, taskI
+  call ctx_init
+  li r3, tcbI
+  sw r1, TCB.sp(r3)
+  li r4, pcb7
+  sw r4, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r1, r4               ; &pcb == &pcb.coda
+  mov r2, r3
+  call enqueue_coda
+
+  ; --- D (livello 3): accodato PRIMA di E, cosi' arriva prima di lui ---
+  li r1, stackD_top
+  li r2, taskbody
+  call ctx_init
+  li r3, tcbD
+  sw r1, TCB.sp(r3)
+  li r4, pcb3
+  sw r4, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r1, r4
+  mov r2, r3
+  call enqueue_coda
+
+  ; --- E (livello 3) ---
+  li r1, stackE_top
+  li r2, taskbody
+  call ctx_init
+  li r3, tcbE
+  sw r1, TCB.sp(r3)
+  li r4, pcb3
+  sw r4, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r1, r4
+  mov r2, r3
+  call enqueue_coda
+
+  ; --- C (livello 4) ---
+  li r1, stackC_top
+  li r2, taskbody
+  call ctx_init
+  li r3, tcbC
+  sw r1, TCB.sp(r3)
+  li r4, pcb4
+  sw r4, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r1, r4
+  mov r2, r3
+  call enqueue_coda
+
+  ; --- H (livello 1) e F (livello 3): CONTESTO PRONTO MA FUORI DA OGNI CODA.
+  ;     Non sono eseguibili, quindi lo scheduler non li vede; li rende
+  ;     eseguibili l'ISR, ed e' l'unico modo di farli arrivare al semaforo fuori
+  ;     dall'ordine di priorita' ---
+  li r1, stackH_top
+  li r2, taskbody
+  call ctx_init
+  li r3, tcbH
+  sw r1, TCB.sp(r3)
+  li r4, pcb1
+  sw r4, TCB.pcb(r3)
+
+  li r1, stackF_top
+  li r2, taskbody
+  call ctx_init
+  li r3, tcbF
+  sw r1, TCB.sp(r3)
+  li r4, pcb3
+  sw r4, TCB.pcb(r3)
+
+  ; --- A (livello 2): parte a freddo, quindi RUNNING e fuori da ogni coda ---
+  li r3, tcbA
+  li r4, pcb2
+  sw r4, TCB.pcb(r3)
+  li r1, current
+  sw r3, 0(r1)             ; current = A: sem_wait accodera' QUESTO TCB
+  li r5, RUNNING
+  sw r5, TCB.state(r3)
+
+  li r1, timer_isr
+  call irq_install
+  call irq_arm
+  li r1, 500
+  call timer_init
+  call irq_enable
+  li r5, taskbody
+  jr r5                    ; cold start di A
+
+; ==========================================================================
+;  taskbody: il corpo dei SEI task, uno solo. Aspetta al semaforo e, quando
+;  torna, scrive il proprio id in 'sveglia' se e' il primo a tornare da quando
+;  e' stato azzerato.
+;
+;  L'identita' si deduce da 'current': i TCB sono contigui, quindi
+;  id = (mio TCB - tcbH) / TCB.size + 1. Nessuno dei sei sa chi e' finche' non
+;  gira, ed e' cio' che rende l'ordine osservato una proprieta' della LISTA e
+;  non del codice.
+; ==========================================================================
+taskbody:
+  li r1, sem
+  call sem_wait            ; ritorna solo con la risorsa in mano
+
+  li r1, cntW
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)             ; una sem_wait in piu' e' RITORNATA
+
+  li r1, sveglia
+  lw r2, 0(r1)
+  bne r2, r0, tb_riparti   ; qualcuno ha gia' firmato: non e' il mio giro
+  li r3, current
+  lw r3, 0(r3)             ; il mio TCB
+  li r4, tcbH
+  sub r3, r3, r4
+  li r4, TCB.size
+  div r3, r3, r4
+  addi r3, r3, 1           ; id 1..6
+  sw r3, 0(r1)
+tb_riparti:
+  j taskbody               ; e si rimette in coda, dove lo ritrova l'ordine
+
+; ==========================================================================
+;  taskI: l'idle, che qui fa anche il POSTER — ed e' l'unico che puo' farlo,
+;  perche' sem_post e' solo da task e quando tutti e sei dormono l'unico che
+;  gira e' lui. Non si blocca mai, come vuole §4.
+; ==========================================================================
+taskI:
+  li r1, apri
+loopI:
+  lw r2, 0(r1)
+  beq r2, r0, loopI        ; finche' l'ISR non arma, gira a vuoto
+  sw r0, 0(r1)             ; consuma l'armamento: una post sola
+  li r1, sem
+  call sem_post            ; consegna diretta al primo della lista
+  li r1, apri
+  j loopI
+
+; ==========================================================================
+;  timer_isr(r1 = contesto opaco): il regista del test, e guarda LO STATO.
+;
+;    fase 0  quattro in attesa (A D E C) -> desta H, che entra IN TESTA
+;    fase 1  cinque in attesa            -> desta F, che entra IN MEZZO
+;    fase 2  sei in attesa               -> legge la lista, azzera 'sveglia' e
+;                                           arma la post dell'idle
+;    fase 3  sei in attesa e cntW = 2    -> stampa e ferma
+;
+;  Il numero di nodi e' -risorse, e non c'e' nessun tick nei confronti: la
+;  prima stesura usava i tick e destava H troppo presto, con F che finiva in
+;  fondo invece che in mezzo.
+;
+;  task_ready da un'ISR e' il caso per cui request_preempt esiste: non commuta,
+;  arma il flag, e la commutazione avviene all'uscita dalla trap.
+; ==========================================================================
+timer_isr:
+  mov r6, r1               ; il contesto: r1 sta per essere sporcato
+  li r1, ticks
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)             ; tenuto solo per la diagnostica: non decide niente
+
+  li r1, sem
+  lw r7, SEMAFORO.risorse(r1)   ; i nodi in lista sono -r7
+  li r1, fase
+  lw r8, 0(r1)
+
+  beq r8, r0, isr_fase0
+  li r3, 1
+  beq r8, r3, isr_fase1
+  li r3, 2
+  beq r8, r3, isr_fase2
+  j isr_fase3
+
+  ; --- fase 0: A, D, E, C sono tutti in attesa. H entra in TESTA ---
+isr_fase0:
+  li r3, -4
+  bne r7, r3, isr_go
+  li r1, tcbH
+  call task_ready
+  j isr_avanza
+
+  ; --- fase 1: e adesso F, che deve fermarsi FRA E e C ---
+isr_fase1:
+  li r3, -5
+  bne r7, r3, isr_go
+  li r1, tcbF
+  call task_ready
+  j isr_avanza
+
+  ; --- fase 2: la lista letta con coda_peek. Il ciclo e' LIMITATO DAL
+  ;     CONTATORE come nel kernel: i nodi sono -risorse, e la sentinella non si
+  ;     cerca. Vale la ragione di §13.6 — un ciclo che gira N volte non scappa
+  ;     nemmeno su una lista corrotta, mentre uno che aspetta di rivedere la
+  ;     testa girerebbe per sempre ---
+isr_fase2:
+  li r3, -6
+  bne r7, r3, isr_go
+  sub r5, r0, r7           ; quanti nodi
+  li r1, sem
+  mov r2, r1               ; il cursore parte dalla TESTA
+  li r9, 0                 ; l'ordine, cifra dopo cifra
+isr_cammina:
+  beq r5, r0, isr_scrivi
+  mov r1, r2
+  call coda_peek           ; r2 = nodo successivo, senza sfilarlo
+  li r3, tcbH
+  sub r3, r2, r3
+  li r4, TCB.size
+  div r3, r3, r4
+  addi r3, r3, 1           ; id 1..6
+  li r4, 10
+  mul r9, r9, r4
+  add r9, r9, r3
+  addi r5, r5, -1
+  j isr_cammina
+isr_scrivi:
+  li r1, ordine
+  sw r9, 0(r1)
+  li r1, sveglia
+  sw r0, 0(r1)             ; A l'aveva firmato tornando dal cammino veloce
+  li r1, apri
+  li r2, 1
+  sw r2, 0(r1)             ; l'idle puo' fare la post
+  j isr_avanza
+
+  ; --- fase 3: H ha avuto la risorsa (cntW = 2) ed e' tornato in attesa
+  ;     (sei nodi). Le due condizioni insieme tolgono ogni ambiguita': prima
+  ;     della post i nodi erano sei ma cntW valeva 1 ---
+isr_fase3:
+  li r3, -6
+  bne r7, r3, isr_go
+  li r1, cntW
+  lw r3, 0(r1)
+  li r4, 2
+  bne r3, r4, isr_go
+
+  li r1, ordine
+  lw r5, 0(r1)
+  dumps r5                 ; 123456 = H A D E F C
+  li r1, cntW
+  lw r5, 0(r1)
+  dumps r5                 ; 2 = il cammino veloce di A e il risveglio di H
+  li r1, sveglia
+  lw r5, 0(r1)
+  dumps r5                 ; 1 = H, il piu' prioritario, non il primo arrivato
+  li r1, sem
+  lw r5, SEMAFORO.risorse(r1)
+  dumps r5                 ; -6 = 1 iniziale meno 7 wait, e 6 nodi in lista
+  halt
+
+isr_avanza:
+  li r1, fase
+  addi r8, r8, 1
+  sw r8, 0(r1)
+
+isr_go:
+  mov r1, r6
+  j sched_isr_exit

@@ -1,0 +1,247 @@
+; rtos/servizi/semaforo/semaforo.vasm — il semaforo contatore: sem_wait, sem_post.
+;
+; Un SEMAFORO *e'* una testa di coda, come la mailbox, e come per la mailbox
+; tutto il disegno sta nella convenzione del terzo campo. Qui e' CONTABILE:
+;
+;   risorse > 0   ci sono 'risorse' risorse disponibili. NON sono nodi e NON
+;                 stanno in nessuna lista: con risorse = 5 la lista e' VUOTA
+;   risorse < 0   ci sono -risorse TCB in attesa, e -N e' la norma (non -1 come
+;                 sulla mailbox: qui i riceventi sono tanti)
+;   risorse == 0  niente di disponibile, nessuno in attesa
+;
+; Da cui l'invariante, che e' l'unica rete di quel campo perche' il lato
+; positivo non e' testimoniato da nessuna struttura:
+;
+;   risorse = DISPONIBILI - IN ATTESA, e i nodi in lista sono max(0, -risorse)
+;
+; Contabilita' in mano a noi => si usa SOLO lo strato _nc di coda.vasm (una sola
+; disciplina per testa). Mai enqueue_coda/dequeue_testa su un semaforo:
+; muoverebbero un contatore che qui significa un'altra cosa.
+;
+; --- PERCHE' NON E' UNA MAILBOX (§13.1) ---
+; Sembrano lo stesso oggetto: una TESTA, un contatore con segno, task accodati
+; sul negativo. La differenza e' la NATURA del contatore, e si vede in una riga
+; di codice: sem_wait con risorse > 0 decrementa e RITORNA SENZA TOCCARE LA
+; LISTA. E' un cammino veloce che la receive non ha e non puo' avere, perche'
+; con count > 0 deve per forza sfilare un nodo vero.
+;
+; --- IL DECREMENTO SI PAGA SEMPRE, POI SI GUARDA IL SEGNO ---
+; Non ci sono due rami che decrementano in modo diverso: si decrementa e basta,
+; e il segno del risultato dice se c'era qualcosa da prendere. E' il contatore
+; contabile che si scrive da se': "ho preso una risorsa" e "mi metto in coda per
+; una risorsa" sono la stessa riga di contabilita', ed e' per questo che al
+; risveglio non c'e' niente da pagare.
+;
+; --- LA CONSEGNA E' DIRETTA, QUINDI NIENTE CICLO DI RICONTROLLO ---
+; Qui questo file si scosta da una frase di §13.1, e va detto per esteso perche'
+; la frase e' scritta nella proposta. §13.1 dava per persi, sul semaforo,
+; ENTRAMBI i regali della mailbox: l'ordinamento (vero, e infatti c'e' la
+; camminata) e il ciclo di ricontrollo al risveglio (falso, e il motivo e' che
+; §13.1 stava pensando a un semaforo che al post rimette la risorsa nel mucchio
+; e sveglia qualcuno perche' RIPROVI).
+;
+; Qui il post fa quello che fa la send (§8.5): CONSEGNA. Sfila l'attendente e
+; incrementa, quindi il conto non torna mai positivo e la risorsa non e' mai
+; disponibile per nessun altro fra la sveglia e l'esecuzione. Non essendoci
+; niente da rubare, non c'e' niente da ricontrollare: il percorso di ripresa e'
+; una linea retta come nella receive. La proprieta' che la mailbox comprava con
+; "un ricevente solo" (§8.1) il semaforo la compra con la consegna diretta, e
+; regge con N in attesa.
+;
+; Il prezzo, che e' lo stesso della mailbox: sem_post NON e' idempotente
+; rispetto all'ordine. Chi sfila decide chi corre, ed e' per questo che sfilare
+; il PRIMO deve voler dire sfilare il piu' prioritario — cioe' per questo esiste
+; la camminata di sem_wait.
+;
+; --- SOLO DA TASK, E NESSUNA VARIANTE _s ---
+; sem_wait puo' bloccare, quindi e' di un task per definizione. sem_post lo e'
+; per una ragione meno ovvia: la variante di SEGNALAZIONE non esiste (§3.26
+; dell'handoff — un post che si perde e' un'attesa di evento, e gli eventi
+; passano dalla mailbox), quindi chi fa post e' sempre qualcuno che RESTITUISCE
+; una risorsa che aveva preso con una wait, cioe' un task. Non c'e' il caso che
+; ha reso raw la send, e le due entry si proteggono da se'.
+;
+; --- E NESSUN TIMEOUT SU sem_wait (§13.8, sciolta in §3.26) ---
+; Non e' una scelta fra due uscite, e' una deduzione: il timeout e' una consegna
+; in mailbox (§9, decisa, col pool di §10 sotto che esiste per quello), e un
+; task accodato QUI non e' nella propria mailbox. La regola d'uso che ne segue:
+;
+;   aspetti qualcosa che puo' NON ARRIVARE?      mailbox, e un timeout
+;   aspetti una risorsa che qualcuno qui dentro
+;   restituira' entro un tempo calcolabile?      semaforo, e nessun timeout
+;
+; Un'attesa su semaforo che avesse bisogno di un orologio e' un semaforo il cui
+; conteggio, o il cui tempo di tenuta, non e' stato analizzato: si aggiusta
+; nell'analisi, non nel runtime. E' lo stesso principio di §13.5 sul ceiling.
+
+.include "coda/coda_api.vinc"
+.include "semaforo/semaforo.vinc"
+.include "tcb/tcb.vinc"
+
+  .text
+
+  .global sem_init
+  .global sem_wait
+  .global sem_post
+
+  .extern irq_save
+  .extern irq_restore
+  .extern task_ready
+  .extern task_block
+  .extern current
+
+; ==========================================================================
+;  sem_init(r1 = &sem, r2 = risorse iniziali). Da chiamare al boot, a IE = 0.
+;
+;  Esiste perche' un semaforo non e' scrivibile nel .data: la lista vuota vuole
+;  fwd = bwd = &se stessa e un .word non accetta etichette (vedi il riquadro in
+;  semaforo.vinc). Il conteggio iniziale e' un argomento, non un .word
+;  posizionale.
+;
+;  Non-foglia (chiama coda_init), corpo lineare, un solo ret, API pubblica ->
+;  .proc/.endproc. coda_init non tocca r2 (lo dichiara coda_api.vinc), quindi il
+;  conteggio arriva intatto alla sw.
+; ==========================================================================
+  .proc sem_init
+  call coda_init            ; fwd = bwd = &sem, e azzera il terzo campo...
+  sw r2, SEMAFORO.risorse(r1)   ; ... che subito dopo prende il suo significato
+  .endproc sem_init
+
+; ==========================================================================
+;  sem_wait(r1 = &sem). Solo da TASK: puo' bloccare.
+;
+;  Non ha e non puo' avere una variante _s, per la stessa ragione della receive
+;  (§8.5): la sezione critica deve comprendere il decremento, la camminata,
+;  l'accodamento del proprio TCB e il blocco. Proteggere una parte e lasciare
+;  fuori la decisione sarebbe attivamente dannoso.
+;
+;  Frame (dopo il prologo):  +0 psw del chiamante   +4 &sem   +8 r15
+;
+;  Non-foglia, con salti -> prologo/epilogo a mano (dentro .proc non sono
+;  ammesse etichette, docs/manual.md §4.2.1).
+;  Clobber: r2..r10.
+; ==========================================================================
+sem_wait:
+  addi r14, r14, -4
+  sw r15, 0(r14)          ; +8
+  addi r14, r14, -4
+  sw r1, 0(r14)           ; +4: &sem
+  call irq_save           ; r5 = psw del chiamante, IE = 0
+  addi r14, r14, -4
+  sw r5, 0(r14)           ; +0: psw, ripristinata all'uscita
+
+  lw r4, SEMAFORO.risorse(r1)
+  addi r4, r4, -1
+  sw r4, SEMAFORO.risorse(r1)   ; si paga SEMPRE, poi si guarda il segno
+  blt r4, r0, sem_wait_attendi  ; sotto zero: non c'era niente da prendere
+
+  ; --- cammino veloce: c'era una risorsa, e LA LISTA NON SI TOCCA (§13.1).
+  ;     E' la riga in cui il semaforo si separa dalla mailbox: qui non c'e'
+  ;     nessun nodo da sfilare, perche' una risorsa disponibile non e' un nodo.
+sem_wait_fine:
+  lw r5, 0(r14)
+  addi r14, r14, 8        ; scarta psw e &sem
+  call irq_restore        ; psw del chiamante
+  lw r15, 0(r14)          ; dopo la call: irq_restore passa da r15
+  addi r14, r14, 4
+  ret
+
+; --------------------------------------------------------------------------
+;  L'ATTESA: la camminata di §13.6, e dove si ferma.
+;
+;  Con N in attesa chi affiora al post deve essere il PIU' PRIORITARIO, quindi
+;  la lista e' tenuta ordinata all'INSERIMENTO. Lo splice lo fa coda.vasm
+;  (enqueue_dopo_nc) e la scansione passa da coda_peek: qui sta solo la
+;  POLITICA, cioe' il confronto — che e' l'unica cosa che coda.vasm non puo'
+;  sapere, perche' dovrebbe sapere che il nodo e' un TCB (§13.6).
+;
+;  Il confronto e' una blt SUI PUNTATORI ai PCB, resa possibile dall'invariante
+;  di §7.3 (tabella contigua e in ordine) col verso di §4: indirizzo minore =
+;  priorita' piu' alta.
+;
+;  SI SCAVALCA ANCHE CHI E' PARI, e non e' un dettaglio: entrando PRIMA dei pari
+;  il livello diventerebbe LIFO, e un task potrebbe restare indietro
+;  indefinitamente mentre altri della sua stessa priorita' gli passano davanti.
+;
+;  IL CICLO E' LIMITATO DAL CONTEGGIO, non dalla sentinella. I nodi gia' in
+;  lista sono -risorse - 1: uno in meno di quelli che ci saranno, perche' il
+;  decremento l'abbiamo gia' fatto noi. Cosi' il limite della sezione critica
+;  che §13.6 chiede di DICHIARARE e' strutturale — questo ciclo non puo' girare
+;  piu' di N volte nemmeno se la lista fosse corrotta — e la circolarita' resta
+;  dentro coda.vasm, che e' l'unico posto che ha ragione di conoscerla.
+; --------------------------------------------------------------------------
+sem_wait_attendi:
+  li r5, current
+  lw r9, 0(r5)            ; r9 = il mio TCB
+  lw r7, TCB.pcb(r9)      ; la mia priorita': un INDIRIZZO (§7.3)
+  sub r10, r0, r4
+  addi r10, r10, -1       ; quanti TCB sono gia' accodati
+  mov r6, r1              ; prec = la sentinella. Se non si entra in nessun
+                          ; confronto, "dopo la sentinella" e' l'inserimento in
+                          ; testa: lista vuota e primo posto sono lo stesso caso
+  mov r2, r1              ; ... e il cursore parte da li'
+sem_wait_scan:
+  beq r10, r0, sem_wait_ins   ; visitati tutti: si entra in fondo
+  mov r1, r2
+  call coda_peek          ; r2 = il nodo successivo (guarda e non tocca)
+  lw r8, TCB.pcb(r2)
+  blt r7, r8, sem_wait_ins    ; lui e' MENO prioritario: gli si entra davanti
+  mov r6, r2                  ; piu' prioritario O PARI: si scavalca
+  addi r10, r10, -1
+  j sem_wait_scan
+
+sem_wait_ins:
+  mov r1, r6              ; prec
+  mov r2, r9              ; il mio TCB
+  call enqueue_dopo_nc    ; L'esito in r3 e' IGNORATO come nella receive: qui
+                          ; non c'e' nessuno a cui restituirlo, la wait sta per
+                          ; bloccarsi e non tornera' al chiamante finche' non e'
+                          ; stata svegliata
+  call task_block         ; si torna qui quando sem_post ha consegnato
+  call irq_save           ; ristabilisce IE=0 (la psw d'ingresso e' sullo stack)
+  ; La risorsa E' NOSTRA e l'abbiamo gia' pagata all'ingresso: nessun secondo
+  ; decremento e nessun ciclo di ricontrollo. Nessuno ha potuto rubarla, perche'
+  ; sem_post consegna invece di rimettere nel mucchio.
+  j sem_wait_fine
+
+; ==========================================================================
+;  sem_post(r1 = &sem): restituisce una risorsa. Solo da TASK (vedi in testa al
+;  file); non blocca mai, ma puo' rendere eseguibile qualcuno piu' prioritario
+;  del chiamante — e in quel caso e' task_ready ad armare la preemption.
+;
+;  Il TETTO NON C'E', e si chiude con un no, non con un valore (§3.26): un post
+;  di troppo e' una risorsa restituita due volte, cioe' un errore di costruzione
+;  del sistema. Non corrompe niente — il contatore non e' dereferenziato e non
+;  indicizza niente — quindi non e' roba che il kernel debba controllare.
+;
+;  Non-foglia, con salti -> prologo/epilogo a mano. Clobber: r2, r3, r4, r5.
+; ==========================================================================
+sem_post:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  call irq_save           ; r5 = psw del chiamante, IE = 0
+  addi r14, r14, -4
+  sw r5, 0(r14)
+
+  lw r4, SEMAFORO.risorse(r1)
+  addi r4, r4, 1
+  sw r4, SEMAFORO.risorse(r1)
+  blt r0, r4, sem_post_fine   ; 0 < nuovo => prima era >= 0: nessuno in attesa.
+                              ; Il permesso si ACCUMULA, ed e' il semaforo
+                              ; contatore classico — quello dei dieci buffer
+
+  ; --- c'era almeno un attendente: CONSEGNA DIRETTA al primo, che per
+  ;     l'ordinamento di sem_wait e' il piu' prioritario. Il conto e' gia'
+  ;     tornato al suo posto sopra, quindi la risorsa non passa mai per lo
+  ;     stato "disponibile" e nessun altro puo' prenderla nel frattempo.
+  call dequeue_testa_nc   ; r2 = il TCB in testa
+  mov r1, r2
+  call task_ready         ; kernel: eseguibile + valuta la preemption
+
+sem_post_fine:
+  lw r5, 0(r14)
+  addi r14, r14, 4
+  call irq_restore
+  lw r15, 0(r14)          ; dopo la call: irq_restore passa da r15
+  addi r14, r14, 4
+  ret

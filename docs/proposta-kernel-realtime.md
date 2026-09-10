@@ -36,17 +36,20 @@ un'estensione per l'anteprima (*Markdown Preview Mermaid Support*).
     campi — l'indirizzo della coda di quel livello e l'indirizzo dell'eventuale
     TCB preemptato a quel livello.
   - **Mailbox**: *è* una testa di coda di `coda.vasm`, con il contatore usato
-    con segno (§8). Una per task. Era anche l'**unico punto di blocco di un
-    task** (§7.5): dal 06/09/2026 **non più**, perché il semaforo blocca — e la
-    conseguenza sui timeout è aperta, vedi §13.8.
-  - **Semafori**: specificati in **§13**. Contatore *contabile* — positivo =
+    con segno (§8). Una per task, e l'invariante è `count >= -1`. Era anche
+    l'**unico punto di blocco di un task** (§7.5): dal 06/09/2026 **non più**,
+    perché il semaforo blocca. Resta l'unico raggiungibile da una **consegna di
+    timeout**, ed è da lì che §13.8 deduce il resto.
+  - **Semafori**: implementati, **§13**. Contatore *contabile* — positivo =
     risorse disponibili (che non sono nodi), negativo = task accodati — e per
     questo **non** sono una mailbox con un parametro diverso (§13.1). Sono
-    l'unico oggetto la cui dichiarazione statica non è «tutti zeri»: nasce col
-    conteggio iniziale delle risorse.
-  - **Mutex**: specificati in **§13**. Ceiling statico (§7.4), e sono *la
+    l'unico oggetto che non nasce «tutti zeri»: il conteggio iniziale arriva da
+    `sem_init`, perché una `TESTA` vuota non è scrivibile con un `.word`.
+  - **Mutex**: implementati, **§13**. Ceiling statico (§7.4), e sono *la
     sezione critica* — la stessa disciplina di `irq_save`/`irq_restore` con un
-    limite calcolato per risorsa invece che infinito (§13.2).
+    limite calcolato per risorsa invece che infinito (§13.2). Sotto un ceiling
+    corretto **non bloccano mai**: la coda d'attesa esiste per far degradare una
+    dichiarazione sbagliata, non per essere usata (§13.5).
   - **Messaggi**: per il kernel sono solo nodi di lista — due link e un
     payload che non legge mai (§8). Il buffer è di chi manda: nel traffico
     richiesta/risposta è memoria del cliente prestata al fornitore per la durata
@@ -613,15 +616,29 @@ Ne discendono tre conseguenze, tutte da tenere in conto:
    `addi` dopo ogni `dequeue_testa` sulla lista d'evento: una istruzione, gratis
    a runtime, ma una regola in più da rispettare a ogni singolo uso — e
    dimenticarla produce un puntatore che **sembra** un TCB valido.
-2. **La mailbox è l'unico punto di blocco di un task.** Il meccanismo funziona
-   perché il task aspetta in un posto solo: se si bloccasse altrove, il messaggio
-   di timeout arriverebbe in una mailbox su cui non sta aspettando e non lo
-   sveglierebbe nessuno. È il modello dei kernel a messaggi (OSE, i *pulse* di
-   QNX) ed è la scelta di fondo che questa decisione porta con sé.
-3. **`sem_wait` non ha timeout, per costruzione.** Chi vuole un tempo massimo
-   passa dalla mailbox. Se un domani si lasciano ai task anche semafori bloccanti
-   diretti, coesistono due discipline e la garanzia «posso sempre mettere un
-   tempo massimo» salta **in silenzio** proprio dove si usa il semaforo nudo.
+2. **La mailbox è l'unico punto di blocco RAGGIUNGIBILE DA UN TIMEOUT.** Il
+   meccanismo funziona perché il task aspetta in un posto solo: se si bloccasse
+   altrove, il messaggio di timeout arriverebbe in una mailbox su cui non sta
+   aspettando e non lo sveglierebbe nessuno. È il modello dei kernel a messaggi
+   (OSE, i *pulse* di QNX) ed è la scelta di fondo che questa decisione porta con
+   sé.
+
+   > **Emendata il 07/09/2026.** Diceva «l'unico punto di blocco di un task», e
+   > da §13 non è più vero: i punti di blocco sono **tre** — mailbox, semaforo e
+   > (solo in degrado) mutex. Quello che resta vero, ed è ciò che serviva a
+   > questa sezione, è che la mailbox è l'unico **raggiungibile da una consegna
+   > di timeout**. Le due frasi si erano confuse perché fino a §13 coincidevano.
+3. **`sem_wait` non ha timeout, ed è una deduzione.** Chi vuole un tempo massimo
+   passa dalla mailbox. Il semaforo è un secondo punto di blocco **proprio
+   perché** è privo di timeout: se un domani ci si mettesse un orologio,
+   coesisterebbero due discipline e la garanzia «posso sempre mettere un tempo
+   massimo» salterebbe **in silenzio** proprio dove si usa il semaforo nudo.
+
+   > Qui stava «per costruzione», che era una convenzione affermata. La
+   > giustificazione strutturale è arrivata il 07/09 ed è in **§13.8**: il
+   > timeout è una consegna in mailbox (§9, decisa, col pool di §10 sotto), e un
+   > task accodato a un semaforo non è nella propria mailbox. Non è una scelta
+   > fra due uscite, è l'unica forma compatibile con una decisione già presa.
 
 > **Da rivedere in §7.2.** Se `SUSPENDED` implica «nella coda della propria
 > mailbox», il secondo argomento tecnico di §7.2 — serve `state` per sapere da
@@ -640,12 +657,36 @@ layout imposto da `coda.vasm`. Qui c'è il ragionamento intero, e il codice che 
 
 ### 8.1 Una per task
 
-È la decisione che governa tutte le altre. Se più task potessero fare `receive`
-sulla stessa mailbox, il risveglio dovrebbe andare al **più prioritario** fra gli
-attesa, e `coda.vasm` conosce solo FIFO e LIFO: servirebbe l'inserimento ordinato
-per priorità, cioè proprio la primitiva che §7.4 si compiace di non dover
-scrivere sotto ICPP. Svegliare in ordine d'arrivo in un kernel a priorità
-statiche è un'inversione che non si vede né nei test né nel codice.
+È la decisione che governa tutte le altre.
+
+> **L'argomento vero, e non è quello che stava scritto qui** (07/09/2026). Fino
+> a quel giorno questa sezione diceva: con più riceventi servirebbe l'inserimento
+> ordinato per priorità, che `coda.vasm` non ha. È un **costo**, non un
+> impedimento — e infatti quella primitiva ora esiste (§13.6), quindi
+> l'argomento sarebbe caduto da solo. Quello che regge è un altro:
+>
+> > Con N riceventi **qualcuno deve scegliere il destinatario**, e il solo che sa
+> > a chi è indirizzato un messaggio è **chi lo manda**, perché l'indirizzo sta
+> > nel payload che il kernel non guarda (§8.4).
+>
+> Lo scenario che sembra funzionare non si chiude. Arriva il messaggio del
+> secondo ricevente, si sveglia il primo, vede che non è suo, lo rimanda e torna
+> in `receive`: finché il destinatario è **in attesa** il giro si chiude, perché
+> è davanti nella coda e chi torna si rimette dietro. Ma se il destinatario **non
+> è in attesa**, chi si sveglia rimanda il messaggio in una lista vuota, torna in
+> `receive` e **riprende lo stesso messaggio**; se è più prioritario del
+> destinatario, quello non gira mai. È il livelock di §13.5, stessa forma.
+>
+> E accodare il TCB *prima* di testare il contatore non lo chiude: metterebbe in
+> lista un messaggio e un TCB insieme con `count == 0`, cioè esattamente la
+> finestra per cui §8.2 ha **rifiutato** la convenzione contabile.
+
+Ne segue l'invariante **`count >= -1`**: −1 è l'unico negativo possibile, e regge
+per costruzione — la `receive` decide su un test a tre vie e accoda il proprio TCB
+solo nel ramo `count == 0`, e la `send` non decrementa mai. I due `li` di
+`messageHandling.vasm` che **assegnano** invece di incrementare *sono* quella
+invariante scritta in un'istruzione, ed è il posto in cui l'ipotesi «un ricevente
+per mailbox» è compilata dentro il codice invece di stare in un commento.
 
 Si perde il pattern *un porto di richieste, N worker*: con task statici lo si
 sostituisce con un dispatcher esplicito.
@@ -1625,7 +1666,7 @@ poi ritirarlo.
 
 ---
 
-## 13. Semafori e mutex — **SPECIFICATI** il 06/09/2026
+## 13. Semafori e mutex — **IMPLEMENTATI** il 10/09/2026
 
 > Nasce come §13 e non fra §10 e §11 per una ragione operativa: i sorgenti
 > nominano §12.1-§12.6, §10.3, §9.2, §8.4. Rinumerare romperebbe decine di
@@ -1634,6 +1675,16 @@ poi ritirarlo.
 
 §1 elencava «**Semafori**: da specificare». Questa sezione lo fa, e specifica il
 mutex insieme perché la decisione di §7.4 li lega.
+
+> **Scritta il 06/09/2026 come specifica, eseguita il 10/09/2026.** Il codice
+> sta in [`rtos/servizi/semaforo/`](../rtos/servizi/semaforo/impl/src/semaforo.vasm)
+> e [`rtos/servizi/mutex/`](../rtos/servizi/mutex/impl/src/mutex.vasm), accanto
+> alla mailbox, e i due test sono `rtos/test/test_semaforo.vasm` e
+> `rtos/test/test_mutex.vasm`. Scrivere il codice ha corretto **tre** affermazioni
+> di questa sezione — la dichiarazione statica del semaforo (§13.1), il ciclo di
+> ricontrollo al risveglio (§13.1) e la forma della struttura del mutex (§13.3)
+> — e le correzioni sono segnate dove stavano le frasi sbagliate, non in fondo.
+> Quello che è rimasto aperto è **uno solo**, ed è in §13.7.
 
 ### 13.1 Il semaforo NON è una mailbox, e la differenza sta nel contatore
 
@@ -1666,9 +1717,20 @@ Da qui discendono tre conseguenze che non sono cosmetiche:
 
 1. **Il semaforo vuole un valore iniziale.** Una mailbox nasce corretta dal
    `.data` azzerato — zero messaggi, nessuno in attesa — e il progetto ci si
-   appoggia. Un semaforo che protegge dieci buffer nasce a 10: `.word 0, 0, 10`.
-   Resta tutto statico e senza percorso d'errore all'avvio (§1), ma è il primo
-   oggetto del progetto la cui dichiarazione naturale non è «zeri».
+   appoggia. Un semaforo che protegge dieci buffer nasce a 10. Resta tutto
+   statico e senza percorso d'errore all'avvio (§1), ma è il primo oggetto del
+   progetto la cui dichiarazione naturale non è «zeri».
+
+   > **CORREZIONE (10/09/2026), e la forma qui era sbagliata.** Questa riga
+   > diceva `sem: .word 0, 0, 10`. Non è scrivibile: **una `TESTA` vuota non è
+   > fatta di zeri**, ha `fwd = bwd = &se stessa`, e un `.word` non accetta
+   > etichette. È lo stesso motivo per cui `sched_init` esiste e per cui la
+   > vecchia `ready` passava già da `coda_init` — scritto in §6 di questo
+   > documento da prima di §13. Il valore iniziale è quindi un **argomento** di
+   > `sem_init(sem, risorse)`, il che toglie l'ultima asimmetria: statico
+   > resta statico, e con quante risorse parte un semaforo si legge in un punto
+   > solo invece che in un `.word` posizionale.
+
 2. **Il lato positivo non è verificabile da niente.** Sulla mailbox il contatore
    è ridondante con la lista, quindi un'asserzione può confrontarli — è la
    stessa famiglia dell'invariante `fwd == bwd == 0`. Sul semaforo il conteggio
@@ -1676,12 +1738,35 @@ Da qui discendono tre conseguenze che non sono cosmetiche:
    accorgersi di una deriva. È la categoria di cosa su cui è già caduto il primo
    modello dei timeout (§9.6). Ne segue che quel campo vuole **un solo
    scrittore** e un'invariante dichiarata, perché sotto non c'è rete.
+
+   > **«Sotto non c'è rete» NON è una richiesta di rete** (07/09/2026). «Un solo
+   > scrittore e un'invariante dichiarata» è disciplina nel codice del kernel,
+   > cioè il lato buono della riga di §3.26 dell'handoff: *il kernel controlla
+   > ciò che, non controllato, corromperebbe le proprie strutture; non controlla
+   > se l'uso che ne fai ha senso.* Un conteggio di risorse sbagliato non
+   > corrompe niente — quel campo non è dereferenziato e non indicizza niente —
+   > quindi non vuole né un'`assert` né un contatore diagnostico. Vuole che lo
+   > scriva un modulo solo.
+
 3. **Il negativo vale −N, non −1.** La mailbox se la cava con un ricevente solo
-   perché ce n'è una per task (§8), e da lì discendono due semplificazioni che
-   il semaforo **non eredita**: non serve l'inserimento ordinato per priorità, e
-   la `receive` non ha bisogno del ciclo di ricontrollo al risveglio perché
-   nessuno può rubarle il messaggio. Su un semaforo con N in attesa servono
-   tutti e due (§13.6).
+   perché ce n'è una per task (§8), e da lì discende una semplificazione che il
+   semaforo **non eredita**: non serve l'inserimento ordinato per priorità. Su
+   un semaforo con N in attesa serve (§13.6).
+
+   > **CORREZIONE (10/09/2026).** Questa riga diceva che il semaforo perde
+   > *due* semplificazioni, e che gli serve anche **il ciclo di ricontrollo al
+   > risveglio**. È falso, e il motivo per cui sembrava vero è che stava
+   > pensando a un semaforo *signal and continue*: uno in cui il `post` rimette
+   > la risorsa nel mucchio e sveglia qualcuno perché **riprovi**. Se `sem_post`
+   > invece **consegna** — come fa la `send` (§8.5): sfila l'attendente e
+   > incrementa nello stesso passo — il conto non torna mai positivo, quindi
+   > fra la sveglia e l'esecuzione **non c'è niente da rubare**, e il percorso
+   > di ripresa è una linea retta come nella `receive`. La proprietà che la
+   > mailbox compra con «un ricevente solo» il semaforo la compra con la
+   > consegna diretta, e regge con N in attesa. Il prezzo è lo stesso della
+   > mailbox: **chi sfila decide chi corre**, ed è per questo che sfilare il
+   > primo deve voler dire sfilare il più prioritario — cioè per questo esiste
+   > l'ordinamento di §13.6, che resta necessario.
 
 ### 13.2 Il mutex è la sezione critica, e il ceiling è `cli` con un limite
 
@@ -1728,29 +1813,90 @@ interrupt farebbe male.
 ### 13.3 Le strutture
 
 ```
-SEMAFORO = TESTA        fwd/bwd/count — count contabile: >0 risorse, <0 attese
-                        Dichiarazione statica con il conteggio iniziale:
-                        sem: .word 0, 0, 10
+SEMAFORO = TESTA        .equ SEMAFORO.risorse  TESTA.count
+                        .equ SEMAFORO.size     TESTA.size
+                        contabile: >0 risorse, <0 attese. Il conteggio iniziale
+                        è un argomento di sem_init, non un .word (§13.1)
 
-MUTEX    = TESTA        fwd/bwd/count — gli attendenti. VUOTA sotto ceiling
-                        corretto: vedi §13.5
-           owner        il TCB che lo tiene, 0 = libero. È ciò che lo separa da
-                        un semaforo binario
-           prio_prec    la priorità salvata al lock — il valore di ritorno di
-                        irq_save, un livello sopra
-           ceiling      costante, calcolata a compile-time
+MUTEX    = .struct      .field coda  TESTA.size   la coda d'attesa, ANNIDATA
+                        .field owner             il TCB che lo tiene, 0 = libero
+                        .field prio_prec         il PCB precedente al lock
+                        .field ceiling           il PCB del ceiling
+                        .equ MUTEX.attese  TESTA.count
 ```
 
 Ventiquattro byte per il mutex, dodici per il semaforo, e **niente nel TCB**:
 nessuna lista di mutex posseduti, che è ciò che l'ereditarietà avrebbe imposto
 (+12 byte a task, §7.4).
 
-Un dettaglio da sciogliere col codice davanti, non adesso: il mutex accoda solo
-task, quindi il suo `count` è il numero di nodi e ricade nella disciplina
-**contata** di `coda.vasm` — a differenza di mailbox e semaforo, che al contatore
-danno un significato proprio e vanno di `_nc`. L'inserimento ordinato potrebbe
-quindi servire in entrambe le varianti, oppure il mutex adotta `_nc` per
-uniformità visto che la camminata è comunque del chiamante.
+> **Come sono scritti davvero (10/09/2026), e la differenza non è cosmetica.**
+> Semaforo e mailbox sono una `TESTA` e nient'altro — stessa dimensione, un solo
+> campo da ribattezzare — quindi sono `.equ` **derivati** e non una `.struct`
+> propria: una seconda dichiarazione dello stesso layout resterebbe indietro in
+> silenzio il giorno che `TESTA` cambiasse (§3.27 dell'handoff). Il mutex ha
+> invece tre campi in più, quindi è una `.struct` vera — ma la `TESTA` la
+> **annida**, come fa `PCB` in `tcb.vinc`, così i link restano dichiarati in un
+> posto solo e `&mutex == &mutex.coda`: il mutex si passa direttamente alle
+> primitive di coda senza nessuna conversione.
+>
+> `prio_prec` e `ceiling` contengono **indirizzi di PCB**, non numeri di
+> livello: è la forma con cui §7.3 rappresenta una priorità, e il percorso caldo
+> non deve pagare niente per la comodità della dichiarazione. La conversione da
+> numero a indirizzo avviene una volta sola, in `mutex_init`, e la fa il kernel
+> — vedi il riquadro sul ceiling qui sotto.
+
+Il `count` del mutex è il numero di nodi, cioè la convenzione **generica** di
+`coda.vasm` e non una propria; il nome `MUTEX.attese` serve a portarsi dietro
+l'invariante di §13.5 («vale 0 sempre»), non a cambiare significato. La
+disciplina però è `_nc` e il contatore lo muove il mutex, perché l'inserimento
+ordinato esiste solo in quella variante (§13.6): una testa, una sola disciplina.
+
+#### Dove si dichiara il ceiling — **DECISA** (07/09/2026)
+
+Né nel mutex né nel TCB a runtime. Nel mutex sta il **risultato**; l'insieme
+degli utenti è l'**ingresso** del calcolo, non lo legge nessuno mentre la
+macchina gira, e sta quindi nel sorgente — nel `.vinc` del modulo che possiede
+il **dato protetto**, perché per §8.6 chi può chiamare quel servizio è chi
+include quel `.vinc`.
+
+`.equ` accetta «un intero o una costante già definita» e non ci sono espressioni,
+quindi `max(...)` non è scrivibile. **Ma non serve: il massimo di un insieme è
+uno dei suoi elementi**, quindi si scrive *quale task è l'utente più
+prioritario*:
+
+```asm
+.equ MTX_POOL_CEILING  PRIO_GESTORE_TIMEOUT   ; utenti: gestore timeout, log, sensore
+```
+
+Un `.word 7` sarebbe un numero che nessuno può ri-derivare; un nome è
+un'affermazione rileggibile, e segue da sé se cambia il valore numerico di quella
+priorità. Grandezza **derivata**, non asserita.
+
+Corollario secco: il ceiling si calcola su chi **può** prendere il mutex, non su
+chi lo prende. Un task che include l'interfaccia di un servizio che poi non chiama
+alza il ceiling per niente, quindi **«non includere ciò che non usi» smette di
+essere igiene e diventa una proprietà temporale.**
+
+E il limite, detto per intero: niente di questo lo **verifica**. L'assembler non
+può sapere quale task esegue una data `mutex_lock` — è un fatto sul grafo delle
+chiamate, e un grafo delle chiamate non c'è. Metterlo nel `.vinc` non lo rende
+controllato: lo mette dove lo vedrà chi dovrebbe cambiarlo. Chi vuole sapere se è
+giusto guarda `MUTEX.attese` (§13.5).
+
+> **Il ponte fra il nome e l'indirizzo, scritto il 10/09/2026.** Il ceiling si
+> dichiara come **numero** di livello, ma a runtime una priorità è l'**indirizzo
+> di un PCB**, e `.equ NOME pcb0` non è scrivibile — costanti ed etichette sono
+> due spazi di nomi risolti in momenti diversi (§3.27 dell'handoff). Serviva
+> quindi una procedura, ed è `prio_pcb(livello) -> &PCB` nello **scheduler**:
+> l'aritmetica che fa *è* l'invariante di §7.3 (tabella dei PCB contigua e in
+> ordine), e farla uscire dal kernel significherebbe che un secondo modulo la
+> conosce senza essere quello che la garantisce. È l'unico punto del sistema in
+> cui una priorità è un numero; ovunque altrove è un indirizzo.
+>
+> Il buco non era del mutex: `tcb.vinc` pubblicava `PRIO_MAX` e `PRIO_IDLE` da
+> giorni senza che niente potesse trasformarli in ciò che il runtime usa, e
+> infatti comparivano solo dentro i commenti mentre ogni boot scriveva
+> `li r4, pcb2` a mano. Il mutex è stato solo il primo a inciamparci.
 
 ### 13.4 Non ci si blocca tenendo un mutex
 
@@ -1875,11 +2021,54 @@ mutex è vuota **sempre**. Quindi:
 > Un TCB accodato a un mutex è un'anomalia osservabile: o il ceiling di quel
 > mutex è dichiarato troppo basso, o qualcuno si è bloccato tenendolo.
 
-È un'asserzione a costo zero — `count != 0` su un mutex — ed è lo stesso mestiere
-di `CODA_LINKED` e dell'invariante `fwd == bwd == 0`: una struttura che sorveglia
-una convenzione, invece di sperarci. Vale la pena esporla come contatore
-diagnostico e non solo come `assert`, perché il caso può essere raro e
-dipendente dai tempi.
+È un'asserzione a costo zero — `MUTEX.attese != 0` — ed è lo stesso mestiere di
+`CODA_LINKED` e dell'invariante `fwd == bwd == 0`: una struttura che sorveglia
+una convenzione, invece di sperarci.
+
+> **Il codice non aggiunge niente per ottenerla (10/09/2026).** La frase che
+> stava qui — «vale la pena esporla come contatore diagnostico» — è stata
+> ritirata: il campo c'è comunque, perché la `TESTA` ce l'ha, quindi chi vuole
+> sorvegliare **lo legge** e non costa un'istruzione a nessun altro. Un
+> contatore in più sarebbe stato il kernel che controlla se l'uso che ne fai ha
+> senso, che è la riga di §3.26 dell'handoff. `test_mutex` lo legge sui due
+> mutex e ne ricava i due numeri opposti: 0 sul ceiling corretto, 1 su quello
+> dichiarato male.
+
+#### Il ceiling non ha una direzione conservativa — **DECISA** (07/09/2026)
+
+La domanda era: e se il ceiling fosse **sempre** dichiarato sopra la priorità del
+task più prioritario del sistema? Sembra una semplificazione enorme — questa
+sezione perde la ragione di esistere per costruzione (la premessa (2) non può
+cadere), la coda del mutex diventa irraggiungibile, spariscono `count`, la
+`TESTA` e persino `owner`, ventiquattro byte diventano otto.
+
+**È un baco, e sta nella parola «conservativo».** Il valore del ceiling *è*
+l'insieme dei task esclusi: non è un margine, come si dimensiona un buffer un po'
+più grande per stare tranquilli.
+
+- **Per difetto** rompe la mutua esclusione, ed è tutto ciò che questa §13.5
+  descrive.
+- **Per eccesso** rompe la garanzia temporale, e la rompe **sempre, su ogni
+  sezione critica**: il task più prioritario aspetta la sezione critica del meno
+  prioritario, cioè l'inversione di priorità che §7.4 esiste per limitare,
+  dichiarata come politica.
+
+Da cui, e non era scritto da nessuna parte, **perché §13.5 deve esistere**: se
+sovradichiarare fosse la direzione sicura, nessuno scriverebbe mai un ceiling
+sbagliato — si metterebbe il massimo dappertutto. §13.5 è il prezzo di una
+grandezza che deve essere **esatta**, ed è ciò che rende il mutex un mutex invece
+che una sospensione dello scheduler.
+
+Il danno concreto si misura su §9.2: lì si è comprata di proposito la proprietà
+«la latenza di interrupt non dipende da quanti timeout sono armati», spostando la
+scansione in un task a priorità massima. Un ceiling universale la ridà indietro un
+piano sotto — la latenza del servizio di kernel torna a dipendere dalla più lunga
+sezione critica applicativa, scritta da chiunque.
+
+Sopravvive una cosa sola, e va tenuta al suo posto: `sched_lock`/`sched_unlock` è
+una primitiva legittima dove serve escludere *tutti* i task e non una
+sottoclasse, ma è il gemello di `cli` un piano più in su, non un mutex economico,
+e non è il default di niente. Non è scritta.
 
 ### 13.6 L'inserimento ordinato, e dove NON va scritto
 
@@ -1906,6 +2095,51 @@ La divisione giusta è la stessa di `sched_dispatch` (meccanismo) contro
   «dopo `testa.bwd`». La primitiva nuova le **contiene**;
 - **la camminata** che cerca il punto di inserimento sta in `rtos/`, dentro
   `sem_wait` o `mutex_lock`, che i TCB li conoscono legittimamente.
+
+##### La seconda metà: `coda_peek` — **DECISA dall'utente** (10/09/2026)
+
+Scrivendo `sem_wait` è emerso che la divisione qui sopra è giusta ma incompleta:
+`enqueue_dopo_nc` dice **dove** mettere il nodo, e non c'è niente che permetta di
+**cercare** quel punto. Camminare a mano — `lw` su `LINK.fwd` in un ciclo — vuol
+dire sapere due cose che sono **rappresentazione e non interfaccia**: che la
+lista è circolare, e che la testa è una sentinella. Oggi nessuno fuori da
+`coda.vasm` lo sa: i quattro moduli che leggono `LINK.fwd`/`LINK.bwd` lo fanno su
+un nodo **fuori** da ogni lista, per verificare `fwd == bwd == 0`, e non
+attraversano niente. Il primo che camminasse a mano sarebbe anche il primo a
+dipendere dalla forma della lista.
+
+Quindi `coda.vasm` pubblica anche la scansione:
+
+```
+coda_peek(corrente) -> corrente.fwd        guarda e non tocca
+```
+
+La prima chiamata si fa con `corrente = testa`, ed è lecito per la ragione di
+sempre — testa e nodo condividono i link, quindi «il successore della testa» e
+«il primo nodo» sono la stessa lettura. È lo stesso fatto su cui poggiano le due
+`.global` sullo stesso indirizzo.
+
+**Un solo argomento, e la fine del giro la riconosce il chiamante contando.** Non
+è una rinuncia, ed è la parte che vale la pena non perdere: il numero di nodi è
+l'unica cosa che il proprietario della testa sa per definizione (§8.3, «la
+contabilità è del chiamante»), e un ciclo **limitato da un conteggio** è più
+forte di uno che si ferma su un terminatore. Qui sotto il terzo trattino chiede
+che il limite della sezione critica sia **dichiarato** invece che implicito:
+contando diventa *strutturale*, perché un ciclo che gira N volte non scappa
+nemmeno su una lista corrotta, mentre uno che aspetta di rivedere la sentinella
+girerebbe per sempre.
+
+`coda_peek` sta **fuori dai due assi dei suffissi**: non è `_nc`, perché il
+contatore non lo tocca nessuno — legge e basta — e non avrà una `_s`, per la
+regola già scritta.
+
+La camminata vera e propria è finita **scritta due volte**, in `sem_wait` e in
+`mutex_lock`, ed è una scelta e non una svista. Un terzo modulo che la esportasse
+costerebbe una libreria, un `.vinc` e un arco di dipendenza fra due servizi per
+risparmiare nove istruzioni; e le due non sono lo stesso codice per caso — quella
+del semaforo è il percorso **normale**, quella del mutex è il percorso che sotto
+un ceiling corretto **non deve mai eseguire** (§13.5). Il giorno che divergessero,
+divergerebbero per una ragione.
 
 Tre vincoli sulla primitiva:
 
@@ -1942,46 +2176,131 @@ periodo del timer invece della lunghezza della sezione critica.
 Va agganciato alla stessa logica di `request_preempt` (§6): non commuta lui,
 arma il flag e lascia che sia il percorso di uscita a decidere.
 
-### 13.8 Cosa resta aperto
+> **QUESTO È L'UNICO PUNTO DI §13 CHE RESTA APERTO** (10/09/2026), ed è questa
+> sezione a contraddirsi da sola. `mutex_unlock` chiama `request_preempt`, come
+> prescritto — ma da contesto di **task** un «percorso di uscita» non c'è: il
+> flag resta armato fino al **tick successivo**, cioè si ottiene esattamente la
+> latenza che il paragrafo qui sopra dice di voler evitare.
+>
+> Non era un errore quando è stata scritta (06/09): allora l'unico rientro nel
+> kernel era l'ISR, e «il percorso di uscita» non poteva voler dire altro. Da
+> §3.30 dell'handoff esiste `task_block`, cioè un rientro **sincrono**, e
+> chiudere il buco vuol dire scrivere l'analogo che **non** sospende: un
+> `task_yield` che rimette il chiamante nella coda di ready del proprio livello,
+> chiama lo scheduler e cade nel dispatcher. Sono le stesse otto righe di
+> `task_block` con `enqueue_coda` al posto di `SUSPENDED`.
+>
+> Non è stato scritto perché è **kernel**, non servizio, e questa sezione
+> prescrive l'altra cosa. Il caso in cui morde è preciso e vale la pena
+> nominarlo: durante la sezione critica un task fra la priorità nominale del
+> possessore e il ceiling diventa `READY` senza poter preemptare — `task_ready`
+> non arma il flag, perché chi gira sta al ceiling e lo batte. All'`unlock` quel
+> task dovrebbe partire subito, e invece aspetta il tick.
+>
+> Il costo attuale è quindi **una latenza**, non una scorrettezza: nessuno resta
+> indietro per sempre, perché il tick arriva comunque. Ed è la stessa forma del
+> difetto che §9.2 ha tolto altrove — una latenza che dipende dal periodo del
+> timer invece che dal lavoro.
 
-- **Il `post` su un semaforo senza attendenti.** Se il contatore è contabile, il
-  permesso si accumula (`count` sale) ed è il semaforo contatore classico —
-  quello che serve all'esempio dei dieci buffer. Resta da decidere se esista
-  anche una variante di **segnalazione**, in cui un `post` senza attendenti si
-  perde. Sono due primitive diverse, non un parametro.
-- **Il tetto del contatore.** Un `post` di troppo su un semaforo contatore è un
-  errore di costruzione come il doppio rilascio di un buffer nel pool (§10). Se
-  esista un massimo dichiarato e cosa restituisca il `post` che lo supera è da
-  decidere, e la risposta naturale in questo progetto è un esito in `r3` come
-  fanno le code, non un fermo macchina.
-- **Il semaforo davanti al pool.** L'esempio dei dieci buffer *è* la classe 16
-  del pool, dimensionata a dieci apposta. Oggi chi la trova vuota riceve
-  `POOL_VUOTO` e ripassa più tardi (§9.2). Un semaforo davanti trasformerebbe la
-  ritentata in un blocco — è il primo cliente vero che il semaforo avrebbe qui
-  dentro. Con un limite: **chi gira nel percorso del tick non può bloccarsi**,
-  quindi il gestore dei timeout resterebbe comunque sul ramo non bloccante, e il
-  semaforo servirebbe ai chiamanti in contesto task.
-- **I timeout, ed è la più grossa.** §7.5 fonda su «la mailbox è l'unico punto
-  di blocco di un task» la garanzia che *ogni attesa possa avere un tempo
-  massimo*: il gestore dei timeout consegna un messaggio nella casella su cui il
-  task sta aspettando (§9). Con il semaforo quella premessa cade — un task
-  accodato a un semaforo **non** è nella propria mailbox, e il messaggio di
-  scadenza arriva dove non c'è nessuno in ascolto. §7.5 lo aveva mezzo previsto
-  («`sem_wait` non ha timeout, per costruzione»), ma le due frasi non stanno
-  insieme: o la mailbox non è l'unico punto di blocco, o il semaforo non blocca.
-  Le due uscite:
-  1. **`sem_wait` non ha timeout**, e chi vuole un tempo massimo passa dalla
-     mailbox. È già scritto in §7.5 e ora ha una giustificazione strutturale
-     invece che una convenzione. Costo: esistono attese non limitabili nel
-     tempo, ed è esattamente ciò che §7.5 voleva evitare;
-  2. **il timeout smette di essere «consegna un messaggio» e diventa «sgancia il
-     task da dove sta e restituiscigli un esito»**. Funzionerebbe uniformemente
-     per mailbox e semaforo, e con `enqueue_dopo`/`remove_buffer` il meccanismo
-     c'è già. Costo, e va detto per intero: **il gestore dei timeout è oggi
-     l'unico cliente del pool** (§10), che esiste proprio per avere un buffer da
-     consegnare quando il cliente dorme. Se il timeout non consegna più un
-     messaggio, il pool resta senza utenti.
-- **Se un task promosso al ceiling può bloccarsi su un semaforo**, §13.4 lo
-  vieta per i mutex. Ne segue che la catena transitiva di priorità non si forma,
-  e che l'ordinamento di §13.6 può usare la priorità corrente senza doversi
-  chiedere se cambierà.
+### 13.8 `sem_wait` non ha timeout — **DECISA** (07/09/2026)
+
+> **Questa sezione si chiamava «Cosa resta aperto» ed elencava quattro dubbi.**
+> Si sono chiusi tutti, e tre di loro come **corollari** del primo: non erano
+> quattro domande, era una domanda e i suoi riflessi.
+
+§7.5 fonda su «la mailbox è l'unico punto di blocco di un task» la garanzia che
+*ogni attesa possa avere un tempo massimo*: il gestore dei timeout consegna un
+messaggio nella casella su cui il task sta aspettando (§9). Il semaforo blocca,
+quindi quella premessa cade — un task accodato a un semaforo **non** è nella
+propria mailbox, e il messaggio di scadenza arriverebbe dove non c'è nessuno in
+ascolto.
+
+Sembravano due uscite di pari dignità. **Non lo sono, e non è una scelta: è una
+deduzione.** §9 apre con «un timeout resta una consegna in mailbox che avviene più
+tardi», §9.5 è marcata DECISA, e sotto c'è §10 implementato, il pool, che esiste
+**solo** per dare un buffer a un cliente che dorme. L'uscita «il timeout sgancia
+il task da dove sta» non è un ramo alternativo: è una **riapertura di §9 e §10**,
+e una cosa decisa si riapre solo se non esiste una via che non lo richieda.
+Esiste:
+
+> Il timeout è una consegna in mailbox (§9). Un task accodato a un semaforo non è
+> nella propria mailbox. Dunque **`sem_wait` non ha timeout** — non per
+> convenzione, come lo scriveva §7.5, ma perché è l'unica forma compatibile con
+> una decisione già presa.
+
+E «il pool resterebbe senza clienti» non era il *costo* di quell'uscita: era il
+**sintomo** che quell'uscita smonta il modello sotto. Un'uscita che lascia senza
+clienti un sottosistema implementato tre giorni prima non sta pagando un prezzo.
+
+**La giustificazione, che trasforma la conclusione da concessione a principio:**
+
+> La mailbox è dove aspetti **il mondo**, e il mondo può non rispondere:
+> quell'attesa vuole un orologio. Il semaforo è dove aspetti che **un altro task
+> qui dentro** restituisca una risorsa presa per un tempo analizzabile:
+> quell'attesa è limitata dall'analisi, non da un clock.
+
+È lo stesso principio di §13.5 applicato una seconda volta — là un ceiling
+dichiarato male si aggiusta nella dichiarazione, non nel runtime; qui un'attesa su
+semaforo che ha bisogno di un timeout è un semaforo il cui conteggio, o il cui
+tempo di tenuta, non sono stati analizzati. Da cui la regola d'uso, nella forma di
+quella di §13.2:
+
+> **Aspetti qualcosa che può non arrivare? Mailbox, e un timeout. Aspetti una
+> risorsa che qualcuno qui dentro restituirà entro un tempo calcolabile?
+> Semaforo, e nessun timeout.**
+
+#### I tre corollari
+
+- **La variante di *segnalazione* non esiste.** Un `post` che si perde quando non
+  c'è nessuno in attesa è un'attesa di **evento**, e gli eventi passano dalla
+  mailbox. Il `post` accumula, ed è il semaforo contatore classico.
+- **Il tetto del contatore si chiude con un no, non con un valore.** Un `post` di
+  troppo non corrompe niente — il contatore non è dereferenziato e non indicizza
+  niente — è una risorsa restituita due volte, cioè un errore di costruzione di
+  un sistema che è statico proprio perché quelle cose si chiudono prima che giri.
+  È la riga di §3.26 dell'handoff: *il kernel controlla ciò che, non controllato,
+  corromperebbe le proprie strutture; non controlla se l'uso che ne fai ha senso.*
+- **Il semaforo davanti al pool** è il caso canonico della regola d'uso, non una
+  questione a parte. L'esempio dei dieci buffer *è* la classe 16 del pool: chi la
+  trova vuota oggi riceve `POOL_VUOTO` e ripassa più tardi (§9.2), e un semaforo
+  davanti trasformerebbe la ritentata in un blocco. Con il limite di sempre: **chi
+  gira nel percorso del tick non può bloccarsi**, quindi il gestore dei timeout
+  resterebbe sul ramo non bloccante e il semaforo servirebbe ai chiamanti in
+  contesto task.
+
+E il quarto punto — *se un task promosso al ceiling può bloccarsi su un semaforo*
+— è §13.4 e non una regola nuova: bloccarsi su un semaforo tenendo un mutex è
+bloccarsi tenendolo. Ne segue che la catena transitiva di priorità non si forma, e
+che l'ordinamento di §13.6 può usare la priorità corrente senza doversi chiedere
+se cambierà.
+
+#### La porta lasciata aperta, col prezzo già misurato
+
+Se un giorno servisse davvero un'attesa a tempo su una risorsa, la strada **non**
+è appendere un timeout a `sem_wait`: è far consegnare al semaforo nella
+**mailbox** dell'attendente, dove §9 sa già arrivare. Costa un pool che non possa
+esaurirsi, dimensionato staticamente, perché una `post` che fallisce col pool
+vuoto non ha una mossa — non è il gestore dei timeout, non può ripassare al tick
+dopo.
+
+### 13.9 Cosa è stato scritto, e cosa no (10/09/2026)
+
+| Dove | Cosa |
+|---|---|
+| `generic/coda` | `coda_peek` (§13.6), e il contratto in `coda_api.vinc`. `test_coda` cresce di due sezioni |
+| `rtos/scheduler` | `prio_pcb(livello) -> &PCB`: l'unico punto in cui una priorità è un numero (§13.3) |
+| `rtos/servizi/semaforo` | `semaforo.vinc` (il tipo, `.equ` derivati) e `sem_init`/`sem_wait`/`sem_post` |
+| `rtos/servizi/mutex` | `mutex.vinc` (la `.struct`, e il riquadro sul ceiling) e `mutex_init`/`mutex_lock`/`mutex_unlock` |
+| `rtos/test` | `test_semaforo` (l'ordinamento) e `test_mutex` (le due storie di §13.5) |
+
+Le quattro entry bloccanti o quasi — `sem_wait`, `sem_post`, `mutex_lock`,
+`mutex_unlock` — **si proteggono da sé e non hanno varianti `_s`**, e non è
+un'omissione: la sezione critica deve comprendere la decisione, non solo la
+lettura. Che siano tutte e quattro di **contesto task** discende da §13.2 per il
+mutex (un'ISR non ha una priorità nello spazio dello scheduler) e dal primo
+corollario di §13.8 per il semaforo (senza variante di segnalazione, chi fa
+`post` è sempre chi aveva fatto `wait`). Non c'è il caso che ha reso *raw* la
+`send`.
+
+**Resta aperto un punto solo, ed è §13.7**: il punto di preemption di
+`mutex_unlock` è armato ma non consumato fino al tick.

@@ -1,0 +1,73 @@
+; semaforo/semaforo.vinc — il TIPO semaforo: una TESTA il cui terzo campo conta
+; RISORSE, non nodi.
+;
+; Stessa forma di mailbox.vinc e per la stessa ragione (§3.27 dell'handoff): il
+; layout e' quello di TESTA, ma il terzo campo ha una convenzione che non e'
+; quella di coda.vasm, e finche' il codice scrive "TESTA.count" quella
+; convenzione sta in un commento invece che nel codice.
+;
+; --- LE TRE CONVENZIONI DEL TERZO CAMPO, IN UN COLPO D'OCCHIO ---
+;
+;   teste CONTATE     count >= 0 = numero di nodi         lo scrive coda.vasm
+;   MAILBOX.count     DESCRITTIVO col segno (§8.2)        lo scrive la mailbox
+;   SEMAFORO.risorse  CONTABILE: disponibili meno in      lo scrive il semaforo
+;                     attesa (§13.1)
+;
+; La differenza fra le ultime due non e' di sfumatura, ed e' la ragione per cui
+; semaforo e mailbox NON sono lo stesso tipo con un parametro diverso:
+;
+;   il contatore della mailbox e' DESCRITTIVO su entrambi i lati — se dice 3, in
+;   lista ci sono tre nodi fisici. E' ridondante con la lista, quindi
+;   un'asserzione puo' confrontarli;
+;
+;   il contatore del semaforo e' CONTABILE, e non puo' essere altrimenti: una
+;   risorsa disponibile NON e' un oggetto da accodare. Con risorse = 5 la lista
+;   e' VUOTA, quindi sul positivo il campo non e' testimoniato da niente e
+;   nessun controllo puo' accorgersi di una deriva.
+;
+; Ne discende la disciplina, che e' l'unica rete che quel campo ha: UN SOLO
+; SCRITTORE (semaforo.vasm) e l'invariante dichiarata accanto a lui. "Sotto non
+; c'e' rete" non e' una richiesta di rete (§3.26 dell'handoff): il kernel
+; controlla cio' che, non controllato, corromperebbe le proprie strutture, e un
+; conteggio di risorse sbagliato non corrompe niente — e' un errore di
+; costruzione di un sistema che e' statico proprio perche' quelle cose si
+; chiudono prima che giri.
+;
+; --- PERCHE' UN .equ DERIVATO E NON UNA .struct PROPRIA ---
+; Identico all'argomento di mailbox.vinc: una ".struct SEMAFORO { pointers,
+; risorse }" sarebbe una SECONDA dichiarazione dello stesso layout, che il
+; giorno che TESTA cambiasse resterebbe indietro in silenzio. Il .equ non copia,
+; DERIVA — se il campo di TESTA venisse rinominato questa riga non assembla piu'
+; invece di produrre un offset sbagliato.
+;
+; .equ risolve al momento della definizione, quindi coda.vinc va incluso PRIMA.
+
+.include "coda/coda.vinc"
+
+.equ SEMAFORO.risorse  TESTA.count   ; il contatore CONTABILE (§13.1)
+.equ SEMAFORO.size     TESTA.size    ; ".res SEMAFORO" alloca un semaforo
+
+; --------------------------------------------------------------------------
+;  UN SEMAFORO NON NASCE DAL .data AZZERATO — E NEMMENO DA UN .word
+;
+;  §13.1 della proposta scriveva la dichiarazione statica cosi':
+;
+;      sem: .word 0, 0, 10          ; NON E' SCRIVIBILE
+;
+;  e ci appoggiava un'osservazione giusta: il semaforo e' il primo oggetto del
+;  progetto la cui dichiarazione naturale non e' "tutti zeri". L'osservazione
+;  resta, la forma no. Una TESTA VUOTA NON E' FATTA DI ZERI — ha fwd = bwd = &se
+;  stessa — e un .word non puo' scriverla perche' non accetta etichette. E' lo
+;  stesso motivo per cui sched_init esiste, ed e' scritto in scheduler.vasm da
+;  prima di questa sezione.
+;
+;  Quindi il valore iniziale arriva da sem_init, ed e' un ARGOMENTO:
+;
+;      li r1, sem
+;      li r2, 10                    ; dieci buffer disponibili
+;      call sem_init
+;
+;  Il che toglie anche l'ultima asimmetria: resta tutto statico, non c'e' nessun
+;  percorso d'errore all'avvio, e con quante risorse parte un semaforo si legge
+;  in un posto solo invece che in un .word posizionale.
+; --------------------------------------------------------------------------

@@ -93,6 +93,7 @@ g_resched: .word 0        ; need_resched: !=0 => switch a uscita IRQ
   .global sched_init
   .global task_block
   .global task_ready
+  .global prio_pcb
   .extern ctx_restore
   .extern hal_ctx_block
 
@@ -188,6 +189,43 @@ task_ready_preempt:
   call request_preempt
   lw r15, 0(r14)
   addi r14, r14, 4
+  ret
+
+; ==========================================================================
+;  prio_pcb(r1 = livello, 0..N_LIVELLI-1) -> r1 = &PCB di quel livello.
+;
+;  L'UNICO PUNTO IN CUI UNA PRIORITA' E' UN NUMERO. Ovunque altrove e' un
+;  INDIRIZZO — TCB.pcb lo contiene, i confronti sono blt sui puntatori (§7.3), e
+;  la scansione avanza di PCB.size — ed e' bene che resti cosi': e' quella forma
+;  a rendere la selezione O(1) senza nessuna conversione.
+;
+;  Ma tcb.vinc pubblica anche PRIO_MAX e PRIO_IDLE, cioe' dei numeri, e finora
+;  non c'era modo di trasformarli in cio' che il runtime usa: le due costanti
+;  comparivano solo dentro i commenti, mentre ogni boot scriveva "li r4, pcb2" a
+;  mano. Il primo a inciampare nel buco e' stato il ceiling di un mutex, che per
+;  §3.26 dell'handoff si dichiara nominando il task piu' prioritario fra i suoi
+;  utenti:
+;
+;      .equ MTX_POOL_CEILING  PRIO_GESTORE_TIMEOUT
+;
+;  Un ".equ NOME pcb0" non e' scrivibile — costanti ed etichette sono due spazi
+;  di nomi risolti in momenti diversi (§3.27) — quindi il ponte non poteva che
+;  essere una procedura.
+;
+;  STA QUI E NON NEL MUTEX perche' l'aritmetica che fa E' l'invariante di §7.3:
+;  la tabella dei PCB e' contigua e in ordine. Quella e' la cosa che la tabella
+;  qui sopra dichiara come "da non rompere", e farla uscire dal kernel
+;  significherebbe che un secondo modulo la conosce senza essere quello che la
+;  garantisce.
+;
+;  Non e' sul percorso caldo: la si chiama al boot, quando si dichiara la
+;  priorita' di un task o il ceiling di un mutex. Foglia. Clobber: r1, r2.
+; ==========================================================================
+prio_pcb:
+  li r2, PCB.size
+  mul r1, r1, r2
+  li r2, pcb0
+  add r1, r2, r1
   ret
 
 ; ==========================================================================

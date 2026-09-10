@@ -1,0 +1,314 @@
+; rtos/servizi/mutex/mutex.vasm — il mutex a priority ceiling (ICPP):
+; mutex_init, mutex_lock, mutex_unlock.
+;
+; --- IL MUTEX E' LA SEZIONE CRITICA (§13.2) ---
+; Non e' un semaforo binario, e la differenza non e' il conteggio: e' il
+; PROPRIETARIO. Un mutex sa chi lo tiene, ed e' quel campo a rendere possibile
+; il ceiling.
+;
+; Il modo utile di vederlo e' che mutex_lock/unlock e irq_save/irq_restore sono
+; LO STESSO MECCANISMO CON UN LIMITE DIVERSO:
+;
+;                        irq_save/restore        mutex_lock/unlock (ICPP)
+;   cosa fa              ti porta a un livello   idem
+;                        da cui nessuno ti
+;                        toglie la CPU
+;   quale livello        il massimo assoluto:    il CEILING della risorsa: solo
+;                        nemmeno le ISR          chi puo' contendere QUESTA
+;   come torna indietro  ripristina la PSW       ripristina la PRIORITA'
+;                        PRECEDENTE, non         PRECEDENTE, non "torna alla
+;                        "riabilita"             nominale"
+;   dove sta il          il valore di ritorno    un campo NEL MUTEX
+;   salvataggio          di irq_save             (prio_prec)
+;   esclude le ISR       si'                     NO
+;
+; Non e' un'analogia: e' la stessa disciplina di salva-e-ripristina applicata a
+; una risorsa invece che alla macchina, ed e' per questo che l'annidamento
+; funziona in tutti e due i casi. Il campo prio_prec E' il valore di ritorno di
+; irq_save, promosso di un livello.
+;
+; Da cui la regola d'uso, e la riga da non perdere e' l'ultima della tabella:
+;
+;   se il dato lo tocca anche un'ISR -> irq_save/irq_restore, cioe' lo strato _s
+;   se lo toccano solo task          -> mutex
+;
+; La seconda meta' e' un'ottimizzazione di LATENZA, non di correttezza: per una
+; sezione di tre istruzioni la _s costa meno di un lock con cambio di priorita'.
+; Il mutex si giustifica quando la sezione e' abbastanza lunga che tenere chiusi
+; gli interrupt farebbe male.
+;
+; --- NON CI SI BLOCCA TENENDO UN MUTEX (§13.4) ---
+; Discende dalla tabella e non e' una regola in piu': sarebbe sbagliato
+; esattamente come bloccarsi con gli interrupt disabilitati — cederesti la CPU
+; tenendo chiusa una porta che nessun altro puo' aprire. Nessuno lo scriverebbe
+; con cli; non va scritto nemmeno col mutex. Non e' verificato qui, ed e' una
+; scelta: il kernel controlla cio' che corromperebbe le proprie strutture, non
+; se l'uso che ne fai ha senso. Il sintomo pero' e' osservabile, ed e' lo stesso
+; del ceiling sbagliato — vedi MUTEX.attese in mutex.vinc.
+;
+; --- LA PROMOZIONE E' UN MINIMO, NON UN MASSIMO ---
+; Con la numerazione di §4, 0 e' la priorita' PIU' ALTA e TCB.pcb e' un
+; INDIRIZZO che cresce al calare della priorita' (§7.3). Quindi "portare al
+; ceiling" e' prendere il MINIMO fra la priorita' corrente e il ceiling: se il
+; possessore e' gia' piu' prioritario del ceiling NON lo si abbassa. E' il verso
+; che si sbaglia rileggendo, ed e' anche il primo passo del degrado di §13.5 —
+; quel caso non e' un ramo in piu', e' questo confronto che non scatta.
+;
+; --- PERCHE' TUTTO QUESTO NON COSTA UNO SPOSTAMENTO FRA CODE (§7.4) ---
+; Col ceiling la priorita' cambia SOLO AL TASK CHE STA GIRANDO: chi acquisisce
+; sta eseguendo mutex_lock, chi rilascia sta eseguendo mutex_unlock, e in
+; entrambi i casi ha la CPU, quindi non e' dentro nessuna coda e la promozione
+; e' la scrittura di un campo. L'ereditarieta' promuove il POSSESSORE, che e'
+; promosso proprio perche' NON sta girando: sarebbe sfilarlo da una testa e
+; accodarlo a un'altra, dentro la sezione critica di chi si sta bloccando.
+;
+; L'unica promozione di un task che non gira sta nel percorso di DEGRADO, dove
+; unlock promuove l'attendente che sta per svegliare — ma li' il TCB e' nella
+; coda del mutex, non in una coda di ready, quindi si scrive il campo PRIMA di
+; accodarlo e la proprieta' regge lo stesso.
+
+.include "coda/coda_api.vinc"
+.include "mutex/mutex.vinc"
+.include "tcb/tcb.vinc"
+
+  .text
+
+  .global mutex_init
+  .global mutex_lock
+  .global mutex_unlock
+
+  .extern irq_save
+  .extern irq_restore
+  .extern task_ready
+  .extern task_block
+  .extern request_preempt
+  .extern prio_pcb
+  .extern current
+
+; ==========================================================================
+;  mutex_init(r1 = &mutex, r2 = LIVELLO del ceiling). Al boot, a IE = 0.
+;
+;  Il ceiling arriva come numero e viene convertito qui, una volta sola, dal
+;  solo modulo che ha il diritto di farlo (prio_pcb, kernel). Da questo momento
+;  in poi il campo e' un indirizzo di PCB, confrontabile con TCB.pcb senza
+;  nessuna conversione — che e' il punto: il percorso caldo non deve pagare
+;  niente per la comodita' della dichiarazione.
+;
+;  Non-foglia, corpo lineare. r6 tiene &mutex perche' prio_pcb sporca r1 e r2.
+; ==========================================================================
+mutex_init:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  mov r6, r1              ; &mutex, che deve sopravvivere alle call
+  mov r1, r2
+  call prio_pcb           ; r1 = &PCB del livello dichiarato
+  sw r1, MUTEX.ceiling(r6)
+  mov r1, r6
+  call coda_init          ; la coda d'attesa vuota: fwd = bwd = &mutex, attese = 0
+  sw r0, MUTEX.owner(r6)      ; libero
+  sw r0, MUTEX.prio_prec(r6)  ; senza significato finche' owner e' 0
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; ==========================================================================
+;  mutex_lock(r1 = &mutex). Solo da TASK: un'ISR non ha una priorita' nello
+;  spazio dello scheduler, non si accoda a un mutex e non si puo' far aspettare.
+;
+;  Non ha una variante _s e non puo' averla: la sezione critica deve
+;  comprendere il test di owner e la sua scrittura — un test-and-set spezzato
+;  darebbe due proprietari.
+;
+;  Frame (dopo il prologo):  +0 psw del chiamante   +4 &mutex   +8 r15
+;
+;  Non-foglia, con salti -> prologo/epilogo a mano.
+; ==========================================================================
+mutex_lock:
+  addi r14, r14, -4
+  sw r15, 0(r14)          ; +8
+  addi r14, r14, -4
+  sw r1, 0(r14)           ; +4: &mutex
+  call irq_save           ; r5 = psw del chiamante, IE = 0
+  addi r14, r14, -4
+  sw r5, 0(r14)           ; +0
+
+  lw r4, MUTEX.owner(r1)
+  bne r4, r0, mtx_degrado ; occupato: e' l'anomalia di §13.5, non il caso normale
+
+  ; --- LIBERO, ed e' l'unico caso che si dia sotto un ceiling corretto ---
+  li r4, current
+  lw r2, 0(r4)            ; r2 = il mio TCB
+  sw r2, MUTEX.owner(r1)
+  lw r5, TCB.pcb(r2)
+  sw r5, MUTEX.prio_prec(r1)  ; la priorita' di PRIMA: e' il valore di ritorno
+                              ; di irq_save, un livello sopra (§13.2)
+  lw r6, MUTEX.ceiling(r1)
+  blt r6, r5, mtx_promuovi    ; il ceiling e' piu' prioritario di me? Indirizzo
+                              ; minore = priorita' piu' alta (§4). Se NON scatta,
+                              ; sono gia' sopra il ceiling: e' il primo passo di
+                              ; §13.5, e la protezione ha gia' smesso di
+                              ; funzionare senza che nessuno se ne accorga
+
+mtx_fine:
+  lw r5, 0(r14)
+  addi r14, r14, 8        ; scarta psw e &mutex
+  call irq_restore        ; psw del chiamante
+  lw r15, 0(r14)          ; dopo la call: irq_restore passa da r15
+  addi r14, r14, 4
+  ret
+
+mtx_promuovi:
+  sw r6, TCB.pcb(r2)      ; MINIMO, non massimo. Costa una sw e basta, perche'
+                          ; chi acquisisce STA GIRANDO e non e' in nessuna coda
+  j mtx_fine
+
+; --------------------------------------------------------------------------
+;  IL DEGRADO (§13.5): il mutex e' occupato, e sotto ICPP non dovrebbe potersi
+;  dare. Se succede, una di due premesse e' caduta — il ceiling e' dichiarato
+;  troppo basso, oppure il possessore si e' bloccato tenendolo (§13.4). Le due
+;  producono lo stesso sintomo, ed e' una fortuna: un solo osservabile
+;  (MUTEX.attese != 0) copre due regole.
+;
+;  QUI SI ESCE DAGLI ESEGUIBILI, e non e' un dettaglio di implementazione: e' la
+;  sola risposta che non rompe. La reazione istintiva — riaccodarsi alla propria
+;  coda di ready e riprovare — trasforma un errore di dichiarazione in un
+;  sistema che non va avanti: se chi riprova e' piu' prioritario del possessore,
+;  lo scheduler rimette in esecuzione lui, che riprova, fallisce, si riaccoda, e
+;  il possessore non gira MAI. E' livelock, non deadlock: la macchina e'
+;  occupata al 100% e sembra che stia lavorando. Un riaccodamento e' un'attesa
+;  attiva alla granularita' dello scheduler, e come ogni attesa attiva funziona
+;  solo se chi tiene la risorsa puo' girare — che e' esattamente cio' che qui
+;  non e' vero.
+;
+;  Bloccandosi invece: il possessore riparte, finisce la sezione critica,
+;  rilascia e ci sveglia. L'inversione di priorita' c'e', ma e' LIMITATA dalla
+;  lunghezza della sua sezione critica — la stessa garanzia che darebbe un mutex
+;  senza nessun protocollo. Si perde la proprieta' ANALITICA del ceiling (un
+;  task si blocca al piu' una volta, e prima di cominciare a eseguire), che
+;  serve all'analisi di schedulabilita' e non a far girare la macchina.
+;
+;  E NON SI PROMUOVE IL POSSESSORE per farlo finire prima: quella e'
+;  ereditarieta', e rientrerebbe dalla finestra con tutto cio' per cui §7.4
+;  l'ha scartata — promuovere un task che non sta girando, quindi spostarlo fra
+;  code, dentro la sezione critica di chi si sta bloccando. Il posto dove si
+;  aggiusta e' la dichiarazione del ceiling, non il runtime.
+;
+;  La coda e' ordinata per priorita' come quella del semaforo, e per la stessa
+;  ragione: chi affiora all'unlock dev'essere il piu' prioritario fra gli
+;  attendenti. La camminata e' scritta due volte — qui e in sem_wait — e non e'
+;  una svista: §13.6 la vuole dentro sem_wait o mutex_lock, e le due non sono lo
+;  stesso codice per caso. Quella del semaforo e' il percorso NORMALE, questa e'
+;  il percorso che sotto un ceiling corretto non deve mai eseguire.
+; --------------------------------------------------------------------------
+mtx_degrado:
+  li r4, current
+  lw r9, 0(r4)            ; r9 = il mio TCB
+  lw r7, TCB.pcb(r9)      ; la mia priorita': un INDIRIZZO
+  lw r10, MUTEX.attese(r1)    ; quanti sono gia' in coda: il limite del ciclo
+  addi r5, r10, 1
+  sw r5, MUTEX.attese(r1)     ; qui la contabilita' e' del chiamante, come sul
+                              ; semaforo: si usa lo strato _nc, quindi il
+                              ; contatore lo muoviamo noi
+  mov r6, r1              ; prec = la sentinella
+  mov r2, r1              ; ... e il cursore parte da li'
+mtx_scan:
+  beq r10, r0, mtx_ins
+  mov r1, r2
+  call coda_peek          ; r2 = nodo successivo, senza sfilarlo
+  lw r8, TCB.pcb(r2)
+  blt r7, r8, mtx_ins     ; lui e' MENO prioritario: gli si entra davanti
+  mov r6, r2              ; piu' prioritario O PARI: si scavalca (FIFO fra pari)
+  addi r10, r10, -1
+  j mtx_scan
+
+mtx_ins:
+  mov r1, r6              ; prec
+  mov r2, r9              ; il mio TCB
+  call enqueue_dopo_nc
+  call task_block         ; si torna qui quando mutex_unlock ha consegnato
+  call irq_save           ; ristabilisce IE=0 (la psw d'ingresso e' sullo stack)
+  ; Il mutex E' NOSTRO: owner, prio_prec e la promozione li ha gia' scritti
+  ; l'unlock prima di renderci eseguibili. Niente da ricontrollare e niente da
+  ; riprovare, per la stessa ragione del semaforo: la consegna e' diretta.
+  j mtx_fine
+
+; ==========================================================================
+;  mutex_unlock(r1 = &mutex). Solo da TASK, e solo dal proprietario.
+;
+;  Frame (dopo il prologo):  +0 psw del chiamante   +4 r15
+;  &mutex non va sullo stack: nessuna delle call sotto tocca r1 finche' serve.
+;
+;  Non-foglia, con salti -> prologo/epilogo a mano.
+; ==========================================================================
+mutex_unlock:
+  addi r14, r14, -4
+  sw r15, 0(r14)          ; +4
+  call irq_save           ; r5 = psw del chiamante, IE = 0
+  addi r14, r14, -4
+  sw r5, 0(r14)           ; +0
+
+  ; --- si torna alla priorita' PRECEDENTE, non alla nominale. E' la stessa
+  ;     differenza che c'e' fra irq_restore e uno sti: e' cio' che fa funzionare
+  ;     l'annidamento di due lock senza nessuna lista di mutex posseduti ---
+  li r4, current
+  lw r2, 0(r4)
+  lw r5, MUTEX.prio_prec(r1)
+  sw r5, TCB.pcb(r2)
+  sw r0, MUTEX.owner(r1)  ; libero
+
+  ; --- la coda e' vuota? Sotto ceiling corretto SEMPRE (§13.5) ---
+  call dequeue_testa_nc   ; (r1 = &mutex) -> r2 = TCB, 0 se vuota. r1 intatto
+  beq r2, r0, mtxu_preempt
+
+  ; --- DEGRADO: consegna diretta al primo, che per l'ordinamento del lock e' il
+  ;     piu' prioritario fra gli attendenti. Owner e promozione si scrivono QUI,
+  ;     mentre il TCB e' ancora fuori da ogni coda di ready: e' l'unico punto in
+  ;     cui si cambia la priorita' a un task che non gira, e non costa uno
+  ;     spostamento fra code proprio perche' lo si fa PRIMA di accodarlo ---
+  lw r5, MUTEX.attese(r1)
+  addi r5, r5, -1
+  sw r5, MUTEX.attese(r1)
+  sw r2, MUTEX.owner(r1)
+  lw r5, TCB.pcb(r2)
+  sw r5, MUTEX.prio_prec(r1)  ; la SUA priorita' di prima
+  lw r6, MUTEX.ceiling(r1)
+  blt r6, r5, mtxu_promuovi
+  j mtxu_ready
+mtxu_promuovi:
+  sw r6, TCB.pcb(r2)
+mtxu_ready:
+  mov r1, r2
+  call task_ready         ; lo accoda al livello del PCB gia' promosso
+
+; --------------------------------------------------------------------------
+;  mutex_unlock E' UN PUNTO DI PREEMPTION (§13.7), e va implementato, non
+;  dedotto. irq_restore lo e' implicitamente: riabilitando, un interrupt
+;  pendente scatta subito. Qui vale lo stesso — abbassando la priorita' dal
+;  ceiling puo' diventare eseguibile un task piu' prioritario, che durante la
+;  sezione critica era stato reso READY senza poter preemptare (task_ready non
+;  arma il flag se il risvegliato non batte chi gira, e chi girava stava al
+;  ceiling).
+;
+;  Si arma il flag e basta, come vuole §13.7: non commuta lui, decide il
+;  percorso di uscita. INCONDIZIONATAMENTE, perche' distinguere i casi in cui
+;  nulla e' cambiato costerebbe un campo in piu' per risparmiare una scansione
+;  che avviene comunque al tick.
+;
+;  IL LIMITE, E VA DETTO PERCHE' §13.7 LO DICE DI SE STESSA: da contesto di task
+;  un "percorso di uscita" non c'e'. Il flag resta armato fino al TICK
+;  successivo, quindi la latenza e' il periodo del timer invece della lunghezza
+;  della sezione critica — che e' precisamente cio' che §13.7 voleva evitare.
+;  Quando §13.7 e' stata scritta (06/09) l'unico rientro nel kernel era l'ISR;
+;  da §3.30 esiste task_block, cioe' un rientro SINCRONO, e chiudere il buco
+;  vorrebbe dire un task_yield che rimette il chiamante nella propria coda di
+;  ready invece di sospenderlo. Non e' scritto, ed e' l'unica cosa che §13
+;  lascia davvero aperta.
+; --------------------------------------------------------------------------
+mtxu_preempt:
+  call request_preempt
+  lw r5, 0(r14)
+  addi r14, r14, 4
+  call irq_restore
+  lw r15, 0(r14)          ; dopo la call: irq_restore passa da r15
+  addi r14, r14, 4
+  ret
