@@ -15,7 +15,10 @@
 > mutex in `rtos/servizi/`, accanto alla mailbox. Le 26 invarianti di prima sono
 > intatte; le due nuove sono `semaforo` e `mutex`.
 >
-> **Committato, NON pushato.** Il push resta una richiesta da rifare ogni volta.
+> **Tutto pushato** su `origin/master` fino a `b19f5df`. Fuori resta solo
+> l'aggiornamento di questo riquadro, che non può nominare il proprio hash. Il
+> push l'ha chiesto l'utente a fine sessione, come deve essere: resta **una
+> richiesta da rifare ogni volta**.
 >
 > > ### ⚠⚠ LA SESSIONE SI È CHIUSA IN MEZZO A UNA DISCUSSIONE APERTA
 > >
