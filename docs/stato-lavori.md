@@ -2649,9 +2649,9 @@ Quando i tick mancano la pagina disegna quelli (15 confini, escluso il boot), e
 il titolo dello zoom cambia, perché «Un tick, fascia per fascia» direbbe il falso.
 
 > Verificata la non regressione su `test_gestore`, che ha 12 tick e prende il
-> ramo di prima. Il JS non è stato **eseguito** in fase di correzione — non c'è
-> `node` sulla macchina e Firefox era aperto sul profilo dell'utente, quindi
-> l'istanza headless non parte.
+> ramo di prima. Il JS non si è potuto **eseguire** in fase di correzione (non
+> c'è `node` sulla macchina, e Firefox era aperto sul profilo dell'utente quindi
+> l'istanza headless non parte): **l'utente ha confermato che la pagina si vede**.
 
 #### Quello che la traccia ha mostrato, e due artefatti di attribuzione
 
