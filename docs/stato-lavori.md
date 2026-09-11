@@ -19,8 +19,9 @@
 > programma del progetto **senza un solo interrupt** — e ha stanato tre difetti,
 > uno dell'assembler e due di `traccia.py`.
 >
-> Pushato fino a `e9e74a3` (§3.36 e §3.37). Il push resta **una richiesta da
-> rifare ogni volta**.
+> **Tutto pushato** su `origin/master` fino a `2e025c7`. Fuori resta solo
+> l'aggiornamento di questo riquadro, che non può nominare il proprio hash. Il
+> push resta **una richiesta da rifare ogni volta**.
 >
 > ### ▶▶ IL PROSSIMO PASSO, IN UNA RIGA
 >
