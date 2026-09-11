@@ -16,8 +16,10 @@
 > ceiling classico. §13.5 ha la sua quarta premessa, §2 non descrive più uno
 > yield che non esiste, e la proposta è riallineata.
 >
-> **NON PUSHATO.** Il lavoro dell'11/09 è sul working tree e va committato; il
-> push è **una richiesta da rifare ogni volta**, e finora non è arrivata.
+> **Tutto pushato** su `origin/master` fino a `2fb873b`. Fuori resta solo
+> l'aggiornamento di questo riquadro, che non può nominare il proprio hash. Il
+> push l'ha chiesto l'utente, come deve essere: resta **una richiesta da rifare
+> ogni volta**.
 >
 > > ### LA DECISIONE, IN QUATTRO RIGHE
 > >
