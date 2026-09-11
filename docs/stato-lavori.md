@@ -22,6 +22,26 @@
 > Pushato fino a `e9e74a3` (§3.36 e §3.37). Il push resta **una richiesta da
 > rifare ogni volta**.
 >
+> ### ▶▶ IL PROSSIMO PASSO, IN UNA RIGA
+>
+> **Il secondo test «stupido»**: guidato dalla tastiera, sempre senza tick (la
+> forma concordata è qui sotto). Poi la decisione grossa, che è aperta e non
+> mia: cosa deve *fare* l'eseguibile che mostra il sistema al lavoro.
+>
+> Restano tre debiti piccoli aperti oggi e non chiusi apposta, perché toccano
+> strumenti e vanno decisi:
+>
+> - **`.word` con una costante `.equ` scrive 0 in silenzio** (§3.38). Il
+>   manuale è corretto, ma l'assembler dovrebbe **rifiutare** un identificatore
+>   invece di azzerarlo. Tocca `assembler.c`;
+> - **il testo narrativo di `traccia.html`** è scritto attorno a `test_gestore`
+>   (il gestore a priorità 0, §3.29, l'idle che non conta il doppio): su
+>   qualunque altro programma racconta cose che non succedono. Reso dipendente
+>   dai dati solo il titolo dello zoom;
+> - **`tools/traccia.py --testo`**, proposto e non scritto: stamperebbe la
+>   timeline nel terminale invece di scrivere l'HTML, che è quello che serve
+>   quando si vuole solo controllare l'ordine dei turni. Una ventina di righe.
+>
 > ### ▶▶ DOVE SI STAVA ANDANDO
 >
 > L'utente vuole **vedere il sistema funzionante** prima di nuove
@@ -45,6 +65,20 @@
 > preemption*. Oggi due task che usassero `v0..v7` si corromperebbero a vicenda,
 > e nessun test se ne accorge perché nessun task li usa. È il fronte (2) dei tre
 > concordati il 07/09; il (1) è chiuso, il (3) — linker/locator — è intatto.
+>
+> > **Le tre strade grosse, e il disaccordo dichiarato.** L'utente vuole un
+> > **sincronizzatore** per più VM e modelli di hardware, con due macchine che si
+> > parlano come su una seriale — progettato in
+> > [`proposta-sincronizzazione.md`](proposta-sincronizzazione.md) e non scritto.
+> > Io metterei prima il **contesto vettoriale nel context switch** (il buco
+> > funzionale vero), poi l'applicazione che lavora davvero, e solo allora il
+> > sincronizzatore, che così nascerebbe con un cliente invece che a vuoto. La
+> > ragione per esteso sta in §12 di quel documento. Il **linker/locator** è il
+> > terzo, e oggi è mancato **due volte in un giorno**: l'indirizzo dei device
+> > cablato in un `.equ`, e il fatto che con più partecipanti la cosa peggiora.
+> >
+> > Il metro resta il **1° ottobre 2026** (ND Satcom): tre settimane, e ciò che
+> > si porta via è il ragionamento, non i `.vasm`.
 >
 > > ### LA DECISIONE, IN QUATTRO RIGHE
 > >
