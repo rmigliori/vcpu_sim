@@ -24,7 +24,44 @@
   .field sp                    ; +8  contesto opaco salvato
   .field pcb                   ; +12 INDIRIZZO del PCB del suo livello (§7.3)
   .field state                 ; +16 stato corrente
+  .field crit                  ; +20 sezioni critiche possedute: != 0 => NON RUOTABILE
 .ends
+
+; --------------------------------------------------------------------------
+;  TCB.crit — PERCHE' ESISTE, visto che §7.4 si vantava di "costo nel TCB:
+;  nulla" scegliendo il ceiling invece dell'ereditarieta'.
+;
+;  Perche' quel vanto e' stato scritto il 06/09/2026, quando la rotazione fra
+;  pari non esisteva ancora (e' arrivata il 07/09, §3.30). La dimostrazione di
+;  §13.5 poggia su "un eseguibile a priorita' maggiore O UGUALE esclude che tu
+;  stia girando": vero con la sola preemption, che e' STRETTA; falso con la
+;  rotazione, che e' l'unico meccanismo del kernel che agisce sull'UGUALE.
+;
+;  E agisce proprio dove fa danno. Il possessore di un mutex gira al ceiling, e
+;  i suoi pari a quel livello sono — per definizione di come il ceiling si
+;  dichiara — esattamente i task che possono chiedere quella risorsa. La
+;  rotazione ne mette uno in esecuzione, quello chiede il mutex, lo trova
+;  occupato e si accoda: la coda che §13.5 promette vuota si popola sotto un
+;  ceiling dichiarato CORRETTAMENTE.
+;
+;  NON E' DEDUCIBILE DALLA PRIORITA', ed e' la ragione per cui qui c'e' un
+;  contatore e non la priorita' nominale. Verrebbe da dedurre "sono promosso"
+;  da TCB.pcb != nominale, ma quando a prendere il mutex e' l'utente PIU'
+;  PRIORITARIO — cioe' proprio quello che definisce il ceiling — la promozione
+;  e' VUOTA: mutex_lock prende il minimo e non alza niente. Il possessore
+;  sarebbe indistinguibile da un task qualsiasi, e il caso scoperto sarebbe il
+;  peggiore.
+;
+;  LO SCHEDULER NON SA COS'E' UN MUTEX, e non deve saperlo: legge un contatore
+;  nel TCB come legge TCB.pcb. La regola che applica e' una sola — "chi e' in
+;  sezione critica non si ruota" — ed e' §13.2 alla lettera, la stessa ragione
+;  per cui una cli non ti fa perdere il quanto. Un contatore e non un flag
+;  perche' i mutex si annidano, e prio_prec esiste apposta per permetterlo.
+;
+;  Chi lo muove: mutex_lock lo incrementa su chi acquisisce, mutex_unlock lo
+;  decrementa su chi rilascia e lo incrementa su chi riceve la consegna diretta.
+;  Nessun boot lo inizializza: il segmento dati nasce azzerato.
+; --------------------------------------------------------------------------
 
 ; --------------------------------------------------------------------------
 ;  PCB — un descrittore per livello di priorita' (§3, §4 della proposta).

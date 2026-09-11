@@ -370,6 +370,16 @@ sp_preempted:
   ;     e la rotazione degenera nel non fare niente -- che e' corretto.
 sp_mio_livello:
   lw r2, 0(r14)
+  ; --- CHI E' IN SEZIONE CRITICA NON SI RUOTA (§13.2, §13.5) ---
+  ; La preemption e' stretta e non tocca i pari; la rotazione e' l'UNICO
+  ; meccanismo che agisce sull'uguale, e al livello di un ceiling l'uguale sono
+  ; gli utenti del mutex. Toglierla al possessore e' cio' che rende vera la
+  ; premessa di §13.5 ("maggiore O UGUALE esclude che tu stia girando"), che
+  ; senza questa riga e' falsa. Il costo e' una lw e una bne su un percorso che
+  ; gira solo quando qualcuno ha armato il need_resched.
+  ; Lo scheduler non sa cosa sia un mutex: legge un contatore (vedi tcb.vinc).
+  lw r3, TCB.crit(r2)
+  bne r3, r0, sp_solo
   lw r3, TESTA.count(r8)       ; ci sono PARI in attesa a questo livello?
   beq r3, r0, sp_solo          ; no: ruotare con nessuno e' due call sprecate
   sw r0, TCB.state(r2)         ; READY

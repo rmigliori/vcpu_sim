@@ -83,9 +83,27 @@ attuale finiscono nello stesso posto:
 
 | Il task… | …finisce | perché |
 |---|---|---|
-| ha lasciato la CPU **controvoglia** | in `PCB.preemptato` | riprenderà da dove stava |
-| **l'ha ceduta lui** | in fondo a `PCB.coda` | ha rinunciato al turno |
+| è stato **preemptato** da un più prioritario | in `PCB.preemptato` | riprenderà da dove stava |
+| ha finito il **turno** fra pari | in fondo a `PCB.coda` | tocca a un altro dello stesso livello |
 | si è **bloccato** | nella coda del semaforo o del mutex | non è più eseguibile |
+
+Le tre righe erano scritte come «controvoglia / l'ha ceduta lui / si è bloccato»,
+e la seconda descriveva uno **yield che non esiste**: nessuna primitiva del
+kernel permette a un task di rinunciare al turno restando eseguibile (§13.7).
+Quella riga è in realtà la **rotazione fra pari**, che non è né volontaria né
+una preemption — è il tick che scade per chi è ancora il più prioritario.
+
+E le prime due **non richiedono di sapere chi ha provocato l'uscita**: la
+differenza emerge dalla scansione. Se trova qualcuno *prima* del livello
+dell'uscente c'è un più prioritario, quindi era preemption e l'uscente non ha
+consumato il turno: slot. Se arriva al suo livello senza trovare nessuno,
+l'uscente è ancora il più prioritario e nessuno gli ha tolto niente: era fine
+turno, e va in fondo alla propria coda. **Il tick è il quanto.**
+
+Con un'eccezione, ed è l'unica cosa che lo scheduler sa di una risorsa che non
+conosce: **chi è in sezione critica non ruota** (`TCB.crit`, §13.5). Non è un
+caso a parte della tabella — l'uscente resta semplicemente RUNNING, come già
+succede quando al suo livello è solo.
 
 ### Cosa cambia rispetto a oggi
 
@@ -125,6 +143,7 @@ classDiagram
         +sp : void*
         +pcb : PCB*
         +state : word
+        +crit : word
     }
 
     class PCB {
@@ -541,7 +560,7 @@ Le due strade cambiano **cosa va dichiarato staticamente**:
 | | Ereditarietà vera | Priority ceiling (ICPP) |
 |---|---|---|
 | **Come funziona** | al rilascio si ricalcola la priorità effettiva come massimo fra la nominale e il bloccato più prioritario di ogni mutex ancora posseduto | ogni mutex ha un *ceiling* statico; chi lo acquisisce viene promosso subito a quel livello, indipendentemente da chi si bloccherà poi |
-| **Costo nel TCB** | una `TESTA` per la lista dei mutex posseduti: +12 byte, più il link nel mutex | nulla |
+| **Costo nel TCB** | una `TESTA` per la lista dei mutex posseduti: +12 byte, più il link nel mutex | un contatore di sezioni critiche: +4 byte (vedi sotto) |
 | **Costo nel mutex** | link di lista | un campo con la priorità precedente all'acquisizione |
 | **Costo a runtime** | ricalcolo a ogni rilascio | O(1) |
 | **Rischio** | complessità | il ceiling va dichiarato correttamente a mano: se un task più prioritario del ceiling prende il mutex, la garanzia salta **in silenzio** |
@@ -556,6 +575,17 @@ essere analizzabile davvero.
 
 Con acquisizioni e rilasci **annidati per costruzione**, salvare nel mutex la
 priorità precedente basta: non serve nessuna lista.
+
+> **La casella «nulla» ha smesso di essere vera l'11/09/2026**, e la correzione
+> vale la pena di leggerla perché non riguarda il mutex. Il ceiling costa zero
+> nel TCB finché lo scheduler non toglie mai la CPU a un task per darla a un suo
+> **pari**: la dimostrazione di ICPP (§13.5) poggia sull'«o uguale». La rotazione
+> fra pari, arrivata il giorno dopo che questa tabella è stata scritta, è
+> precisamente il meccanismo che agisce sull'uguale — e al livello di un ceiling
+> i pari del possessore sono i suoi utenti. Serve quindi **un contatore nel TCB**
+> che dica allo scheduler «costui non si ruota». Quattro byte contro i dodici
+> più il link dell'ereditarietà, e la raccomandazione non cambia; ma «nulla» era
+> un vanto legato a uno scheduler che nel frattempo è cambiato.
 
 #### L'argomento che ha deciso, e non è nessuno dei due qui sopra
 
@@ -1908,6 +1938,43 @@ scriverebbe con `cli`; non va scritto nemmeno col mutex.
 Non è solo igiene: è una delle tre premesse da cui discende che la coda del mutex
 resti vuota (§13.5).
 
+#### Il mutex NON È RIENTRANTE, e il rilock è questa stessa regola
+
+`mutex_lock` guarda se `owner` è diverso da zero e non lo confronta con
+`current`. Quindi un task che prende **due volte lo stesso mutex** senza
+rilasciarlo cade nel ramo del degrado, si accoda alla coda d'attesa di un mutex
+di cui è lui il proprietario, e chiama `task_block`. L'unico che potrebbe
+svegliarlo è l'unico che non girerà più: se stesso. Il task è perduto, il resto
+del sistema prosegue.
+
+Non è un caso nuovo — **è questa sezione**, letta da un'angolazione che sorprende:
+chi rilocca si sta bloccando tenendo un mutex. La premessa che cade è la (3) di
+§13.5, e l'osservabile è quello che c'è già, senza una riga di codice in più:
+`MUTEX.attese != 0` con `owner` uguale al TCB sospeso.
+
+Va detto anche che **la dimostrazione di §13.5 non parla di questo caso**. Il suo
+passaggio chiave — «un task eseguibile a priorità maggiore o uguale a quella di
+`T` esclude che `T` stia girando» — è vacuo quando quel task *è* `T`. Non è una
+premessa da aggiungere all'elenco: è un'ipotesi sulla forma dell'enunciato, che
+vale la pena dichiarare proprio perché non si vede leggendo.
+
+**Rendere il mutex rientrante è stato valutato e scartato l'11/09/2026.** Non per
+il costo — un confronto e un contatore di rientri — ma perché la rientranza è la
+primitiva di chi **non sa** se il mutex è già preso, e qui lo si sa per
+costruzione: il ceiling si dichiara nominando gli utenti, e §8.6 lega chi può
+chiamare un servizio a chi ne include l'interfaccia. In più delimiterebbe la
+sezione critica sul **grafo delle chiamate** invece che sul blocco di codice fra
+`lock` e `unlock`, annacquando esattamente la proprietà per cui §13 esiste: che
+il blocking time si legga. E il `lock` acquisirebbe un ramo che nel
+funzionamento normale **deve** eseguire, mentre oggi ogni passaggio dal degrado
+significa «qualcosa è rotto».
+
+Niente `assert`, coerentemente con il criterio del progetto: un rilock non
+corrompe nessuna struttura del kernel — lascia tutto perfettamente coerente, ed è
+il task a non esistere più. Questa è una **dichiarazione di contratto**, non un
+avvertimento: pretendere che chi usa la libreria lo sappia è legittimo solo se
+sta scritto.
+
 ### 13.5 Il degrado del mutex — cosa succede quando il ceiling è dichiarato male
 
 **Questa sezione esiste perché il ceiling ha un rischio che la tabella di §7.4
@@ -1933,20 +2000,70 @@ uguale a quella di `T` esclude che `T` stia girando. Assurdo.
 > perché il verso dei confronti è la cosa che si sbaglia rileggendo.
 
 Ne segue che **la coda d'attesa del mutex non si usa mai**. Ma la dimostrazione
-ha tre premesse, e ognuna può cadere:
+ha **quattro** premesse, e ognuna può cadere:
 
 1. **monoprocessore** — qui è vero per costruzione;
 2. **il ceiling è dichiarato correttamente**, cioè è davvero la **più alta**
    fra le priorità dei task che possono prendere quel mutex — col verso di §4,
    il numero più piccolo;
-3. **`L` è eseguibile**, cioè nessuno si blocca tenendo un mutex (§13.4).
+3. **`L` è eseguibile**, cioè nessuno si blocca tenendo un mutex (§13.4);
+4. **lo scheduler non toglie la CPU a `L` per darla a un suo PARI** — cioè non
+   c'è time-slicing fra task dello stesso livello mentre uno di loro è in
+   sezione critica.
 
 Il passaggio «un task eseguibile a priorità ≥ esclude che `T` giri» usa la (3):
-se `L` si è bloccato, non è eseguibile, e `T` può girare pur essendo `M` occupato.
+se `L` si è bloccato, non è eseguibile, e `T` può girare pur essendo `M`
+occupato. E usa la (4) per il caso dell'**uguale**, che è la parte della frase
+che nel 2026 ha smesso di essere ovvia: vedi sotto.
 
 **Le premesse (2) e (3) producono lo stesso sintomo**, ed è una fortuna: in
 entrambi i casi qualcuno finisce nella coda del mutex. Un solo osservabile
-copre due regole.
+copre due regole — e dal 11/09/2026 ne copre tre, perché anche la (4) si vede lì.
+
+#### La premessa (4), che è stata falsa per quattro giorni
+
+Questa sezione è stata scritta il 06/09/2026, quando lo scheduler aveva la sola
+preemption. La preemption è **stretta**: `task_ready` arma il `need_resched`
+solo se il risvegliato batte chi gira, quindi un pari non toglie la CPU a
+nessuno e la frase «maggiore **o uguale** esclude che tu stia girando» era vera
+senza bisogno di dirlo.
+
+Il 07/09 (§3.30 dell'handoff) è arrivata la **rotazione fra pari**, che è
+l'unico meccanismo del kernel che agisce sull'**uguale** — e agisce esattamente
+dove fa danno. Il possessore di un mutex gira al **ceiling**; i suoi pari a quel
+livello sono, per la definizione stessa di come il ceiling si dichiara, **i task
+che possono chiedere quella risorsa**. La rotazione ne mette uno in esecuzione,
+quello chiama `mutex_lock`, lo trova occupato e **si accoda**.
+
+Cioè: la coda si popolava con il ceiling dichiarato **correttamente** e senza che
+nessuno si bloccasse tenendo il mutex. Nessuna delle due cause dichiarate, e
+nessuno dei due rimedi che questa sezione prescrive avrebbe aiutato. La
+controprova è in `test_mutex`, dove basta armare il `need_resched` a ogni tick —
+uso che §6 dichiara legittimo — per far passare `attOK` da 0 a 1.
+
+**La premessa è stata resa vera invece che riscritta**, e il prezzo è un campo:
+`TCB.crit` conta le sezioni critiche possedute, `mutex_lock`/`mutex_unlock` lo
+muovono, e `sched_preempt` non ruota chi ce l'ha diverso da zero. Tre note sul
+perché è questa la forma:
+
+- **non è deducibile dalla priorità.** Verrebbe da dedurre «sono promosso» da
+  `TCB.pcb != nominale`, ma quando a prendere il mutex è **l'utente più
+  prioritario** — quello che *definisce* il ceiling — la promozione è vuota, e
+  il possessore sarebbe indistinguibile da chiunque altro. Proprio nel caso
+  peggiore;
+- **è §13.2 alla lettera**: `cli` non ti fa perdere il quanto, e una sezione
+  critica sotto ceiling non deve perderlo per il motivo gemello;
+- **costa ciò che §7.4 diceva di non pagare** («costo nel TCB: nulla»). Quella
+  riga va letta per quello che è: un vanto scritto quando la rotazione non
+  esisteva, non un vincolo di disegno.
+
+L'alternativa esaminata e scartata era alzare il ceiling di **un livello sopra**
+l'utente più prioritario, che svuota il livello del possessore dagli utenti senza
+toccare il TCB. Funziona, ma sposta il costo dove la teoria non lo prevede: i
+task che stanno *nominalmente* al livello del ceiling — estranei al mutex —
+perdono la capacità di preemptare il possessore e si prendono un termine di
+blocking per una risorsa che non usano. Con il ceiling classico il blocking cade
+esattamente su chi la usa, che è ciò che ICPP promette.
 
 #### Cosa succede se cade la (2), coi numeri
 
@@ -2202,6 +2319,24 @@ arma il flag e lascia che sia il percorso di uscita a decidere.
 > difetto che §9.2 ha tolto altrove — una latenza che dipende dal periodo del
 > timer invece che dal lavoro.
 
+> **Una cosa di questa sezione è stata confermata l'11/09/2026**, e non era
+> ovvia: `mutex_unlock` arma il flag **incondizionatamente**, anche quando nulla
+> è cambiato, ed è la scelta giusta e non un'approssimazione. Lo scheduling a
+> priorità fissa poggia sull'invariante «gira sempre il più prioritario fra gli
+> eseguibili», quindi ogni evento che cambia l'insieme degli eseguibili **o la
+> priorità di qualcuno** è un punto di rescheduling obbligatorio. Abbassare la
+> propria priorità è uno di quegli eventi: per lo scheduler è indistinguibile
+> dall'arrivo di qualcuno più prioritario. È anche asimmetrico — *salire* non
+> chiede nulla, perché sali mentre stai già girando e resti il massimo.
+>
+> E l'informazione per decidere non c'è più: quando durante la sezione critica
+> qualcuno è diventato eseguibile, `task_ready` ha confrontato, ha risposto «non
+> batte chi gira» e non ha armato niente. Quella risposta era **corretta in quel
+> momento**, perché chi girava stava al ceiling; ma il flag è a un bit e non
+> resta traccia del passaggio. Riarmare alla cieca non è pigrizia: è l'unico modo
+> di rifare una decisione che dipendeva da un dato buttato via. Conservarlo
+> costerebbe un campo.
+
 ### 13.8 `sem_wait` non ha timeout — **DECISA** (07/09/2026)
 
 > **Questa sezione si chiamava «Cosa resta aperto» ed elencava quattro dubbi.**
@@ -2304,3 +2439,17 @@ corollario di §13.8 per il semaforo (senza variante di segnalazione, chi fa
 
 **Resta aperto un punto solo, ed è §13.7**: il punto di preemption di
 `mutex_unlock` è armato ma non consumato fino al tick.
+
+#### L'aggiunta dell'11/09/2026: la premessa che mancava a §13.5
+
+| Dove | Cosa |
+|---|---|
+| `rtos/scheduler/…/tcb.vinc` | `TCB.crit`, il contatore delle sezioni critiche possedute, e il riquadro sul perché non è deducibile dalla priorità |
+| `rtos/scheduler/…/scheduler.vasm` | `sp_mio_livello` non ruota chi ha `TCB.crit != 0` |
+| `rtos/servizi/mutex` | `mutex_lock` incrementa, `mutex_unlock` decrementa e incrementa su chi riceve la consegna diretta |
+| `rtos/test/test_mutex` | l'ISR arma il `need_resched` a ogni tick: la storia A adesso prova anche che la rotazione non tocca il possessore |
+| §2, §7.4, §13.5 | la terna delle destinazioni, la casella «costo nel TCB: nulla», la quarta premessa |
+
+Il campo si paga in tre punti e si legge in uno. `TCB.size` passa da 20 a 24, e
+`test_include` — che stampa gli offset prodotti dall'assembler — se ne accorge:
+è la prova che nessuno li ha copiati a mano da qualche parte.

@@ -1,7 +1,7 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **10 settembre 2026** (§3.35 §13 è scritta: `coda_peek`,
-> `prio_pcb`, semaforo e mutex in `rtos/servizi/`, e la proposta riallineata)
+> Ultimo aggiornamento: **11 settembre 2026** (§3.36 la discussione aperta si è
+> chiusa: `TCB.crit`, chi è in sezione critica non si ruota)
 > Scopo: fotografia dello stato per riprendere il lavoro a distanza di giorni
 > senza dover ricostruire il contesto.
 
@@ -9,40 +9,31 @@
 
 ## 0. STATO ATTUALE — DA DOVE SI RIPRENDE
 
-> ### ▶ RIPRENDI DA QUI (11/09/2026 o dopo)
+> ### ▶ RIPRENDI DA QUI (12/09/2026 o dopo)
 >
-> `ctest` **28/28**. Il 10/09 (**§3.35**) ha scritto §13 per intero: semaforo e
-> mutex in `rtos/servizi/`, accanto alla mailbox. Le 26 invarianti di prima sono
-> intatte; le due nuove sono `semaforo` e `mutex`.
+> `ctest` **28/28**. L'11/09 (**§3.36**) ha chiuso la discussione che era rimasta
+> aperta a metà frase: **chi è in sezione critica non si ruota**, `TCB.crit`,
+> ceiling classico. §13.5 ha la sua quarta premessa, §2 non descrive più uno
+> yield che non esiste, e la proposta è riallineata.
 >
-> **Tutto pushato** su `origin/master` fino a `b19f5df`. Fuori resta solo
-> l'aggiornamento di questo riquadro, che non può nominare il proprio hash. Il
-> push l'ha chiesto l'utente a fine sessione, come deve essere: resta **una
-> richiesta da rifare ogni volta**.
+> **NON PUSHATO.** Il lavoro dell'11/09 è sul working tree e va committato; il
+> push è **una richiesta da rifare ogni volta**, e finora non è arrivata.
 >
-> > ### ⚠⚠ LA SESSIONE SI È CHIUSA IN MEZZO A UNA DISCUSSIONE APERTA
+> > ### LA DECISIONE, IN QUATTRO RIGHE
 > >
-> > Il codice è finito e verde, ma il 10/09 è finito **nel mezzo di una
-> > discussione di disegno**, con l'ultima frase dell'utente interrotta a metà.
-> > Non è un dettaglio da recuperare: è il fronte attivo.
+> > La rotazione fra pari è l'unico meccanismo del kernel che agisce
+> > sull'**uguale**, e al livello di un ceiling l'uguale sono gli **utenti** del
+> > mutex: li mette in esecuzione mentre il possessore tiene la risorsa, e la
+> > coda che §13.5 promette vuota si popola con il ceiling dichiarato **bene**.
 > >
-> > **Si riprende da `§3.35 → "Cosa resta aperto: §13.7, e una discussione
-> > INTERROTTA A METÀ"`**, e dentro quella sottosezione dal paragrafo
-> > **«La frase interrotta»**.
+> > Rimedio: un contatore nel TCB (`TCB.crit`), che `sched_preempt` legge prima
+> > di ruotare. **Non** la priorità nominale — quando a prendere il mutex è
+> > l'utente più prioritario la promozione è *vuota* e non si distinguerebbe
+> > niente, proprio nel caso peggiore.
 > >
-> > In una riga: *l'affiorante dalla coda di un mutex con priorità **PARI**
-> > all'ex detentore non lo preempta (la `blt` è stretta), ma la **rotazione fra
-> > pari** al tick successivo gli toglie la CPU lo stesso.* Due meccanismi, due
-> > risposte diverse alla stessa situazione. L'utente ha chiuso con **«questa
-> > cosa va chiarita per bene»**.
-> >
-> > Collegato e più grosso, con la misura già fatta: **la rotazione fra pari
-> > invalida la dimostrazione di §13.5** (controprova `0 1 1 1 1`). Tre uscite
-> > discusse, nessuna decisa.
-> >
-> > **Niente di quella discussione è nella proposta**, e tre riscritture sono
-> > sospese apposta: §2 (il criterio dei link), §13.5 (la terza causa della coda
-> > non vuota), §13.7 (la fascia invece della scansione generale).
+> > Scartate, e vale la pena sapere perché: il **ceiling universale** (è
+> > `sched_lock` travestito) e il **ceiling un livello sopra** (sposta il
+> > blocking su task che quel mutex non lo usano). La storia intera è in §3.36.
 >
 > ### ▶▶ §13 È CHIUSA, E RESTA UN PUNTO SOLO
 >
@@ -54,6 +45,10 @@
 > | **mailbox** | il **mondo**, che può non rispondere | sì (§9) |
 > | **semaforo** | una **risorsa** che un altro task qui dentro restituirà entro un tempo calcolabile | no, ed è una deduzione (§13.8) |
 > | **mutex** | niente: sotto un ceiling corretto non blocca mai. La coda esiste per far **degradare** una dichiarazione sbagliata (§13.5) | — |
+>
+> La riga del mutex regge su una proprietà dello **scheduler**, non del mutex, e
+> dall'11/09 è dichiarata: chi ha `TCB.crit != 0` non viene ruotato fra pari.
+> Chi tocca `sp_mio_livello` sta toccando l'invariante di §13.5 (§3.36).
 >
 > Quello che resta aperto è **uno**, ed è **§13.7**: `mutex_unlock` arma
 > `request_preempt` come la sezione prescrive, ma da contesto di task un
@@ -89,7 +84,8 @@
 >   distinzione di §2 si risolve senza sapere chi ha chiamato: se la scansione
 >   trova qualcuno **prima** del livello dell'uscente era preemption (slot), se
 >   arriva al suo livello senza trovare nessuno era fine turno (in fondo alla
->   coda). **Il tick è il quanto**;
+>   coda). **Il tick è il quanto**. Dall'11/09 con un'eccezione sola: chi tiene
+>   una sezione critica non ruota (§3.36);
 > - **§3.31** `test_block`: un task che si blocca su una mailbox vuota, l'ISR
 >   che gli consegna, e l'idle che gira **mentre lui dorme** — la CPU libera
 >   misurata sul serio;
@@ -124,6 +120,11 @@
 >    rimasta della tabella di §3.26. L'HAL è quello che rende di più: oggi
 >    «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo
 >    `machine.vasm`.
+>
+> Più una piccola, che l'11/09 ha messo in luce senza chiuderla: **la seconda
+> causa di §13.5 non è testata**. `test_mutex` prova il ceiling dichiarato male,
+> non il possessore che si blocca volontariamente dentro la sezione critica —
+> l'altra premessa che fa popolare la coda.
 >
 > ### ⚠ COSE CHE NON SONO NELLA PROPOSTA, E ALTRI DEBITI
 >
@@ -416,7 +417,7 @@ livello.
 | CLI `asm/ld/run/nm/ar` | completo | [`src/main.c`](../src/main.c) |
 | HAL | completo (§3.21) | [`hal/`](../hal/) |
 | Code, pool, timeout, formato messaggi | completo, indipendente dallo scheduler (§3.24) | [`generic/`](../generic/) |
-| Kernel + scheduler a priorità + mailbox + gestore timeout | completo: PCB, slot, rotazione fra pari, blocco volontario, task di sistema (§3.28–§3.33). Restano mutex e semaforo (§13) | [`rtos/`](../rtos/) |
+| Kernel + scheduler a priorità + mailbox + gestore timeout + semaforo e mutex | completo: PCB, slot, rotazione fra pari (tranne per chi è in sezione critica, §3.36), blocco volontario, task di sistema (§3.28–§3.33), §13 scritta (§3.35). Resta §13.7 | [`rtos/`](../rtos/) |
 | Linguaggio alto livello `vc` | **da fare** — solo progettato | [`docs/proposta-linguaggio-alto-livello.md`](proposta-linguaggio-alto-livello.md) |
 
 Macchina: 16 registri scalari `r0..r15` (`r0` = 0), 16 float `f0..f15`, 8
@@ -2545,6 +2546,151 @@ il contratto scritto.
 
 ---
 
+### 3.36 LA DISCUSSIONE APERTA SI È CHIUSA: chi è in sezione critica non si ruota (11/09/2026)
+
+`ctest` **28/28**. Il fronte che il 10/09 era rimasto a metà frase è chiuso, e la
+decisione **non è quella che io raccomandavo all'inizio della sessione**: ci si è
+arrivati per una strada che l'utente ha impostato da zero, ripartendo dai semafori
+del 1985.
+
+#### Il chiarimento che ha sciolto il nodo: non erano due problemi, era uno
+
+Il 10/09 l'handoff registrava due cose come «collegate»: il caso dell'affiorante
+di priorità **pari** all'ex detentore, e la rotazione che invalida §13.5. Sono
+**lo stesso caso**.
+
+All'unlock l'affiorante è pari all'ex detentore esattamente quando
+`prio_prec(S) == ceiling` — cioè quando S, prima del lock, stava già al livello
+del ceiling. E chi sta a quel livello? Per definizione di come il ceiling si
+dichiara, **l'utente più prioritario del mutex**. Possessore promosso e utente
+più prioritario abitano lo stesso livello *per costruzione*, non per una
+coincidenza del test.
+
+Da lì tutto si allinea. `task_ready` confronta con una `blt` **stretta** e li
+tiene separati: quello è il pezzo **corretto**, ed è la premessa su cui §13.5
+poggia («maggiore *o uguale* esclude che tu stia girando»). `sp_mio_livello` è
+l'unico meccanismo del kernel che agisce **sull'uguale**, e al livello di un
+ceiling l'uguale sono gli utenti. Il `0 1 1 1 1` non era un terzo caso sfortunato
+accanto ai due di §13.5: era il solo posto in cui quel meccanismo poteva mordere.
+
+#### Il giro storico, che ha cambiato la domanda
+
+L'utente ha riportato il problema al modello che usava prima che ICPP esistesse —
+semaforo binario, nessuna promozione, l'ex detentore che continua a girare — e ha
+chiesto cosa cambia col mutex. Tre risposte, e la seconda è quella che conta:
+sotto un ceiling corretto **il ramo «occupato» non si esegue mai**, perché
+l'attesa non è stata accorciata, è stata **spostata prima** della sezione
+critica. Il task alto non aspetta in coda: non viene ancora schedulato.
+
+Da cui la domanda vera — *«è giusto far girare sempre e comunque lo
+scheduler?»* — e la risposta che ha dato la chiave: **sì per il rescheduling, no
+per la rotazione**, e nel nostro kernel sono la stessa `call`. Il rescheduling
+all'unlock è obbligatorio (abbassare la propria priorità è indistinguibile,
+per lo scheduler, dall'arrivo di uno più prioritario); il round-robin fra pari è
+un'aggiunta nostra, **estranea al modello in cui ICPP è dimostrato** — PCP e ICPP
+assumono tie-breaking non preemptivo fra pari, e la response-time analysis somma
+l'interferenza solo sui task *strettamente* più prioritari. È la ragione per cui
+esistono `SCHED_FIFO` e `SCHED_RR` separati.
+
+#### Le due strade percorse, e perché ha vinto la seconda
+
+L'utente ha riproposto il **ceiling universale** — tutti i mutex a priorità 0,
+nessun task dichiarabile a 0 — che il 07/09 aveva già proposto e bocciato lui
+stesso come «baco concettuale». Riaprirlo era legittimo: il 07/09 il confronto
+era fra un ceiling esatto *gratis* e uno universale *caro*, e oggi sappiamo che
+quello esatto non è gratis. Ma è caduto su un'**identità**: un mutex che esclude
+*tutti* i task invece di una sottoclasse non è un mutex economico, è
+`sched_lock`/`sched_unlock` con 8 byte di stato attorno. La domanda diventava
+«ci serve un mutex o ci serve `sched_lock`?», e la risposta del progetto è la
+prima.
+
+Poi il **ceiling un livello sopra** (`max(utenti) − 1`), che svuota il livello
+del possessore dagli utenti. Funziona, e per un po' è sembrata la strada.
+L'ha affondata un esempio dell'utente — utenti a 2 e 3, ceiling 1 — che ha fatto
+vedere il costo nascosto: un task nominalmente a 1, **estraneo al mutex**, con il
+ceiling classico preempta il possessore e non paga niente; col `−1` diventa suo
+pari, non lo preempta più, e si prende un termine di blocking per una risorsa che
+non usa. Il `−1` sposta il costo dove la teoria non lo prevede.
+
+> Dentro quel ramo è nata anche l'idea dell'utente di accodare il possessore al
+> **secondo posto** invece che in fondo: la dilatazione della sezione critica
+> passerebbe da `n × quanto` a un quanto, indipendente da quanti pari ci sono.
+> È buona, ma paga lo stesso campo nel TCB dell'uscita scelta e non risolve la
+> correttezza da sola (il turno ceduto andrebbe comunque a un utente). Resta in
+> archivio: serve solo se il livello del ceiling non si può tenere vuoto.
+
+#### La decisione, e cosa è stato scritto
+
+**Ceiling classico + il possessore non è ruotabile.** Il blocking cade esattamente
+su chi usa la risorsa, che è ciò che ICPP promette; nessun livello di priorità
+consumato; il gestore dei timeout resta a `PRIO_MAX`; §13.5 non si riscrive, le
+si aggiunge la **quarta premessa** che era rimasta implicita.
+
+Il campo è un **contatore**, e la ragione è il caso che la scelta ovvia non
+copre: dedurre «sono promosso» da `TCB.pcb != nominale` fallisce proprio quando a
+prendere il mutex è l'utente più prioritario — la promozione è **vuota**, e il
+possessore sarebbe indistinguibile da chiunque altro nel caso peggiore. Quello da
+rilevare non è «sei promosso» ma **«tieni un mutex»**.
+
+| Dove | Cosa |
+|---|---|
+| [`tcb.vinc`](../rtos/scheduler/interface/tcb/tcb.vinc) | `TCB.crit` (+20), e il riquadro sul perché non è la priorità nominale |
+| [`scheduler.vasm`](../rtos/scheduler/impl/src/scheduler.vasm) | `sp_mio_livello`: `lw` + `bne` e si va a `sp_solo` |
+| [`mutex.vasm`](../rtos/servizi/mutex/impl/src/mutex.vasm) | `lock` incrementa; `unlock` decrementa su di sé e incrementa su chi riceve la consegna diretta |
+| [`mutex.vinc`](../rtos/servizi/mutex/interface/mutex/mutex.vinc) | la terza causa che c'è stata dal 07 all'11/09, scritta perché la sua assenza non è gratuita |
+| [`test_mutex.vasm`](../rtos/test/test_mutex.vasm) | `call request_preempt` nell'ISR: la storia A prova ora anche la rotazione |
+| `CMakeLists.txt`, `rtos/test/CMakeLists.txt` | `TCB.size` 20 → 24; `test_scheduler` 74→73 e 59→58 |
+| `proposta-kernel-realtime.md` | §13.5 (la quarta premessa), §2 (la terna, e lo yield che non esiste), §7.4 (la casella «nulla»), §13.7 (perché armare incondizionatamente è giusto), §13.9 |
+
+**Il numero che NON si è mosso è `cntD`** nel test dello scheduler: lì nessuno
+tiene un mutex, quindi la rotazione deve funzionare esattamente come prima, e
+funziona. Gli altri due scendono di uno perché due istruzioni si pagano.
+
+E la controprova è stata eseguita **prima** della cura: con la sola `call
+request_preempt` aggiunta al test, `attOK` passava a 1 — un TCB accodato a un
+mutex dichiarato correttamente. Poi la cura, e `0 0 1 1 1`.
+
+#### La coda della sessione: il mutex non è rientrante, e adesso è scritto
+
+Domanda dell'utente a lavoro finito, e la risposta non c'era da nessuna parte.
+`mutex_lock` non confronta `owner` con `current`, quindi chi rilocca si accoda
+alla coda d'attesa di un mutex che possiede lui e chiama `task_block`: perduto.
+
+Non è un caso nuovo — **è §13.4**: chi rilocca si sta bloccando tenendo un
+mutex, la premessa che cade è la (3) di §13.5, e l'osservabile esiste già
+(`attese != 0` con `owner` uguale al TCB sospeso). Interessante il corollario
+sulla dimostrazione: il passaggio «un eseguibile a priorità ≥ esclude che `T`
+giri» è **vacuo quando quel task è `T`**, quindi la non-rientranza non è una
+premessa da aggiungere all'elenco, è un'ipotesi sulla forma dell'enunciato.
+
+**Implementare la rientranza è stato valutato e scartato**, e l'argomento non è
+il costo: è che la rientranza serve a chi **non sa** se il mutex è già preso,
+mentre qui lo si sa per costruzione (il ceiling si dichiara nominando gli utenti,
+§8.6 lega chi chiama a chi include). In più delimiterebbe la sezione critica sul
+grafo delle chiamate invece che fra `lock` e `unlock`, e darebbe al `lock` un
+ramo che nel funzionamento normale **deve** eseguire — mentre oggi ogni
+passaggio dal degrado significa «qualcosa è rotto». Nessun `assert`, per il
+criterio di §3.26: un rilock non corrompe niente.
+
+Scritto in §13.4 della proposta e in testa a `mutex.vinc`, in forma di
+**contratto** e non di avvertimento — sull'osservazione dell'utente che un
+ingegnere del software queste cose le sa, cui va aggiunto che pretenderlo è
+legittimo solo se il contratto sta scritto.
+
+#### Cosa resta aperto
+
+- **§13.7**, come prima e per la stessa ragione: `task_yield` è kernel e va
+  deciso, non dedotto. Oggi la sessione ha *confermato* che armare il flag
+  incondizionatamente è giusto, quindi il buco è solo il consumo sincrono;
+- **la seconda causa di §13.5 non è testata**: nessun test prova il possessore
+  che si blocca volontariamente dentro la sezione critica. La coda non distingue
+  le due cause, ed è dichiarato che non le distingue, ma l'osservabile andrebbe
+  visto scattare anche per quella;
+- la **fascia** al posto della scansione generale (§13.7) resta una proposta non
+  decisa, e non è stata scritta.
+
+---
+
 ### 3.35 §13 È SCRITTA: semaforo e mutex, e la primitiva che l'utente ha aggiunto a `coda.vasm` (10/09/2026)
 
 **La sessione che chiude §13.** `ctest` **28/28** — le 26 di prima intatte, più
@@ -2744,6 +2890,11 @@ compare dove non deve mai comparire.
 
 #### Cosa resta aperto: §13.7, e una discussione INTERROTTA A METÀ
 
+> **CHIUSA l'11/09/2026 — vedi §3.36.** Quello che segue è il verbale di com'era
+> il problema quando non aveva ancora una risposta, e si legge per capire da dove
+> la risposta è venuta. Le «tre uscite, nessuna decisa» adesso sono quattro e una
+> è scelta: ceiling classico più `TCB.crit`. §13.7 invece è ancora aperta.
+
 > **⚠ SI RIPRENDE DA QUI.** La sessione è finita nel mezzo di una discussione di
 > disegno che non è conclusa, e l'ultima frase dell'utente si è interrotta a
 > metà. Il paragrafo «La frase interrotta» qui sotto dice esattamente dove.
@@ -2832,7 +2983,7 @@ E `sem_post`/`send_s` **non** hanno una fascia: nessuno è stato zittito, e
 fedele e serve solo un consumatore sincrono. Quindi **non** è una primitiva sola
 per tutti e tre, come avevo detto: sono due bisogni diversi.
 
-##### La frase interrotta — ⚠ È DA QUI CHE SI RIPARTE
+##### La frase interrotta — (risolta l'11/09: era lo stesso caso del ritrovamento qui sotto, §3.36)
 
 L'utente stava enumerando i casi dell'affiorante dalla coda del mutex e si è
 fermato a: *«se il task affiorante dalla…»*. La mia ipotesi di completamento era

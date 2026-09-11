@@ -21,6 +21,16 @@
 ;   gira e trova il mutex LIBERO. E' la proprieta' di §13.5 messa in esecuzione:
 ;   un task che gira e prova a prendere un mutex lo trova libero.
 ;
+;   E DAL 11/09/2026 LA STORIA A PROVA UNA COSA IN PIU'. "T non preempta S"
+;   riguarda la sola preemption, che e' stretta; ma i due sono PARI, e la
+;   rotazione fra pari e' l'unico meccanismo del kernel che agisce sull'uguale.
+;   L'ISR qui arma il need_resched a ogni tick (vedi isr_go), cioe' chiede la
+;   rotazione come §6 permette, e senza TCB.crit la rotazione toglierebbe la CPU
+;   a S per darla a T — che andrebbe a trovare il mutex occupato e SI
+;   ACCODEREBBE, sotto un ceiling dichiarato correttamente. attOK varrebbe 1.
+;   Che valga 0 e' la prova che lo scheduler non ruota chi e' in sezione
+;   critica, cioe' la premessa su cui §13.5 poggia senza averla mai dichiarata.
+;
 ; --- STORIA B, il ceiling sbagliato: SI BLOCCA, NON RIPROVA ---
 ;   W (4) prende mtxKO. Il ceiling e' 5, MENO prioritario di lui, quindi la
 ;   promozione NON scatta: e' il passo 1 di §13.5, "qui la protezione ha gia'
@@ -41,7 +51,8 @@
 ;                confronto e' sbagliato, ed e' l'errore che si fa rileggendo
 ;   attOK    0   la coda di mtxOK mentre S la tiene e T e' gia' eseguibile.
 ;                E' l'osservabile a costo zero di §13.5: sotto ceiling corretto
-;                un TCB accodato a un mutex e' un'ANOMALIA, non uno stato
+;                un TCB accodato a un mutex e' un'ANOMALIA, non uno stato.
+;                E' anche il numero che la rotazione fra pari faceva diventare 1
 ;   attKO    1   la coda di mtxKO nella stessa identica situazione. Un solo
 ;                osservabile, due esiti: e' la misura della differenza fra i due
 ;                ceiling, non due prove separate
@@ -141,6 +152,7 @@ stackI_top:
   .extern mutex_unlock
   .extern receive
   .extern irq_install
+  .extern request_preempt
   .extern sched_isr_exit
   .extern ctx_init
   .extern timer_init
@@ -511,5 +523,15 @@ isr_avanza:
   sw r8, 0(r1)
 
 isr_go:
+  ; --- LA ROTAZIONE FRA PARI, CHIESTA A OGNI TICK ---
+  ; Un'ISR che arma il need_resched a ogni tick e' uso legittimo e dichiarato
+  ; (§6): e' cosi' che un'applicazione chiede il round-robin fra i suoi task
+  ; dello stesso livello. Ma il possessore di un mutex gira AL CEILING, e i suoi
+  ; pari a quel livello sono — per definizione della dichiarazione — proprio i
+  ; task che possono chiedere quella risorsa. Senza il campo TCB.crit questa
+  ; sola riga porta attOK da 0 a 1: la rotazione toglie la CPU a S e la da' a T,
+  ; che va a trovare il mutex occupato e SI ACCODA, sotto un ceiling dichiarato
+  ; CORRETTAMENTE. E' la terza causa che §13.5 non prevedeva.
+  call request_preempt
   mov r1, r6
   j sched_isr_exit

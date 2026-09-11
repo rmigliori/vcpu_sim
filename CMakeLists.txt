@@ -103,7 +103,9 @@ vasm_check(proc       MODE DUMPS EXPECT "100 200 300"
 # quindi TCB.size passa da 16 a 20 e TCB.state da +12 a +16. Il test non e'
 # cambiato -- stampa gli offset che l'assembler produce -- e i due numeri nuovi
 # sono la prova che li ha presi dalla dichiarazione e non da una copia.
-vasm_check(include    MODE DUMPS EXPECT "20 16 16 512 1"
+# "24" dall'11/09/2026: il campo TCB.crit, che toglie la rotazione fra pari a
+# chi tiene un mutex (tcb.vinc). TCB.state resta a +16: il campo e' in fondo.
+vasm_check(include    MODE DUMPS EXPECT "24 16 16 512 1"
            IFLAGS -I$<TARGET_PROPERTY:vinc_tcb,INTERFACE_INCLUDE_DIRECTORIES>
                   -I$<TARGET_PROPERTY:vinc_pool,INTERFACE_INCLUDE_DIRECTORIES>
                   -I$<TARGET_PROPERTY:vinc_coda,INTERFACE_INCLUDE_DIRECTORIES>

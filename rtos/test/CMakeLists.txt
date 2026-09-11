@@ -39,6 +39,12 @@ vasm_check(mailbox MODE DUMPS PROGRAM test_mailbox
 #  TUTTI > 0. Il piu' importante e' cntD (il terzo): senza la rotazione fra pari
 #  varrebbe esattamente zero, perche' M finirebbe nello slot a ogni tick e lo
 #  slot batte la coda.
+#
+#  "73 ... 58" dall'11/09/2026 (era "74 ... 59"): sp_mio_livello legge TCB.crit
+#  prima di ruotare, e le due istruzioni in piu' si pagano sui contatori che
+#  dipendono dai cicli. Il numero che NON si e' mosso e' cntD, ed e' la
+#  non-regressione che conta: qui nessuno tiene un mutex, quindi la rotazione
+#  deve funzionare esattamente come prima.
 # ---------------------------------------------------------------------------
 vasm_object(t_scheduler SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_scheduler.vasm
                         INTERFACES vinc_coda vinc_tcb)
@@ -46,7 +52,7 @@ vasm_object(t_scheduler SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_scheduler.vasm
 vasm_program(test_scheduler OBJECTS t_scheduler LINK lib_kernel)
 
 vasm_check(scheduler MODE DUMPS PROGRAM test_scheduler
-           EXPECT "74 5 10 59")
+           EXPECT "73 5 10 58")
 
 # ---------------------------------------------------------------------------
 #  test_block — il blocco volontario: un task che dorme davvero.

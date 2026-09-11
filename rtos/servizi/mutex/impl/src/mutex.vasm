@@ -139,6 +139,9 @@ mutex_lock:
   li r4, current
   lw r2, 0(r4)            ; r2 = il mio TCB
   sw r2, MUTEX.owner(r1)
+  lw r4, TCB.crit(r2)     ; da qui in poi lo scheduler non mi ruota fra pari:
+  addi r4, r4, 1          ; la promozione mi mette AL livello degli utenti, e la
+  sw r4, TCB.crit(r2)     ; rotazione li' darebbe la CPU a uno di loro (tcb.vinc)
   lw r5, TCB.pcb(r2)
   sw r5, MUTEX.prio_prec(r1)  ; la priorita' di PRIMA: e' il valore di ritorno
                               ; di irq_save, un livello sopra (§13.2)
@@ -227,9 +230,11 @@ mtx_ins:
   call enqueue_dopo_nc
   call task_block         ; si torna qui quando mutex_unlock ha consegnato
   call irq_save           ; ristabilisce IE=0 (la psw d'ingresso e' sullo stack)
-  ; Il mutex E' NOSTRO: owner, prio_prec e la promozione li ha gia' scritti
-  ; l'unlock prima di renderci eseguibili. Niente da ricontrollare e niente da
-  ; riprovare, per la stessa ragione del semaforo: la consegna e' diretta.
+  ; Il mutex E' NOSTRO: owner, prio_prec, la promozione e TCB.crit li ha gia'
+  ; scritti l'unlock prima di renderci eseguibili. Niente da ricontrollare e
+  ; niente da riprovare, per la stessa ragione del semaforo: la consegna e'
+  ; diretta. In particolare crit NON va incrementato qui: sarebbe la seconda
+  ; volta, e resteremmo non ruotabili per sempre.
   j mtx_fine
 
 ; ==========================================================================
@@ -254,6 +259,9 @@ mutex_unlock:
   lw r2, 0(r4)
   lw r5, MUTEX.prio_prec(r1)
   sw r5, TCB.pcb(r2)
+  lw r4, TCB.crit(r2)     ; scendo di priorita' E torno ruotabile. Un contatore
+  addi r4, r4, -1         ; e non un flag: con due lock annidati il primo unlock
+  sw r4, TCB.crit(r2)     ; non deve restituirmi alla rotazione (tcb.vinc)
   sw r0, MUTEX.owner(r1)  ; libero
 
   ; --- la coda e' vuota? Sotto ceiling corretto SEMPRE (§13.5) ---
@@ -269,6 +277,9 @@ mutex_unlock:
   addi r5, r5, -1
   sw r5, MUTEX.attese(r1)
   sw r2, MUTEX.owner(r1)
+  lw r4, TCB.crit(r2)     ; il possessore e' lui da ADESSO, anche se non gira
+  addi r4, r4, 1          ; ancora: la consegna e' diretta, e il divieto di
+  sw r4, TCB.crit(r2)     ; rotazione viaggia con essa
   lw r5, TCB.pcb(r2)
   sw r5, MUTEX.prio_prec(r1)  ; la SUA priorita' di prima
   lw r6, MUTEX.ceiling(r1)

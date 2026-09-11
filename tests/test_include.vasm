@@ -33,9 +33,9 @@
   .text
 
 main:
-  li r1, TCB.size       ; 16 — da tcb.vinc, definita una volta sola
+  li r1, TCB.size       ; 24 — da tcb.vinc, definita una volta sola
   dumps r1
-  li r2, TCB.state      ; 12 — l'offset, non solo la taglia
+  li r2, TCB.state      ; 16 — l'offset, non solo la taglia
   dumps r2
   li r3, POOL_D16       ; 16 — da pool.vinc: il secondo fornitore c'e'
   dumps r3

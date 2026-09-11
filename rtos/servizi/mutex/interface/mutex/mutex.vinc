@@ -8,6 +8,27 @@
 ; ridichiarata, come fa PCB in tcb.vinc: cosi' il layout dei link vive in un
 ; posto solo (§3.27) e &mutex == &mutex.coda, quindi il mutex si passa
 ; DIRETTAMENTE alle primitive di coda senza nessuna conversione.
+;
+; --------------------------------------------------------------------------
+;  CONTRATTO: QUESTO MUTEX NON E' RIENTRANTE.
+;
+;  mutex_lock guarda se owner e' diverso da zero e NON lo confronta con current.
+;  Un task che prende due volte lo stesso mutex senza rilasciarlo si accoda
+;  quindi alla coda d'attesa di un mutex di cui e' lui il proprietario, e
+;  chiama task_block: l'unico che potrebbe svegliarlo e' l'unico che non girera'
+;  piu'. Il task e' perduto; il resto del sistema prosegue.
+;
+;  Non e' un caso a parte: chi rilocca SI STA BLOCCANDO TENENDO UN MUTEX, che e'
+;  §13.4. La premessa che cade e' la (3) di §13.5 e l'osservabile e' gia' qui —
+;  MUTEX.attese != 0 con owner uguale al TCB sospeso — senza una riga di codice
+;  in piu'.
+;
+;  Nessun controllo a runtime, per il criterio di §3.26: un rilock non corrompe
+;  nessuna struttura del kernel, le lascia tutte coerenti. E' il task a non
+;  esistere piu'. La rientranza e' stata valutata e scartata (§13.4 della
+;  proposta): e' la primitiva di chi NON SA se il mutex e' gia' preso, mentre
+;  qui lo si sa per costruzione — il ceiling si dichiara nominando gli utenti.
+; --------------------------------------------------------------------------
 
 .include "coda/coda.vinc"
 
@@ -32,6 +53,16 @@
 ; stato, e' un'ANOMALIA — o il ceiling di quel mutex e' dichiarato troppo basso,
 ; o qualcuno si e' bloccato tenendolo. Le due cause producono lo stesso sintomo,
 ; ed e' una fortuna: un solo osservabile copre due regole.
+;
+; UNA TERZA CAUSA C'E' STATA, dal 07/09 al 11/09/2026, ed e' scritta qui perche'
+; la sua assenza non e' gratuita. La dimostrazione di §13.5 dice "un eseguibile a
+; priorita' maggiore O UGUALE esclude che tu stia girando": vero per la
+; preemption, che e' stretta, falso per la ROTAZIONE FRA PARI, che al livello di
+; un ceiling ruota il possessore con i suoi utenti. La coda si popolava con il
+; ceiling dichiarato bene, e i due rimedi qui sopra non c'entravano niente.
+; Oggi non succede perche' lo scheduler non ruota chi ha TCB.crit != 0 — quindi
+; l'invariante di questo campo poggia su una proprieta' del kernel, non del
+; mutex, e chi tocca sp_mio_livello in scheduler.vasm la sta toccando.
 ;
 ; Non c'e' nessun contatore diagnostico e nessuna assert (§3.26 dell'handoff: il
 ; kernel controlla cio' che, non controllato, corromperebbe le proprie
