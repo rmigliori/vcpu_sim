@@ -105,11 +105,12 @@ stanno in [`cmake/vasm.cmake`](../cmake/vasm.cmake).
 ### 2.3 Eseguire un programma
 
 ```bash
-./build/vcpu_sim [--trace|--debug] <programma.vasm>
+./build/vcpu_sim [--trace|--debug] [--kbd <ciclo:car,...>] <programma.vasm>
 ```
 
 Senza flag esegue il programma normalmente. `--trace` e `--debug` sono descritti
-in §2.4.
+in §2.4; `--kbd` alimenta la tastiera con una traccia a cicli ed è descritto in
+§3.1.
 
 Esempio:
 
@@ -456,6 +457,7 @@ breakpoint at 5
 | Parola di stato (`psw`) | 1 registro | strato di controllo scalare; bit 0 = `IE` (interrupt enable) |
 | Registri di trap | `epc`, `epsw` | copie ombra di `pc` e `psw` salvate all'interruzione, ripristinate da `reti` |
 | Memoria | 1 MiB | **indirizzabile a byte**; elemento = 4 byte (float32) |
+| Device (MMIO) | `0x100000`+ | registri di periferica, **sopra** la RAM: vedi §3.1 |
 
 **Dettagli importanti:**
 
@@ -473,6 +475,58 @@ breakpoint at 5
   significa «nessun task in esecuzione», e le liste del kernel riconoscono un
   nodo fuori da ogni coda dai link nulli. Conseguenza pratica: la prima
   etichetta dichiarata in `.data` vale 4, non 0.
+
+### 3.1 Device in memoria (MMIO) e la tastiera
+
+Dall'11/09/2026 la macchina ha un **ingresso**. I registri di periferica si
+leggono con una `lw` normale, come su qualunque macchina vera: **non c'è nessuna
+istruzione nuova**, e l'ISA resta quella che era.
+
+L'intervallo comincia a `0x100000`, cioè **subito dopo l'ultimo byte di RAM**, e
+non dentro: così non sottrae memoria ai programmi, nessun linker deve sapere di
+doverlo evitare, e una collisione fra un dato e un registro di periferica è
+impossibile invece che improbabile. L'errore *out of bounds* resta per gli
+indirizzi che non sono né RAM né device.
+
+| Registro | Indirizzo | Accesso | Significato |
+|---|---|---|---|
+| `KBD_STATUS` | `0x100000` | lettura | bit 0 `KBD_READY` = c'è un carattere; bit 1 `KBD_OVERRUN` = ne è arrivato un altro prima che leggessi |
+| `KBD_DATA` | `0x100004` | lettura | il carattere — **e la lettura abbassa il flag** |
+
+Che leggere `KBD_DATA` abbia un **effetto** è la differenza fra memoria e MMIO,
+e il protocollo sta tutto lì: non serve nessun handshake, e un carattere perso
+non sparisce in silenzio perché `KBD_OVERRUN` lo dice. È il modello di ogni
+UART. Le costanti stanno in
+[`hal/interface/hal/kbd.vinc`](../hal/interface/hal/kbd.vinc), e il polling si
+scrive con le istruzioni che già ci sono — quello che il PDP-8 chiamava *skip on
+flag*:
+
+```asm
+  li   r1, KBD_STATUS
+  lw   r2, 0(r1)
+  beq  r2, r0, niente        ; il flag non è alzato
+  li   r1, KBD_DATA
+  lw   r3, 0(r1)             ; r3 = il carattere, e il flag si abbassa qui
+```
+
+**Chi alimenta il device** è separato dal device stesso. Oggi c'è un
+alimentatore solo, una traccia a cicli passata al simulatore:
+
+```bash
+vcpu_sim run prog.vx --kbd "1200:a,3000:b,3000:c"
+```
+
+cioè *«al ciclo 1200 arriva `a`, al 3000 arrivano `b` e `c`»* — i cicli devono
+essere non decrescenti, e due eventi nello stesso ciclo producono un overrun.
+La traccia vive nel **tempo simulato**, quindi rigiocarla dà sempre gli stessi
+numeri: è il motivo per cui un programma che dipende dal mondo esterno può stare
+in `ctest`, e `tests/test_kbd.vasm` ci sta. Un secondo alimentatore che legga
+`stdin` da un thread vivrebbe nel tempo di parete e non sarebbe riproducibile —
+ma il programma vedrebbe gli stessi due registri, senza cambiare una riga.
+
+**Non c'è interrupt**: la tastiera non può armare una trap, e non esiste un
+registro per abilitarla. La macchina ha ancora una sola sorgente di interrupt, il
+timer, e un solo vettore.
 
 ---
 

@@ -113,6 +113,23 @@ vasm_check(include    MODE DUMPS EXPECT "24 16 16 512 1"
 vasm_check(epsw       MODE DUMPS EXPECT "1 0 0 7"
            SOURCE ${CMAKE_SOURCE_DIR}/tests/test_epsw.vasm)
 
+# test_kbd — il primo device del progetto, letto in polling (11/09/2026).
+#
+# I cinque numeri sono derivabili a mano dalla traccia: 'a'+'b'+'c' = 294, e
+# 'y' = 121 e' il secondo dei due che arrivano allo stesso ciclo. Che un test
+# che dipende dal MONDO sia deterministico e' il punto dell'esercizio: lo stato
+# del device e chi lo riempie sono separati, e qui l'alimentatore e' una traccia
+# che vive nel tempo SIMULATO. Un thread che legge stdin sara' il secondo
+# alimentatore, e questo test continuera' a girare identico.
+#
+# La distanza fra il terzo carattere (300) e la coppia (2000) e' quella che
+# rende osservabile il flag abbassato dalla lettura: senza, il caso interessante
+# potrebbe non capitare mai.
+vasm_check(kbd        MODE DUMPS EXPECT "0 294 0 3 121"
+           IFLAGS -I$<TARGET_PROPERTY:vinc_hal,INTERFACE_INCLUDE_DIRECTORIES>
+           ARGS   --kbd "100:a,200:b,300:c,2000:x,2000:y"
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_kbd.vasm)
+
 # I 13 programmi di standalone/ devono continuare a girare da soli: qui si
 # verifica che nessuno vada in errore, non cosa stampano (solo saxpy ha
 # un'invariante numerica dichiarata, ed e' il test qui sopra).

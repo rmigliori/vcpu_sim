@@ -13,6 +13,51 @@
 #define VLMAX      64   // elements per vector register
 #define MEM_SIZE   (1u << 20)  // 1 MiB byte-addressable memory
 
+// ---------------------------------------------------------------------------
+//  MMIO — i registri delle periferiche, e perche' stanno SOPRA la RAM
+//
+//  Su una macchina vera i registri di periferica si leggono con una load
+//  normale, e quello e' il motivo per cui qui non c'e' nessuna istruzione
+//  nuova: la ISA resta quella che e'. L'intervallo comincia a MEM_SIZE, cioe'
+//  SUBITO DOPO l'ultimo byte di RAM, e non dentro:
+//
+//    - non sottrae un byte di memoria ai programmi, e nessun linker deve
+//      sapere di doverlo evitare (oggi non saprebbe: concatena in command
+//      order, senza regioni);
+//    - una collisione fra un dato e un registro di periferica e' IMPOSSIBILE
+//      invece che improbabile;
+//    - l'errore "out of bounds" resta quello che era, per gli indirizzi che
+//      non sono ne' RAM ne' device.
+//
+//  Il prezzo e' un confronto in piu' per ogni load/store scalare, accanto al
+//  controllo dei limiti che c'era gia'.
+// ---------------------------------------------------------------------------
+#define MMIO_BASE   ((int64_t) MEM_SIZE)   // 0x100000
+#define MMIO_SIZE   ((int64_t) 0x1000)
+
+// Tastiera: due registri, il modello di ogni UART.
+//
+//  KBD_STATUS  sola lettura   bit 0 = c'e' un carattere, bit 1 = overrun
+//  KBD_DATA    lettura        restituisce il carattere E CONSUMA IL FLAG
+//
+//  Che la lettura abbia un EFFETTO e' la differenza fra memoria e MMIO, non un
+//  dettaglio: e' cio' che rende il protocollo corretto senza un handshake, ed
+//  e' il motivo per cui load_i32 non puo' piu' prendere un puntatore const.
+#define KBD_STATUS  (MMIO_BASE + 0)
+#define KBD_DATA    (MMIO_BASE + 4)
+
+#define KBD_READY    1   // bit 0 di KBD_STATUS
+#define KBD_OVERRUN  2   // bit 1: ne e' arrivato un altro prima della lettura
+
+// Un evento della traccia: "al ciclo N arriva il carattere c".
+typedef struct
+{
+  uint64_t      cycle;
+  unsigned char ch;
+} KbdEvent;
+
+#define KBD_TRACE_MAX 64
+
 // Guard word at the bottom of the data segment: no object is ever placed at
 // address 0, so 0 is a NULL pointer that cannot collide with a real datum.
 // The codebase already assumed this in several places before it was enforced --
@@ -182,6 +227,22 @@ typedef struct
   int64_t  timer_period; // cycles between timer interrupts (0 = disabled)
   uint64_t timer_next;   // cycle count at which the next timer interrupt is due
 
+  // Tastiera (MMIO, vedi KBD_STATUS/KBD_DATA). Lo STATO del device e CHI LO
+  // RIEMPIE sono separati di proposito: questi tre campi sono cio' che il
+  // programma vede, e sotto puo' starci una traccia a cicli (deterministica,
+  // rigiocabile in ctest) oppure -- domani -- un thread che legge stdin. Il
+  // .vasm non distingue i due casi, ed e' la ragione per cui la stessa
+  // applicazione puo' essere insieme la demo e il test.
+  unsigned char kbd_data;      // l'ultimo carattere arrivato
+  unsigned char kbd_ready;     // 1 = non ancora letto
+  unsigned char kbd_overrun;   // 1 = ne e' arrivato un altro prima della lettura
+
+  // L'alimentatore deterministico: eventi ordinati per ciclo, consumati dal
+  // loop mentre il tempo SIMULATO avanza. Niente tempo di parete qui dentro.
+  KbdEvent kbd_trace[KBD_TRACE_MAX];
+  int      kbd_trace_len;
+  int      kbd_trace_pos;
+
   // statistics
   uint64_t instr_count;    // total executed instructions
   uint64_t vec_elem_ops;   // total per-element vector operations (measure of SIMD work)
@@ -192,6 +253,14 @@ typedef struct
 //  API
 // ---------------------------------------------------------------------------
 void vcpu_init(VCpu* cpu);
+
+// Carica la traccia della tastiera da una specifica testuale:
+//
+//     "1200:a,3000:b,3000:c"      ciclo:carattere, separati da virgola
+//
+// I cicli devono essere non decrescenti (la traccia si consuma in ordine).
+// Ritorna 0, o -1 con il messaggio in 'err'. Va chiamata dopo vcpu_init.
+int vcpu_kbd_trace(VCpu* cpu, const char* spec, char* err, size_t errsz);
 
 // Assemble a .vasm file into 'prog'. Returns number of instructions, or -1 on
 // error (message written to 'err'). Data directives are written into cpu->mem.

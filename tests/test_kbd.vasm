@@ -1,0 +1,111 @@
+; tests/test_kbd.vasm — la tastiera in MMIO, letta in POLLING.
+;
+; E' il primo programma del progetto che riceve qualcosa dal mondo. Fino a
+; adesso l'unica sorgente di eventi era il timer, cioe' una cosa PERIODICA che
+; il programma stesso aveva armato; qui l'evento arriva da fuori e a istanti
+; che il programma non sceglie.
+;
+; --- PERCHE' E' DETERMINISTICO, PUR DIPENDENDO DAL MONDO ---
+; Il device ha uno stato (flag, dato, overrun) e un ALIMENTATORE, e i due sono
+; separati. Qui l'alimentatore e' una traccia a cicli passata al simulatore:
+;
+;     --kbd "100:a,200:b,300:c,2000:x,2000:y"
+;
+; che vive nel tempo SIMULATO. Rigiocarla da' sempre gli stessi numeri, quindi
+; questo sta in ctest come qualunque altro test. Il giorno che l'alimentatore
+; sara' un thread che legge stdin, QUESTO FILE NON CAMBIERA': vede gli stessi
+; due registri.
+;
+; --- I CINQUE NUMERI, TUTTI DERIVABILI ---
+;   st0     0   all'avvio non e' arrivato niente: il flag e' giu'. Se fosse != 0
+;               il device nascerebbe con un carattere fantasma
+;   somma 294   'a'+'b'+'c' = 97+98+99, letti uno per uno in polling. Prova due
+;               cose insieme: che i tre arrivano tutti, e che arrivano in ORDINE
+;   stDopo  0   dopo aver letto l'ultimo, il flag e' giu' DA SOLO. E' l'effetto
+;               collaterale della lettura di KBD_DATA, cioe' il protocollo: non
+;               c'e' nessun handshake da scrivere, e qui si vede che non serve
+;   stOvr   3   KBD_READY|KBD_OVERRUN. Due caratteri nello stesso ciclo: il
+;               primo si perde, ma NON in silenzio
+;   chOvr 121   'y', il SECONDO dei due. Un overrun tiene il piu' recente e
+;               perde il vecchio, che e' cio' che fa una UART: il registro di
+;               ricezione e' uno solo e il nuovo dato ci finisce sopra
+;
+; La distanza fra 300 e 2000 non e' decorativa: serve a leggere stDopo in una
+; finestra in cui non puo' essere arrivato nient'altro. Un test che dipende dal
+; tempo va scritto in modo che il caso interessante non possa mancare.
+
+.include "hal/kbd.vinc"
+
+  .data
+
+st0:     .word 0         ; lo stato prima che arrivi qualcosa
+somma:   .word 0         ; 'a'+'b'+'c'
+stDopo:  .word 0         ; lo stato dopo aver consumato l'ultimo
+stOvr:   .word 0         ; lo stato quando due arrivano insieme
+chOvr:   .word 0         ; e quale dei due sopravvive
+
+  .text
+
+main:
+  ; --- (1) all'avvio il flag e' giu' ---
+  li r1, KBD_STATUS
+  lw r2, 0(r1)
+  li r3, st0
+  sw r2, 0(r3)
+
+  ; --- (2) tre caratteri, uno alla volta, in polling. Il ciclo NON ha un
+  ;     limite di tempo: finisce quando li ha contati tutti e tre, ed e' il
+  ;     test a garantire che arrivino ---
+  li r4, 0                 ; la somma
+  li r5, 0                 ; quanti ne ho presi
+  li r6, 3
+tk_attesa:
+  beq r5, r6, tk_presi
+  li r1, KBD_STATUS
+  lw r2, 0(r1)
+  beq r2, r0, tk_attesa    ; niente ancora: e' lo "skip on flag", scritto con
+                           ; le istruzioni che questa ISA ha gia'
+  li r1, KBD_DATA
+  lw r3, 0(r1)             ; il carattere, e il flag si abbassa QUI
+  add r4, r4, r3
+  addi r5, r5, 1
+  j tk_attesa
+
+tk_presi:
+  li r3, somma
+  sw r4, 0(r3)
+
+  ; --- (3) nessuno ha riabbassato il flag a mano: l'ha fatto la lettura ---
+  li r1, KBD_STATUS
+  lw r2, 0(r1)
+  li r3, stDopo
+  sw r2, 0(r3)
+
+  ; --- (4) due nello stesso ciclo: overrun ---
+tk_ovr:
+  li r1, KBD_STATUS
+  lw r2, 0(r1)
+  beq r2, r0, tk_ovr
+  li r3, stOvr
+  sw r2, 0(r3)             ; 3 = READY|OVERRUN
+  li r1, KBD_DATA
+  lw r3, 0(r1)
+  li r4, chOvr
+  sw r3, 0(r4)             ; 'y': il piu' recente
+
+  li r1, st0
+  lw r5, 0(r1)
+  dumps r5
+  li r1, somma
+  lw r5, 0(r1)
+  dumps r5
+  li r1, stDopo
+  lw r5, 0(r1)
+  dumps r5
+  li r1, stOvr
+  lw r5, 0(r1)
+  dumps r5
+  li r1, chOvr
+  lw r5, 0(r1)
+  dumps r5
+  halt

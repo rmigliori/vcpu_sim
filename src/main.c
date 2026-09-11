@@ -36,6 +36,24 @@ static void print_stats(const VCpu* cpu)
 }
 
 // --- legacy path: assemble a .vasm and run it in memory --------------------
+// La traccia della tastiera, se --kbd e' stato passato. E' file-static perche'
+// la ricevono entrambi i percorsi di esecuzione (legacy a file singolo e
+// "run" su un .vx) e non cambia niente per chi non la usa.
+static const char* g_kbd_spec = NULL;
+
+// Applica la traccia dopo vcpu_init, che azzera tutto. Ritorna 0 o 1.
+static int apply_kbd_trace(VCpu* cpu)
+{
+  char err[256] = {0};
+  if (!g_kbd_spec) return 0;
+  if (vcpu_kbd_trace(cpu, g_kbd_spec, err, sizeof err) != 0)
+  {
+    fprintf(stderr, "%s\n", err);
+    return 1;
+  }
+  return 0;
+}
+
 static int cmd_legacy(const char* path, RunMode mode)
 {
   static VCpu  cpu;
@@ -43,6 +61,7 @@ static int cmd_legacy(const char* path, RunMode mode)
   char err[256] = {0};
 
   vcpu_init(&cpu);
+  if (apply_kbd_trace(&cpu) != 0) return 2;
   int len = assemble(path, &cpu, prog, err, sizeof err);
   if (len < 0) { fprintf(stderr, "assemble error: %s\n", err); return 1; }
 
@@ -229,9 +248,14 @@ static int cmd_run(int argc, char** argv)
   {
     if (strcmp(argv[i], "--trace") == 0)      mode = RUN_TRACE;
     else if (strcmp(argv[i], "--debug") == 0) mode = RUN_DEBUG;
+    else if (strcmp(argv[i], "--kbd") == 0 && i + 1 < argc) g_kbd_spec = argv[++i];
     else path = argv[i];
   }
-  if (!path) { fprintf(stderr, "usage: %s run <prog.vx> [--trace|--debug]\n", argv[0]); return 2; }
+  if (!path)
+  {
+    fprintf(stderr, "usage: %s run <prog.vx> [--trace|--debug] [--kbd <ciclo:car,...>]\n", argv[0]);
+    return 2;
+  }
 
   static VCpu  cpu;
   static Instr prog[MAX_INSTR];
@@ -247,6 +271,7 @@ static int cmd_run(int argc, char** argv)
   else
   {
     vcpu_init(&cpu);
+    if (apply_kbd_trace(&cpu) != 0) { vimage_free(img); free(img); return 2; }
     int len = 0;
     int64_t entry = vx_load(img, &cpu, prog, &len);
     vcpu_run_from(&cpu, prog, len, mode, entry);
@@ -394,15 +419,16 @@ int main(int argc, char** argv)
     if (inc > 0) continue;
     if (strcmp(argv[i], "--trace") == 0)      mode = RUN_TRACE;
     else if (strcmp(argv[i], "--debug") == 0) mode = RUN_DEBUG;
+    else if (strcmp(argv[i], "--kbd") == 0 && i + 1 < argc) g_kbd_spec = argv[++i];
     else                                      path = argv[i];
   }
   if (!path)
   {
     fprintf(stderr,
-            "usage: %s [--trace|--debug] [-I <dir>]... <program.vasm>\n"
+            "usage: %s [--trace|--debug] [--kbd <ciclo:car,...>] [-I <dir>]... <program.vasm>\n"
             "       %s asm <in.vasm> -o <out.vo> [-I <dir>]...\n"
             "       %s ld  <a.vo|lib.va> ... [-e <sym>] -o <out.vx>\n"
-            "       %s run <prog.vx> [--trace|--debug]\n"
+            "       %s run <prog.vx> [--trace|--debug] [--kbd <ciclo:car,...>]\n"
             "       %s nm  [-n|-p] [-r] <file.vo|file.vx>\n"
             "       %s ar  <lib.va> <o1.vo> ...\n",
             argv[0], argv[0], argv[0], argv[0], argv[0], argv[0]);

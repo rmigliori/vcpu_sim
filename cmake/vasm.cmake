@@ -303,14 +303,18 @@ endfunction()
 #
 #   MODE DUMPS   confronta la sequenza dei valori stampati da `dumps`
 #   MODE STATS   confronta istruzioni / vec-elem-ops / cicli
+# ARGS: opzioni passate al simulatore all'esecuzione (non all'assemblaggio) --
+# oggi serve per --kbd, che alimenta un device con una traccia a cicli. Sta qui
+# e non in IFLAGS perche' le due cose vanno in due momenti diversi: gli -I li
+# vuole l'assembler, questo lo vuole la macchina.
 function(vasm_check name)
-  cmake_parse_arguments(A "" "MODE;EXPECT;PROGRAM;SOURCE" "IFLAGS" ${ARGN})
+  cmake_parse_arguments(A "" "MODE;EXPECT;PROGRAM;SOURCE" "IFLAGS;ARGS" ${ARGN})
   if(A_PROGRAM)
     get_target_property(vx ${A_PROGRAM} VASM_OUTPUT)
-    set(cmd $<TARGET_FILE:vcpu_sim> run ${vx})
+    set(cmd $<TARGET_FILE:vcpu_sim> run ${vx} ${A_ARGS})
   else()
     # percorso legacy a file singolo: assembla ed esegue in memoria
-    set(cmd $<TARGET_FILE:vcpu_sim> ${A_IFLAGS} ${A_SOURCE})
+    set(cmd $<TARGET_FILE:vcpu_sim> ${A_IFLAGS} ${A_ARGS} ${A_SOURCE})
   endif()
   add_test(NAME ${name}
            COMMAND ${CMAKE_COMMAND}

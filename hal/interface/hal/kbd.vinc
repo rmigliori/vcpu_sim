@@ -1,0 +1,57 @@
+; hal/kbd.vinc — la tastiera, il primo DEVICE del progetto.
+;
+; Fino all'11/09/2026 la macchina aveva una sola sorgente di eventi, il timer,
+; e nessun ingresso: la memoria era solo memoria e i programmi non potevano
+; ricevere niente dal mondo. Questo file e' il primo pezzo dell'altra meta'.
+;
+; --- PERCHE' NON C'E' UN'ISTRUZIONE NUOVA ---
+; Su una macchina vera i registri di periferica si leggono con una load, e il
+; PDP-8 che faceva "skip on flag" aveva un'istruzione apposta perche' non aveva
+; il resto. Noi abbiamo la lw e i branch, quindi la tastiera si legge cosi':
+;
+;     li   r1, KBD_STATUS
+;     lw   r2, 0(r1)
+;     beq  r2, r0, niente_da_leggere    ; il flag non e' alzato
+;     li   r1, KBD_DATA
+;     lw   r3, 0(r1)                    ; r3 = il carattere, E IL FLAG SI ABBASSA
+;
+; La ISA non e' stata toccata: e' la parte che fa da surrogato della macchina
+; reale, e si muove il meno possibile.
+;
+; --- I REGISTRI STANNO SOPRA LA RAM ---
+; MMIO_BASE e' 0x100000, cioe' il primo indirizzo DOPO l'ultimo byte di memoria
+; (1 MiB). Non sottrae un byte ai programmi, nessun linker deve sapere di
+; doverlo evitare — e oggi non saprebbe, perche' concatena in command order
+; senza regioni — e una collisione fra un dato e un registro e' impossibile
+; invece che improbabile.
+;
+; --- LEGGERE KBD_DATA HA UN EFFETTO ---
+; E' la differenza fra memoria e MMIO, e il protocollo sta tutto li': la lettura
+; consuma il carattere e abbassa il flag, quindi non serve nessun handshake. Se
+; ne arriva un altro prima che tu legga, il vecchio si perde ma NON in silenzio:
+; KBD_OVERRUN te lo dice. E' il modello di ogni UART.
+;
+; --- CHI ALIMENTA IL DEVICE ---
+; Lo stato del device e chi lo riempie sono separati. Oggi c'e' un alimentatore
+; solo, una traccia a cicli passata al simulatore:
+;
+;     vcpu_sim run prog.vx --kbd "1200:a,3000:b"
+;
+; che vive nel tempo SIMULATO, quindi da' sempre gli stessi numeri e si mette in
+; ctest. Un secondo alimentatore che legge stdin da un thread e' il passo
+; successivo, e questo file non cambiera': il programma vede gli stessi due
+; registri, ed e' per questo che la stessa applicazione potra' essere insieme la
+; demo e il test.
+;
+; NON C'E' INTERRUPT, e non c'e' un registro per abilitarlo: non si scrive il
+; controllo di una cosa che non esiste. Chi vuole il carattere fa polling.
+;
+; File FOGLIA: non include niente.
+
+.equ MMIO_BASE   0x100000        ; il primo indirizzo dopo la RAM
+
+.equ KBD_STATUS  0x100000        ; sola lettura: i due bit qui sotto
+.equ KBD_DATA    0x100004        ; lettura: il carattere, e CONSUMA il flag
+
+.equ KBD_READY    1              ; bit 0: c'e' un carattere da leggere
+.equ KBD_OVERRUN  2              ; bit 1: ne e' arrivato un altro prima

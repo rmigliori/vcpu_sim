@@ -1,7 +1,8 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **11 settembre 2026** (§3.36 la discussione aperta si è
-> chiusa: `TCB.crit`, chi è in sezione critica non si ruota)
+> Ultimo aggiornamento: **11 settembre 2026** (§3.36 `TCB.crit`, chi è in
+> sezione critica non si ruota; §3.37 la macchina ha un ingresso: MMIO e la
+> tastiera in polling)
 > Scopo: fotografia dello stato per riprendere il lavoro a distanza di giorni
 > senza dover ricostruire il contesto.
 
@@ -11,15 +12,32 @@
 
 > ### ▶ RIPRENDI DA QUI (12/09/2026 o dopo)
 >
-> `ctest` **28/28**. L'11/09 (**§3.36**) ha chiuso la discussione che era rimasta
-> aperta a metà frase: **chi è in sezione critica non si ruota**, `TCB.crit`,
-> ceiling classico. §13.5 ha la sua quarta premessa, §2 non descrive più uno
-> yield che non esiste, e la proposta è riallineata.
+> `ctest` **29/29**. L'11/09 ha fatto due cose. La mattina (**§3.36**) ha chiuso
+> la discussione rimasta aperta a metà frase: **chi è in sezione critica non si
+> ruota**, `TCB.crit`, ceiling classico. Il pomeriggio (**§3.37**) ha dato alla
+> macchina un **ingresso**: MMIO sopra la RAM e una tastiera letta in polling,
+> con il test `kbd` che è deterministico pur dipendendo dal mondo.
 >
-> **Tutto pushato** su `origin/master` fino a `2fb873b`. Fuori resta solo
-> l'aggiornamento di questo riquadro, che non può nominare il proprio hash. Il
-> push l'ha chiesto l'utente, come deve essere: resta **una richiesta da rifare
-> ogni volta**.
+> §3.36 è pushato fino a `2fb873b`; **§3.37 è sul working tree e non è
+> committato.** Il push resta **una richiesta da rifare ogni volta**.
+>
+> ### ▶▶ DOVE SI STAVA ANDANDO
+>
+> L'utente vuole **vedere il sistema funzionante** prima di nuove
+> implementazioni, e ha impostato la strada: prima due test «stupidi» senza
+> registri vettoriali, guidati da **eventi** invece che dal tick — ed è per
+> questo che la tastiera è arrivata adesso. Poi un eseguibile che usi lo stato
+> dell'arte del sistema.
+>
+> La cosa che ho proposto di farne, e che resta da decidere: che
+> quell'applicazione faccia un **lavoro vero**, cioè un calcolo vettoriale, così
+> che la dimostrazione e la misura siano la stessa cosa. Perché il buco più
+> grosso del progetto, verificato l'11/09, è che **le due metà non si sono mai
+> incontrate**: non c'è una sola istruzione vettoriale sotto `rtos/` e `hal/`, e
+> `machine.vasm:17-19` dichiara i registri vettoriali *volatili attraverso la
+> preemption*. Oggi due task che usassero `v0..v7` si corromperebbero a vicenda,
+> e nessun test se ne accorge perché nessun task li usa. È il fronte (2) dei tre
+> concordati il 07/09; il (1) è chiuso, il (3) — linker/locator — è intatto.
 >
 > > ### LA DECISIONE, IN QUATTRO RIGHE
 > >
@@ -2545,6 +2563,93 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `TESTA` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.37 LA MACCHINA HA UN INGRESSO: MMIO e la tastiera in polling (11/09/2026, seconda parte)
+
+`ctest` **29/29**, il nuovo è `kbd`. Fino a oggi il sistema aveva **una sola
+sorgente di eventi** — il timer, cioè una cosa periodica che il programma stesso
+si era armato — e nessun modo di ricevere niente dal mondo. È la ragione per cui
+ogni spiegazione finiva per girare attorno al tick, e l'utente l'ha fatto notare:
+*«non esiste solo la preemption da interruzione»*.
+
+#### La proposta è dell'utente, e le ho cambiato il livello
+
+L'utente ha proposto un **thread** che simuli l'hardware, capace di generare
+interrupt o di essere letto in polling — *«skip on flag»*, che è il `KSF` del
+PDP-8. Il modello è giusto e non è una stravaganza: è come sono fatti QEMU e
+SystemC, e il device *è* concorrente alla CPU.
+
+Le obiezioni non erano al thread ma a due conseguenze. **Il determinismo**: 28
+test con `EXPECT` esatti smettono di essere verificabili se l'evento arriva
+quando decide lo scheduler di Linux. E **il tempo**: la CPU conta cicli, un
+thread vive in millisecondi veri, e le due grandezze non sono commensurabili.
+
+Da lì la forma che è stata scritta: **separare lo stato del device dal suo
+alimentatore**. Il programma vede un flag, un dato e (domani) una linea di
+interrupt; sotto ci può stare una traccia a cicli — tempo simulato,
+deterministica, rigiocabile in `ctest` — oppure un thread che legge `stdin`. Il
+`.vasm` non distingue i due casi, ed è la proprietà che conta: **la stessa
+applicazione potrà essere insieme la demo e il test**, invece di dover scegliere.
+
+#### Le due decisioni di disegno che hanno risparmiato lavoro
+
+**Nessuna istruzione nuova: MMIO.** Su una macchina vera i registri di
+periferica si leggono con una load, e qui il punto di innesto **esisteva già** —
+ogni accesso scalare passa da `load_i32`/`store_i32`, che avevano già un `if` sui
+limiti. Il decoder, l'assembler, la ISA e tutti i `.vasm` esistenti non sono
+stati toccati. Lo *skip on flag* diventa `lw` più `beq`, cioè quello che questa
+ISA sa già fare.
+
+> Un dettaglio che vale come segnale: `load_i32` prendeva un `const VCpu*`, e
+> quella `const` **è caduta**. Non per una ragione tecnica: era la dichiarazione
+> che «leggere non ha effetti», vera finché la memoria era solo memoria, e cade
+> nel punto esatto in cui smette di esserlo — leggere `KBD_DATA` consuma il
+> carattere.
+
+**I registri stanno SOPRA la RAM**, a `0x100000`, non dentro. Non sottraggono un
+byte ai programmi, nessun linker deve sapere di doverli evitare — e oggi non
+saprebbe, perché concatena in command order senza regioni — e una collisione fra
+un dato e un registro è impossibile invece che improbabile. L'`imm` di `Instr` è
+un `int64_t`, quindi `li r1, 0x100000` non ha bisogno di niente.
+
+#### Cosa è stato scritto
+
+| Dove | Cosa |
+|---|---|
+| [`vcpu.h`](../include/vcpu.h) | `MMIO_BASE`/`KBD_*`, `KbdEvent`, i tre campi di stato del device e la traccia |
+| [`vcpu.c`](../src/vcpu.c) | `mmio_load`/`mmio_store`, l'intercettazione in `load_i32`/`store_i32`, `kbd_pump` al confine d'istruzione, il parser della traccia |
+| [`main.c`](../src/main.c) | `--kbd "ciclo:car,..."`, su entrambi i percorsi (legacy e `run`) |
+| [`hal/kbd.vinc`](../hal/interface/hal/kbd.vinc) **(nuovo)** | gli indirizzi e i bit, con il perché di ognuna delle scelte |
+| [`tests/test_kbd.vasm`](../tests/test_kbd.vasm) **(nuovo)** | cinque numeri derivabili a mano: `0 294 0 3 121` |
+| `cmake/vasm.cmake` | `ARGS` in `vasm_check`: opzioni per la **macchina**, distinte dagli `IFLAGS` che sono per l'**assembler** |
+| `docs/manual.md` | §3.1 nuova, e `--kbd` in §2.3 |
+
+I numeri del test: `'a'+'b'+'c' = 294`, e `'y' = 121` è il **secondo** dei due
+che arrivano allo stesso ciclo, perché un overrun tiene il più recente. Lo `0` in
+mezzo è il flag abbassato **dalla lettura**, cioè il protocollo che funziona
+senza handshake.
+
+#### Cosa NON è stato scritto, di proposito
+
+- **nessun interrupt, e nessun registro per abilitarlo.** La macchina ha ancora
+  una sorgente sola e un solo vettore; aggiungerne una seconda vuol dire una
+  causa leggibile (stile `mcause`) o un secondo vettore, più il problema nuovo
+  dell'**annidamento** — oggi l'HAL entra in trap con `IE` a zero, quindi una
+  seconda sorgente resterebbe pendente per tutta la durata dell'ISR. È una
+  decisione, non un'aggiunta;
+- **nessun thread**: è il secondo alimentatore, e si innesta sugli stessi tre
+  campi senza toccare né il `.vinc` né i programmi;
+- **nessuna libreria di primitive**: leggere la tastiera è `lw` + `beq`, e una
+  procedura attorno a due istruzioni sarebbe solo un prologo in più.
+
+#### L'osservazione da tenere
+
+È la **seconda volta in un giorno** che manca il locator: l'indirizzo base dei
+device è cablato in un `.equ` perché il linker non conosce regioni. Funziona, ed
+è quello che si fa in ogni kernel prima di avere un device tree — ma quando lo
+scriverai, i device saranno il suo primo cliente vero.
 
 ---
 

@@ -14,6 +14,115 @@ void vcpu_init(VCpu* cpu)
 }
 
 // ---------------------------------------------------------------------------
+//  MMIO — il modello dei device
+//
+//  Due funzioni sole, chiamate da load_i32/store_i32 quando l'indirizzo cade
+//  sopra la RAM. Il decoder, l'assembler e la ISA non sanno che esistono: e'
+//  questo che rende il MMIO piu' economico di un'istruzione nuova.
+// ---------------------------------------------------------------------------
+static int is_mmio(int64_t addr)
+{
+  return addr >= MMIO_BASE && addr < MMIO_BASE + MMIO_SIZE;
+}
+
+// Leggere KBD_DATA CONSUMA il carattere: e' l'effetto collaterale che la
+// memoria non ha, e il protocollo sta tutto li'. Chi legge lo status e poi il
+// dato non ha bisogno di nessun altro handshake, e un secondo carattere
+// arrivato nel frattempo si vede in KBD_OVERRUN invece di sparire in silenzio.
+static int32_t mmio_load(VCpu* cpu, int64_t addr)
+{
+  if (addr == KBD_STATUS)
+    return (cpu->kbd_ready ? KBD_READY : 0) | (cpu->kbd_overrun ? KBD_OVERRUN : 0);
+
+  if (addr == KBD_DATA)
+  {
+    int32_t ch = cpu->kbd_data;
+    cpu->kbd_ready   = 0;
+    cpu->kbd_overrun = 0;
+    return ch;
+  }
+
+  fprintf(stderr, "runtime error: MMIO load from unmapped register 0x%llx\n",
+          (unsigned long long) addr);
+  return 0;
+}
+
+// Nessun registro scrivibile, per adesso: l'abilitazione dell'interrupt non
+// esiste finche' non esiste l'interrupt. Il messaggio dice la verita' invece
+// di lasciar passare la scrittura in silenzio.
+static void mmio_store(int64_t addr, int32_t value)
+{
+  (void) value;
+  fprintf(stderr, "runtime error: MMIO store to read-only register 0x%llx\n",
+          (unsigned long long) addr);
+}
+
+// L'alimentatore deterministico, chiamato a ogni confine d'istruzione: il
+// device vive nel tempo SIMULATO, quindi una traccia rigiocata da' sempre gli
+// stessi numeri. Piu' eventi possono maturare nello stesso ciclo, e il
+// risultato e' un overrun -- che e' esattamente cio' che farebbe una UART.
+static void kbd_pump(VCpu* cpu)
+{
+  while (cpu->kbd_trace_pos < cpu->kbd_trace_len &&
+         cpu->cycles >= cpu->kbd_trace[cpu->kbd_trace_pos].cycle)
+  {
+    if (cpu->kbd_ready) cpu->kbd_overrun = 1;
+    cpu->kbd_data  = cpu->kbd_trace[cpu->kbd_trace_pos].ch;
+    cpu->kbd_ready = 1;
+    cpu->kbd_trace_pos += 1;
+  }
+}
+
+int vcpu_kbd_trace(VCpu* cpu, const char* spec, char* err, size_t errsz)
+{
+  cpu->kbd_trace_len = 0;
+  cpu->kbd_trace_pos = 0;
+
+  const char* p = spec;
+  uint64_t last = 0;
+  while (*p)
+  {
+    char* end = NULL;
+    unsigned long long cyc = strtoull(p, &end, 0);
+    if (end == p || *end != ':')
+    {
+      snprintf(err, errsz, "traccia tastiera: atteso <ciclo>:<carattere> in \"%s\"", p);
+      return -1;
+    }
+    if ((uint64_t) cyc < last)
+    {
+      snprintf(err, errsz, "traccia tastiera: i cicli devono essere non decrescenti (%llu dopo %llu)",
+               cyc, (unsigned long long) last);
+      return -1;
+    }
+    if (!end[1])
+    {
+      snprintf(err, errsz, "traccia tastiera: manca il carattere dopo il ciclo %llu", cyc);
+      return -1;
+    }
+    if (cpu->kbd_trace_len >= KBD_TRACE_MAX)
+    {
+      snprintf(err, errsz, "traccia tastiera: troppi eventi (max %d)", KBD_TRACE_MAX);
+      return -1;
+    }
+
+    cpu->kbd_trace[cpu->kbd_trace_len].cycle = (uint64_t) cyc;
+    cpu->kbd_trace[cpu->kbd_trace_len].ch    = (unsigned char) end[1];
+    cpu->kbd_trace_len += 1;
+    last = (uint64_t) cyc;
+
+    p = end + 2;
+    if (*p == ',') p += 1;
+    else if (*p)
+    {
+      snprintf(err, errsz, "traccia tastiera: atteso ',' fra due eventi, trovato \"%s\"", p);
+      return -1;
+    }
+  }
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
 //  Memory helpers (element size is 4 bytes / one float)
 // ---------------------------------------------------------------------------
 static float load_f32(const VCpu* cpu, int64_t addr)
@@ -40,9 +149,14 @@ static void store_f32(VCpu* cpu, int64_t addr, float value)
   memcpy(&cpu->mem[addr], &value, sizeof(value));
 }
 
-static int32_t load_i32(const VCpu* cpu, int64_t addr)
+// NON prende piu' un const VCpu*, e la ragione e' concettuale prima che
+// tecnica: leggere KBD_DATA consuma il carattere. Quella const era la
+// dichiarazione che "leggere non ha effetti", vera finche' la memoria era solo
+// memoria, e cade nel punto esatto in cui smette di esserlo.
+static int32_t load_i32(VCpu* cpu, int64_t addr)
 {
   int32_t value = 0;
+  if (is_mmio(addr)) return mmio_load(cpu, addr);
   if (addr < 0 || (uint64_t) addr + sizeof(value) > MEM_SIZE)
   {
     fprintf(stderr, "runtime error: word load out of bounds at 0x%llx\n",
@@ -55,6 +169,7 @@ static int32_t load_i32(const VCpu* cpu, int64_t addr)
 
 static void store_i32(VCpu* cpu, int64_t addr, int32_t value)
 {
+  if (is_mmio(addr)) { mmio_store(addr, value); return; }
   if (addr < 0 || (uint64_t) addr + sizeof(value) > MEM_SIZE)
   {
     fprintf(stderr, "runtime error: word store out of bounds at 0x%llx\n",
@@ -746,6 +861,12 @@ void vcpu_run_from(VCpu* cpu, const Instr* prog, int prog_len, RunMode mode, int
 
   while (!cpu->halted && cpu->pc >= 0 && cpu->pc < prog_len)
   {
+    // I device avanzano al confine d'istruzione come tutto il resto. Questo
+    // NON e' una trap: aggiorna solo lo stato visibile in MMIO, quindi non
+    // guarda PSW_IE e vale anche per un programma che gli interrupt non li
+    // abilita mai -- che e' precisamente il caso del polling.
+    kbd_pump(cpu);
+
     // Timer interrupt: delivered at an instruction boundary. Saving the
     // whole status word (epsw) mirrors the exchange-package / mstatus model.
     if ((cpu->psw & PSW_IE) && cpu->timer_period > 0 && cpu->cycles >= cpu->timer_next)
