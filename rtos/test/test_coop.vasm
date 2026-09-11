@@ -1,0 +1,348 @@
+; rtos/test/test_coop.vasm — LO SCHEDULER SENZA IL TICK.
+;
+; Ogni altro test del kernel arma il timer, e la preemption da interrupt finisce
+; per sembrare il modo in cui il sistema funziona. Non lo e': e' UN modo. Qui non
+; c'e' un solo interrupt — la lista degli .extern qui sotto lo dice da sola, non
+; compaiono ne' irq_install ne' timer_init ne' irq_enable, e IE resta a zero per
+; tutta la vita del programma.
+;
+; Il testimone e' UN SOLO MESSAGGIO che gira: A lo riceve, lo passa a B, B a C,
+; C ad A. Ogni task, finito il suo giro, torna a bloccarsi sulla propria
+; mailbox. La CPU cambia mano SOLO per blocco volontario.
+;
+; --- COSA DIMOSTRA, E CHE OGGI NON E' SCRITTO DA NESSUNA PARTE ---
+;
+;  1. IL RIENTRO SINCRONO NEL KERNEL ESISTE GIA'. task_block chiama scheduler e
+;     cade nel dispatcher senza passare dall'ISR (scheduler.vasm). Il percorso
+;     c'e' da §3.30, ma nessun test lo esercitava DA SOLO: c'era sempre un tick
+;     a coprirlo;
+;  2. LA PRIORITA' NON DECIDE NIENTE, QUI. Le tre priorita' sono dichiarate
+;     apposta in ordine DIVERSO dal giro (il giro e' A->B->C, le priorita' sono
+;     B(1), C(2), A(3)): se lo scheduler scegliesse per priorita' invece di
+;     seguire il testimone, l'ordine cambierebbe e `err` lo direbbe. In un
+;     sistema cooperativo il pronto e' sempre UNO SOLO, e chi sceglie non ha
+;     niente da scegliere;
+;  3. L'IDLE NON E' UN TASK DI RIEMPIMENTO: e' la prova che serve una sorgente
+;     asincrona. Senza interrupt, "nessuno e' pronto" non vuol dire "aspetta",
+;     vuol dire IL SISTEMA E' FINITO — l'idle non si blocca mai (§4) e nessuno
+;     puo' togliergli la CPU, quindi chi ci entra non ne esce. Un eventuale
+;     task_ready armerebbe g_resched e quel flag resterebbe li' per sempre,
+;     perche' l'unico che lo consuma e' sched_isr_exit.
+;     Da cui una cosa da dire con precisione, perche' e' facile ingannarsi:
+;     CNTI NEL DUMP NON PUO' CHE VALERE 0. Se l'idle girasse non ne uscirebbe, e
+;     queste righe non verrebbero mai eseguite. Il numero non misura niente —
+;     l'osservabile vero e' CHE IL TEST TERMINI. E' la stessa forma di cntU in
+;     test_mutex: se il livelock ci fosse, quel test non fallirebbe, non
+;     finirebbe. Lo si stampa lo stesso perche' rende esplicito nel dump un
+;     fatto che altrimenti resterebbe implicito, e perche' il giorno che questo
+;     programma avesse una sorgente asincrona quel numero comincerebbe a
+;     misurare per davvero.
+;
+; --- IL PREZZO DEL MODELLO, CHE VA DETTO ---
+; Senza tick il cambio di contesto avviene SOLO nei punti di blocco, quindi la
+; latenza di un task piu' prioritario non e' limitata dal quanto ma dalla
+; distanza fra due blocchi di chi sta girando. Un task che non si blocca ferma
+; tutto il sistema, e nessuno puo' accorgersene. E' l'altra faccia di §13.7: il
+; flag armato senza un consumatore sincrono.
+;
+; --- I CINQUE NUMERI, TUTTI DERIVABILI ---
+;   err    0   tre controlli in un contatore solo: l'ordine del giro (ognuno
+;              verifica chi ha girato prima di lui) e che il messaggio ricevuto
+;              sia SEMPRE lo stesso oggetto. Un valore != 0 dice che il
+;              testimone non e' quello che credi
+;   cntA   5   GIRI. Tutti e tre uguali perche' a fermare il programma e' C,
+;              cioe' l'ULTIMO del giro: quando C ha finito il quinto, anche A e
+;              B ne hanno fatti cinque
+;   cntB   5
+;   cntC   5
+;   cntI   0   l'idle non ha mai girato — ma vedi sopra: e' un fatto che si
+;              legge nella TERMINAZIONE del test, non in questo numero
+
+.include "tcb/tcb.vinc"
+.include "coda/coda_api.vinc"
+.include "mailbox/mailbox.vinc"
+.include "messaggio/messaggio.vinc"
+
+; Il giro e' A -> B -> C; le priorita' NO, ed e' voluto (punto 2 qui sopra).
+.equ PRIO_B  1
+.equ PRIO_C  2
+.equ PRIO_A  3
+.equ PRIO_I  7
+
+.equ GIRI    5
+
+; Chi ha girato per ultimo: 1 = A, 2 = B, 3 = C. Parte da 3 perche' il primo a
+; girare e' A, che si aspetta di trovare C dietro di se' -- il giro e' un
+; cerchio e il "primo" e' solo dove lo si taglia.
+.equ ID_A    1
+.equ ID_B    2
+.equ ID_C    3
+
+  .data
+
+testimone: .res MESSAGGIO      ; UNO SOLO, e gira: e' il punto del test
+
+mbA:     .res MAILBOX
+mbB:     .res MAILBOX
+mbC:     .res MAILBOX
+
+err:     .word 0
+cntA:    .word 0
+cntB:    .word 0
+cntC:    .word 0
+cntI:    .word 0
+; Inizializzata nel BOOT e non qui: ".word ID_C" assembla senza un fiato e
+; scrive ZERO -- .word accetta solo numeri (manual.md §4.2), e un identificatore
+; non lo rifiuta, lo azzera. Costato un err=1 al primo giro, cioe' l'unico
+; controllo che guarda il valore iniziale.
+ultimo:  .word 0
+
+tcbA:    .res TCB
+tcbB:    .res TCB
+tcbC:    .res TCB
+tcbI:    .res TCB
+
+stackA:  .space 256
+stackA_top:
+stackB:  .space 256
+stackB_top:
+stackC:  .space 256
+stackC_top:
+stackI:  .space 256
+stackI_top:
+
+  .text
+
+  .global main
+  .extern current
+  .extern sched_init
+  .extern prio_pcb
+  .extern send_s
+  .extern receive
+  .extern ctx_init
+; NESSUN interrupt: niente irq_install, niente timer_init, niente irq_enable,
+; niente sched_isr_exit. La lista e' l'asserzione piu' forte del file.
+
+; ==========================================================================
+;  BOOT. Tutti e tre i task partono ESEGUIBILI e fanno la stessa cosa: una
+;  receive sulla propria mailbox. Due su tre la trovano vuota e si bloccano
+;  subito; il terzo -- A, che ha il testimone messo qui dal boot -- prosegue.
+;
+;  Non si passa da task_ready ma si accoda direttamente al PCB, come fa
+;  test_mutex per l'idle: task_ready valuterebbe la preemption e potrebbe armare
+;  g_resched, e in un programma senza interrupt quel flag non avrebbe mai un
+;  consumatore. Meglio non armarlo che lasciarlo armato per sempre.
+; ==========================================================================
+main:
+  li r14, stackA_top       ; PRIMA di ogni call: main diventera' A
+  call sched_init
+
+  li r1, mbA
+  call coda_init
+  li r1, mbB
+  call coda_init
+  li r1, mbC
+  call coda_init
+
+  ; --- B ---
+  li r1, stackB_top
+  li r2, taskB
+  call ctx_init
+  li r3, tcbB
+  sw r1, TCB.sp(r3)
+  li r1, PRIO_B
+  call prio_pcb
+  sw r1, TCB.pcb(r3)
+  sw r0, TCB.state(r3)     ; READY
+  mov r2, r3               ; &pcb == &pcb.coda
+  call enqueue_coda
+
+  ; --- C ---
+  li r1, stackC_top
+  li r2, taskC
+  call ctx_init
+  li r3, tcbC
+  sw r1, TCB.sp(r3)
+  li r1, PRIO_C
+  call prio_pcb
+  sw r1, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r2, r3
+  call enqueue_coda
+
+  ; --- I (idle): eseguibile come gli altri, e proprio per questo cntI e'
+  ;     un'asserzione: e' RAGGIUNGIBILE, e non deve essere raggiunto ---
+  li r1, stackI_top
+  li r2, taskI
+  call ctx_init
+  li r3, tcbI
+  sw r1, TCB.sp(r3)
+  li r1, PRIO_I
+  call prio_pcb
+  sw r1, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r2, r3
+  call enqueue_coda
+
+  ; --- A (livello 3): parte a freddo, quindi RUNNING e fuori da ogni coda ---
+  li r3, tcbA
+  li r1, PRIO_A
+  call prio_pcb
+  sw r1, TCB.pcb(r3)
+  li r1, current
+  sw r3, 0(r1)
+  li r5, RUNNING
+  sw r5, TCB.state(r3)
+
+  ; --- chi "ha girato per ultimo" prima che cominci il giro: C, perche' il
+  ;     primo a girare e' A e il cerchio non ha un inizio, solo un taglio ---
+  li r1, ultimo
+  li r2, ID_C
+  sw r2, 0(r1)
+
+  ; --- il testimone nella mailbox di A. La mailbox e' vuota e nessuno la sta
+  ;     aspettando, quindi la send accoda e basta: niente task_ready ---
+  li r1, mbA
+  li r2, testimone
+  call send_s
+
+  li r5, taskA
+  jr r5                    ; cold start di A
+
+; ==========================================================================
+;  err_piu: un controllo non e' tornato. Un contatore solo per tutti, come in
+;  test_mutex: cio' che conta e' che resti 0.
+; ==========================================================================
+  .proc err_piu
+  li r1, err
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  .endproc err_piu
+
+; ==========================================================================
+;  controlla(r1 = chi mi aspetto prima di me, r2 = il messaggio ricevuto):
+;  verifica l'ordine del giro e l'identita' del testimone. Non-foglia.
+; ==========================================================================
+controlla:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+
+  li r3, ultimo
+  lw r4, 0(r3)
+  beq r4, r1, co_ordine_ok
+  call err_piu
+co_ordine_ok:
+
+  li r4, testimone
+  beq r2, r4, co_msg_ok    ; e' sempre lo STESSO oggetto che gira
+  call err_piu
+co_msg_ok:
+
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; ==========================================================================
+;  A (livello 3), il primo del giro. Riceve dalla propria mailbox e passa a B.
+; ==========================================================================
+taskA:
+  li r1, mbA
+  call receive             ; r2 = il testimone. Qui NON si blocca al primo giro:
+                           ; il boot ce l'ha gia' messo
+  li r1, ID_C              ; prima di me deve aver girato C
+  call controlla
+
+  li r1, ultimo
+  li r2, ID_A
+  sw r2, 0(r1)
+  li r1, cntA
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+
+  li r1, mbB
+  li r2, testimone
+  call send_s              ; B e' bloccato li': la send consegna DIRETTAMENTE e
+                           ; lo rende eseguibile. Ma non commuta: a dargli la
+                           ; CPU sara' la mia receive qui sotto
+  j taskA
+
+; ==========================================================================
+;  B (livello 1, il piu' prioritario del sistema dopo il gestore che qui non
+;  c'e'). Che sia il piu' prioritario non gli serve a niente: aspetta il suo
+;  turno come gli altri, perche' il turno lo detta il testimone.
+; ==========================================================================
+taskB:
+  li r1, mbB
+  call receive
+  li r1, ID_A
+  call controlla
+
+  li r1, ultimo
+  li r2, ID_B
+  sw r2, 0(r1)
+  li r1, cntB
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+
+  li r1, mbC
+  li r2, testimone
+  call send_s
+  j taskB
+
+; ==========================================================================
+;  C (livello 2), l'ultimo del giro: e' lui a contare i giri e a fermare tutto,
+;  ed e' per questo che i tre contatori valgono lo stesso numero.
+; ==========================================================================
+taskC:
+  li r1, mbC
+  call receive
+  li r1, ID_B
+  call controlla
+
+  li r1, ultimo
+  li r2, ID_C
+  sw r2, 0(r1)
+  li r1, cntC
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+
+  li r3, GIRI
+  beq r2, r3, tc_fine
+
+  li r1, mbA
+  li r2, testimone
+  call send_s
+  j taskC
+
+tc_fine:
+  li r1, err
+  lw r5, 0(r1)
+  dumps r5                 ; 0 = ordine e identita' del testimone tornano
+  li r1, cntA
+  lw r5, 0(r1)
+  dumps r5                 ; 5
+  li r1, cntB
+  lw r5, 0(r1)
+  dumps r5                 ; 5
+  li r1, cntC
+  lw r5, 0(r1)
+  dumps r5                 ; 5
+  li r1, cntI
+  lw r5, 0(r1)
+  dumps r5                 ; 0 = l'idle non e' mai stato raggiunto
+  halt
+
+; ==========================================================================
+;  L'idle. Se questo contatore si muove, il sistema e' gia' morto: senza
+;  interrupt da qui non si esce (vedi il punto 3 in testa al file).
+; ==========================================================================
+taskI:
+  li r1, cntI
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  j taskI

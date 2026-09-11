@@ -1,8 +1,7 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **11 settembre 2026** (§3.36 `TCB.crit`, chi è in
-> sezione critica non si ruota; §3.37 la macchina ha un ingresso: MMIO e la
-> tastiera in polling)
+> Ultimo aggiornamento: **11 settembre 2026** (§3.36 `TCB.crit`; §3.37 MMIO e la
+> tastiera; §3.38 lo scheduler senza il tick)
 > Scopo: fotografia dello stato per riprendere il lavoro a distanza di giorni
 > senza dover ricostruire il contesto.
 
@@ -12,14 +11,16 @@
 
 > ### ▶ RIPRENDI DA QUI (12/09/2026 o dopo)
 >
-> `ctest` **29/29**. L'11/09 ha fatto due cose. La mattina (**§3.36**) ha chiuso
-> la discussione rimasta aperta a metà frase: **chi è in sezione critica non si
-> ruota**, `TCB.crit`, ceiling classico. Il pomeriggio (**§3.37**) ha dato alla
-> macchina un **ingresso**: MMIO sopra la RAM e una tastiera letta in polling,
-> con il test `kbd` che è deterministico pur dipendendo dal mondo.
+> `ctest` **30/30**. L'11/09 ha fatto tre cose. **§3.36** ha chiuso la
+> discussione rimasta aperta a metà frase: **chi è in sezione critica non si
+> ruota**, `TCB.crit`, ceiling classico. **§3.37** ha dato alla macchina un
+> **ingresso**: MMIO sopra la RAM e una tastiera letta in polling, con il test
+> `kbd` deterministico pur dipendendo dal mondo. **§3.38** ha scritto il primo
+> programma del progetto **senza un solo interrupt** — e ha stanato tre difetti,
+> uno dell'assembler e due di `traccia.py`.
 >
-> §3.36 è pushato fino a `2fb873b`; **§3.37 è sul working tree e non è
-> committato.** Il push resta **una richiesta da rifare ogni volta**.
+> Pushato fino a `e9e74a3` (§3.36 e §3.37). Il push resta **una richiesta da
+> rifare ogni volta**.
 >
 > ### ▶▶ DOVE SI STAVA ANDANDO
 >
@@ -28,6 +29,12 @@
 > registri vettoriali, guidati da **eventi** invece che dal tick — ed è per
 > questo che la tastiera è arrivata adesso. Poi un eseguibile che usi lo stato
 > dell'arte del sistema.
+>
+> **Il primo dei due è fatto** (§3.38, `test_coop`). Il secondo non è scritto:
+> guidato dalla tastiera, sempre senza tick — un task legge in polling, manda il
+> carattere a un altro e si blocca aspettando l'ack. Lì l'idle **può** girare,
+> perché c'è un mondo esterno a riempire il vuoto: è lo stesso sistema di
+> `test_coop` con e senza qualcosa che possa succedere.
 >
 > La cosa che ho proposto di farne, e che resta da decidere: che
 > quell'applicazione faccia un **lavoro vero**, cioè un calcolo vettoriale, così
@@ -438,6 +445,8 @@ livello.
 | HAL | completo (§3.21) | [`hal/`](../hal/) |
 | Code, pool, timeout, formato messaggi | completo, indipendente dallo scheduler (§3.24) | [`generic/`](../generic/) |
 | Kernel + scheduler a priorità + mailbox + gestore timeout + semaforo e mutex | completo: PCB, slot, rotazione fra pari (tranne per chi è in sezione critica, §3.36), blocco volontario, task di sistema (§3.28–§3.33), §13 scritta (§3.35). Resta §13.7 | [`rtos/`](../rtos/) |
+| Device in MMIO (tastiera, polling) | primo pezzo: registri sopra la RAM, alimentati da una traccia a cicli (§3.37) | [`hal/kbd.vinc`](../hal/interface/hal/kbd.vinc), [`src/vcpu.c`](../src/vcpu.c) |
+| Sincronizzatore fra più VM e modelli di hardware | **da fare** — solo progettato (11/09/2026) | [`docs/proposta-sincronizzazione.md`](proposta-sincronizzazione.md) |
 | Linguaggio alto livello `vc` | **da fare** — solo progettato | [`docs/proposta-linguaggio-alto-livello.md`](proposta-linguaggio-alto-livello.md) |
 
 Macchina: 16 registri scalari `r0..r15` (`r0` = 0), 16 float `f0..f15`, 8
@@ -2566,6 +2575,112 @@ il contratto scritto.
 
 ---
 
+### 3.38 LO SCHEDULER SENZA IL TICK, e i tre difetti che il test ha stanato (11/09/2026, terza parte)
+
+`ctest` **30/30**, il nuovo è `coop`. L'ha chiesto l'utente con una frase che
+inquadra un limite di tutto quello che c'era prima: *«ti sei sempre basato su un
+sistema che usa dei timeout, ma questo non è l'unico modo di lavorare — non
+esiste solo la preemption da interruzione»*. Aveva ragione: ogni test del kernel
+arma il timer, e a furia di leggerli la preemption da interrupt finisce per
+sembrare *il* modo in cui il sistema funziona.
+
+#### Cosa dimostra
+
+Un testimone — **un solo `MESSAGGIO`** — che gira A→B→C→A cinque volte, con il
+timer **mai armato** e `IE` a zero per tutta la vita del programma. La lista
+degli `.extern` è l'asserzione più forte del file: niente `irq_install`, niente
+`timer_init`, niente `irq_enable`, niente `sched_isr_exit`.
+
+Il percorso che esercita da solo esiste dal 07/09 e non era mai stato messo alla
+prova senza rete: `task_block` chiama `scheduler` e cade nel `dispatcher`
+**senza passare dall'ISR**. C'era sempre un tick a coprirlo.
+
+Le **priorità sono dichiarate in ordine diverso dal giro** — il giro è A→B→C, le
+priorità sono B(1), C(2), A(3) — ed è ciò che rende il test sensibile: se lo
+scheduler scegliesse per priorità invece di seguire il testimone, l'ordine
+cambierebbe e `err` lo direbbe.
+
+#### L'idle, che è il vero contenuto — e una precisazione su cosa misura
+
+La domanda dell'utente («la preemption c'è perché l'idle verrà preemptato, no?»)
+ha tirato fuori la cosa che vale più del ping-pong: **in un sistema puramente
+cooperativo l'idle non è un task di riempimento, è la prova che serve una
+sorgente asincrona.** Lì «nessuno è pronto» non significa «aspetta»: significa
+che il sistema è finito, perché l'idle non si blocca mai (§4) e nessuno può
+togliergli la CPU — un `task_ready` armerebbe `g_resched` e quel flag resterebbe
+armato per sempre, visto che l'unico consumatore è `sched_isr_exit`.
+
+Ma il quinto numero **non lo misura**, e sarebbe stato facile ingannarsi: `cntI`
+nel dump non può che valere 0, perché se l'idle girasse il dump non verrebbe mai
+eseguito. L'osservabile vero è che il test **termini** — la stessa forma di
+`cntU` in `test_mutex`, dove il livelock non farebbe fallire il test ma non lo
+farebbe finire. Corretto nei commenti invece di lasciar credere il contrario.
+
+#### Difetto 1: `.word` con una costante `.equ` scrive ZERO in silenzio
+
+`ultimo: .word ID_C` assembla senza un fiato e mette **0**. Il manuale è
+corretto — `.word` accetta «decimale o esadecimale» (§4.2) — e nel resto del
+progetto nessuno ci era inciampato: gli unici riscontri sono commenti che dicono
+«`.word` non accetta etichette». Ma accettare un identificatore e azzerarlo senza
+dire niente è l'opposto di come si comporta il resto della toolchain. Costava un
+`err=1` al primo giro, cioè l'unico controllo che guarda il valore iniziale.
+
+**Non corretto**: rifiutarlo in fase di assemblaggio è una modifica a
+`assembler.c`, e va decisa. Nel test il valore si scrive nel boot.
+
+#### Difetti 2 e 3: `traccia.py` non reggeva un programma senza tick
+
+La pagina HTML **non disegnava niente**, e la causa era una riga sola:
+
+```js
+["CPU libera", Math.round(100 * (own.idle.task + own.idle.kernel) / gran) + "%"]
+```
+
+`D.own` contiene solo `A`, `B`, `C`, `boot` — **l'idle non c'è perché non ha mai
+girato** — quindi `own.idle` è `undefined` e quella riga lancia una `TypeError`.
+Sta nel masthead, cioè *prima* del disegno: moriva lo script, non il diagramma.
+Sotto ce n'era una seconda pronta a scattare: lo zoom cerca l'intervallo fra due
+tick, e con zero tick calcolava `z0`/`z1` da `undefined`.
+
+La correzione della seconda è concettuale, non una toppa: **le linee di
+riferimento del diagramma sono i punti in cui il kernel riprende la macchina** —
+il tick in un sistema preemptivo, il **passaggio di turno** in uno cooperativo.
+Quando i tick mancano la pagina disegna quelli (15 confini, escluso il boot), e
+il titolo dello zoom cambia, perché «Un tick, fascia per fascia» direbbe il falso.
+
+> Verificata la non regressione su `test_gestore`, che ha 12 tick e prende il
+> ramo di prima. Il JS non è stato **eseguito** in fase di correzione — non c'è
+> `node` sulla macchina e Firefox era aperto sul profilo dell'utente, quindi
+> l'istanza headless non parte.
+
+#### Quello che la traccia ha mostrato, e due artefatti di attribuzione
+
+Quindici turni in sequenza rigida, `0 tick`, l'idle assente dall'elenco, e un
+ritmo sorprendentemente regolare: 686/696/716 cicli a testa, **identici giro dopo
+giro**. Senza tick non c'è niente che possa spostare i confini — ogni turno è
+esattamente «ricevi, controlla, conta, manda, bloccati».
+
+Due cose vanno lette sapendo cosa sono, e sono limiti dello **strumento**:
+
+- **19 cicli per turno attribuiti a `boot`**: sono `controlla` e `err_piu`,
+  procedure locali del test che girano per conto del task chiamante ma stanno
+  fisicamente fra `main` e `taskA` nel listato. Stessa famiglia del caso
+  `gestore_tick` di §3.34, in una forma che quella correzione non copre — lì il
+  rimedio era fermare il corpo al primo simbolo *pubblicato*, e qui il simbolo
+  pubblicato che precede è proprio `main`;
+- **`_trap_entry` e `sched_isr_exit` compaiono in un programma senza interrupt**.
+  Sono etichette di attribuzione: `ctx_save` non è `.global` e finisce contata
+  dentro `_trap_entry` (§3.34 lo dichiara), e qui la chiama `hal_ctx_block` sul
+  percorso **volontario**; allo stesso modo `scheduler` e `dispatcher` non sono
+  pubblicati e cadono dentro `sched_isr_exit`. Il tempo è attribuito al task
+  giusto, il nome è fuorviante.
+
+Resta anche, non toccato, che tutto il **testo narrativo** della pagina è scritto
+attorno a `test_gestore` (il gestore a priorità 0, §3.29, l'idle che non conta il
+doppio): su qualunque altro programma è fuorviante, e adesso si vede.
+
+---
+
 ### 3.37 LA MACCHINA HA UN INGRESSO: MMIO e la tastiera in polling (11/09/2026, seconda parte)
 
 `ctest` **29/29**, il nuovo è `kbd`. Fino a oggi il sistema aveva **una sola
@@ -2650,6 +2765,40 @@ senza handshake.
 device è cablato in un `.equ` perché il linker non conosce regioni. Funziona, ed
 è quello che si fa in ogni kernel prima di avere un device tree — ma quando lo
 scriverai, i device saranno il suo primo cliente vero.
+
+#### Il seguito della discussione: il sincronizzatore, PROGETTATO E NON SCRITTO
+
+La sera l'utente ha rilanciato, e l'obiezione che gli avevo fatto era **mal
+posta**. Avevo detto che un device in un processo separato vive nel tempo di
+parete e perde il determinismo: è vero del *thread*, non del processo. Con un
+**clock comune** il tempo simulato resta uno solo e i partecipanti avanzano
+quando lui lo concede — è come funziona SystemC, dove il tempo è del kernel di
+simulazione e non dei moduli. La domanda giusta non è «thread o traccia», è
+**chi possiede il tempo**.
+
+E l'utente vuole di più di un device: un sincronizzatore per **più VM**, con due
+macchine che si parlano come su una linea seriale. Che per il dominio di ottobre
+non è un esercizio — un apparato satcom è fatto di processori che si scambiano
+messaggi su un bus.
+
+È nata [`docs/proposta-sincronizzazione.md`](proposta-sincronizzazione.md), che
+**congela le decisioni senza implementare niente**. Le tre che contano:
+
+- **il tempo comune è assoluto (nanosecondi simulati), non in cicli** — due VM
+  possono avere frequenze diverse, ed è la configurazione normale di un apparato
+  vero. Va deciso alla prima riga, perché cambiarlo dopo riscrive ogni messaggio;
+- **l'arbitro è un processo separato.** Con una VM sola si poteva farle possedere
+  il tempo; con due nessuna può essere arbitro e parte insieme;
+- **il quanto di sincronizzazione ≤ latenza minima del canale**, e da qui il
+  risultato controintuitivo: più il canale è lento, più veloce va la
+  simulazione. Il *lookahead* non è un'approssimazione concessa, è una proprietà
+  fisica del sistema simulato. Stessa forma del tick («il tick è il quanto»).
+
+**Sull'ordine non sono d'accordo, e sta scritto in §12 del documento**: un
+sincronizzatore è infrastruttura e vale per ciò che ci gira sopra. Costruito
+adesso, avrebbe sotto due VM con lo stesso kernel che non sa ancora fare la cosa
+per cui esiste — i registri vettoriali volatili. Prima quel fronte, poi
+l'applicazione che lavora davvero, e il sincronizzatore nasce con un cliente.
 
 ---
 

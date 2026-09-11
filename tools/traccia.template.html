@@ -255,8 +255,8 @@
   <section>
     <div class="sec-head">
       <div class="eyebrow">Zoom</div>
-      <h2>Un tick, fascia per fascia</h2>
-      <p class="lede">Lo stesso diagramma su un solo periodo, dove la sequenza si legge per
+      <h2 id="zoom-titolo">Un tick, fascia per fascia</h2>
+      <p class="lede" id="zoom-lede">Lo stesso diagramma su un solo periodo, dove la sequenza si legge per
       intero: trap, ISR, gestore che alloca e consegna, il cliente che conta e riarma,
       e l'idle che si prende tutto il resto.</p>
     </div>
@@ -345,13 +345,45 @@ const rtMap = Object.fromEntries(D.rt);
 const ctx = D.ctx.ctx_save + D.ctx.ctx_restore;
 const nsw = Math.round((rtMap["ctx_restore"] || 0) / 84);
 
+/* ---------- le linee di riferimento ----------
+   In un sistema preemptivo sono i TICK: e' li' che il kernel riprende la
+   macchina. In uno COOPERATIVO (test_coop, 11/09/2026) di tick non ce n'e'
+   nemmeno uno, e il punto in cui il kernel riprende la macchina e' il BLOCCO
+   VOLONTARIO -- cioe' ogni cambio di proprietario. Sono la stessa cosa vista
+   nei due modelli, quindi la pagina disegna quelli quando i tick mancano.   */
+function confiniDiTurno() {
+  // Il boot non e' un turno, e le sue fasce in mezzo al programma sono
+  // procedure locali dell'applicazione attribuite al corpo che le precede nel
+  // listato: contarle darebbe confini che nessun task ha attraversato.
+  const m = [];
+  let ultimo = null;
+  for (const f of D.fasce) {
+    if (f[2] === "boot") continue;
+    if (f[2] !== ultimo) { m.push(f[0]); ultimo = f[2]; }
+  }
+  return m;
+}
+const MARK = D.tick.length >= 2 ? D.tick : confiniDiTurno();
+const MARK_ETICHETTA = D.tick.length >= 2 ? "tick @ " : "turno @ ";
+
+// Senza tick la pagina racconta un'altra storia, e i titoli scritti per un
+// sistema preemptivo direbbero il falso.
+if (!D.tick.length) {
+  document.getElementById("zoom-titolo").textContent = "Un turno, fascia per fascia";
+  document.getElementById("zoom-lede").textContent =
+    "Nessun tick: qui la CPU cambia mano solo per blocco volontario, e le linee " +
+    "di riferimento sono i passaggi di turno. Lo zoom e' su uno solo di quelli.";
+}
+
 document.getElementById("ntick").textContent = D.tick.length;
 document.getElementById("stats").innerHTML = [
   ["cicli simulati", N.format(D.fine)],
   ["tick di timer", D.tick.length],
   ["fasce di esecuzione", D.fasce.length],
   ["commutazioni", nsw],
-  ["CPU libera", Math.round(100 * (own.idle.task + own.idle.kernel) / gran) + "%"]
+  // own.idle puo' NON ESISTERE: in un sistema cooperativo ben formato l'idle
+  // non gira mai, ed e' un'asserzione, non un caso limite (vedi test_coop).
+  ["CPU libera", Math.round(100 * (own.idle ? own.idle.task + own.idle.kernel : 0) / gran) + "%"]
 ].map(([k, v]) => `<div class="stat"><span class="v">${v}</span><span class="k">${k}</span></div>`).join("");
 
 /* ---------- legenda ---------- */
@@ -366,7 +398,7 @@ function disegna(axisEl, lanesEl, b0, b1, tickLabel) {
   const span = b1 - b0;
   const pc = x => ((x - b0) / span) * 100;
 
-  axisEl.innerHTML = D.tick
+  axisEl.innerHTML = MARK
     .filter(t => t >= b0 && t <= b1)
     .map((t, i) => `<span class="t" style="left:${pc(t)}%">${tickLabel(t, i)}</span>`)
     .join("");
@@ -374,7 +406,7 @@ function disegna(axisEl, lanesEl, b0, b1, tickLabel) {
   lanesEl.innerHTML = ORDINE.map(o => {
     const bande = D.fasce.filter(f => f[2] === o.k && f[1] > b0 && f[0] < b1);
     if (!bande.length) return "";
-    const rules = D.tick.filter(t => t > b0 && t < b1)
+    const rules = MARK.filter(t => t > b0 && t < b1)
       .map(t => `<span class="tickline" style="left:${pc(t)}%"></span>`).join("");
     const bb = bande.map(f => {
       const a = Math.max(f[0], b0), z = Math.min(f[1], b1);
@@ -410,15 +442,17 @@ document.addEventListener("focusin", e => {
   const b = e.target.closest(".band"); if (b) mostra(b);
 });
 
-/* ---------- zoom: il tick con piu' fasce ---------- */
+/* ---------- zoom: l'intervallo fra due linee con piu' fasce ---------- */
 let best = 0, bestN = -1;
-for (let i = 0; i < D.tick.length - 1; i++) {
-  const n = D.fasce.filter(f => f[1] > D.tick[i] && f[0] < D.tick[i + 1]).length;
+for (let i = 0; i < MARK.length - 1; i++) {
+  const n = D.fasce.filter(f => f[1] > MARK[i] && f[0] < MARK[i + 1]).length;
   if (n > bestN) { bestN = n; best = i; }
 }
-const z0 = D.tick[best] - 60, z1 = D.tick[best + 1] + 40;
+// Con meno di due linee non c'e' intervallo da isolare: si mostra tutto.
+const z0 = MARK.length >= 2 ? MARK[best] - 60 : 0;
+const z1 = MARK.length >= 2 ? MARK[best + 1] + 40 : D.fine;
 disegna(document.getElementById("zaxis"), document.getElementById("zlanes"),
-        z0, z1, t => "tick @ " + N.format(t));
+        z0, z1, t => MARK_ETICHETTA + N.format(t));
 
 document.getElementById("zseq").innerHTML =
   D.fasce.filter(f => f[1] > z0 && f[0] < z1)

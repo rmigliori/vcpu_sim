@@ -212,3 +212,46 @@ vasm_program(test_mutex OBJECTS t_mutex LINK lib_mutex lib_messaggi lib_kernel)
 
 vasm_check(mutex MODE DUMPS PROGRAM test_mutex
            EXPECT "0 0 1 1 1")
+
+# ---------------------------------------------------------------------------
+#  test_coop — LO SCHEDULER SENZA IL TICK (11/09/2026).
+#
+#  Ogni altro test di questa cartella arma il timer, e a furia di leggerli la
+#  preemption da interrupt finisce per sembrare IL modo in cui il sistema
+#  funziona. Non lo e': e' un modo. Qui non c'e' un solo interrupt, IE resta a
+#  zero per tutta la vita del programma, e la CPU cambia mano solo per blocco
+#  volontario -- un testimone (un unico MESSAGGIO) che gira A -> B -> C -> A.
+#
+#  Il percorso che esercita da solo esiste dal 07/09 e non era mai stato messo
+#  alla prova senza rete: task_block chiama scheduler e cade nel dispatcher
+#  SENZA passare dall'ISR. C'era sempre un tick a coprirlo.
+#
+#  LE PRIORITA' SONO DICHIARATE IN ORDINE DIVERSO DAL GIRO -- il giro e'
+#  A->B->C, le priorita' sono B(1), C(2), A(3) -- ed e' il modo di rendere il
+#  test sensibile: se lo scheduler scegliesse per priorita' invece di seguire il
+#  testimone, l'ordine cambierebbe e `err` lo direbbe. In un sistema cooperativo
+#  il pronto e' sempre uno solo, e chi sceglie non ha niente da scegliere.
+#
+#  L'IDLE QUI E' RAGGIUNGIBILE -- e' accodato come gli altri -- e non deve
+#  essere raggiunto: senza interrupt da li' non si esce, perche' l'idle non si
+#  blocca mai (§4) e nessuno puo' togliergli la CPU. Un task_ready armerebbe
+#  g_resched e quel flag resterebbe armato per sempre, visto che l'unico
+#  consumatore e' sched_isr_exit. In un sistema puramente cooperativo "nessuno
+#  e' pronto" non significa "aspetta": significa che il sistema e' finito.
+#
+#  Ma il quinto numero non lo misura, e va detto: cntI nel dump NON PUO' CHE
+#  VALERE 0, perche' se l'idle girasse il dump non verrebbe mai eseguito.
+#  L'osservabile vero e' che il test TERMINI -- stessa forma di cntU in
+#  test_mutex, dove il livelock non farebbe fallire il test ma non lo farebbe
+#  finire.
+#
+#  I cinque numeri non dipendono dai cicli: non c'e' niente, qui, che misuri il
+#  tempo.
+# ---------------------------------------------------------------------------
+vasm_object(t_coop SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_coop.vasm
+                   INTERFACES vinc_coda vinc_tcb vinc_mailbox vinc_messaggio)
+
+vasm_program(test_coop OBJECTS t_coop LINK lib_messaggi lib_kernel)
+
+vasm_check(coop MODE DUMPS PROGRAM test_coop
+           EXPECT "0 5 5 5 0")
