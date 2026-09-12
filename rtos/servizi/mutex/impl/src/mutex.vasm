@@ -83,6 +83,7 @@
   .extern task_block
   .extern request_preempt
   .extern task_yield       ; §13.7: il percorso di uscita sincrono
+  .extern sched_pronto_sopra ; ... e la domanda che evita di pagarlo a vuoto
   .extern prio_pcb
   .extern current
 
@@ -301,12 +302,29 @@ mtxu_ready:
 ;  arma il flag se il risvegliato non batte chi gira, e chi girava stava al
 ;  ceiling).
 ;
-;  Si arma il flag INCONDIZIONATAMENTE, perche' distinguere i casi in cui nulla
-;  e' cambiato costerebbe un campo in piu': durante la sezione critica
-;  task_ready ha confrontato, ha risposto "non batte chi gira" e non ha armato
-;  niente -- quella risposta era corretta ALLORA, e il flag e' a un bit.
+;  --- PRIMA SI CHIEDE, POI SI PAGA ---
 ;
-;  ... E POI SI CEDE, dal 12/09/2026, ed e' la chiusura di §13.7.
+;  Fino a poche ore fa qui si armava INCONDIZIONATAMENTE, e l'argomento era che
+;  l'informazione per decidere non c'era piu': durante la sezione critica
+;  task_ready aveva confrontato, aveva risposto "non batte chi gira" -- vero
+;  ALLORA, perche' chi girava stava al ceiling -- e il flag e' a un bit, quindi
+;  di quel passaggio non resta traccia.
+;
+;  L'argomento vale finche' non si GUARDA. sched_pronto_sopra guarda: una
+;  scansione di sola lettura, 12 cicli per livello vuoto, contro i ~460 di una
+;  commutazione. E l'informazione si recupera invece di essere dedotta.
+;
+;  Il limite e' il PROPRIO PCB, gia' riabbassato a prio_prec qui sopra: i PARI
+;  non contano, perche' un unlock non e' una fine turno e non deve ruotare.
+;  Misurato su test_mutex: la scansione risponde "nessuno" nella maggioranza dei
+;  casi, e quelle erano cessioni che salvavano il contesto per rientrare su se
+;  stesse.
+;
+;  Da cui anche che g_resched torna a significare quello che dice -- "qualcuno
+;  ha chiesto un rescheduling" -- invece di essere armato e consumato dalla
+;  stessa funzione a due istruzioni di distanza.
+;
+;  ... E QUANDO QUALCUNO C'E', SI CEDE: e' la chiusura di §13.7.
 ;
 ;  Fino a oggi qui c'era solo il request_preempt, e la sezione lo dichiarava
 ;  come proprio limite: da contesto di task un "percorso di uscita" non
@@ -336,9 +354,17 @@ mtxu_ready:
 ;  si scambia un costo COSTANTE e piccolo con una latenza VARIABILE e grande.
 ; --------------------------------------------------------------------------
 mtxu_preempt:
+  li r4, current
+  lw r4, 0(r4)
+  lw r1, TCB.pcb(r4)      ; il mio livello, gia' tornato a prio_prec
+  call sched_pronto_sopra ; domanda di SOLA LETTURA: non sfila niente
+  beq r1, r0, mtxu_esci   ; nessuno mi batte: niente flag, niente commutazione
+
   call request_preempt
   call task_yield         ; IE e' ancora 0, ed e' obbligatorio: vedi sopra
   call irq_save           ; ristabilisce IE = 0 dopo la ripresa, come receive
+
+mtxu_esci:
   lw r5, 0(r14)
   addi r14, r14, 4
   call irq_restore

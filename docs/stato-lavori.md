@@ -1,7 +1,8 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **12 settembre 2026** (§3.39 `task_yield`; §3.40 il
-> marcatore e il contesto vettoriale; §3.41 **§13 chiusa**)
+> Ultimo aggiornamento: **13 settembre 2026** (§3.42 il primo ramo si fonde e la
+> **lingua è decisa**; il 12/09: §3.39 `task_yield`, §3.40 il marcatore e il
+> contesto vettoriale, §3.41 **§13 chiusa**)
 > Scopo: fotografia dello stato per riprendere il lavoro a distanza di giorni
 > senza dover ricostruire il contesto.
 
@@ -9,9 +10,13 @@
 
 ## 0. STATO ATTUALE — DA DOVE SI RIPRENDE
 
-> ### ▶ RIPRENDI DA QUI (13/09/2026 o dopo)
+> ### ▶ RIPRENDI DA QUI (14/09/2026 o dopo)
 >
-> `ctest` **32/32**. Il 12/09 ha fatto tre cose, e la terza è la più grossa.
+> `ctest` **32/32**. Il **13/09** non ha scritto codice: ha **fuso** il primo ramo
+> del progetto e ha **deciso la lingua** (§3.42) — due cose che erano rimaste
+> aperte apposta, e che adesso non lo sono più. Il prossimo passo è il **rename**,
+> e l'elenco delle coppie è pronto da approvare. Il 12/09 aveva fatto tre cose, e
+> la terza è la più grossa.
 >
 > **§3.40 — IL CONTESTO VETTORIALE SI SALVA, e le due metà del progetto si sono
 > incontrate.** `test_vettori` è il primo programma in cui un **task** usa
@@ -71,46 +76,128 @@
 > resta **una richiesta da rifare ogni volta**: fuori c'è solo questo riquadro,
 > che non può nominare il proprio hash.
 >
-> ### ▶▶ C'È UN RAMO APERTO, ED È IL PRIMO
+> ### ▶▶ IL PRIMO RAMO DEL PROGETTO È NATO E MORTO: FUSO IL 13/09
 >
-> **`mutex-cede-solo-se-serve`** — `sched_pronto_sopra`, la prima domanda di sola
-> lettura che si possa fare allo scheduler, e `mutex_unlock` che la usa per non
-> cedere a vuoto (§3.41). Verde, 32/32, nessun `EXPECT` mosso, misurato: su
-> `test_mutex` salta due cessioni su quattro e il costo di §13.7 scende dal +22%
-> al +13%.
+> **`mutex-cede-solo-se-serve` è in `master`** (§3.41 e §3.42). `test_mutex`
+> misurato dopo la fusione: **7143 cicli**, cioè il numero del ramo, non quello
+> di `master` (7700). 32/32, nessun `EXPECT` mosso.
 >
-> **La fusione è rimandata a mente fredda, ed è una decisione dell'utente.** Le
-> due obiezioni che ho sollevato io e che vanno pesate: `sched_pronto_sopra` ha
-> **un chiamante solo** (stamattina, per `task_yield`, avevo sostenuto che ciò
-> che rende una cosa kernel sono «due clienti che non si conoscono»), e il
-> vantaggio è dimostrato su un test solo, per giunta il caso peggiore. A favore:
-> `master` porta la versione *peggiore* di una decisione già presa — lì
-> `mutex_unlock` arma `g_resched` e lo consuma due istruzioni dopo.
+> Le due obiezioni che avevo sollevato erano vere e hanno perso lo stesso, e il
+> perché conta più del verdetto:
 >
-> È anche il primo ramo del progetto, per il criterio fissato il 12/09: si apre
-> un ramo quando una cosa **potrebbe rivelarsi sbagliata**, non quando è grossa.
-> E rami **corti e uno per volta**, perché due che toccano in parallelo
-> `stato-lavori.md` danno un conflitto in prosa.
+> - **«un chiamante solo»** non era la domanda giusta. Il criterio dei «due
+>   clienti che non si conoscono» serviva a decidere se `task_yield` fosse una
+>   primitiva o un pezzo di test. Qui la ragione è un'altra: l'aritmetica che
+>   `sched_pronto_sopra` fa **è** l'invariante di §7.3 — tabella dei PCB contigua
+>   e in ordine — e farla uscire dal kernel vorrebbe dire un secondo modulo che
+>   la conosce senza garantirla. È lo stesso argomento di `prio_pcb`, già dentro;
+> - **«un test solo, il caso peggiore»** resta vero. Ma per un kernel realtime il
+>   caso peggiore è il numero che si **dichiara**, quindi misurarlo lì è la
+>   scelta giusta e non un campione comodo.
 >
-> ### ▶▶ IL PROSSIMO PASSO, IN UNA RIGA
+> Ciò che ha spostato il verdetto è cosa portava `master`: non «la versione senza
+> ottimizzazione», ma **la versione peggiore di una decisione già presa**. Lì
+> `mutex_unlock` armava `g_resched` e lo consumava due istruzioni dopo — il flag
+> non significava più «qualcuno ha chiesto un rescheduling», non significava
+> niente. Il ramo ripara **quello**; il −7% è l'effetto collaterale.
 >
-> **L'ASSEMBLAGGIO CONDIZIONALE** (`.ifdef` e `-D`), che è il prerequisito di
+> Il criterio del ramo regge e va tenuto: si apre un ramo quando una cosa
+> **potrebbe rivelarsi sbagliata**, non quando è grossa. E rami **corti e uno per
+> volta**, perché due che toccano in parallelo `stato-lavori.md` danno un
+> conflitto in prosa. Questo è durato un giorno, che è la durata giusta.
+>
+> ### ▶▶ LA LINGUA: DECISA IL 13/09, E NON È UNA TRADUZIONE
+>
+> La decisione lasciata aperta il 12/09 è presa, dall'utente: **i nomi passano
+> all'inglese, i commenti restano in italiano.**
+>
+> Il conto che l'ha resa decidibile, perché «avrei dovuto cominciare in inglese»
+> senza un numero davanti è un'intenzione e non una scelta:
+>
+> | | quanto | verificabile? |
+> |---|---|---|
+> | **nomi** — simboli, file, cartelle | **18** simboli esportati su 72, **256** occorrenze in **34 file su 55**, +106 nei documenti | **sì**, meccanicamente |
+> | **commenti** | **4044 righe** su 8844 di `.vasm`/`.vinc` | **no** |
+>
+> E la differenza che decide non è la dimensione, è la seconda colonna. Un rename
+> ha una prova: `ctest` 32/32 **più conteggi di istruzioni e cicli identici su
+> tutti e 32 i test**, che è più forte del solo verde — è il metodo di §3.24, i
+> `.vx` confrontati byte per byte. Tradurre un commento che *è* l'argomento non ha
+> nessuna prova: si può solo rileggere.
+>
+> Da cui: la metà che si rimpiange è quella che **si recupera con una verifica**,
+> e la metà che non si recupera è quella dove scrivere nella propria lingua è
+> stato probabilmente giusto. 4044 righe di ragionamento denso in seconda lingua,
+> sotto la scadenza del 1° ottobre, sarebbero **più magre** — e ciò che si porta a
+> ND Satcom è il ragionamento.
+>
+> **Il rename ripara anche una collisione vera**, che non è cosmetica: `coda`
+> nel progetto significa **due cose** — il modulo (*queue*) e la posizione
+> (*tail*). `coda_init` inizializza una coda, `enqueue_coda` accoda **in fondo**,
+> e il contrario è `enqueue_testa`. Stessa parola per due concetti che non
+> c'entrano niente, dall'inizio del progetto, e in italiano non si vede.
+>
+> **Scartata: la doppia versione**, italiana e inglese in parallelo, «tanto quella
+> italiana prima o poi muore». È la regola dei quattro documenti applicata al
+> codice — *due cose scritte indipendentemente divergono, una derivata no* — e in
+> peggio, perché il codice **ha** un compilatore ma il compilatore dice che
+> ciascuna è coerente con sé, mai che le due non sono d'accordo. E «prima o poi
+> muore» non succede: muore quando qualcuno la dichiara morta, e fino a quel
+> giorno ogni correzione costa due volte. Il bisogno dietro la proposta —
+> *rileggere com'era* — **git lo dà già**: il commit prima del rename *è* la
+> versione italiana, e non può andare alla deriva perché nessuno ci scrive.
+> Da cui il **tag `italiano-pre-rename`**, il primo tag del progetto.
+>
+> **I commenti in inglese arrivano dopo il nucleo fattuale**, e solo dove un
+> documento inglese li cita: allora l'insieme è **noto** invece che stimato, e il
+> carico è proporzionale a ciò che i documenti usano davvero. Deciderlo in
+> quest'ordine non è rimandare — è l'unico ordine in cui il costo si conosce prima
+> di impegnarlo.
+>
+> ### ▶▶ IL PROSSIMO PASSO, IN DUE RIGHE E IN QUEST'ORDINE
+>
+> **1. IL RENAME**, perché tocca **34 file su 55** e quindi non può convivere con
+> un ramo aperto né stare nello stesso commit di un cambiamento semantico —
+> altrimenti «i cicli non si muovono» non vuol più dire niente. A commit piccoli,
+> con i conteggi confrontati a ogni passo. L'elenco delle coppie vecchio→nuovo si
+> approva **prima** di toccare un file: su `gestore_timeout` e `marche` la
+> traduzione giusta è una scelta, non un automatismo.
+>
+> **2. L'ASSEMBLAGGIO CONDIZIONALE** (`.ifdef` e `-D`), che è il prerequisito di
 > tutto il resto del marcatore. L'utente ha impostato tre **categorie fisse**
 > nello strumento — `scheduler`, `dispatcher`, `ISR` — e quelle stanno nel
 > kernel: senza un modo di compilarle via, il kernel resta strumentato **per
 > sempre** e ogni `EXPECT` che dipende dai cicli si sposta una volta e non torna
 > più. L'assembler oggi conosce diciassette direttive e nessuna condizionale.
+> Dopo il rename, così le categorie nascono col nome giusto invece di prenderlo
+> e cambiarlo.
 >
 > È anche ciò che rende scrivibile `start_misura(FFT, primoStage)` come l'utente
 > l'ha scritta: oggi serve l'idioma in linea a tre istruzioni, perché **non ci
 > sono macro**.
 >
+> > **Dove va il filtro condizionale, già guardato il 13/09.** L'assembler legge
+> > il sorgente **una volta sola**: pass 1 scorre le righe con `inc_next_line` e
+> > **salva le righe di codice** per pass 2, e questo vale identico per entrambi
+> > gli ingressi, `assemble()` e `assemble_object()`. Quindi il punto di
+> > strozzatura è unico — `inc_next_line` in `assembler.c` — e le due passate non
+> > possono divergere **per costruzione**, che è la proprietà che si vuole.
+> >
+> > Una scelta di portata, da prendere alla luce: **`.ifdef` interroga solo i
+> > simboli di `-D`, non quelli di `.equ`**. Gli assembler classici fanno il
+> > contrario, ma qui `.equ` si raccoglie durante pass 1 e **in ordine**, quindi
+> > `.ifdef` su una `.equ` dipenderebbe da *dove* sta scritto — la stessa trappola
+> > silenziosa di `.word` con una costante, che è già qui sotto fra i debiti. Con
+> > solo `-D` la risposta è indipendente dall'ordine e il filtro può stare nel
+> > lettore. Quattro direttive (`.ifdef`, `.ifndef`, `.else`, `.endif`) e `-D NOME`
+> > come **presenza**: `-DNOME=valore` che definisce anche una costante è un'altra
+> > funzione e non serve a compilare via la strumentazione.
+>
 > Il resto in fila, dal più vicino:
 >
-> - ~~**§13.7**~~ — **CHIUSA** (§3.41): `mutex_unlock` arma e CEDE. Resta
->   l'ottimizzazione, cedere solo quando serve, che vuole una domanda non
->   distruttiva allo scheduler («c'è qualcuno sopra di me?») — oggi `scheduler`
->   sfila il TCB che sceglie, quindi non è interrogabile;
+> - ~~**§13.7**~~ — **CHIUSA PER INTERO** (§3.41 e §3.42): `mutex_unlock` arma e
+>   CEDE, e dal 13/09 **chiede prima di pagare** — `sched_pronto_sopra`, la prima
+>   domanda di sola lettura che si possa fare allo scheduler. Non resta niente;
 > - **il salvataggio PIGRO**: oggi un task vettoriale che esce e rientra senza
 >   che nessun altro usi i vettori paga salvataggio e ripristino per niente.
 >   Evitarlo vuol dire disabilitare l'unità alla commutazione e trappare alla
@@ -125,7 +212,18 @@
 > sistema al lavoro**. Il disaccordo sull'ordine (qui sotto) si è ridotto: il
 > contesto vettoriale, che era il mio primo argomento, **è fatto**.
 >
-> Restano cinque debiti piccoli aperti e non chiusi apposta:
+> Restano sei debiti piccoli aperti e non chiusi apposta:
+>
+> - **il controllo sullo slot in `sched_pronto_sopra` è CODICE CORRETTO E MAI
+>   ESEGUITO** — entrato in `master` con la fusione del 13/09, e scritto qui
+>   perché non venga ingoiato insieme a essa. Verificato per esecuzione: su tutta
+>   la suite le due `lw` girano lo **stesso** numero di volte, cioè quel ramo non
+>   scatta mai, e non è un caso dei test ma una proprietà (uno slot occupato sta
+>   sempre **sotto** chi gira, e i due limiti usati lo mettono fuori portata). Si
+>   tiene perché la routine **deve** rispondere come `sched_scan`, che lo slot lo
+>   guarda per primo — toglierlo le farebbe divergere su un'invariante che nessuno
+>   ha scritto. Ma va saputo: **se qualcuno cambia come si riempiono gli slot, non
+>   c'è nessun test che se ne accorga**;
 >
 > - **`task_block` non consuma `g_resched`, `task_yield` sì** (§3.39). Anche lì
 >   il flag resta stantìo dopo uno switch. Asimmetria dichiarata e non risolta:
@@ -181,13 +279,12 @@
 > c'è un oggetto concluso da descrivere. Sincronizzatore, linker e `vc` non lo
 > sono e non lo saranno per il 1° ottobre.
 >
-> > **UNA COSA DA DECIDERE, e non è mia.** Tutto il ragionamento di questo
-> > progetto vive nei **commenti in italiano** del codice e in questi documenti.
-> > Se ciò che ci si porta a ND Satcom è il ragionamento e lì si lavora in
-> > inglese, un documento inglese che cita commenti italiani è zoppo. Le uscite
-> > sono tre — lasciare il codice com'è e tradurre solo i documenti; commentare
-> > in inglese da adesso in avanti; convertire l'esistente — e costano molto
-> > diversamente. Vale la pena deciderlo ora e non a ottobre.
+> > ~~**UNA COSA DA DECIDERE, e non è mia.**~~ — **DECISA il 13/09** (§3.42), e
+> > nessuna delle tre uscite elencate qui il 12/09: i **nomi** passano
+> > all'inglese, i **commenti** restano in italiano, e l'inglese nei commenti
+> > arriva solo dove un documento inglese li cita, **dopo** il nucleo fattuale.
+> > La ragione in una riga: un rename si verifica, una traduzione no. Il quadro
+> > sopra, in «LA LINGUA».
 >
 > ### ▶▶ DOVE SI STAVA ANDANDO
 >
@@ -664,6 +761,25 @@ dopo lo spostamento e danno gli stessi numeri di prima.
 Branch `master`, pubblicato su `git@github.com:rmigliori/vcpu_sim.git` (remote
 `origin`, HTTPS + credential helper `git-credential-libsecret` configurato,
 push senza prompt).
+
+> **13/09/2026 — un ramo fuso e il primo tag.**
+> `mutex-cede-solo-se-serve` è stato fuso in `master` con `--no-ff`, quindi la
+> vita del ramo resta leggibile nella storia invece di appiattirsi. Il ramo
+> **non** è stato cancellato né in locale né su `origin`: lo si cancella quando
+> il push del merge è fatto e verificato, non prima.
+>
+> **`italiano-pre-rename`** è il **primo tag del progetto**, e sta sul commit di
+> merge — cioè sull'ultimo albero con i nomi in italiano. È ciò che sostituisce
+> l'idea (scartata, §3.42) di tenere in vita due versioni in parallelo: la
+> versione italiana esiste, è raggiungibile con un `git checkout`, e non può
+> andare alla deriva perché nessuno ci scrive dentro.
+>
+> **Da pushare**: il merge, il tag (`git push origin italiano-pre-rename`, che i
+> tag non viaggiano da soli) e i commit del rename che seguiranno. Come sempre,
+> **il push lo chiede l'utente**.
+>
+> *(I due paragrafi qui sotto sono fermi al 07/09 e vanno letti come storia: lo
+> stato del push aggiornato sta nel riquadro in cima.)*
 
 **Pushato fino a `2c97bf6`, cioè tutto il 07/09.** Tre push in giornata, tutti e
 tre chiesti dall'utente: `90c29fd` (§3.32, la catena), poi `2c97bf6` a fine
@@ -2759,6 +2875,109 @@ il contratto scritto.
 
 ---
 
+### 3.42 IL PRIMO RAMO SI FONDE, E LA LINGUA SI DECIDE (13/09/2026)
+
+Nessuna riga di codice nuova: una fusione e una decisione. Ma la decisione è
+quella che il 12/09 era stata dichiarata «da prendere ora e non a ottobre», e
+prenderla costa meno che descriverla.
+
+#### La fusione, e le due obiezioni che avevo sollevato io
+
+`mutex-cede-solo-se-serve` è in `master`. Verificato **prima** di consigliarla,
+non dopo: entrambi i rami a 32/32, e `test_mutex` a **7700 cicli su `master`**
+contro **7143 sul ramo** — cioè il +22% → +13% del riquadro riconfermato da capo,
+partendo dai 6321 cicli della base pre-§13.7. Dopo la fusione l'albero misura
+7143: il numero del ramo, non quello di `master`.
+
+Le due obiezioni erano mie, erano vere, e hanno perso lo stesso:
+
+- **«`sched_pronto_sopra` ha un chiamante solo.»** Il criterio dei «due clienti
+  che non si conoscono» era nato la mattina prima per decidere se `task_yield`
+  fosse una primitiva o un pezzo di test, e lì era il criterio giusto. Qui la
+  domanda è un'altra: quella routine sta nel kernel perché l'aritmetica che fa
+  **è** l'invariante di §7.3 — tabella dei PCB contigua e in ordine — e farla
+  uscire vorrebbe dire un secondo modulo che la conosce senza garantirla.
+  Identico a `prio_pcb`, entrato il giorno prima per quella stessa ragione;
+- **«il vantaggio è su un test solo, e per giunta il caso peggiore.»** Vero, e
+  resta vero. Ma per un kernel realtime il caso peggiore **è** il numero che si
+  dichiara: misurarlo lì non è scegliersi un campione comodo, è misurarlo dove
+  conta. E §13.5 sostiene che in un sistema dichiarato bene quella coda sia
+  sempre vuota, cioè che il risparmio reale sia **maggiore** di quello misurato.
+
+Ciò che ha spostato il verdetto è cosa portava `master`, ed è la cosa che nel
+riquadro del 12/09 era scritta come una riga a favore senza che ne pesassi il
+peso: non «la versione senza ottimizzazione», ma **la versione peggiore di una
+decisione già presa**. Lì `mutex_unlock` armava `g_resched` e lo consumava due
+istruzioni dopo. Non è un costo di prestazioni: è un **significato rotto** — il
+flag non voleva più dire «qualcuno ha chiesto un rescheduling», non voleva dire
+niente. Il ramo ripara quello, e il −7% è l'effetto collaterale.
+
+**Il debito che la fusione porta dentro** è dichiarato nel riquadro e non va
+ingoiato con essa: il controllo sullo slot in `sched_pronto_sopra` è codice
+corretto e **mai eseguito**, e nessun test se ne accorgerebbe se qualcuno
+cambiasse il modo in cui gli slot si riempiono.
+
+#### La lingua: i nomi passano, i commenti restano
+
+L'utente ha sciolto la decisione lasciata aperta il 12/09, e l'ha aperta
+dicendo *«l'errore è mio, dovevo iniziare subito con commenti, nomi dei file e
+delle procedure in inglese»*. Il conto dice che l'errore c'è ed è quello piccolo:
+
+| | quanto | verificabile? |
+|---|---|---|
+| **nomi** — simboli, file, cartelle | **18** simboli esportati su 72, **256** occorrenze in **34 file su 55**, +106 nei documenti | **sì**, meccanicamente |
+| **commenti** | **4044 righe** su 8844 di `.vasm`/`.vinc` | **no** |
+
+Il resto era già inglese senza che nessuno l'avesse deciso — `task_yield`,
+`mutex_lock`, `sem_post`, `irq_save`, `request_preempt`, `sched_isr_exit`, tutto
+l'HAL — e anche nel C il confine è cronologico più che intenzionale:
+`assembler.c` e `toolchain.c` hanno i commenti in inglese quasi puri, l'italiano
+sta in `main.c`, `vcpu.c` e `vcpu.h`, cioè nel marcatore e nei vettori, scritti
+negli ultimi giorni. Non è una convenzione: è una **deriva**.
+
+**La colonna che decide è la seconda, non la prima.** Un rename ha una prova —
+`ctest` 32/32 *più* conteggi di istruzioni e cicli identici su tutti e 32 i test,
+che è più forte del solo verde, ed è il metodo di §3.24 (i `.vx` confrontati byte
+per byte). Tradurre un commento che *è* l'argomento non ha nessuna prova: si può
+solo rileggere. Quindi la metà che si rimpiange è quella che si **recupera con
+una verifica**, e la metà che non si recupera è quella dove scrivere nella propria
+lingua è stato probabilmente giusto: 4044 righe di ragionamento denso in seconda
+lingua, sotto la scadenza del 1° ottobre, sarebbero **più magre**, e ciò che si
+porta a ND Satcom è il ragionamento.
+
+**Il rename ripara una collisione, e non è cosmetica.** `coda` nel progetto
+significa **due cose diverse**: il modulo (*queue*) e la posizione (*tail*).
+`coda_init` inizializza una coda; `enqueue_coda` accoda **in fondo**, e il suo
+contrario è `enqueue_testa`. Stessa parola per due concetti che non c'entrano
+niente, dall'inizio del progetto, e in italiano non si vede. In inglese si separa
+da sola: `queue_init` contro `enqueue_tail`/`enqueue_head`, e `dequeue_head` che
+finalmente dice che toglie dalla **testa** e non «dalla coda».
+
+#### Scartata: la doppia versione
+
+L'utente ha proposto un albero inglese accanto a quello italiano, «che prima o
+poi morirà». È la regola dei quattro documenti applicata al codice — *due cose
+scritte indipendentemente divergono, una derivata no* — e in **peggio**, perché
+il codice ha un compilatore, ma il compilatore dice che ciascuna delle due è
+coerente con sé stessa, mai che le due non sono d'accordo.
+
+E «prima o poi muore» in pratica non succede: muore quando qualcuno la dichiara
+morta, e fino a quel giorno ogni correzione costa due volte — con l'assemblaggio
+condizionale, il disegno delle marche, il salvataggio pigro e quattro documenti
+da scrivere in tre settimane, ognuna di quelle cose andrebbe decisa due volte o
+riportata a mano.
+
+Il bisogno vero dietro la proposta — *e se va storto, o se fra un mese voglio
+rileggere com'era* — **git lo dà già senza mantenere niente**: il commit prima
+del rename **è** la versione italiana, per sempre, e non può andare alla deriva
+proprio perché nessuno ci scrive dentro. Da cui il tag **`italiano-pre-rename`**,
+il primo tag del progetto; tag non ce n'erano.
+
+C'è un solo caso in cui la doppia versione sarebbe giusta — che qualcun altro
+stia leggendo o dipendendo da quella italiana — e non c'è nessuno.
+
+---
+
 ### 3.41 §13 SI CHIUDE: `mutex_unlock` arma e CEDE (12/09/2026, terza parte)
 
 `ctest` **32/32**, e **nessun numero atteso si è mosso**. L'ultimo punto aperto
@@ -2794,26 +3013,63 @@ ramo *sp_solo*, perché averlo vorrebbe dire scandire prima di salvare»), qui
 misurato invece che previsto. Ed è anche una proprietà dello strumento da
 ricordare: **una cessione a vuoto è invisibile sul canale 0**, correttamente.
 
-> **Su quel test l'affare è cattivo, e va detto.** Il guadagno di latenza
-> misurato è **37 cicli** su una commutazione, contro un periodo del timer di
-> 500. Ma `test_mutex` esercita le *transizioni di stato* del ceiling, non il
-> caso in cui un task più prioritario resta fermo per un tick intero — e con un
-> tick di 500 cicli e una commutazione da ~460 quel sistema è già vicino alla
-> saturazione.
+> **UNA CORREZIONE, e vale la pena tenerla scritta.** Una prima lettura aveva
+> riportato «37 cicli di guadagno di latenza». Era **deriva di fase, non una
+> misura**: le commutazioni sono **sette in ogni variante** — senza cessione, con
+> cessione incondizionata, con la domanda — e uno spostamento di
+> quell'ordine si spiega con la diversa lunghezza del percorso, non con una
+> preemption anticipata. Per misurare il guadagno davvero bisognerebbe sapere
+> *quando* il contendente è diventato pronto, cioè un tag dentro `task_ready`:
+> strumentazione di kernel, che ha il suo prerequisito (§1 del prossimo passo).
 >
-> La giustificazione non è il throughput medio: è che la latenza diventa
-> **deterministica**. Il costo si paga sempre e si conosce; l'attesa evitata era
-> variabile e limitata solo dal tick. È lo scambio che un kernel realtime fa per
-> definizione, ed è esattamente ciò che §13.7 argomenta.
+> La giustificazione quindi non è un numero su questo test: è che la latenza
+> diventa **deterministica**. Il costo si paga sempre e si conosce; l'attesa
+> evitata era variabile e limitata solo dal tick.
 
-#### Cosa resta, e non è §13
+#### E poi: SI CHIEDE PRIMA DI PAGARE (ramo `mutex-cede-solo-se-serve`)
 
-L'ottimizzazione: cedere **solo se serve**. Richiede una domanda non distruttiva
-allo scheduler — *c'è qualcuno sopra di me?* — che oggi non esiste, perché
-`scheduler` **sfila** il TCB che sceglie e quindi non è interrogabile.
-Costerebbe una scansione (≤96 cicli, il caso peggiore dichiarato in `tcb.vinc`)
-al posto di una commutazione (~460). È un'aggiunta al kernel, e va decisa a
-parte.
+L'idea è dell'utente — *«non potrebbe essere una prima ottimizzazione vedere se
+la coda è vuota?»* — e la risposta è sì, purché sia **la coda giusta**.
+
+Non quella del mutex: è già interrogata due istruzioni sopra, e sul percorso
+normale era vuota per definizione, quindi non dice niente sul caso di §13.7 (un
+task svegliato da un'**ISR** durante la sezione critica, che con quel mutex non
+c'entra). Sono le **code dei PCB**, e la domanda esatta è *esiste un eseguibile
+più prioritario di `prio_prec`?*
+
+`sched_pronto_sopra(r1 = &PCB limite)` è quella domanda: la stessa scansione di
+`sched_scan` **senza l'effetto**. Esiste perché `scheduler` *sfila* il TCB che
+sceglie — è un comando, non una domanda, e interrogarlo costerebbe rimettere
+dentro ciò che ha tolto. Guarda **coda e slot** a ogni livello, perché sono i due
+posti in cui un eseguibile può stare, e il limite è **esclusivo** perché le due
+domande utili sono diverse: `mutex_unlock` esclude i pari (un unlock non è una
+fine turno), un ceditore li include (cedere a un pari è lo scopo).
+
+Con la domanda in mano **cade l'argomento dell'armare incondizionatamente**: la
+nota dell'11/09 lo giustificava con «l'informazione non c'è più», vero finché non
+si guarda.
+
+Misurato su `test_mutex`, che ha **quattro** unlock:
+
+| | istruzioni | cicli | cessioni |
+|---|---|---|---|
+| senza cessione (prima di §13.7) | 3038 | 6321 | 0 |
+| arma e cede **sempre** | 3679 | 7700 (+22%) | 4 |
+| **chiede, poi cede** | 3434 | 7143 (+13%) | **2** |
+
+Le due cessioni saltate sono esattamente quelle che rientravano su se stesse, e i
+245 cicli recuperati sono le loro. Le altre due trovano davvero qualcuno sopra.
+
+Che sia **solo la metà** è una proprietà di *questo* test e non del rimedio:
+`test_mutex` è costruito per avere un contendente pronto durante la sezione
+critica, cioè è il caso peggiore. §13.5 sostiene che sotto un ceiling corretto
+quella coda sia **sempre vuota** — in un sistema dichiarato bene la risposta
+sarebbe «nessuno» quasi sempre, e il risparmio quasi totale.
+
+> `task_yield` **non** è stata toccata: resta una primitiva che salva il contesto
+> prima di scandire, con il prezzo dichiarato nel suo commento. Un chiamante che
+> voglia evitarlo chiede prima, ed è quello che fa `mutex_unlock`. Il suo unico
+> altro cliente — l'idle di `test_mondo` — cede sempre a ragione.
 
 ---
 
