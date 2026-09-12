@@ -23,7 +23,7 @@
 ;
 ;   in FONDO      D, E, C: ognuno meno prioritario di tutti quelli gia' dentro
 ;   in TESTA      H, piu' prioritario del primo -> prec = sentinella, cioe'
-;                 enqueue_dopo_nc che ricade su enqueue_testa_nc
+;                 enqueue_after_nc che ricade su enqueue_head_nc
 ;   IN MEZZO      F, che scavalca D ed E (suoi PARI) e si ferma davanti a C.
 ;                 E' il caso che le due enqueue vecchie non sanno esprimere
 ;
@@ -52,7 +52,7 @@
 ; scritte invece che da come sono accodate.
 ;
 ; --- I QUATTRO NUMERI, TUTTI DERIVABILI ---
-;   ordine   123456  la lista letta con coda_peek quando i sei sono tutti in
+;   ordine   123456  la lista letta con queue_peek quando i sei sono tutti in
 ;                    attesa. Le cifre sono gli id nell'ordine in cui stanno in
 ;                    lista: 1=H 2=A 3=D 4=E 5=F 6=C. E' l'asserzione principale.
 ;                    CONTROPROVA ESEGUITA: disattivando il confronto della
@@ -170,7 +170,7 @@ main:
   sw r0, TCB.state(r3)
   mov r1, r4               ; &pcb == &pcb.coda
   mov r2, r3
-  call enqueue_coda
+  call enqueue_tail
 
   ; --- D (livello 3): accodato PRIMA di E, cosi' arriva prima di lui ---
   li r1, stackD_top
@@ -183,7 +183,7 @@ main:
   sw r0, TCB.state(r3)
   mov r1, r4
   mov r2, r3
-  call enqueue_coda
+  call enqueue_tail
 
   ; --- E (livello 3) ---
   li r1, stackE_top
@@ -196,7 +196,7 @@ main:
   sw r0, TCB.state(r3)
   mov r1, r4
   mov r2, r3
-  call enqueue_coda
+  call enqueue_tail
 
   ; --- C (livello 4) ---
   li r1, stackC_top
@@ -209,7 +209,7 @@ main:
   sw r0, TCB.state(r3)
   mov r1, r4
   mov r2, r3
-  call enqueue_coda
+  call enqueue_tail
 
   ; --- H (livello 1) e F (livello 3): CONTESTO PRONTO MA FUORI DA OGNI CODA.
   ;     Non sono eseguibili, quindi lo scheduler non li vede; li rende
@@ -349,7 +349,7 @@ isr_fase1:
   call task_ready
   j isr_avanza
 
-  ; --- fase 2: la lista letta con coda_peek. Il ciclo e' LIMITATO DAL
+  ; --- fase 2: la lista letta con queue_peek. Il ciclo e' LIMITATO DAL
   ;     CONTATORE come nel kernel: i nodi sono -risorse, e la sentinella non si
   ;     cerca. Vale la ragione di §13.6 — un ciclo che gira N volte non scappa
   ;     nemmeno su una lista corrotta, mentre uno che aspetta di rivedere la
@@ -364,7 +364,7 @@ isr_fase2:
 isr_cammina:
   beq r5, r0, isr_scrivi
   mov r1, r2
-  call coda_peek           ; r2 = nodo successivo, senza sfilarlo
+  call queue_peek           ; r2 = nodo successivo, senza sfilarlo
   li r3, tcbH
   sub r3, r2, r3
   li r4, TCB.size

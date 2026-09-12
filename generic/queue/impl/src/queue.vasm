@@ -47,10 +47,10 @@
 ; appartiene per forza al chiamante.
 ;
 ; --- LA TERZA FORMA DELL'INSERIMENTO ---
-; enqueue_dopo_nc(prec, nodo) mette il nodo DOPO un predecessore qualsiasi. Non
+; enqueue_after_nc(prec, nodo) mette il nodo DOPO un predecessore qualsiasi. Non
 ; e' una disciplina in piu': siccome la TESTA e' una SENTINELLA dentro una lista
 ; circolare, "in testa" e' "dopo la sentinella" e "in coda" e' "dopo testa.bwd".
-; Questa forma CONTIENE le altre due, e infatti condivide con enqueue_testa_nc
+; Questa forma CONTIENE le altre due, e infatti condivide con enqueue_head_nc
 ; la stessa identica riga di codice: cambia solo come il chiamante legge r1.
 ;
 ; Serve all'inserimento ORDINATO per priorita' (§13.6 della proposta), dove la
@@ -75,9 +75,9 @@
 ; un mutex (§13.3) — potrebbe adottare le _nc comunque, visto che la camminata
 ; e' del chiamante. Si aggiunge in tre istruzioni il giorno che serva davvero.
 ;
-; --- LA SCANSIONE: coda_peek ---
-; coda_peek(corrente) -> corrente.fwd, senza sfilare niente. E' l'altra meta' di
-; enqueue_dopo_nc: quella mette il nodo DOVE le si dice, questa permette di
+; --- LA SCANSIONE: queue_peek ---
+; queue_peek(corrente) -> corrente.fwd, senza sfilare niente. E' l'altra meta' di
+; enqueue_after_nc: quella mette il nodo DOVE le si dice, questa permette di
 ; CERCARE quel punto.
 ;
 ; Serve all'inserimento ordinato di §13.6, in cui la camminata sta nel chiamante
@@ -122,27 +122,27 @@
 
   .text
 
-  .global coda_init
-  .global enqueue_coda
-  .global enqueue_testa
-  .global dequeue_testa
+  .global queue_init
+  .global enqueue_tail
+  .global enqueue_head
+  .global dequeue_head
   .global remove_buffer
 
-  .global enqueue_coda_nc
-  .global enqueue_testa_nc
-  .global enqueue_dopo_nc
-  .global dequeue_testa_nc
+  .global enqueue_tail_nc
+  .global enqueue_head_nc
+  .global enqueue_after_nc
+  .global dequeue_head_nc
   .global remove_buffer_nc
-  .global coda_peek
+  .global queue_peek
 
-  .global enqueue_coda_s
-  .global enqueue_testa_s
-  .global dequeue_testa_s
+  .global enqueue_tail_s
+  .global enqueue_head_s
+  .global dequeue_head_s
   .global remove_buffer_s
   .extern irq_save
   .extern irq_restore
 
-coda_init:                ; coda_init(r1=&testa)
+queue_init:                ; queue_init(r1=&head)
   sw r1, LINK.fwd(r1)    ; fwd = &testa
   sw r1, LINK.bwd(r1)    ; bwd = &testa
   sw r0, TESTA.count(r1)  ; count = 0
@@ -155,7 +155,7 @@ coda_init:                ; coda_init(r1=&testa)
 ; l'errore con la testa gia' incoerente, e da li' non si torna indietro. Nessuna
 ; call in nessuno dei due percorsi: restano FOGLIA.
 
-enqueue_coda:             ; enqueue_coda(r1=&testa, r2=&nodo) -- in fondo (FIFO)
+enqueue_tail:             ; enqueue_tail(r1=&head, r2=&node) -- in fondo (FIFO)
   lw r3, LINK.fwd(r2)
   lw r4, LINK.bwd(r2)
   or r3, r3, r4
@@ -163,13 +163,13 @@ enqueue_coda:             ; enqueue_coda(r1=&testa, r2=&nodo) -- in fondo (FIFO)
   lw r5, TESTA.count(r1)
   addi r5, r5, 1
   sw r5, TESTA.count(r1)  ; count++
-  j enq_coda_splice
-enqueue_coda_nc:          ; enqueue_coda_nc(r1=&testa, r2=&nodo) -- senza contatore
+  j enq_tail_splice
+enqueue_tail_nc:          ; enqueue_tail_nc(r1=&head, r2=&node) -- senza contatore
   lw r3, LINK.fwd(r2)
   lw r4, LINK.bwd(r2)
   or r3, r3, r4
   bne r3, r0, enq_linked
-enq_coda_splice:
+enq_tail_splice:
   lw r4, LINK.bwd(r1)    ; prev = testa.bwd (ultimo)
   sw r1, LINK.fwd(r2)    ; nodo.fwd = &testa
   sw r4, LINK.bwd(r2)    ; nodo.bwd = prev
@@ -178,7 +178,7 @@ enq_coda_splice:
   li r3, CODA_OK
   ret
 
-enqueue_testa:            ; enqueue_testa(r1=&testa, r2=&nodo) -- in testa (LIFO)
+enqueue_head:            ; enqueue_head(r1=&head, r2=&node) -- in testa (LIFO)
   lw r3, LINK.fwd(r2)
   lw r4, LINK.bwd(r2)
   or r3, r3, r4
@@ -186,20 +186,20 @@ enqueue_testa:            ; enqueue_testa(r1=&testa, r2=&nodo) -- in testa (LIFO
   lw r5, TESTA.count(r1)
   addi r5, r5, 1
   sw r5, TESTA.count(r1)  ; count++
-  j enq_testa_splice
+  j enq_head_splice
 ; Le due etichette stanno sullo STESSO indirizzo, e non e' un espediente: sono
 ; la stessa operazione chiamata con due contratti diversi su r1. "Dopo la
 ; sentinella" e "in testa" sono la stessa cosa perche' la sentinella e' un nodo,
 ; e il corpo qui sotto legge di r1 solo fwd/bwd, che testa e nodo condividono.
 ; Due nomi e una copia sola: se un giorno divergessero, divergerebbe anche
 ; l'unica riga che li tiene veri.
-enqueue_testa_nc:         ; enqueue_testa_nc(r1=&testa, r2=&nodo) -- senza contatore
-enqueue_dopo_nc:          ; enqueue_dopo_nc(r1=&prec, r2=&nodo)   -- dopo un nodo qualsiasi
+enqueue_head_nc:         ; enqueue_head_nc(r1=&head, r2=&node) -- senza contatore
+enqueue_after_nc:          ; enqueue_after_nc(r1=&prev, r2=&node)   -- dopo un nodo qualsiasi
   lw r3, LINK.fwd(r2)
   lw r4, LINK.bwd(r2)
   or r3, r3, r4
   bne r3, r0, enq_linked
-enq_testa_splice:
+enq_head_splice:
   lw r4, LINK.fwd(r1)    ; next = prec.fwd   (la sentinella e' il prec del primo)
   sw r4, LINK.fwd(r2)    ; nodo.fwd = next
   sw r1, LINK.bwd(r2)    ; nodo.bwd = prec
@@ -221,12 +221,12 @@ enq_linked:
 ;
 ; La coda vuota non e' un errore ma un esito normale (r2 = 0), quindi qui non
 ; c'e' nessun CODA_*: il valore di ritorno e' il nodo.
-dequeue_testa:            ; dequeue_testa(r1=&testa) -> r2 = nodo (0 se vuota)
+dequeue_head:            ; dequeue_head(r1=&head) -> r2 = nodo (0 se vuota)
   lw r5, TESTA.count(r1)
   beq r5, r0, deq_empty
   addi r5, r5, -1
   sw r5, TESTA.count(r1) ; count--, poi cade nel corpo
-dequeue_testa_nc:         ; dequeue_testa_nc(r1=&testa) -> r2 = nodo (0 se vuota)
+dequeue_head_nc:         ; dequeue_head_nc(r1=&head) -> r2 = nodo (0 se vuota)
   lw r2, LINK.fwd(r1)   ; nodo = testa.fwd
   beq r2, r1, deq_empty  ; fwd == &testa -> lista vuota (uscita condivisa)
   lw r4, LINK.fwd(r2)   ; new = nodo.fwd
@@ -242,14 +242,14 @@ deq_empty:
 ; Guarda e non tocca: nessun link cambia, nessun contatore si muove, il nodo
 ; resta dov'e'. Chiamata con r1 = &testa da' il primo nodo; rimettendole dentro
 ; cio' che ha restituito si avanza di uno. Quante volte, lo sa il chiamante.
-coda_peek:                ; coda_peek(r1=&corrente) -> r2 = corrente.fwd
+queue_peek:                ; queue_peek(r1=&current) -> r2 = current.fwd
   lw r2, LINK.fwd(r1)
   ret
 
 ; Simmetrica dell'inserimento: sfilare un nodo che non sta in nessuna lista
 ; scriverebbe su 0(r0) attraverso i link nulli, quindi il controllo qui pretende
 ; l'opposto — link NON nulli.
-remove_buffer:            ; remove_buffer(r1=&nodo, r2=&testa) -- unlink O(1)
+remove_buffer:            ; remove_buffer(r1=&node, r2=&head) -- unlink O(1)
   lw r3, LINK.fwd(r1)
   lw r4, LINK.bwd(r1)
   or r3, r3, r4
@@ -258,7 +258,7 @@ remove_buffer:            ; remove_buffer(r1=&nodo, r2=&testa) -- unlink O(1)
   addi r6, r6, -1
   sw r6, TESTA.count(r2) ; count-- (la testa la conosce il chiamante)
   j rem_splice
-remove_buffer_nc:         ; remove_buffer_nc(r1=&nodo) -- senza contatore
+remove_buffer_nc:         ; remove_buffer_nc(r1=&node) -- senza contatore
   lw r3, LINK.fwd(r1)
   lw r4, LINK.bwd(r1)
   or r3, r3, r4
@@ -289,37 +289,37 @@ rem_unlinked:
 ;  quindi gli argomenti della raw restano intatti — ne' r3, quindi l'esito della
 ;  raw arriva intatto al chiamante del wrapper.
 ; --------------------------------------------------------------------------
-  .proc enqueue_coda_s    ; enqueue_coda_s(r1=&testa, r2=&nodo) -> r3 = esito
+  .proc enqueue_tail_s    ; enqueue_tail_s(r1=&head, r2=&node) -> r3 = esito
   call irq_save           ; r5 = psw, IE=0 (r1/r2 intatti)
   addi r14, r14, -4
   sw r5, 0(r14)           ; la psw sopravvive alla call
-  call enqueue_coda
+  call enqueue_tail
   lw r5, 0(r14)
   addi r14, r14, 4
   call irq_restore        ; ripristina psw da r5
-  .endproc enqueue_coda_s
+  .endproc enqueue_tail_s
 
-  .proc enqueue_testa_s   ; enqueue_testa_s(r1=&testa, r2=&nodo) -> r3 = esito
+  .proc enqueue_head_s   ; enqueue_head_s(r1=&head, r2=&node) -> r3 = esito
   call irq_save
   addi r14, r14, -4
   sw r5, 0(r14)
-  call enqueue_testa
+  call enqueue_head
   lw r5, 0(r14)
   addi r14, r14, 4
   call irq_restore
-  .endproc enqueue_testa_s
+  .endproc enqueue_head_s
 
-  .proc dequeue_testa_s   ; dequeue_testa_s(r1=&testa) -> r2 = nodo (0 se vuota)
+  .proc dequeue_head_s   ; dequeue_head_s(r1=&head) -> r2 = nodo (0 se vuota)
   call irq_save
   addi r14, r14, -4
   sw r5, 0(r14)
-  call dequeue_testa      ; r2 = risultato (irq_restore non lo tocca -> preservato)
+  call dequeue_head      ; r2 = risultato (irq_restore non lo tocca -> preservato)
   lw r5, 0(r14)
   addi r14, r14, 4
   call irq_restore
-  .endproc dequeue_testa_s
+  .endproc dequeue_head_s
 
-  .proc remove_buffer_s   ; remove_buffer_s(r1=&nodo, r2=&testa) -> r3 = esito
+  .proc remove_buffer_s   ; remove_buffer_s(r1=&node, r2=&head) -> r3 = esito
   call irq_save
   addi r14, r14, -4
   sw r5, 0(r14)

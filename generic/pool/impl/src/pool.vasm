@@ -15,16 +15,16 @@
 ;
 ; --- Zero meccanismo nuovo ---
 ; Una free-list di blocchi a taglia fissa E' una TESTA con i blocchi come nodi:
-;   buf_alloc  = catena taglia->classe, poi dequeue_testa_s
-;   buf_free   = controlli, poi enqueue_coda_s
-;   pool_init  = N x enqueue_coda (raw: al boot IE e' gia' 0)
+;   buf_alloc  = catena taglia->classe, poi dequeue_head_s
+;   buf_free   = controlli, poi enqueue_tail_s
+;   pool_init  = N x enqueue_tail (raw: al boot IE e' gia' 0)
 ; Teste CONTATE normali: count >= 0 = blocchi liberi in quella classe, che e'
 ; anche l'unica statistica utile per dimensionare. Niente segno, niente _nc:
 ; quelle servono a chi da' al contatore un significato proprio.
 ;
 ; --- Nessuna sezione critica propria, e non e' una dimenticanza ---
 ; In buf_alloc la catena taglia->classe e' aritmetica sull'argomento e non tocca
-; niente di condiviso; l'unico atto sullo stato e' il dequeue_testa_s, che si
+; niente di condiviso; l'unico atto sullo stato e' il dequeue_head_s, che si
 ; protegge da se'. In buf_free la lettura della taglia e' una costante del
 ; blocco. Sono due wrapper sottili sopra primitive gia' protette.
 ;
@@ -113,7 +113,7 @@ pool_b32_fine:
 ;
 ;  Va chiamata al boot, prima di qualsiasi buf_alloc, e non c'e' modo di
 ;  imporlo. Degrada pero' in modo benigno: un pool non inizializzato ha le teste
-;  azzerate, dequeue_testa legge count == 0 e restituisce 0, quindi si presenta
+;  azzerate, dequeue_head legge count == 0 e restituisce 0, quindi si presenta
 ;  come "classe vuota" invece di corrompere qualcosa.
 ;
 ;  Clobber: r1..r6 (r10..r13 sono salvati dalla riempi).
@@ -123,27 +123,27 @@ pool_init:
   sw r15, 0(r14)
 
   li r1, pool_c16
-  call coda_init          ; coda_init non tocca r1
+  call queue_init          ; queue_init non tocca r1
   li r2, pool_b16
   li r3, pool_b16_fine
   li r4, POOL_D16
   call pool_riempi
 
   li r1, pool_c32
-  call coda_init
+  call queue_init
   li r2, pool_b32
   li r3, pool_b32_fine
   li r4, POOL_D32
   call pool_riempi
 
   li r1, pool_c64         ; classi senza blocchi: la testa esiste ed e' vuota,
-  call coda_init          ; cosi' una richiesta trova POOL_VUOTO e non un caso
+  call queue_init          ; cosi' una richiesta trova POOL_VUOTO e non un caso
   li r1, pool_c128        ; speciale
-  call coda_init
+  call queue_init
   li r1, pool_c256
-  call coda_init
+  call queue_init
   li r1, pool_c512
-  call coda_init
+  call queue_init
 
   lw r15, 0(r14)
   addi r14, r14, 4
@@ -156,7 +156,7 @@ pool_init:
 ;  della classe. Lo stride e' BLOCCO.dati + taglia, cioe' i dodici byte di testa
 ;  piu' l'area: nessun numero magico.
 ;
-;  Gli argomenti si spostano in r10..r13 perche' enqueue_coda usa r3 per l'esito
+;  Gli argomenti si spostano in r10..r13 perche' enqueue_tail usa r3 per l'esito
 ;  e r4/r5 come scratch, quindi in r1..r6 non sopravvivrebbero al giro. Quei
 ;  quattro registri vengono salvati: pool_init resta chiamabile da qualunque
 ;  punto senza sorprese.
@@ -180,7 +180,7 @@ riempi_loop:
   sw r12, BLOCCO.pool(r10)   ; provenienza e capacita', scritte una volta sola
   mov r1, r13
   mov r2, r10
-  call enqueue_coda          ; raw: al boot IE e' gia' 0. I link del blocco sono
+  call enqueue_tail          ; raw: al boot IE e' gia' 0. I link del blocco sono
                              ; nulli (.data azzerato), quindi il controllo passa
   addi r10, r10, BLOCCO.dati ; stride = 12 + taglia
   add r10, r10, r12
@@ -212,7 +212,7 @@ buf_alloc:
   call pool_classe_su     ; r2 = testa della classe (0 se oltre la piu' grande)
   beq r2, r0, alloc_enorme
   mov r1, r2
-  call dequeue_testa_s    ; r2 = blocco, oppure 0 se la classe e' esaurita
+  call dequeue_head_s    ; r2 = blocco, oppure 0 se la classe e' esaurita
   beq r2, r0, alloc_vuoto
   li r1, POOL_OK
   j alloc_uscita
@@ -270,7 +270,7 @@ buf_free:
   addi r14, r14, 4        ; r2 = buffer
   beq r1, r0, free_estraneo
 
-  call enqueue_coda_s     ; (r1 = testa, r2 = nodo). Non puo' fallire: i link
+  call enqueue_tail_s     ; (r1 = testa, r2 = nodo). Non puo' fallire: i link
                           ; erano nulli, controllati due istruzioni fa
   li r1, POOL_OK
   j free_uscita

@@ -106,7 +106,7 @@ stackD_top:
 ;  suo stato (§5) — in coda se READY, fuori da tutto se RUNNING.
 ;
 ;  TCB.pcb e' un INDIRIZZO, non un indice (§7.3): si scrive &pcbN e basta.
-;  E l'accodamento passa &pcbN direttamente a enqueue_coda, senza conversione,
+;  E l'accodamento passa &pcbN direttamente a enqueue_tail, senza conversione,
 ;  perche' la TESTA e' annidata a offset 0 nel PCB: &pcb == &pcb.coda.
 ; ==========================================================================
 main:
@@ -114,7 +114,7 @@ main:
                            ; stack scriverebbe a -4. Puo' usare lo stack dell'idle
                            ; perche' e' il task che main diventera' col cold
                            ; start in fondo -- come nella vecchia demo, dove
-                           ; pero' l'unica call di boot (coda_init) era foglia e
+                           ; pero' l'unica call di boot (queue_init) era foglia e
                            ; il problema non si vedeva.
   call sched_init          ; le otto code vuote e gli slot liberi
 
@@ -248,17 +248,17 @@ isr_check4:
   bne r2, r3, isr_check_h  ; al SECONDO tick entra M
   li r1, pcb2              ; &pcb2 == &pcb2.coda
   li r2, tcbM
-  call enqueue_coda
+  call enqueue_tail
   li r1, pcb2              ; ... e D, suo PARI: da qui devono RUOTARE
   li r2, tcbD
-  call enqueue_coda
+  call enqueue_tail
   j isr_go
 isr_check_h:
   li r3, 4
   bne r2, r3, isr_go       ; al QUARTO entra H, che batte M
   li r1, pcb1
   li r2, tcbH
-  call enqueue_coda        ; H diventa visibile allo scheduler
+  call enqueue_tail        ; H diventa visibile allo scheduler
 isr_go:
   call request_preempt     ; arma il need_resched
   mov r1, r6               ; il kernel vuole il contesto in r1

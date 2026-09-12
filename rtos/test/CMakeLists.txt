@@ -185,7 +185,7 @@ vasm_check(gestore MODE DUMPS PROGRAM test_gestore
 #  test_semaforo — il semaforo contatore, e l'INSERIMENTO ORDINATO di §13.6.
 #
 #  E' il primo test della serie in cui il numero che conta non misura QUANTO ma
-#  IN CHE ORDINE: 'ordine' e' la lista d'attesa letta con coda_peek e resa in
+#  IN CHE ORDINE: 'ordine' e' la lista d'attesa letta con queue_peek e resa in
 #  cifre. Serviva perche' un risveglio FIFO su un semaforo e' un'inversione di
 #  priorita' silenziosa — nessun contatore devia, nessuna asserzione scatta, e
 #  a peggiorare e' solo la latenza del task piu' importante.

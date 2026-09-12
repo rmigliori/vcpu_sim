@@ -23,7 +23,7 @@
 #
 #  Sono davvero due cose diverse e il progetto lo mostra: lib_kernel LINKa le
 #  code ma non ne dichiara l'interfaccia, perche' scheduler.vasm chiama
-#  enqueue_coda senza aver bisogno di una sola costante di queue.vinc. Tenerle
+#  enqueue_tail senza aver bisogno di una sola costante di queue.vinc. Tenerle
 #  in due parole chiave e non in una lista sola e' quello che rende quel fatto
 #  leggibile al punto di chiamata invece che deducibile da com'e' fatto un
 #  target definito altrove.

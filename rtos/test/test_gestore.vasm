@@ -119,7 +119,7 @@ stackI_top:
 ;
 ;    pool_init      i blocchi vanno incatenati nelle sei free-list
 ;    gestore_init   la mailbox del gestore, che gestore_tick usa al PRIMO tick
-;    coda_init(mbA) la mailbox di A
+;    queue_init(mbA) la mailbox di A
 ;
 ;  Il vettore dei timeout invece NON si inizializza: nasce tutto TMO_FREE perche'
 ;  il .data e' azzerato e TMO_FREE vale 0 (§9.1).
@@ -133,7 +133,7 @@ main:
   call gestore_init
 
   li r1, mbA
-  call coda_init
+  call queue_init
 
   ; --- G (il gestore, livello 0): READY, in coda ---
   li r1, stackG_top
@@ -146,7 +146,7 @@ main:
   sw r0, TCB.state(r3)
   mov r1, r4               ; &pcb == &pcb.coda
   mov r2, r3
-  call enqueue_coda
+  call enqueue_tail
 
   ; --- I (idle, livello 7): READY, in coda ---
   li r1, stackI_top
@@ -159,7 +159,7 @@ main:
   sw r0, TCB.state(r3)
   mov r1, r4
   mov r2, r3
-  call enqueue_coda
+  call enqueue_tail
 
   ; --- A (livello 1): parte a freddo, quindi RUNNING e fuori da ogni coda ---
   li r3, tcbA

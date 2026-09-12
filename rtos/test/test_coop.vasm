@@ -138,11 +138,11 @@ main:
   call sched_init
 
   li r1, mbA
-  call coda_init
+  call queue_init
   li r1, mbB
-  call coda_init
+  call queue_init
   li r1, mbC
-  call coda_init
+  call queue_init
 
   ; --- B ---
   li r1, stackB_top
@@ -155,7 +155,7 @@ main:
   sw r1, TCB.pcb(r3)
   sw r0, TCB.state(r3)     ; READY
   mov r2, r3               ; &pcb == &pcb.coda
-  call enqueue_coda
+  call enqueue_tail
 
   ; --- C ---
   li r1, stackC_top
@@ -168,7 +168,7 @@ main:
   sw r1, TCB.pcb(r3)
   sw r0, TCB.state(r3)
   mov r2, r3
-  call enqueue_coda
+  call enqueue_tail
 
   ; --- I (idle): eseguibile come gli altri, e proprio per questo cntI e'
   ;     un'asserzione: e' RAGGIUNGIBILE, e non deve essere raggiunto ---
@@ -182,7 +182,7 @@ main:
   sw r1, TCB.pcb(r3)
   sw r0, TCB.state(r3)
   mov r2, r3
-  call enqueue_coda
+  call enqueue_tail
 
   ; --- A (livello 3): parte a freddo, quindi RUNNING e fuori da ogni coda ---
   li r3, tcbA

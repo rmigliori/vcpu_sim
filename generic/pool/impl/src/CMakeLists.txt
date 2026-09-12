@@ -1,5 +1,5 @@
 # Nessun LINK verso lib_hal, e non e' una dimenticanza: pool.vasm non nomina un
-# simbolo dell'HAL. Chiama enqueue_coda_s e dequeue_testa_s, cioe' primitive
+# simbolo dell'HAL. Chiama enqueue_tail_s e dequeue_head_s, cioe' primitive
 # che la sezione critica se la chiudono dentro. L'HAL arriva per transitivita'
 # attraverso lib_queue, che e' l'unico posto dove serve saperlo.
 vasm_library(lib_pool

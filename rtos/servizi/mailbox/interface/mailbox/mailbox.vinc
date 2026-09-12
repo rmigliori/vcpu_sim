@@ -24,16 +24,16 @@
 ; stesso numero con un secondo nome, quindi segue TESTA per costruzione, e se il
 ; campo di TESTA venisse rinominato questa riga non assembla piu' e indica dove
 ; guardare. La dipendenza dal nome resta — un'interfaccia E' un insieme di nomi,
-; e il kernel dipende gia' da enqueue_coda_nc e da CODA_OK — ma da sparsa su
+; e il kernel dipende gia' da enqueue_tail_nc e da CODA_OK — ma da sparsa su
 ; sette istruzioni diventa dichiarata in un punto e verificata dal compilatore.
 ;
 ; E' lo stesso meccanismo delle due .global sullo stesso indirizzo di
-; enqueue_dopo_nc/enqueue_testa_nc (§13.6): un nome pubblico che punta a
+; enqueue_after_nc/enqueue_head_nc (§13.6): un nome pubblico che punta a
 ; un'implementazione con un altro nome, risolto pero' all'assemblaggio, dove non
 ; costa un'istruzione. Sui DATI aggiunge informazione (dice di chi e' la
 ; semantica del contatore); sulle PROCEDURE la toglierebbe, ed e' per questo che
 ; le entry di coda si continuano a chiamare col loro nome: in "addi" + "call
-; enqueue_coda_nc" il nome della primitiva e' l'unica cosa che dice quale
+; enqueue_tail_nc" il nome della primitiva e' l'unica cosa che dice quale
 ; disciplina e' in vigore.
 ;
 ; .equ risolve al momento della definizione, quindi queue.vinc va incluso PRIMA:

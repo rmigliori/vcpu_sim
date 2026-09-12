@@ -38,8 +38,8 @@
 ; timeout, per esempio — se lo dichiara dentro il payload, e resta affare suo.
 ;
 ; Contabilita' in mano a noi => si usa SOLO lo strato _nc di queue.vasm (una sola
-; disciplina per testa, vedi la regola in queue.vasm). Mai enqueue_coda/
-; dequeue_testa su una mailbox: decrementerebbero un contatore che qui significa
+; disciplina per testa, vedi la regola in queue.vasm). Mai enqueue_tail/
+; dequeue_head su una mailbox: decrementerebbero un contatore che qui significa
 ; un'altra cosa.
 ;
 ; --- Due simboli che il kernel deve fornire ---
@@ -111,7 +111,7 @@ send:
 
   addi r4, r4, 1
   sw r4, MAILBOX.count(r1)        ; un messaggio in piu' in lista
-  call enqueue_coda_nc          ; (r1 = mailbox, r2 = messaggio) FIFO
+  call enqueue_tail_nc          ; (r1 = mailbox, r2 = messaggio) FIFO
   li r3, CODA_OK
   lw r15, 0(r14)
   addi r14, r14, 4
@@ -125,12 +125,12 @@ send_linked:
   ret
 
 send_consegna:
-  mov r3, r2              ; il messaggio: dequeue_testa_nc restituisce in r2
-  call dequeue_testa_nc   ; r2 = TCB in attesa (unico nodo, count == -1)
+  mov r3, r2              ; il messaggio: dequeue_head_nc restituisce in r2
+  call dequeue_head_nc   ; r2 = TCB in attesa (unico nodo, count == -1)
   addi r14, r14, -4
   sw r2, 0(r14)           ; il TCB deve sopravvivere alle call seguenti
   mov r2, r3              ; r2 = messaggio
-  call enqueue_coda_nc    ; prende il posto lasciato dal TCB
+  call enqueue_tail_nc    ; prende il posto lasciato dal TCB
   li r4, 1                  ; ASSEGNA, non incrementa: qui il conto valeva -1 e
                             ; in lista c'e' ora esattamente un messaggio. E' il
                             ; ramo che compila l'ipotesi "un solo ricevente per
@@ -178,7 +178,7 @@ receive:
   lw r2, 0(r4)            ; r2 = TCB del chiamante
   li r4, SUSPENDED
   sw r4, TCB.state(r2)
-  call enqueue_coda_nc    ; (r1 = mailbox, r2 = TCB): unico nodo in lista
+  call enqueue_tail_nc    ; (r1 = mailbox, r2 = TCB): unico nodo in lista
                           ; L'esito in r3 e' IGNORATO, e non e' una svista: qui
                           ; non c'e' nessuno a cui restituirlo — la receive sta
                           ; per bloccarsi e non tornera' al chiamante finche' non
@@ -200,7 +200,7 @@ receive:
 
   ; --- prelievo: identico sul percorso veloce e su quello di risveglio ---
 receive_preleva:
-  call dequeue_testa_nc   ; r2 = messaggio (FIFO)
+  call dequeue_head_nc   ; r2 = messaggio (FIFO)
   lw r4, MAILBOX.count(r1)
   addi r4, r4, -1
   sw r4, MAILBOX.count(r1)  ; un messaggio in meno in lista

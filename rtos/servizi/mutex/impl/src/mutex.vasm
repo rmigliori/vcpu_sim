@@ -106,7 +106,7 @@ mutex_init:
   call prio_pcb           ; r1 = &PCB del livello dichiarato
   sw r1, MUTEX.ceiling(r6)
   mov r1, r6
-  call coda_init          ; la coda d'attesa vuota: fwd = bwd = &mutex, attese = 0
+  call queue_init          ; la coda d'attesa vuota: fwd = bwd = &mutex, attese = 0
   sw r0, MUTEX.owner(r6)      ; libero
   sw r0, MUTEX.prio_prec(r6)  ; senza significato finche' owner e' 0
   lw r15, 0(r14)
@@ -219,7 +219,7 @@ mtx_degrado:
 mtx_scan:
   beq r10, r0, mtx_ins
   mov r1, r2
-  call coda_peek          ; r2 = nodo successivo, senza sfilarlo
+  call queue_peek          ; r2 = nodo successivo, senza sfilarlo
   lw r8, TCB.pcb(r2)
   blt r7, r8, mtx_ins     ; lui e' MENO prioritario: gli si entra davanti
   mov r6, r2              ; piu' prioritario O PARI: si scavalca (FIFO fra pari)
@@ -229,7 +229,7 @@ mtx_scan:
 mtx_ins:
   mov r1, r6              ; prec
   mov r2, r9              ; il mio TCB
-  call enqueue_dopo_nc
+  call enqueue_after_nc
   call task_block         ; si torna qui quando mutex_unlock ha consegnato
   call irq_save           ; ristabilisce IE=0 (la psw d'ingresso e' sullo stack)
   ; Il mutex E' NOSTRO: owner, prio_prec, la promozione e TCB.crit li ha gia'
@@ -267,7 +267,7 @@ mutex_unlock:
   sw r0, MUTEX.owner(r1)  ; libero
 
   ; --- la coda e' vuota? Sotto ceiling corretto SEMPRE (§13.5) ---
-  call dequeue_testa_nc   ; (r1 = &mutex) -> r2 = TCB, 0 se vuota. r1 intatto
+  call dequeue_head_nc   ; (r1 = &mutex) -> r2 = TCB, 0 se vuota. r1 intatto
   beq r2, r0, mtxu_preempt
 
   ; --- DEGRADO: consegna diretta al primo, che per l'ordinamento del lock e' il

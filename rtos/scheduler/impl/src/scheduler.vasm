@@ -72,7 +72,7 @@
 ;  stessa, che un .word non puo' scrivere perche' non accetta etichette. Ci
 ;  pensa sched_init, ed e' il motivo per cui §6 ("strutture gia' inizializzate
 ;  staticamente al link") non e' mai stata del tutto vera -- gia' oggi la vecchia
-;  'ready' passava da coda_init.
+;  'ready' passava da queue_init.
 ; --------------------------------------------------------------------------
 pcb0:      .res PCB       ; PRIO_MAX — il gestore dei timeout (§9.2)
 pcb1:      .res PCB
@@ -111,7 +111,7 @@ g_resched: .word 0        ; need_resched: !=0 => switch a uscita IRQ
 ;  come verifica implicita dell'invariante di §7.3: se i PCB non fossero
 ;  contigui e in ordine, questo ciclo non li toccherebbe tutti.
 ;
-;  Non-foglia (chiama coda_init), corpo con salti -> prologo a mano.
+;  Non-foglia (chiama queue_init), corpo con salti -> prologo a mano.
 ; ==========================================================================
 sched_init:
   addi r14, r14, -4
@@ -120,7 +120,7 @@ sched_init:
   li r6, pcb7            ; r6 = ultimo: il ciclo si ferma DOPO averlo fatto
 sched_init_loop:
   mov r1, r5
-  call coda_init         ; &pcb == &pcb.coda: nessuna conversione (§7.5)
+  call queue_init         ; &pcb == &pcb.coda: nessuna conversione (§7.5)
   sw r0, PCB.preemptato(r5)
   beq r5, r6, sched_init_done
   addi r5, r5, PCB.size
@@ -186,7 +186,7 @@ task_block:
 ;  latenza diventa il periodo del timer invece della lunghezza della sezione
 ;  critica. Il buco si chiude con un rientro sincrono che NON sospende, ed e'
 ;  questo -- §13.7 lo descrive alla lettera: "le stesse otto righe di task_block
-;  con enqueue_coda al posto di SUSPENDED".
+;  con enqueue_tail al posto di SUSPENDED".
 ;
 ;  Il secondo cliente e' arrivato da un'altra porta (rtos/test/test_mondo.vasm):
 ;  un lettore in polling che, senza interrupt, e' per costruzione l'idle, e che
@@ -230,7 +230,7 @@ task_yield:
   sw r0, TCB.state(r3)   ; READY: e' QUI la differenza da task_block
   lw r1, TCB.pcb(r3)     ; &pcb == &pcb.coda: nessuna conversione (§7.5)
   mov r2, r3
-  call enqueue_coda      ; in FONDO al mio livello: cedere e' passare per ultimo
+  call enqueue_tail      ; in FONDO al mio livello: cedere e' passare per ultimo
   li r1, g_resched
   sw r0, 0(r1)           ; la preemption chiesta la sto onorando io
   call scheduler         ; la scelta va rifatta, IE e' gia' 0
@@ -256,7 +256,7 @@ task_ready:
   lw r7, TCB.pcb(r2)     ; r7 = il suo PCB. Sopravvive alle call (r4/r5 no)
   sw r0, TCB.state(r2)   ; READY
   mov r1, r7             ; &pcb == &pcb.coda: nessuna conversione (§7.5)
-  call enqueue_coda
+  call enqueue_tail
   li r2, current
   lw r2, 0(r2)
   lw r3, TCB.pcb(r2)     ; il PCB di chi sta girando
@@ -483,7 +483,7 @@ sched_isr_exit_done:
 ;  timer scandisce gia' il tempo e non serve un contatore per misurare cio' che
 ;  il periodo del timer misura da se'.
 ;
-;  Non-foglia -> salva r15. r7 tiene il PCB corrente perche' dequeue_testa sporca
+;  Non-foglia -> salva r15. r7 tiene il PCB corrente perche' dequeue_head sporca
 ;  r2/r4/r5, r8 il PCB dell'uscente.
 ; ==========================================================================
 sched_preempt:
@@ -502,7 +502,7 @@ sp_scan:
   j sp_preempted
 sp_coda:
   mov r1, r7
-  call dequeue_testa
+  call dequeue_head
   mov r1, r2
   bne r1, r0, sp_preempted
   addi r7, r7, PCB.size
@@ -535,9 +535,9 @@ sp_mio_livello:
   beq r3, r0, sp_solo          ; no: ruotare con nessuno e' due call sprecate
   sw r0, TCB.state(r2)         ; READY
   mov r1, r8                   ; &pcb == &pcb.coda
-  call enqueue_coda            ; in FONDO: il round-robin e' il FIFO del livello
+  call enqueue_tail            ; in FONDO: il round-robin e' il FIFO del livello
   mov r1, r8
-  call dequeue_testa           ; il primo dei pari
+  call dequeue_head           ; il primo dei pari
   mov r1, r2
   j sp_done
   ; Il caso "solo al mio livello" e' quello NORMALE in un sistema ben
@@ -564,7 +564,7 @@ scheduler:
   sw r15, 0(r14)         ; non-foglia: preserva il ritorno
 
   ; --- scansione dall'alto: a ogni livello lo slot batte la coda (§4) ---
-  ; Il PCB corrente sta in r7 e NON in uno scratch: dequeue_testa sporca r2, r4
+  ; Il PCB corrente sta in r7 e NON in uno scratch: dequeue_head sporca r2, r4
   ; e r5 (lo dichiara queue_api.vinc), quindi tenerlo in r5 lo farebbe avanzare
   ; da un indirizzo spazzatura dalla seconda iterazione in poi. E' un bug che
   ; non si vede su un solo livello: lo scan si ferma sempre al primo giro finche'
@@ -577,7 +577,7 @@ sched_scan:
   j sched_scan_done
 sched_scan_coda:
   mov r1, r7             ; &pcb == &pcb.coda (§7.5 un livello sopra)
-  call dequeue_testa     ; r2 = TCB, 0 se il livello e' vuoto
+  call dequeue_head     ; r2 = TCB, 0 se il livello e' vuoto
   mov r1, r2
   bne r1, r0, sched_scan_done
   addi r7, r7, PCB.size  ; livello successivo, cioe' meno prioritario

@@ -4,7 +4,7 @@
 ;
 ; Nato il 07/09/2026. Prima gli .extern se li scriveva ogni cliente a mano, e
 ; l'interfaccia pubblicava i tipi ma non le procedure: per sapere che
-; enqueue_coda vuole la testa in r1 e restituisce l'esito in r3 bisognava aprire
+; enqueue_tail vuole la testa in r1 e restituisce l'esito in r3 bisognava aprire
 ; l'implementazione. §8.6 della proposta lo chiedeva gia' ("gli indirizzi delle
 ; entry se e' un'API"); hal.vinc scriveva la regola opposta ("qui ci sono solo
 ; costanti"), ed e' quella che cede.
@@ -13,7 +13,7 @@
 ; Un .vinc unico non e' scrivibile, e non per gusto: il fornitore include la
 ; propria interfaccia per gli offset di TESTA, e un .extern di un simbolo che lo
 ; stesso modulo dichiara .global e' un errore secco dell'assembler
-; ("'enqueue_coda' is both defined and .extern"). Quindi:
+; ("'enqueue_tail' is both defined and .extern"). Quindi:
 ;
 ;   queue.vinc      i TIPI            lo include il FORNITORE (queue.vasm) e gli
 ;                                    altri header i cui nodi sono liste —
@@ -47,7 +47,7 @@
 ;  chiamabili anche dentro un'ISR. I wrapper _s NON sono foglia — usano stack e
 ;  r15 — e in piu' sporcano r5, che e' dove irq_save consegna la psw.
 ;
-;  dequeue_testa e dequeue_testa_nc NON restituiscono un CODA_*: la coda vuota
+;  dequeue_head e dequeue_head_nc NON restituiscono un CODA_*: la coda vuota
 ;  non e' un errore ma un esito normale, e il valore di ritorno e' il nodo
 ;  (0 = vuota). r3 arriva intatto al chiamante.
 ;
@@ -57,18 +57,18 @@
 ; --------------------------------------------------------------------------
 
 ; --- CONTATE: sulla loro testa count >= 0 = numero di nodi ---
-  .extern coda_init         ; (r1=&testa)                       sporca: niente
-  .extern enqueue_coda      ; (r1=&testa, r2=&nodo) -> r3 esito  sporca: r3 r4 r5
-  .extern enqueue_testa     ; (r1=&testa, r2=&nodo) -> r3 esito  sporca: r3 r4 r5
-  .extern dequeue_testa     ; (r1=&testa) -> r2 nodo, 0 se vuota sporca: r2 r4 r5
-  .extern remove_buffer     ; (r1=&nodo, r2=&testa) -> r3 esito  sporca: r3 r4 r5 r6
+  .extern queue_init         ; (r1=&head)                       sporca: niente
+  .extern enqueue_tail      ; (r1=&head, r2=&node) -> r3 esito  sporca: r3 r4 r5
+  .extern enqueue_head     ; (r1=&head, r2=&node) -> r3 esito  sporca: r3 r4 r5
+  .extern dequeue_head     ; (r1=&head) -> r2 nodo, 0 se vuota sporca: r2 r4 r5
+  .extern remove_buffer     ; (r1=&node, r2=&head) -> r3 esito  sporca: r3 r4 r5 r6
 
 ; --- NON CONTATE: i link e basta, la contabilita' e' del chiamante ---
-  .extern enqueue_coda_nc   ; (r1=&testa, r2=&nodo) -> r3 esito  sporca: r3 r4
-  .extern enqueue_testa_nc  ; (r1=&testa, r2=&nodo) -> r3 esito  sporca: r3 r4
-  .extern enqueue_dopo_nc   ; (r1=&prec,  r2=&nodo) -> r3 esito  sporca: r3 r4
-  .extern dequeue_testa_nc  ; (r1=&testa) -> r2 nodo, 0 se vuota sporca: r2 r4
-  .extern remove_buffer_nc  ; (r1=&nodo)            -> r3 esito  sporca: r3 r4 r5
+  .extern enqueue_tail_nc   ; (r1=&head, r2=&node) -> r3 esito  sporca: r3 r4
+  .extern enqueue_head_nc  ; (r1=&head, r2=&node) -> r3 esito  sporca: r3 r4
+  .extern enqueue_after_nc   ; (r1=&prev,  r2=&node) -> r3 esito  sporca: r3 r4
+  .extern dequeue_head_nc  ; (r1=&head) -> r2 nodo, 0 se vuota sporca: r2 r4
+  .extern remove_buffer_nc  ; (r1=&node)            -> r3 esito  sporca: r3 r4 r5
 
 ; --- SCANSIONE: guarda e non tocca. Fuori dai due assi dei suffissi ---
 ; Non e' _nc (il contatore non lo tocca nessuno: legge e basta) e non avra' una
@@ -79,11 +79,11 @@
 ; chiamarla lo sa il chiamante, che e' il proprietario del contatore (§8.3). Un
 ; ciclo limitato da un conteggio non scappa nemmeno su una lista corrotta, ed e'
 ; il limite che §13.6 chiede di dichiarare invece di lasciare implicito.
-  .extern coda_peek         ; (r1=&corrente) -> r2 successore   sporca: r2
+  .extern queue_peek         ; (r1=&current) -> r2 successore   sporca: r2
 
 ; --- PROTETTE: la raw dentro irq_save/irq_restore, per l'uso da TASK (IE=1) ---
 ; Non foglia, e sporcano r5 oltre a cio' che sporca la raw corrispondente.
-  .extern enqueue_coda_s    ; (r1=&testa, r2=&nodo) -> r3 esito
-  .extern enqueue_testa_s   ; (r1=&testa, r2=&nodo) -> r3 esito
-  .extern dequeue_testa_s   ; (r1=&testa) -> r2 nodo, 0 se vuota
-  .extern remove_buffer_s   ; (r1=&nodo, r2=&testa) -> r3 esito
+  .extern enqueue_tail_s    ; (r1=&head, r2=&node) -> r3 esito
+  .extern enqueue_head_s   ; (r1=&head, r2=&node) -> r3 esito
+  .extern dequeue_head_s   ; (r1=&head) -> r2 nodo, 0 se vuota
+  .extern remove_buffer_s   ; (r1=&node, r2=&head) -> r3 esito

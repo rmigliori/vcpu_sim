@@ -65,7 +65,7 @@ main:
   li r2, tcb0
   sw r2, 0(r1)            ; current = tcb0
   li r1, mbox
-  call coda_init
+  call queue_init
 
   li r1, msg1             ; payload distinti per riconoscere i messaggi
   li r2, 11

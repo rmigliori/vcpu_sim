@@ -58,7 +58,7 @@
 
 ; Testa di coda (sentinella): condivide i link con i nodi (idioma list_head), ed
 ; e' per questo che "dopo la sentinella" e "in testa" sono la stessa operazione
-; (enqueue_dopo_nc, §13.6).
+; (enqueue_after_nc, §13.6).
 .struct TESTA
   .field pointers  LINK.size   ; +0
   .field count                 ; +8

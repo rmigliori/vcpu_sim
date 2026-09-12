@@ -77,7 +77,7 @@ msg_tick:     .space 2
 ; ==========================================================================
   .proc gestore_init
   li r1, mbox_gestore
-  call coda_init
+  call queue_init
   .endproc gestore_init
 
 ; ==========================================================================

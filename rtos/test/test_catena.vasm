@@ -80,7 +80,7 @@
 ;
 ; Un messaggio per salto, riusato a ogni giro. E' lecito perche' i tre task sono
 ; in serie: quando A manda msgB, il msgB del giro precedente e' gia' stato
-; prelevato da B, e dequeue_testa_nc azzera i link del nodo che sfila (§7.5),
+; prelevato da B, e dequeue_head_nc azzera i link del nodo che sfila (§7.5),
 ; quindi l'invariante fwd == bwd == 0 che la send pretende vale di nuovo. La
 ; serialita' non e' un'ipotesi sul timing: e' che A non torna a mandare finche'
 ; non ha ricevuto, e non riceve finche' l'ISR non consegna.
@@ -156,11 +156,11 @@ main:
   call sched_init
 
   li r1, mbA
-  call coda_init           ; le tre mailbox vuote: count = 0, lista su se stessa
+  call queue_init           ; le tre mailbox vuote: count = 0, lista su se stessa
   li r1, mbB
-  call coda_init
+  call queue_init
   li r1, mbC
-  call coda_init
+  call queue_init
 
   ; --- B (livello 2): READY, in coda ---
   li r1, stackB_top
@@ -173,7 +173,7 @@ main:
   sw r0, TCB.state(r3)
   mov r1, r4               ; &pcb == &pcb.coda
   mov r2, r3
-  call enqueue_coda
+  call enqueue_tail
 
   ; --- C (livello 3): READY, in coda ---
   li r1, stackC_top
@@ -186,7 +186,7 @@ main:
   sw r0, TCB.state(r3)
   mov r1, r4
   mov r2, r3
-  call enqueue_coda
+  call enqueue_tail
 
   ; --- I (idle, livello 7): READY, in coda ---
   li r1, stackI_top
@@ -199,7 +199,7 @@ main:
   sw r0, TCB.state(r3)
   mov r1, r4
   mov r2, r3
-  call enqueue_coda
+  call enqueue_tail
 
   ; --- A (livello 1): parte a freddo, quindi RUNNING e fuori da ogni coda ---
   li r3, tcbA

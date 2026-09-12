@@ -33,7 +33,7 @@
 ;  Non e' il task a farlo da se' come prima istruzione, e la ragione e' proprio
 ;  quella: il primo tick puo' arrivare prima che il task sia mai girato.
 ;
-;  Sporca: r1 (e cio' che sporca coda_init).
+;  Sporca: r1 (e cio' che sporca queue_init).
 ; --------------------------------------------------------------------------
   .extern gestore_init
 

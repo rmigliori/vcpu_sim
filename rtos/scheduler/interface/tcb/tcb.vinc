@@ -72,7 +72,7 @@
 ;    - si risparmia una lw per ogni livello scandito, e la scansione e' il
 ;      percorso piu' caldo del kernel;
 ;    - la coda sta a offset 0, quindi &pcb == &pcb.coda e il PCB si passa
-;      DIRETTAMENTE a enqueue_coda/dequeue_testa senza nessuna conversione.
+;      DIRETTAMENTE a enqueue_tail/dequeue_head senza nessuna conversione.
 ;      E' il contratto di §7.5 ("il puntatore al link E' il puntatore al
 ;      buffer") applicato un livello sopra.
 ;

@@ -43,11 +43,11 @@ cntW:   .word 0        ; messaggi ricevuti da W
 cntI:   .word 0        ; giri dell'idle: la CPU libera, quella vera
 ticks:  .word 0
 
-mbW:    .res MAILBOX   ; la mailbox di W. Nasce da coda_init: una TESTA vuota
+mbW:    .res MAILBOX   ; la mailbox di W. Nasce da queue_init: una TESTA vuota
                        ; non e' fatta di zeri (fwd = bwd = &se stessa)
 msg:    .space 4       ; un messaggio: due link piu' due parole di payload che
                        ; nessuno legge (§8.4). Si RIUSA a ogni giro, ed e' lecito
-                       ; perche' dequeue_testa_nc azzera i link del nodo che
+                       ; perche' dequeue_head_nc azzera i link del nodo che
                        ; sfila: quando W l'ha prelevato, il buffer e' di nuovo
                        ; accodabile e l'invariante fwd == bwd == 0 vale
 
@@ -85,7 +85,7 @@ main:
   call sched_init
 
   li r1, mbW
-  call coda_init           ; la mailbox vuota: count = 0, lista su se stessa
+  call queue_init           ; la mailbox vuota: count = 0, lista su se stessa
 
   ; --- I (idle, livello 7): READY, in coda ---
   li r1, stackI_top
@@ -98,7 +98,7 @@ main:
   sw r0, TCB.state(r3)
   mov r1, r4               ; &pcb == &pcb.coda
   mov r2, r3
-  call enqueue_coda
+  call enqueue_tail
 
   ; --- W (livello 2): parte a freddo, quindi RUNNING e fuori da ogni coda ---
   li r3, tcbW

@@ -69,12 +69,12 @@ stack_top:
 main:
   li r14, stack_top
   li r1, testa
-  call coda_init
+  call queue_init
 
   ; --- (1) primo accodamento: nodo nuovo, link nulli ---
   li r1, testa
   li r2, n1
-  call enqueue_coda
+  call enqueue_tail
   dumps r3                ; 0 = CODA_OK
   li r1, testa
   lw r5, TESTA.count(r1)
@@ -83,7 +83,7 @@ main:
   ; --- (2) stesso nodo di nuovo: rifiutato, e il contatore NON si muove ---
   li r1, testa
   li r2, n1
-  call enqueue_coda
+  call enqueue_tail
   dumps r3                ; 1 = CODA_LINKED
   li r1, testa
   lw r5, TESTA.count(r1)
@@ -91,7 +91,7 @@ main:
 
   ; --- (3) la rimozione fa uscire il nodo E glielo dice ---
   li r1, testa
-  call dequeue_testa
+  call dequeue_head
   li r5, n1
   sub r5, r2, r5
   dumps r5                ; 0 = e' proprio n1
@@ -103,7 +103,7 @@ main:
   ; --- (4) e quindi adesso si puo' riaccodare ---
   li r1, testa
   li r2, n1
-  call enqueue_coda
+  call enqueue_tail
   dumps r3                ; 0 = CODA_OK
 
   ; --- (5) remove di un nodo che non sta in nessuna lista: il caso speculare.
@@ -132,44 +132,44 @@ main:
 
   ; --- (7) coda vuota: non e' un errore, e' un esito ---
   li r1, testa
-  call dequeue_testa
+  call dequeue_head
   dumps r2                ; 0
 
-  ; --- (8) enqueue_dopo_nc: l'inserimento che le altre due non sanno esprimere.
+  ; --- (8) enqueue_after_nc: l'inserimento che le altre due non sanno esprimere.
   ;         Da qui in giu' la testa e' gestita con le _nc e il contatore resta
   ;         fermo a 0: una sola disciplina per testa, anche dentro un test.
   ;         Costruisco [n1, n2] e infilo n3 FRA i due, passando n1 come prec ---
   li r1, testa
   li r2, n1
-  call enqueue_coda_nc
+  call enqueue_tail_nc
   li r1, testa
   li r2, n2
-  call enqueue_coda_nc
+  call enqueue_tail_nc
   li r1, n1               ; prec e' un NODO, non la sentinella
   li r2, n3
-  call enqueue_dopo_nc
+  call enqueue_after_nc
   dumps r3                ; 0 = CODA_OK
 
   ; --- (9) l'invariante dei link vale anche da questa porta: il controllo non
   ;         e' della singola entry, e' del corpo che tutte condividono ---
   li r1, n1
   li r2, n3
-  call enqueue_dopo_nc
+  call enqueue_after_nc
   dumps r3                ; 1 = CODA_LINKED
 
   ; --- (10) l'ordine e' [n1, n3, n2], e lo si legge svuotando ---
   li r1, testa
-  call dequeue_testa_nc
+  call dequeue_head_nc
   li r5, n1
   sub r5, r2, r5
   dumps r5                ; 0
   li r1, testa
-  call dequeue_testa_nc
+  call dequeue_head_nc
   li r5, n3
   sub r5, r2, r5
   dumps r5                ; 0 = n3 e' finito FRA n1 e n2
   li r1, testa
-  call dequeue_testa_nc
+  call dequeue_head_nc
   li r5, n2
   sub r5, r2, r5
   dumps r5                ; 0
@@ -179,7 +179,7 @@ main:
   ;          assunta: se un giorno i due ingressi divergessero, si vede qui ---
   li r1, testa
   li r2, n1
-  call enqueue_dopo_nc
+  call enqueue_after_nc
   dumps r3                ; 0 = CODA_OK
   li r1, testa
   lw r5, LINK.fwd(r1)
@@ -187,29 +187,29 @@ main:
   sub r5, r5, r6
   dumps r5                ; 0 = n1 e' il primo
 
-  ; --- (12) coda_peek: camminare senza sfilare. Il ciclo e' LIMITATO dal
+  ; --- (12) queue_peek: camminare senza sfilare. Il ciclo e' LIMITATO dal
   ;          conteggio, che qui e' del test (tre nodi) come nel kernel e' del
   ;          proprietario della testa: la sentinella non si incontra mai, e la
   ;          circolarita' della lista resta dentro coda.vasm ---
   li r1, testa
   li r2, n2
-  call enqueue_coda_nc
+  call enqueue_tail_nc
   li r1, testa
   li r2, n3
-  call enqueue_coda_nc      ; [n1, n2, n3]
+  call enqueue_tail_nc      ; [n1, n2, n3]
 
   li r1, testa
-  call coda_peek
+  call queue_peek
   li r5, n1
   sub r5, r2, r5
   dumps r5                ; 0 = col cursore sulla TESTA da' il primo nodo
   mov r1, r2
-  call coda_peek
+  call queue_peek
   li r5, n2
   sub r5, r2, r5
   dumps r5                ; 0 = e si avanza rimettendole dentro il risultato
   mov r1, r2
-  call coda_peek
+  call queue_peek
   li r5, n3
   sub r5, r2, r5
   dumps r5                ; 0
@@ -218,17 +218,17 @@ main:
   ;          contratto che non si vede leggendo la primitiva: guarda e non tocca,
   ;          quindi tre peek di fila non sono tre dequeue ---
   li r1, testa
-  call dequeue_testa_nc
+  call dequeue_head_nc
   li r5, n1
   sub r5, r2, r5
   dumps r5                ; 0
   li r1, testa
-  call dequeue_testa_nc
+  call dequeue_head_nc
   li r5, n2
   sub r5, r2, r5
   dumps r5                ; 0
   li r1, testa
-  call dequeue_testa_nc
+  call dequeue_head_nc
   li r5, n3
   sub r5, r2, r5
   dumps r5                ; 0

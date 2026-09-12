@@ -56,7 +56,7 @@ stackB_top:
 ; ==========================================================================
 main:
   li r1, ready             ; ready queue vuota
-  call coda_init
+  call queue_init
 
   ; --- priming del frame finto di B: riparte via reti al primo switch-in ---
   li r1, stackB_top
@@ -68,7 +68,7 @@ main:
   sw r0, 12(r3)            ; stato = READY
   li r1, ready
   li r2, tcbB
-  call enqueue_coda        ; B pronto in coda
+  call enqueue_tail        ; B pronto in coda
 
   ; --- A e' il primo a girare: RUNNING, puntato da current, FUORI dalla coda ---
   li r1, current
@@ -166,12 +166,12 @@ isr_switch:
   sw r0, 12(r4)          ; stato = READY
   li r1, ready
   mov r2, r4
-  call enqueue_coda       ; il task uscente torna in fondo alla ready queue
+  call enqueue_tail       ; il task uscente torna in fondo alla ready queue
 
 isr_pick:
   ; (D) SCHEDULER (politica): prende il prossimo dalla ready queue.
   li r1, ready
-  call dequeue_testa      ; r2 = prossimo TCB
+  call dequeue_head      ; r2 = prossimo TCB
   li r3, current
   sw r2, 0(r3)           ; current = prossimo
   li r5, 1
@@ -217,13 +217,13 @@ isr_pick:
 ;  Convenzione: r1/r2 argomenti, r4/r5/r6 scratch; non toccano r14(sp).
 ;  Testa (12 byte): +0 fwd  +4 bwd  +8 count.  Vuota: fwd=bwd=&testa, count=0.
 ; ==========================================================================
-coda_init:                ; coda_init(r1=&testa)
+queue_init:                ; queue_init(r1=&testa)
   sw r1, 0(r1)            ; fwd = &testa
   sw r1, 4(r1)            ; bwd = &testa
   sw r0, 8(r1)            ; count = 0
   ret
 
-enqueue_coda:             ; enqueue_coda(r1=&testa, r2=&nodo) -- in fondo (FIFO)
+enqueue_tail:             ; enqueue_tail(r1=&testa, r2=&nodo) -- in fondo (FIFO)
   lw r4, 4(r1)            ; prev = testa.bwd (ultimo)
   sw r1, 0(r2)            ; nodo.fwd = &testa
   sw r4, 4(r2)            ; nodo.bwd = prev
@@ -234,7 +234,7 @@ enqueue_coda:             ; enqueue_coda(r1=&testa, r2=&nodo) -- in fondo (FIFO)
   sw r5, 8(r1)           ; count++
   ret
 
-enqueue_testa:            ; enqueue_testa(r1=&testa, r2=&nodo) -- in testa (LIFO)
+enqueue_head:            ; enqueue_head(r1=&testa, r2=&nodo) -- in testa (LIFO)
   lw r4, 0(r1)           ; next = testa.fwd
   sw r4, 0(r2)           ; nodo.fwd = next
   sw r1, 4(r2)           ; nodo.bwd = &testa
@@ -245,7 +245,7 @@ enqueue_testa:            ; enqueue_testa(r1=&testa, r2=&nodo) -- in testa (LIFO
   sw r5, 8(r1)          ; count++
   ret
 
-dequeue_testa:            ; dequeue_testa(r1=&testa) -> r2 = nodo (0 se vuota)
+dequeue_head:            ; dequeue_head(r1=&testa) -> r2 = nodo (0 se vuota)
   lw r5, 8(r1)
   beq r5, r0, deq_empty
   lw r2, 0(r1)          ; nodo = testa.fwd

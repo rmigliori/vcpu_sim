@@ -15,7 +15,7 @@
 ;   risorse = DISPONIBILI - IN ATTESA, e i nodi in lista sono max(0, -risorse)
 ;
 ; Contabilita' in mano a noi => si usa SOLO lo strato _nc di queue.vasm (una sola
-; disciplina per testa). Mai enqueue_coda/dequeue_testa su un semaforo:
+; disciplina per testa). Mai enqueue_tail/dequeue_head su un semaforo:
 ; muoverebbero un contatore che qui significa un'altra cosa.
 ;
 ; --- PERCHE' NON E' UNA MAILBOX (§13.1) ---
@@ -98,12 +98,12 @@
 ;  semaforo.vinc). Il conteggio iniziale e' un argomento, non un .word
 ;  posizionale.
 ;
-;  Non-foglia (chiama coda_init), corpo lineare, un solo ret, API pubblica ->
-;  .proc/.endproc. coda_init non tocca r2 (lo dichiara queue_api.vinc), quindi il
+;  Non-foglia (chiama queue_init), corpo lineare, un solo ret, API pubblica ->
+;  .proc/.endproc. queue_init non tocca r2 (lo dichiara queue_api.vinc), quindi il
 ;  conteggio arriva intatto alla sw.
 ; ==========================================================================
   .proc sem_init
-  call coda_init            ; fwd = bwd = &sem, e azzera il terzo campo...
+  call queue_init            ; fwd = bwd = &sem, e azzera il terzo campo...
   sw r2, SEMAFORO.risorse(r1)   ; ... che subito dopo prende il suo significato
   .endproc sem_init
 
@@ -151,7 +151,7 @@ sem_wait_fine:
 ;
 ;  Con N in attesa chi affiora al post deve essere il PIU' PRIORITARIO, quindi
 ;  la lista e' tenuta ordinata all'INSERIMENTO. Lo splice lo fa queue.vasm
-;  (enqueue_dopo_nc) e la scansione passa da coda_peek: qui sta solo la
+;  (enqueue_after_nc) e la scansione passa da queue_peek: qui sta solo la
 ;  POLITICA, cioe' il confronto — che e' l'unica cosa che queue.vasm non puo'
 ;  sapere, perche' dovrebbe sapere che il nodo e' un TCB (§13.6).
 ;
@@ -183,7 +183,7 @@ sem_wait_attendi:
 sem_wait_scan:
   beq r10, r0, sem_wait_ins   ; visitati tutti: si entra in fondo
   mov r1, r2
-  call coda_peek          ; r2 = il nodo successivo (guarda e non tocca)
+  call queue_peek          ; r2 = il nodo successivo (guarda e non tocca)
   lw r8, TCB.pcb(r2)
   blt r7, r8, sem_wait_ins    ; lui e' MENO prioritario: gli si entra davanti
   mov r6, r2                  ; piu' prioritario O PARI: si scavalca
@@ -193,7 +193,7 @@ sem_wait_scan:
 sem_wait_ins:
   mov r1, r6              ; prec
   mov r2, r9              ; il mio TCB
-  call enqueue_dopo_nc    ; L'esito in r3 e' IGNORATO come nella receive: qui
+  call enqueue_after_nc    ; L'esito in r3 e' IGNORATO come nella receive: qui
                           ; non c'e' nessuno a cui restituirlo, la wait sta per
                           ; bloccarsi e non tornera' al chiamante finche' non e'
                           ; stata svegliata
@@ -234,7 +234,7 @@ sem_post:
   ;     l'ordinamento di sem_wait e' il piu' prioritario. Il conto e' gia'
   ;     tornato al suo posto sopra, quindi la risorsa non passa mai per lo
   ;     stato "disponibile" e nessun altro puo' prenderla nel frattempo.
-  call dequeue_testa_nc   ; r2 = il TCB in testa
+  call dequeue_head_nc   ; r2 = il TCB in testa
   mov r1, r2
   call task_ready         ; kernel: eseguibile + valuta la preemption
 
