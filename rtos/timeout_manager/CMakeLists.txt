@@ -11,7 +11,7 @@
 #  Non poteva stare in generic/timeout accanto a timeout_arm/timeout_cancel:
 #  chiama receive e send, cioe' simboli di rtos/, e la regola in fondo a
 #  generic/CMakeLists.txt e' senza appello. La riga di confine e'
-#  timeout_scaduto, che formatta il messaggio ma non lo manda.
+#  timeout_expired, che formatta il messaggio ma non lo manda.
 # ---------------------------------------------------------------------------
 add_subdirectory(interface)
 add_subdirectory(impl)

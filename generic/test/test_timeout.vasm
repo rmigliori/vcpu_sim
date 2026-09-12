@@ -43,7 +43,7 @@ stack_top:
   .extern timeout_arm
   .extern timeout_cancel
   .extern tmo_now
-  .extern tmo_vettore
+  .extern tmo_vector
 
 main:
   li r14, stack_top
@@ -66,10 +66,10 @@ main:
   call timeout_arm
   dumps r2                ; 0 = TMO_OK
 
-  li r5, tmo_vettore      ; primo slot libero = il primo del vettore
-  lw r6, DESCRITTORE.scadenza(r5)
+  li r5, tmo_vector      ; primo slot libero = il primo del vettore
+  lw r6, DESCRIPTOR.expiry(r5)
   dumps r6                ; 150 = 100 + 50
-  lw r6, DESCRITTORE.stato(r5)
+  lw r6, DESCRIPTOR.state(r5)
   dumps r6                ; 1 = TMO_ARMED
 
   ; --- (3) stessa identita' due volte: errore, non un secondo timeout ---
@@ -93,8 +93,8 @@ main:
   li r2, 7
   call timeout_cancel
   dumps r2                ; 0 = TMO_OK
-  li r5, tmo_vettore
-  lw r6, DESCRITTORE.stato(r5)
+  li r5, tmo_vector
+  lw r6, DESCRIPTOR.state(r5)
   dumps r6                ; 0 = TMO_FREE: la casella e' tornata libera
 
   li r1, mbox_a

@@ -1,4 +1,4 @@
-# timeout.vinc: il DESCRITTORE e la geometria del vettore delle scadenze.
+# timeout.vinc: il DESCRIPTOR e la geometria del vettore delle scadenze.
 #
 # Foglia per una proprieta' del modello, non per un limite: il descrittore non
 # entra mai in una lista (§9.3), quindi non ha niente da chiedere alle code --

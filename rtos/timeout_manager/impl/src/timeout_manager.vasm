@@ -18,7 +18,7 @@
 ; Il vettore dei descrittori, arm, cancel e il prelievo di una scadenza stanno in
 ; generic/timeout, che non nomina un solo simbolo di rtos/. Qui c'e' cio' che ne
 ; fa un task: una mailbox, un buffer dal pool, la consegna, e il tick che entra
-; dall'ISR. La riga di confine e' timeout_scaduto, che formatta ma non manda.
+; dall'ISR. La riga di confine e' timeout_expired, che formatta ma non manda.
 ;
 ; --- LA COALESCENZA DEL TICK, E UN "count == 0" CHE NON POTEVA FUNZIONARE ---
 ; Il messaggio di tick e' uno statico: se l'ISR lo rispedisse mentre e' ancora
@@ -58,7 +58,7 @@ msg_tick:     .space 2
   .global tmgr_task
   .global tmgr_tick
 
-  .extern timeout_scaduto
+  .extern timeout_expired
   .extern tmo_now
   .extern buf_alloc
   .extern buf_free
@@ -84,7 +84,7 @@ msg_tick:     .space 2
 ;  tmgr_task: il ciclo. Non ritorna mai -- e' un task, non una procedura.
 ;
 ;  --- L'ORDINE E' L'INVARIANTE: PRIMA IL BUFFER, POI LA SCADENZA ---
-;  buf_alloc viene prima di timeout_scaduto, e non e' un dettaglio di scrittura.
+;  buf_alloc viene prima di timeout_expired, e non e' un dettaglio di scrittura.
 ;  Cosi' una scadenza non puo' essere consumata senza un posto dove metterla: se
 ;  il pool e' vuoto non si guarda nemmeno il vettore, tutto resta armato, e il
 ;  "arriva tardi invece di non arrivare" di §9.2 e' STRUTTURALE invece che un
@@ -94,7 +94,7 @@ msg_tick:     .space 2
 ;
 ;  --- PERCHE' UN CICLO INTERNO ---
 ;  Piu' timeout possono scadere allo stesso tick, e anche piu' tick possono
-;  essere stati coalescati in un messaggio solo. Si drena finche' timeout_scaduto
+;  essere stati coalescati in un messaggio solo. Si drena finche' timeout_expired
 ;  dice TMO_NONE: e' la condizione di uscita, non un errore.
 ; ==========================================================================
 tmgr_task:
@@ -118,9 +118,9 @@ tmgr_drain:
   addi r14, r14, -4
   sw r2, 0(r14)            ; il buffer deve sopravvivere alle call
   mov r1, r2
-  call timeout_scaduto     ; r2 = TMO_OK | TMO_NONE. Formatta nel buffer E libera
+  call timeout_expired     ; r2 = TMO_OK | TMO_NONE. Formatta nel buffer E libera
                            ; la casella, in una sezione critica sola
-  lw r3, 0(r14)            ; il buffer: timeout_scaduto sporca r3, quindi si
+  lw r3, 0(r14)            ; il buffer: timeout_expired sporca r3, quindi si
                            ; rilegge DOPO la call
   addi r14, r14, 4
   bne r2, r0, tmgr_none    ; TMO_OK == 0

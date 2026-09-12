@@ -38,6 +38,21 @@
 #
 # So this does NOT replace ctest and ctest does not replace this: they fail on
 # different things. Run both.
+#
+# --- CHECK THE BUILD'S EXIT CODE FIRST. THIS TOOL CANNOT. ---
+# It reads the .vx files that are on disk. If the build FAILED, those files are
+# the ones from last time -- and then this prints "no change" and ctest prints
+# 32/32, both truthfully, about a program that is not the one in the sources.
+#
+# It happened on 13/09/2026, at rename step 5: two .vo failed to assemble, the
+# stale .vx stayed behind, and both checks came up green on them. Grepping the
+# build log for "error" is NOT enough either -- that is what missed it.
+#
+# Chain the three, so nothing can be green on stale artefacts:
+#
+#   cmake --build build >/dev/null 2>&1 \
+#     && (cd build && ctest) \
+#     && tools/fingerprint.sh | diff before.txt -
 
 set -eu
 

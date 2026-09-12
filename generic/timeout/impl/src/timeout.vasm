@@ -37,7 +37,7 @@
 ; anche da IE=0 (boot).
 ;
 ; --- La scansione c'e', la CONSEGNA no, ed e' il confine della cartella ---
-; timeout_scaduto (in fondo) trova la prima scadenza, la formatta nel buffer che
+; timeout_expired (in fondo) trova la prima scadenza, la formatta nel buffer che
 ; il chiamante gli porta e libera la casella. Non manda niente: send e receive
 ; stanno in rtos/, e un modulo di generic/ che li nominasse smetterebbe di essere
 ; generic (la regola sta in generic/CMakeLists.txt). Il ciclo del task-gestore
@@ -56,12 +56,12 @@
 ; stato attraverso la call.
 
 .include "timeout/timeout.vinc"
-.include "message/message.vinc"   ; il formato che timeout_scaduto compone
+.include "message/message.vinc"   ; il formato che timeout_expired compone
 
   .data
 
   .global tmo_now
-  .global tmo_vettore
+  .global tmo_vector
 
 ; Base dei tempi: contatore ASSOLUTO dei tick. Sta qui perche' e' lo stato del
 ; gestore, ma l'incremento appartiene al percorso del tick, che non e' ancora
@@ -70,26 +70,26 @@
 tmo_now:      .word 0
 
 ; Il vettore. La sua taglia e' "quante righe .res ci sono": per cambiarla si
-; aggiunge o si toglie una riga, e tmo_fine la segue da sola — nessuna costante
+; aggiunge o si toglie una riga, e tmo_end la segue da sola — nessuna costante
 ; da tenere allineata a mano con l'allocazione. Nasce tutto TMO_FREE perche'
 ; l'immagine dati e' azzerata e TMO_FREE vale 0.
-tmo_vettore:  .res DESCRITTORE
-              .res DESCRITTORE
-              .res DESCRITTORE
-              .res DESCRITTORE
-              .res DESCRITTORE
-              .res DESCRITTORE
-              .res DESCRITTORE
-              .res DESCRITTORE
-              .res DESCRITTORE
-              .res DESCRITTORE
-tmo_fine:
+tmo_vector:  .res DESCRIPTOR
+              .res DESCRIPTOR
+              .res DESCRIPTOR
+              .res DESCRIPTOR
+              .res DESCRIPTOR
+              .res DESCRIPTOR
+              .res DESCRIPTOR
+              .res DESCRIPTOR
+              .res DESCRIPTOR
+              .res DESCRIPTOR
+tmo_end:
 
   .text
 
   .global timeout_arm
   .global timeout_cancel
-  .global timeout_scaduto
+  .global timeout_expired
   .extern irq_save
   .extern irq_restore
 
@@ -123,45 +123,45 @@ timeout_arm:
   lw r5, 0(r5)
   add r1, r1, r5          ; r1 = adesso + ritardo = scadenza assoluta
 
-  li r5, tmo_vettore      ; r5 = cursore
-  li r7, tmo_fine         ; r7 = sentinella di fine vettore
+  li r5, tmo_vector      ; r5 = cursore
+  li r7, tmo_end         ; r7 = sentinella di fine vettore
   li r6, 0                ; r6 = primo slot libero visto (0 = ancora nessuno)
 
 arm_scan:
-  beq r5, r7, arm_esito
-  lw r8, DESCRITTORE.stato(r5)
-  beq r8, r0, arm_libero        ; TMO_FREE == 0
-  lw r8, DESCRITTORE.replyMailbox(r5)
-  bne r8, r4, arm_avanti        ; armato ma di un altro task
-  lw r8, DESCRITTORE.clientTag(r5)
+  beq r5, r7, arm_result
+  lw r8, DESCRIPTOR.state(r5)
+  beq r8, r0, arm_free        ; TMO_FREE == 0
+  lw r8, DESCRIPTOR.replyMailbox(r5)
+  bne r8, r4, arm_next        ; armato ma di un altro task
+  lw r8, DESCRIPTOR.clientTag(r5)
   beq r8, r2, arm_dup           ; stessa mailbox E stesso tag: stessa identita'
-  j arm_avanti
-arm_libero:
-  bne r6, r0, arm_avanti        ; ne ho gia' uno: tengo il PRIMO
+  j arm_next
+arm_free:
+  bne r6, r0, arm_next        ; ne ho gia' uno: tengo il PRIMO
   mov r6, r5
-arm_avanti:
-  addi r5, r5, DESCRITTORE.size
+arm_next:
+  addi r5, r5, DESCRIPTOR.size
   j arm_scan
 
-arm_esito:
+arm_result:
   beq r6, r0, arm_full
-  sw r1, DESCRITTORE.scadenza(r6)
-  sw r4, DESCRITTORE.replyMailbox(r6)
-  sw r2, DESCRITTORE.clientTag(r6)
-  sw r3, DESCRITTORE.messageCode(r6)
+  sw r1, DESCRIPTOR.expiry(r6)
+  sw r4, DESCRIPTOR.replyMailbox(r6)
+  sw r2, DESCRIPTOR.clientTag(r6)
+  sw r3, DESCRIPTOR.messageCode(r6)
   li r8, TMO_ARMED
-  sw r8, DESCRITTORE.stato(r6)  ; lo stato per ULTIMO, dopo i dati: qui dentro la
+  sw r8, DESCRIPTOR.state(r6)  ; lo stato per ULTIMO, dopo i dati: qui dentro la
                                 ; sezione critica rende l'ordine indifferente, ma
                                 ; e' l'ordine giusto e non costa niente
   li r2, TMO_OK
-  j arm_uscita
+  j arm_exit
 arm_full:
   li r2, TMO_FULL
-  j arm_uscita
+  j arm_exit
 arm_dup:
   li r2, TMO_DUP
 
-arm_uscita:
+arm_exit:
   lw r5, 0(r14)
   addi r14, r14, 4
   call irq_restore        ; psw del chiamante (r2 = esito, non toccato)
@@ -189,26 +189,26 @@ timeout_cancel:
   addi r14, r14, -4
   sw r5, 0(r14)
 
-  li r5, tmo_vettore
-  li r7, tmo_fine
+  li r5, tmo_vector
+  li r7, tmo_end
   li r6, TMO_NONE         ; esito finche' non si trova
 
 can_scan:
-  beq r5, r7, can_uscita
-  lw r8, DESCRITTORE.stato(r5)
-  beq r8, r0, can_avanti        ; libera: l'identita' non si guarda nemmeno
-  lw r8, DESCRITTORE.replyMailbox(r5)
-  bne r8, r1, can_avanti
-  lw r8, DESCRITTORE.clientTag(r5)
-  bne r8, r2, can_avanti
-  sw r0, DESCRITTORE.stato(r5)  ; TMO_FREE: la casella torna libera
+  beq r5, r7, can_exit
+  lw r8, DESCRIPTOR.state(r5)
+  beq r8, r0, can_next        ; libera: l'identita' non si guarda nemmeno
+  lw r8, DESCRIPTOR.replyMailbox(r5)
+  bne r8, r1, can_next
+  lw r8, DESCRIPTOR.clientTag(r5)
+  bne r8, r2, can_next
+  sw r0, DESCRIPTOR.state(r5)  ; TMO_FREE: la casella torna libera
   li r6, TMO_OK
-  j can_uscita                  ; identita' unica: si ferma al primo match
-can_avanti:
-  addi r5, r5, DESCRITTORE.size
+  j can_exit                  ; identita' unica: si ferma al primo match
+can_next:
+  addi r5, r5, DESCRIPTOR.size
   j can_scan
 
-can_uscita:
+can_exit:
   mov r2, r6
   lw r5, 0(r14)
   addi r14, r14, 4
@@ -218,7 +218,7 @@ can_uscita:
   ret
 
 ; ==========================================================================
-;  timeout_scaduto(r1 = &buffer) -> r2 = TMO_OK | TMO_NONE
+;  timeout_expired(r1 = &buffer) -> r2 = TMO_OK | TMO_NONE
 ;
 ;  UNA scadenza per chiamata: trova la prima casella armata la cui scadenza e'
 ;  passata, ci formatta sopra il messaggio nel buffer del chiamante, e libera la
@@ -252,7 +252,7 @@ can_uscita:
 ;  Non-foglia, con salti -> prologo/epilogo a mano.
 ;  Clobber: r2 (esito), r3, r4, r5, r6, r7, r8. r1 (il buffer) intatto.
 ; ==========================================================================
-timeout_scaduto:
+timeout_expired:
   addi r14, r14, -4
   sw r15, 0(r14)
   call irq_save
@@ -263,19 +263,19 @@ timeout_scaduto:
   lw r5, 0(r5)            ; adesso. Si legge QUI dentro: e' l'ISR del tick a
                           ; muoverlo, ed e' l'unica parola di questo modulo che
                           ; qualcun altro scrive
-  li r6, tmo_vettore
-  li r7, tmo_fine
+  li r6, tmo_vector
+  li r7, tmo_end
   li r2, TMO_NONE         ; esito finche' non si trova
 
 sca_scan:
-  beq r6, r7, sca_uscita
-  lw r8, DESCRITTORE.stato(r6)
-  beq r8, r0, sca_avanti        ; TMO_FREE: non c'e' niente da far scadere
-  lw r8, DESCRITTORE.scadenza(r6)
+  beq r6, r7, sca_exit
+  lw r8, DESCRIPTOR.state(r6)
+  beq r8, r0, sca_next        ; TMO_FREE: non c'e' niente da far scadere
+  lw r8, DESCRIPTOR.expiry(r6)
   sub r8, r8, r5                ; LA DIFFERENZA, mai i valori (§9.3): al wrap del
                                 ; contatore i confronti diretti invertono
                                 ; l'ordine delle scadenze
-  blt r0, r8, sca_avanti        ; scadenza ancora nel futuro
+  blt r0, r8, sca_next        ; scadenza ancora nel futuro
                                 ; (differenza <= 0 => e' passata, o e' adesso)
 
   ; --- scaduta: si formatta il messaggio nel buffer del chiamante ---
@@ -286,25 +286,25 @@ sca_scan:
   li r4, MSG_REPLY                ; una scadenza e' una RISPOSTA: il cliente l'ha
                                   ; chiesta con timeout_arm
   sw r4, PAYLOAD.messageType(r3)
-  lw r4, DESCRITTORE.clientTag(r6)
+  lw r4, DESCRIPTOR.clientTag(r6)
   sw r4, PAYLOAD.clientTag(r3)    ; e' con questo che il cliente riconosce un
                                   ; messaggio stantio (§9.4)
-  lw r4, DESCRITTORE.messageCode(r6)
+  lw r4, DESCRIPTOR.messageCode(r6)
   sw r4, PAYLOAD.messageCode(r3)
-  lw r4, DESCRITTORE.replyMailbox(r6)
+  lw r4, DESCRIPTOR.replyMailbox(r6)
   sw r4, PAYLOAD.replyMailbox(r3) ; anche DOVE va: il chiamante lo rilegge da qui
                                   ; invece di riceverlo in un registro, cosi' il
                                   ; messaggio e' autosufficiente
 
-  sw r0, DESCRITTORE.stato(r6)    ; TMO_FREE, PRIMA di uscire dalla sezione
+  sw r0, DESCRIPTOR.state(r6)    ; TMO_FREE, PRIMA di uscire dalla sezione
                                   ; critica: e' l'invariante di tutta la routine
   li r2, TMO_OK
-  j sca_uscita
-sca_avanti:
-  addi r6, r6, DESCRITTORE.size
+  j sca_exit
+sca_next:
+  addi r6, r6, DESCRIPTOR.size
   j sca_scan
 
-sca_uscita:
+sca_exit:
   lw r5, 0(r14)
   addi r14, r14, 4
   call irq_restore

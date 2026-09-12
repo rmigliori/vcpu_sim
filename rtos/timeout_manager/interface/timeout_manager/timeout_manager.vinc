@@ -2,7 +2,7 @@
 ; timeout (§9.2), e il contratto con cui si chiamano.
 ;
 ; Non pubblica nessun tipo, e non e' una dimenticanza: qui non c'e' niente da
-; dichiarare. Il DESCRITTORE e i TMO_* sono di generic/timeout (timeout.vinc),
+; dichiarare. Il DESCRIPTOR e i TMO_* sono di generic/timeout (timeout.vinc),
 ; il formato del messaggio di scadenza e' di generic/message, e la mailbox del
 ; gestore e' PRIVATA -- ci scrive solo tmgr_tick, che sta dentro il modulo.
 ; Un cliente non ne ha bisogno: chiede un timeout con timeout_arm e lo riceve

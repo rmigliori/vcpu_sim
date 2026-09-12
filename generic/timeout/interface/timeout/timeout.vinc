@@ -8,7 +8,7 @@
 ; NON include niente, ma ora e' una proprieta' del modello e non un impedimento
 ; della toolchain. La regola provvisoria "i .vinc sono FOGLIA" e' caduta con
 ; l'idempotenza di `.include` (pool.vinc infatti include types.vinc); questo file
-; resta foglia perche' il DESCRITTORE non entra mai in una lista (§9.3): e' una
+; resta foglia perche' il DESCRIPTOR non entra mai in una lista (§9.3): e' una
 ; casella di un vettore statico, non ha fwd/bwd, e quindi non ha niente da
 ; chiedere a types.vinc.
 
@@ -29,9 +29,9 @@
 ;  Il layout e' pubblicato per l'ispezione e per i test, non perche' un cliente
 ;  debba toccarlo: al cliente bastano le due call e i TMO_* qui sotto.
 ; --------------------------------------------------------------------------
-.struct DESCRITTORE
-  .field stato          ; +0  TMO_FREE / TMO_ARMED
-  .field scadenza       ; +4  tick ASSOLUTO; i confronti vanno fatti sulla
+.struct DESCRIPTOR
+  .field state          ; +0  TMO_FREE / TMO_ARMED
+  .field expiry         ; +4  tick ASSOLUTO; i confronti vanno fatti sulla
                         ;     differenza (scadenza - adesso), mai sui valori:
                         ;     al wrap del contatore l'ordine si inverte (§9.3)
   .field replyMailbox   ; +8  \ identita': la mailbox E' il task (§8.6)
@@ -55,7 +55,7 @@
 ; Esito delle tre chiamate.
 ;   timeout_arm     -> TMO_OK | TMO_FULL | TMO_DUP
 ;   timeout_cancel  -> TMO_OK | TMO_NONE
-;   timeout_scaduto -> TMO_OK | TMO_NONE
+;   timeout_expired -> TMO_OK | TMO_NONE
 ;
 ; La terza e' del solo gestore, non dei clienti: prende UNA scadenza passata, la
 ; formatta nel buffer che le si porta e libera la casella, tutto in una sezione

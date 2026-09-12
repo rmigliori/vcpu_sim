@@ -19,7 +19,7 @@
 ;              comunque aspettando un evento vero
 ;   ISR tick   tmgr_tick: incrementa tmo_now e sveglia G (coalescando il
 ;              messaggio di tick, che e' uno statico)
-;   G          buf_alloc dal pool, timeout_scaduto (formatta e libera la
+;   G          buf_alloc dal pool, timeout_expired (formatta e libera la
 ;              casella), send_s alla mailbox di A
 ;   A          riparte, riconosce il tag, buf_free, riarma
 ;
@@ -67,7 +67,7 @@
 .include "timeout/timeout.vinc"
 .include "timeout_manager/timeout_manager.vinc"
 
-.equ COD_SCADENZA  77     ; il messageCode che A si fa recapitare. Opaco per
+.equ COD_EXPIRY  77     ; il messageCode che A si fa recapitare. Opaco per
                           ; tutti tranne che per A: il gestore lo ricopia dal
                           ; descrittore senza leggerlo
 
@@ -193,7 +193,7 @@ taskA:
   li r5, tagA
   lw r2, 0(r5)             ; r2 = clientTag: l'attesa corrente
   li r1, 2                 ; fra due tick
-  li r3, COD_SCADENZA
+  li r3, COD_EXPIRY
   li r4, mbA               ; dove consegnare: la mia mailbox
   call timeout_arm         ; r2 = TMO_OK | TMO_FULL | TMO_DUP
   beq r2, r0, a_armato     ; TMO_OK == 0
