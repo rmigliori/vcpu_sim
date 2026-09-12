@@ -299,8 +299,25 @@ task_ready_preempt:
 ;
 ;  Un livello e' popolato se ha qualcuno in coda O nello slot: sono i due posti
 ;  in cui un eseguibile puo' stare, ed e' la stessa coppia che guarda sched_scan.
-;  Guardarne uno solo direbbe il falso proprio sul task preemptato, cioe' su
-;  quello che ha piu' diritto di ripartire.
+;
+;  --- IL CONTROLLO SULLO SLOT E' OGGI IRRAGGIUNGIBILE, E RESTA ---
+;  Verificato per esecuzione (12/09/2026): sull'intera suite le due lw girano lo
+;  STESSO numero di volte, cioe' il ramo dello slot non scatta mai. E non e' un
+;  caso dei test, e' una proprieta': sp_preempted mette l'uscente nello slot del
+;  SUO livello e dispaccia qualcuno piu' prioritario, quindi uno slot occupato
+;  sta sempre SOTTO chi gira -- e con i limiti che i due chiamanti usano (il
+;  proprio PCB, o il proprio piu' uno) quel ramo e' fuori portata.
+;
+;  Si tiene lo stesso, e la ragione non e' la prudenza generica: questa routine
+;  DEVE rispondere come risponderebbe sched_scan, e sched_scan lo slot lo guarda
+;  per primo. Toglierlo renderebbe le due divergenti, e la divergenza reggerebbe
+;  su un'invariante che nessuno ha scritto da nessuna parte. Chi un domani
+;  chiamasse questa con un limite piu' basso del proprio livello troverebbe una
+;  risposta giusta invece di una sbagliata in silenzio.
+;
+;  ATTENZIONE pero' a cosa vuol dire: e' codice CORRETTO E MAI ESEGUITO. Se
+;  qualcuno cambia il modo in cui gli slot si riempiono, qui non c'e' nessun
+;  test che se ne accorga.
 ;
 ;  Sta nel kernel per la stessa ragione di prio_pcb: l'aritmetica che fa E'
 ;  l'invariante di §7.3 (tabella dei PCB contigua e in ordine), e farla uscire
