@@ -66,8 +66,31 @@
 > lo script della pagina gira e le eccezioni si vedono. Entrambi i difetti sono
 > **corretti e verificati su tre programmi** (§3.39).
 >
-> **Non pushato**: l'ultimo push è `1df9dd8` dell'11/09. Il push resta **una
-> richiesta da rifare ogni volta**.
+> **Pushato tutto** il 12/09 a fine giornata, su richiesta: `master` fino a
+> `b1a068c` (sei commit) e il ramo `mutex-cede-solo-se-serve` (due). Il push
+> resta **una richiesta da rifare ogni volta**: fuori c'è solo questo riquadro,
+> che non può nominare il proprio hash.
+>
+> ### ▶▶ C'È UN RAMO APERTO, ED È IL PRIMO
+>
+> **`mutex-cede-solo-se-serve`** — `sched_pronto_sopra`, la prima domanda di sola
+> lettura che si possa fare allo scheduler, e `mutex_unlock` che la usa per non
+> cedere a vuoto (§3.41). Verde, 32/32, nessun `EXPECT` mosso, misurato: su
+> `test_mutex` salta due cessioni su quattro e il costo di §13.7 scende dal +22%
+> al +13%.
+>
+> **La fusione è rimandata a mente fredda, ed è una decisione dell'utente.** Le
+> due obiezioni che ho sollevato io e che vanno pesate: `sched_pronto_sopra` ha
+> **un chiamante solo** (stamattina, per `task_yield`, avevo sostenuto che ciò
+> che rende una cosa kernel sono «due clienti che non si conoscono»), e il
+> vantaggio è dimostrato su un test solo, per giunta il caso peggiore. A favore:
+> `master` porta la versione *peggiore* di una decisione già presa — lì
+> `mutex_unlock` arma `g_resched` e lo consuma due istruzioni dopo.
+>
+> È anche il primo ramo del progetto, per il criterio fissato il 12/09: si apre
+> un ramo quando una cosa **potrebbe rivelarsi sbagliata**, non quando è grossa.
+> E rami **corti e uno per volta**, perché due che toccano in parallelo
+> `stato-lavori.md` danno un conflitto in prosa.
 >
 > ### ▶▶ IL PROSSIMO PASSO, IN UNA RIGA
 >
