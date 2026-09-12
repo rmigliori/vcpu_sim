@@ -156,12 +156,29 @@
 >
 > ### ▶▶ IL PROSSIMO PASSO, IN DUE RIGHE E IN QUEST'ORDINE
 >
-> **1. IL RENAME**, perché tocca **34 file su 55** e quindi non può convivere con
-> un ramo aperto né stare nello stesso commit di un cambiamento semantico —
-> altrimenti «i cicli non si muovono» non vuol più dire niente. A commit piccoli,
-> con i conteggi confrontati a ogni passo. L'elenco delle coppie vecchio→nuovo si
-> approva **prima** di toccare un file: su `gestore_timeout` e `marche` la
-> traduzione giusta è una scelta, non un automatismo.
+> **1. IL RENAME**, perché tocca **34 file su 55** più **39 `CMakeLists`** e
+> quindi non può convivere con un ramo aperto né stare nello stesso commit di un
+> cambiamento semantico — altrimenti «i cicli non si muovono» non vuol più dire
+> niente. Otto commit piccoli, con l'impronta confrontata a ogni passo.
+>
+> **L'elenco è scritto e aspetta un sì**: [`rename-inglese.md`](rename-inglese.md).
+> Si approvano tre cose e non centocinquanta coppie — **le sei scelte vere**, il
+> **vocabolario** (una parola italiana, una inglese, applicata ovunque: approvato
+> quello, le etichette interne seguono da sé) e l'**API esportata**, che è
+> l'interfaccia e merita una decisione invece di una regola. La scelta che conta
+> è la terza: `scadenza` → **`expiry`** e **non** `deadline`, perché nei quattro
+> documenti *deadline* è il vincolo temporale di un task — la «D» di *deadline
+> monotonic* — e usarla per l'istante in cui scatta un timeout creerebbe **adesso
+> e per scelta** una collisione peggiore di quella di `coda`, che almeno è un
+> residuo.
+>
+> **E la rete c'è già**, provata prima di fidarsene (`3fba9fe`):
+> [`tools/fingerprint.sh`](../tools/fingerprint.sh) confronta la parte del `.vx`
+> che un rename **non ha il permesso di toccare**. Su un rename vero il diff è
+> vuoto; su **una sola istruzione in più** in `scheduler.vasm`, per giunta su un
+> ramo mai eseguito, il diff scatta su **dieci programmi su quindici** mentre
+> `ctest` resta **32/32**. Cioè: la suite da sola non avrebbe visto quel
+> cambiamento. I due strumenti falliscono su cose diverse e si usano insieme.
 >
 > **2. L'ASSEMBLAGGIO CONDIZIONALE** (`.ifdef` e `-D`), che è il prerequisito di
 > tutto il resto del marcatore. L'utente ha impostato tre **categorie fisse**
