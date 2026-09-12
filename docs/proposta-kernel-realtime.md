@@ -2319,6 +2319,36 @@ arma il flag e lascia che sia il percorso di uscita a decidere.
 > difetto che §9.2 ha tolto altrove — una latenza che dipende dal periodo del
 > timer invece che dal lavoro.
 
+> **AGGIORNAMENTO 12/09/2026 — `task_yield` ESISTE, e questa sezione è a metà.**
+> La primitiva descritta qui sopra è scritta in `rtos/scheduler/…/scheduler.vasm`
+> nella forma esatta che questo riquadro prescriveva: le righe di `task_block`
+> con `enqueue_coda` al posto di `SUSPENDED`, quindi il chiamante **non lascia
+> mai il proprio livello**.
+>
+> Non è arrivata dal mutex. Il cliente che l'ha resa dovuta è un lettore in
+> polling che, senza una linea di interruzione, è per costruzione **l'idle**, e
+> che dopo aver consegnato quello che ha letto deve cedere senza sospendersi —
+> perché un idle sospeso svuota l'ultimo livello, e §4 fa poggiare lì la
+> terminazione della scansione (§3.39 dell'handoff). **Due clienti che non si
+> conoscono** sono la ragione per cui è kernel e non un idiom da ripetere.
+>
+> Tre cose decise scrivendola, e tutte hanno un seguito qui:
+>
+> - **consuma `g_resched`**, perché esiste per essere il consumatore sincrono che
+>   questa sezione dice mancante. `task_block` **non** lo consuma, ed è
+>   un'asimmetria aperta;
+> - **non guarda `TCB.crit`**: cedere dentro la propria sezione critica è lecito,
+>   ed è la **seconda causa di §13.5** — quella che l'11/09 era stata annotata
+>   come non testata;
+> - **nessun ramo «solo al mio livello»**: cedere quando non c'è nessun altro
+>   eseguibile costa comunque uno switch, e il prezzo è dichiarato.
+>
+> **Quello che resta di §13.7 è farla chiamare da `mutex_unlock`.** Oggi
+> `mutex_unlock` arma il flag e ritorna, come il corpo di questa sezione
+> prescrive; sostituire «arma e lascia decidere al percorso di uscita» con «arma
+> e *poi cedi*» è una riga, ma cambia il comportamento di un percorso verificato
+> da `test_mutex` e va deciso esplicitamente.
+
 > **Una cosa di questa sezione è stata confermata l'11/09/2026**, e non era
 > ovvia: `mutex_unlock` arma il flag **incondizionatamente**, anche quando nulla
 > è cambiato, ed è la scelta giusta e non un'approssimazione. Lo scheduling a

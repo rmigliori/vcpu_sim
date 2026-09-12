@@ -1,7 +1,7 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **11 settembre 2026** (§3.36 `TCB.crit`; §3.37 MMIO e la
-> tastiera; §3.38 lo scheduler senza il tick)
+> Ultimo aggiornamento: **12 settembre 2026** (§3.39 `task_yield`; §3.40 il
+> marcatore e il contesto vettoriale)
 > Scopo: fotografia dello stato per riprendere il lavoro a distanza di giorni
 > senza dover ricostruire il contesto.
 
@@ -9,36 +9,112 @@
 
 ## 0. STATO ATTUALE — DA DOVE SI RIPRENDE
 
-> ### ▶ RIPRENDI DA QUI (12/09/2026 o dopo)
+> ### ▶ RIPRENDI DA QUI (13/09/2026 o dopo)
 >
-> `ctest` **30/30**. L'11/09 ha fatto tre cose. **§3.36** ha chiuso la
-> discussione rimasta aperta a metà frase: **chi è in sezione critica non si
-> ruota**, `TCB.crit`, ceiling classico. **§3.37** ha dato alla macchina un
-> **ingresso**: MMIO sopra la RAM e una tastiera letta in polling, con il test
-> `kbd` deterministico pur dipendendo dal mondo. **§3.38** ha scritto il primo
-> programma del progetto **senza un solo interrupt** — e ha stanato tre difetti,
-> uno dell'assembler e due di `traccia.py`.
+> `ctest` **32/32**. Il 12/09 ha fatto tre cose, e la terza è la più grossa.
 >
-> **Tutto pushato** su `origin/master` fino a `2e025c7`. Fuori resta solo
-> l'aggiornamento di questo riquadro, che non può nominare il proprio hash. Il
-> push resta **una richiesta da rifare ogni volta**.
+> **§3.40 — IL CONTESTO VETTORIALE SI SALVA, e le due metà del progetto si sono
+> incontrate.** `test_vettori` è il primo programma in cui un **task** usa
+> `v0..v7`. Il buco era dichiarato in `machine.vasm` dal 05/09 e non poteva
+> manifestarsi perché nessun task li usava; adesso è chiuso. Lungo la strada è
+> venuto fuori che **i sedici registri float non erano salvati affatto**, e
+> nessun commento lo diceva. Quattro istruzioni nuove (`mfvl`/`mtvl`,
+> `mfvmask`/`mtvmask`), perché due terzi dello stato vettoriale **non erano
+> leggibili dal software**: il contesto non era scrivibile, non mal scritto.
+>
+> **§3.40 — IL MARCATORE**, l'oscilloscopio a più tracce, idea dell'utente: tag
+> di apertura e chiusura con categoria e punto, due canali riempiti dalla
+> macchina a costo zero, i nomi in un catalogo (`marche.conf`) da cui il `.vinc`
+> è **generato**. Misura il **tempo di risposta** — una finestra che attraversa
+> le commutazioni — che la traccia del `pc` non può dare.
+>
+> **§3.39 — `task_yield`**, e la coppia dei test «stupidi» chiusa con
+> `test_mondo`. Ma la cosa che conta non è il test: è la **primitiva di kernel**
+> che scriverlo ha reso dovuta.
+>
+> **`task_yield` È SCRITTA** ([`scheduler.vasm`](../rtos/scheduler/impl/src/scheduler.vasm)),
+> ed è **§13.7 alla lettera**: le otto righe di `task_block` con `enqueue_coda`
+> al posto di `SUSPENDED`. Cedere restando eseguibili. La differenza non è di
+> stile — un **blocco** toglie il TCB dalle code di ready, uno **yield** lo
+> rimette in fondo alla coda del *proprio* livello — ed è quella che permette a
+> un idle di cedere senza svuotare l'ultimo livello, cioè **senza far cadere §4**.
+> Aggiunta pura: **nessun numero degli altri 30 test si è mosso**.
+>
+> Come ci si è arrivati conta, perché la prima stesura era sbagliata: l'idle
+> cedeva con una `receive` su una mailbox di ack, e io avevo dichiarato §4
+> sostituita da un'invariante di programma. L'utente ha chiesto *«a cosa serve la
+> receive nell'idle?»* — e la risposta è che non serviva ad aspettare, serviva a
+> **cedere**, cioè era uno yield scritto con l'unica primitiva che c'era.
+>
+> Ha stanato anche il **quarto difetto** di `traccia.py` — non poteva passare
+> `--kbd`, quindi su un programma guidato da un device restava appeso invece di
+> tracciarlo. Corretto (le opzioni della macchina dopo un `--`), e la traccia ora
+> dice **idle 86,9%**: la prima volta che l'idle compare in una misura di questo
+> progetto con un numero che significhi qualcosa.
+>
+> ### ▶▶ E LA PAGINA ADESSO SI VERIFICA: c'è `gjs`
+>
+> Il template HTML era l'unico pezzo del progetto che si spediva **letto invece
+> che provato** — niente `node`, Firefox headless non parte — ed è così che §3.38
+> aveva lasciato passare due difetti che l'utente ha visto all'istante aprendo la
+> pagina: *«ma c'è solo l'idle e il boot»*. `ORDINE` era un elenco scritto a mano
+> e costruiva **anche le corsie del diagramma**, quindi i task che non conosceva
+> sparivano del tutto (`E` qui, `B` e `C` in `test_coop`).
+>
+> **`gjs` (SpiderMonkey) c'è**, e con un DOM finto di venti righe
+> ([`tools/traccia_dom.js`](../tools/traccia_dom.js), ricetta in testa al file)
+> lo script della pagina gira e le eccezioni si vedono. Entrambi i difetti sono
+> **corretti e verificati su tre programmi** (§3.39).
+>
+> **Non pushato**: l'ultimo push è `1df9dd8` dell'11/09. Il push resta **una
+> richiesta da rifare ogni volta**.
 >
 > ### ▶▶ IL PROSSIMO PASSO, IN UNA RIGA
 >
-> **Il secondo test «stupido»**: guidato dalla tastiera, sempre senza tick (la
-> forma concordata è qui sotto). Poi la decisione grossa, che è aperta e non
-> mia: cosa deve *fare* l'eseguibile che mostra il sistema al lavoro.
+> **L'ASSEMBLAGGIO CONDIZIONALE** (`.ifdef` e `-D`), che è il prerequisito di
+> tutto il resto del marcatore. L'utente ha impostato tre **categorie fisse**
+> nello strumento — `scheduler`, `dispatcher`, `ISR` — e quelle stanno nel
+> kernel: senza un modo di compilarle via, il kernel resta strumentato **per
+> sempre** e ogni `EXPECT` che dipende dai cicli si sposta una volta e non torna
+> più. L'assembler oggi conosce diciassette direttive e nessuna condizionale.
 >
-> Restano tre debiti piccoli aperti oggi e non chiusi apposta, perché toccano
-> strumenti e vanno decisi:
+> È anche ciò che rende scrivibile `start_misura(FFT, primoStage)` come l'utente
+> l'ha scritta: oggi serve l'idioma in linea a tre istruzioni, perché **non ci
+> sono macro**.
+>
+> Il resto in fila, dal più vicino:
+>
+> - **§13.7 è a metà, e la seconda metà è una riga**: `mutex_unlock` arma ancora
+>   `request_preempt` e basta. Adesso che `task_yield` esiste, farglielo chiamare
+>   chiude la sezione — ma tocca un percorso verificato da `test_mutex`;
+> - **il salvataggio PIGRO**: oggi un task vettoriale che esce e rientra senza
+>   che nessun altro usi i vettori paga salvataggio e ripristino per niente.
+>   Evitarlo vuol dire disabilitare l'unità alla commutazione e trappare alla
+>   prima istruzione vettoriale — cioè una **seconda sorgente di trap con una
+>   causa leggibile**, che è la stessa decisione parcheggiata da §3.37 per
+>   l'interrupt della tastiera. Si ripresenta, ed è la seconda volta;
+> - **il disegno** delle marche: corsie per canale, barre **a strisce** per
+>   proprietario, e la sovrapposizione allineata al trigger, che è dove il jitter
+>   si vede. Con `test_vettori` adesso c'è finalmente qualcosa da disegnare.
+>
+> Poi resta **la decisione grossa: cosa deve *fare* l'eseguibile che mostra il
+> sistema al lavoro**. Il disaccordo sull'ordine (qui sotto) si è ridotto: il
+> contesto vettoriale, che era il mio primo argomento, **è fatto**.
+>
+> Restano cinque debiti piccoli aperti e non chiusi apposta:
+>
+> - **`task_block` non consuma `g_resched`, `task_yield` sì** (§3.39). Anche lì
+>   il flag resta stantìo dopo uno switch. Asimmetria dichiarata e non risolta:
+>   quel percorso è verificato da cinque test e va deciso a parte;
 >
 > - **`.word` con una costante `.equ` scrive 0 in silenzio** (§3.38). Il
 >   manuale è corretto, ma l'assembler dovrebbe **rifiutare** un identificatore
 >   invece di azzerarlo. Tocca `assembler.c`;
-> - **il testo narrativo di `traccia.html`** è scritto attorno a `test_gestore`
->   (il gestore a priorità 0, §3.29, l'idle che non conta il doppio): su
->   qualunque altro programma racconta cose che non succedono. Reso dipendente
->   dai dati solo il titolo dello zoom;
+> - **il testo narrativo di `traccia.html`** parla ancora di gestore a priorità 0,
+>   ISR e tick: su un programma senza interrupt racconta cose che non succedono.
+>   È l'ultimo pezzo del debito dell'11/09 — i due difetti *strutturali* della
+>   pagina sono chiusi (§3.39), questo è prosa e va riscritta sapendo cosa deve
+>   dire;
 > - **`tools/traccia.py --testo`**, proposto e non scritto: stamperebbe la
 >   timeline nel terminale invece di scrivere l'HTML, che è quello che serve
 >   quando si vuole solo controllare l'ordine dei turni. Una ventina di righe.
@@ -51,11 +127,9 @@
 > questo che la tastiera è arrivata adesso. Poi un eseguibile che usi lo stato
 > dell'arte del sistema.
 >
-> **Il primo dei due è fatto** (§3.38, `test_coop`). Il secondo non è scritto:
-> guidato dalla tastiera, sempre senza tick — un task legge in polling, manda il
-> carattere a un altro e si blocca aspettando l'ack. Lì l'idle **può** girare,
-> perché c'è un mondo esterno a riempire il vuoto: è lo stesso sistema di
-> `test_coop` con e senza qualcosa che possa succedere.
+> **I due sono fatti**: `test_coop` (§3.38) e `test_mondo` (§3.39), e vanno letti
+> come una coppia — stesso kernel, con e senza qualcosa che possa succedere.
+> Quello che resta è l'eseguibile, e **cosa debba fare è la decisione aperta**.
 >
 > La cosa che ho proposto di farne, e che resta da decidere: che
 > quell'applicazione faccia un **lavoro vero**, cioè un calcolo vettoriale, così
@@ -112,12 +186,13 @@
 > dall'11/09 è dichiarata: chi ha `TCB.crit != 0` non viene ruotato fra pari.
 > Chi tocca `sp_mio_livello` sta toccando l'invariante di §13.5 (§3.36).
 >
-> Quello che resta aperto è **uno**, ed è **§13.7**: `mutex_unlock` arma
-> `request_preempt` come la sezione prescrive, ma da contesto di task un
-> «percorso di uscita» non c'è, quindi il flag aspetta il **tick**. Chiuderlo è
-> scrivere `task_yield` — le otto righe di `task_block` con `enqueue_coda` al
-> posto di `SUSPENDED` — ed è **kernel**, non servizio: non l'ho scritto perché
-> §13.7 prescrive l'altra cosa. È una latenza, non una scorrettezza.
+> Quello che resta aperto è **uno**, ed è **§13.7** — ma dal 12/09 è **a metà**.
+> `mutex_unlock` arma `request_preempt` come la sezione prescrive, e da contesto
+> di task il «percorso di uscita» adesso **esiste**: `task_yield` è scritta
+> (§3.39), arrivata da un cliente che con il mutex non c'entra niente. Quello che
+> manca è farla **chiamare** da `mutex_unlock`, cioè una riga — che però tocca un
+> percorso verificato da `test_mutex` e va decisa. Finché non c'è, il flag aspetta
+> il **tick**: è una latenza, non una scorrettezza.
 >
 > Due cose da sapere leggendo il codice nuovo:
 >
@@ -171,8 +246,9 @@
 > Il kernel non ha più un fronte obbligato: §13 è chiusa e §3.28 pure. Le tre
 > strade, in ordine di quanto valgono:
 >
-> 1. **`task_yield` e §13.7**, sopra. È corta, è l'ultimo pezzo di §13, e
->    tocca il kernel — quindi va decisa, non dedotta;
+> 1. ~~**`task_yield` e §13.7**~~ — la primitiva è **SCRITTA** il 12/09 (§3.39).
+>    Resta la seconda metà: farla chiamare da `mutex_unlock`, che è una riga e
+>    tocca un percorso verificato;
 > 2. **il semaforo davanti al pool** (§13.8, terzo corollario): oggi chi trova
 >    vuota una classe riceve `POOL_VUOTO` e ripassa più tardi (§9.2). È il primo
 >    cliente vero che il semaforo avrebbe, e il limite è dichiarato — chi gira
@@ -479,8 +555,8 @@ livello.
 | CLI `asm/ld/run/nm/ar` | completo | [`src/main.c`](../src/main.c) |
 | HAL | completo (§3.21) | [`hal/`](../hal/) |
 | Code, pool, timeout, formato messaggi | completo, indipendente dallo scheduler (§3.24) | [`generic/`](../generic/) |
-| Kernel + scheduler a priorità + mailbox + gestore timeout + semaforo e mutex | completo: PCB, slot, rotazione fra pari (tranne per chi è in sezione critica, §3.36), blocco volontario, task di sistema (§3.28–§3.33), §13 scritta (§3.35). Resta §13.7 | [`rtos/`](../rtos/) |
-| Device in MMIO (tastiera, polling) | primo pezzo: registri sopra la RAM, alimentati da una traccia a cicli (§3.37) | [`hal/kbd.vinc`](../hal/interface/hal/kbd.vinc), [`src/vcpu.c`](../src/vcpu.c) |
+| Kernel + scheduler a priorità + mailbox + gestore timeout + semaforo e mutex | completo: PCB, slot, rotazione fra pari (tranne per chi è in sezione critica, §3.36), blocco volontario **e cessione volontaria** (`task_yield`, §3.39), task di sistema (§3.28–§3.33), §13 scritta (§3.35). Di §13.7 resta la chiamata da `mutex_unlock` | [`rtos/`](../rtos/) |
+| Device in MMIO (tastiera, polling) | primo pezzo: registri sopra la RAM, alimentati da una traccia a cicli (§3.37); usato dall'RTOS in `test_mondo` (§3.39) | [`hal/kbd.vinc`](../hal/interface/hal/kbd.vinc), [`src/vcpu.c`](../src/vcpu.c) |
 | Sincronizzatore fra più VM e modelli di hardware | **da fare** — solo progettato (11/09/2026) | [`docs/proposta-sincronizzazione.md`](proposta-sincronizzazione.md) |
 | Linguaggio alto livello `vc` | **da fare** — solo progettato | [`docs/proposta-linguaggio-alto-livello.md`](proposta-linguaggio-alto-livello.md) |
 
@@ -2610,6 +2686,348 @@ il contratto scritto.
 
 ---
 
+### 3.40 IL MARCATORE, E IL CONTESTO VETTORIALE (12/09/2026, seconda parte)
+
+`ctest` **32/32**, il nuovo è `vettori`. Due fronti, e il secondo esiste perché
+il primo ha dato il modo di misurarlo.
+
+#### Il marcatore: l'oscilloscopio a più tracce — **l'idea è dell'utente**
+
+La traccia del `pc` (§3.34) dice **chi occupava la CPU**. Non sa dire quanto sia
+durata una *richiesta*, perché una richiesta cambia proprietario a metà. L'utente
+ha proposto la forma con cui si misura sul ferro: un tag all'inizio della regione
+che interessa e uno alla fine, con due identificatori — la **categoria** e il
+**punto** — letti come i canali di un oscilloscopio. È il toggle di un GPIO
+guardato con l'analizzatore di stato logico; le versioni industriali sono le
+stimulus port dell'ITM e SystemView.
+
+Tre cose sono state decise discutendo, e nessuna era nella proposta iniziale:
+
+- **il canale è l'indirizzo**, non un campo impacchettato in una parola.
+  L'assembler non valuta espressioni (`.equ B (A << 16)` non assembla,
+  verificato), quindi comporre canale e valore a compile-time non si può — e il
+  rimedio è migliore del problema: 32 registri contigui, come l'ITM ne ha 32.
+  Aprire costa tre istruzioni, chiudere **una** (`sw r0`, e `r0` è già zero);
+- **due canali li scrive la macchina, a costo zero**. `esecuzione` osserva le
+  scritture a `current` — l'indirizzo esce dalla tabella dei simboli del `.vx`,
+  niente da cablare — e annota i *cambi*. `tasto` marca l'istante in cui un
+  carattere diventa disponibile, e serve perché **il programma non può saperlo**:
+  sa quando se n'è accorto, e la differenza fra i due è il ritardo del polling;
+- **i nomi stanno in un catalogo**, `marche.conf`, che è la **sorgente** da cui
+  il `.vinc` viene generato e che il lettore rilegge. Una sorgente, due
+  consumatori. Un file di nomi *accanto* agli `.equ` sarebbe stato la doppia
+  verità che quello stesso giorno aveva fatto sparire un task da `traccia.html`.
+
+Un dettaglio che vale: il costo del tag **si paga anche quando la registrazione
+è spenta** — la `sw` viene eseguita comunque, è solo la macchina che non annota.
+Un probe a costo zero sarebbe stato comodo e avrebbe insegnato il falso.
+
+Misurato su `test_mondo`, che è stato strumentato con due categorie:
+
+```
+--- per categoria ---
+  attesa del mondo    5   min 1718  max 2924  jitter 1206
+  risposta al tasto   5   min  584  max  687  jitter  103
+
+  risposta al tasto  @6041  687 cicli ATTRAVERSA  [tcbI 507  tcbE 180]
+```
+
+Tre cose che non sapevamo dire: la **latenza di accorgersi** (28–33 cicli, il
+periodo del ciclo di polling); il **tempo di risposta** attraverso `task_yield`;
+e la sua **decomposizione** — 507 cicli di macchinario contro 180 di lavoro, cioè
+l'interferenza. Più una scoperta: i giri 2–5 sono identici al ciclo, e il primo
+costa 103 cicli in meno perché la prima `send` prende il ramo senza `task_ready`.
+
+> **Un difetto del piazzamento, dichiarato**: `attesa` chiude e `risposta` apre
+> sei cicli dopo, quindi la somma delle parti non fa il totale. Ogni ciclo
+> dovrebbe stare dentro esattamente una finestra, ed è il modo tipico in cui una
+> misura strumentata inganna. Si chiude sovrapponendo i due canali.
+
+#### Il contesto vettoriale, e il buco che si è rivelato più grande
+
+Alla domanda «come intendi salvarlo» la risposta è cominciata con un fatto:
+**oggi non si poteva**, e non per mancanza di codice. `vmask` era scritto solo
+dalle `vms*` e letto da `vmerge`; `vl` era solo *impostabile*. Due terzi dello
+stato architetturale vettoriale non erano accessibili al software.
+
+Quindi la macchina doveva cambiare comunque, e la decisione era quale. Quattro
+accessori — `mfvl`/`mtvl`, `mfvmask`/`mtvmask` — con il salvataggio che resta
+**software** nell'HAL. Scartato il salvataggio assistito dall'hardware: è più
+rapido da scrivere e **nasconde il costo**, che qui è il punto.
+
+Poi, scrivendo il test, è emerso il resto:
+
+- **i sedici registri FLOAT non erano salvati affatto**, e nessun commento lo
+  dichiarava — il frame nominava solo `r1..r13`, psw, epc, r15. Non è un buco
+  separabile: `vredsum` riduce **in** un float, quindi ogni calcolo vettoriale
+  vero finisce lì dentro. `PSW_VDIRTY` copre l'estensione intera;
+- **`hal_ctx_block` costruisce la epsw** invece di copiarla, ed è il punto in cui
+  `VDIRTY` andrebbe perso sul percorso volontario. Tre istruzioni per tenerlo;
+- **il frame diventa a taglia variabile**, con una parola di flag all'offset 0.
+  Da cui una semplificazione indipendente: `hal_ctx_block` recuperava il proprio
+  `r15` con un `lw r15, 60(r1)` — un offset cablato che con il frame variabile
+  non sarebbe più stato costante. Sostituito da una **coda-chiamata** (`j
+  ctx_save` invece di `call`), che il problema lo toglie invece di renderlo
+  condizionale;
+- **il blocco sta sullo stack del task, non nel TCB**: il kernel vede `TCB.sp`
+  come puntatore opaco e non deve conoscere una cosa che solo l'HAL sa leggere.
+
+#### `test_vettori`: le due metà del progetto si incontrano
+
+Il primo programma in cui un **task** usa i registri vettoriali. A e B tengono un
+valore in `v0` attraverso un tratto interrompibile, allo **stesso livello** —
+obbligatorio: a priorità diverse non ci sarebbe nessuno con cui corrompersi.
+
+Sensibilità verificata disattivando il salvataggio nel simulatore:
+
+```
+senza salvataggio   19  0  20  19  25
+con salvataggio      0  0  20  19  39
+```
+
+E la differenza fra `errA` ed `errB` va letta: **è la fase**, non una proprietà
+dei due task. Il tick è periodico e il giro ha un costo fisso, quindi la
+preemption cade sistematicamente dentro il tratto di A e fuori da quello di B.
+`errB` resta un osservabile, non un'asserzione — scritto nel file invece che
+lasciato credere.
+
+> **Il primo tentativo livelloccava**, e il perché è la cosa più istruttiva del
+> test: con periodo 300 il task riprendeva e veniva **ritrappato prima di
+> eseguire un'istruzione**, perché una commutazione con stato vettoriale costa
+> ~1650 cicli. È la saturazione di §3.32 amplificata di un ordine di grandezza:
+> **un sistema che usa i vettori non può tenere il tick che aveva prima.**
+
+E la conseguenza più concreta: **gli stack**. 68 byte di parte fissa per un task
+scalare, ~2,2 KB per uno vettoriale. Smettono di essere un numero che si copia da
+un test all'altro e diventano una cosa da dichiarare e verificare — che è il
+terzo fronte, il linker/locator.
+
+#### Cinque `EXPECT` spostati, e i derivabili immobili
+
+`scheduler`, `block`, `catena`, `gestore`, `mondo`: il context switch è più lungo
+di ~9 istruzioni **anche sul percorso pulito** (il test di `VDIRTY` e la parola
+di flag), e l'idle ne paga la differenza. Tutti i numeri **derivabili** non si
+sono mossi — `3`, `3 3 3`, `5 0`, `0 5 495 5` — e si muovono solo i contatori che
+dipendono dai cicli. È il prezzo che i task scalari pagano perché quelli
+vettoriali possano esistere, ed è dichiarato in ogni `vasm_check`.
+
+---
+
+### 3.39 LO SCHEDULER GUIDATO DAL MONDO, e `task_yield` — §13.7 a metà (12/09/2026)
+
+`ctest` **31/31**, il nuovo è `mondo`. È il **secondo dei due test «stupidi»**
+che l'utente aveva impostato il 10/09, e chiude quella coppia. Ma il risultato
+che conta non è il test: è la **primitiva di kernel** che scriverlo ha reso
+dovuta, e che l'utente ha deciso di far scrivere.
+
+I due file vanno letti insieme, e il confronto è il contenuto:
+
+| | `test_coop` (§3.38) | `test_mondo` |
+|---|---|---|
+| chi mette in moto il giro | il boot | la **tastiera**, un carattere per volta |
+| l'idle | irraggiungibile, e raggiungerlo sarebbe la fine | **è il motore**: 86,9% del tempo |
+| «nessuno è pronto» | il sistema è finito | non c'è **lavoro**, ed è la definizione di idle |
+| come si cambia mano | `task_block` (blocco volontario) | **`task_yield`** |
+
+#### `task_yield`, e come ci si è arrivati
+
+Il primo tentativo aveva l'idle che leggeva la tastiera, mandava il carattere e
+**si bloccava su una mailbox di ack**. Funzionava, dava i numeri giusti, e la
+sezione che avevo scritto dichiarava apertamente il prezzo: §4 («l'idle non si
+blocca mai») sostituita da un'invariante di programma («il testimone è uno solo
+e chi lo tiene è eseguibile»).
+
+**L'utente non l'ha accettato, e aveva ragione.** La domanda che ha sciolto il
+nodo è stata la più semplice: *a cosa serve la `receive` nell'idle?* La risposta
+è che non serviva ad aspettare — serviva a **cedere**, perché la `send` da sola
+non commuta (`request_preempt` arma `g_resched` e l'unico consumatore è
+`sched_isr_exit`, che senza interrupt non gira mai). Era uno **yield scritto con
+l'unica primitiva che il kernel offriva**, e la differenza non è di stile:
+
+> un **blocco** toglie il TCB dalle code di ready; uno **yield** lo rimette in
+> fondo alla coda del **proprio livello**.
+
+§4 non dice «l'idle non aspetta»: dice che **l'ultimo livello non è mai vuoto**,
+ed è su quello che poggia la terminazione della scansione (`sched_scan_done`
+dichiara il caso contrario *un errore di costruzione del sistema*). Un idle che
+cede non lo svuota. La proposta dell'utente — *«fai fare la receive a un task
+più prioritario dell'idle e lascia l'idle a skip on flag più la send»* — non
+gira presa alla lettera, per il motivo qui sopra; ma indica la forma giusta, e
+il pezzo che manca in mezzo non è una `receive`: è lo yield.
+
+#### Cosa è stato scritto
+
+| Dove | Cosa |
+|---|---|
+| [`scheduler.vasm`](../rtos/scheduler/impl/src/scheduler.vasm) | **`task_yield`**, accanto a `task_block`, di cui è il gemello |
+| [`test_mondo.vasm`](../rtos/test/test_mondo.vasm) **(nuovo)** | il primo cliente, e con lui **spariscono** la mailbox di ack e il suo giro |
+| `rtos/test/CMakeLists.txt` | il `vasm_check` con l'`ARGS --kbd` |
+
+`task_yield` è **§13.7 alla lettera** — quella sezione lo descrive come *«le
+stesse otto righe di `task_block` con `enqueue_coda` al posto di `SUSPENDED`»* —
+e ciò che lo rende una primitiva di kernel invece di un idiom da ripetere sono
+**due clienti che non si conoscono**: `mutex_unlock`, che deve onorare subito un
+`request_preempt` da contesto di task, e un lettore in polling che non aspetta
+niente e vuole solo cedere.
+
+Tre decisioni dentro le sue dodici righe, tutte scritte accanto al codice:
+
+- **consuma `g_resched`.** Esiste per essere il consumatore sincrono che §13.7
+  dice mancante: uno switch che ignorasse il flag nato per onorare sarebbe una
+  contraddizione, e lascerebbe al tick successivo una rotazione già fatta.
+  **Asimmetria dichiarata e non risolta**: `task_block` *non* lo consuma, e
+  anche lì il flag resta stantìo dopo uno switch. Non l'ho toccato — quel
+  percorso è verificato da cinque test e la cosa va decisa a parte;
+- **non guarda `TCB.crit`.** `sp_mio_livello` toglie il turno *contro* la
+  volontà del possessore (§13.2); qui è il possessore a chiederlo. È la
+  **seconda causa di §13.5** — quella che l'11/09 era stata annotata come non
+  testata — e resta ciò che §13.5 dice che sia: un modo documentato di far
+  popolare una coda, non un difetto da impedire dentro lo scheduler;
+- **nessun ramo `sp_solo`.** Cedere senza nessun altro eseguibile costa
+  `ctx_save` + scansione + `ctx_restore` e ritrova se stessi. Averlo
+  richiederebbe di scandire *prima* di salvare il contesto, cioè due volte nel
+  caso che conta. Prezzo dichiarato, non nascosto.
+
+**Nessun numero degli altri 30 test si è mosso**, ed è la verifica che serviva:
+è un'aggiunta pura, nessun percorso esistente è stato toccato.
+
+#### Cosa gira
+
+`I` (PRIO_IDLE) polla `KBD_STATUS`; al flag alzato legge `KBD_DATA`, mette il
+carattere nel payload del testimone, lo manda a `E` e **cede**. `E` (livello 2)
+riceve, controlla che l'oggetto sia sempre lo stesso e che il payload sia
+arrivato intatto, somma il carattere e torna ad aspettarne un altro — ed è lui a
+fermare il programma, perché l'idle non aspetta più nessuna risposta e non sa
+quando il lavoro è finito.
+
+**Il controllo di flusso cade fuori dall'ordine**, e si verifica: quando l'idle
+riprende, `E` ha per forza già consumato, perché la scansione scende al livello 7
+solo dopo che `E` si è bloccato sulla mailbox vuota. Se non fosse vero la `send`
+troverebbe il testimone ancora linkato e risponderebbe `CODA_LINKED` — ed è
+esattamente ciò che il test asserisce sull'esito. È l'asserzione che ha preso il
+posto della mailbox di ack.
+
+Due cose che il file rende osservabili invece di lasciarle implicite:
+
+- **`E` è ESEGUIBILE dal primo istante e non gira lo stesso** per duemila cicli,
+  finché l'idle non cede. Essere il più prioritario non basta: senza una
+  sorgente di preemption ci vuole qualcuno che ceda;
+- **la `send` da sola non commuta.** È il motivo per cui `task_yield` serve, ed
+  è §13.7 vista da una porta diversa da quella del mutex.
+
+#### I cinque numeri
+
+`0 5 495 5 725`, con la traccia `2000:a,6000:b,10000:c,14000:d,18000:e`.
+
+- **`err` = 0** — tre asserzioni e una diagnosi: la `send` ha sempre trovato il
+  testimone libero, il messaggio che arriva a `E` è quell'oggetto, il payload è
+  intatto; più `KBD_OVERRUN`, che è la diagnosi;
+- **`cntE` = 5**, **`somma` = 495** (`'a'`…`'e'`, sommati da `E` **leggendo il
+  payload**: §8.4 smette di essere un commento);
+- **`attese` = 5** — quante volte l'idle ha davvero aspettato. Verificato vivo:
+  `2000:a,2400:b,…` dà **4**, perché il secondo carattere era già lì;
+- **`cntP` = 725** — i giri di polling a vuoto, il tempo in cui non c'era
+  lavoro. L'unico che dipende dai cicli.
+
+#### La finestra fra `KBD_STATUS` e `KBD_DATA`, trovata riscrivendo
+
+Il caso di overrun **ha smesso di scattare** quando il giro si è accorciato
+(senza la mailbox di ack): `somma = 500`, cioè la `'a'` persa, ed `err = 0`.
+Non era un difetto del test ma del **protocollo del device**, e vale la pena
+saperlo:
+
+> fra la `lw KBD_STATUS` e la `lw KBD_DATA` ci sono due transazioni distinte, e
+> nel mezzo il mondo continua. Se lì dentro arriva un secondo tasto, la lettura
+> del dato restituisce il **superstite** e nello stesso colpo **azzera
+> l'overrun appena alzato**: la perdita diventa invisibile, con lo stato già
+> letto che dice «tutto a posto».
+
+Nella prima stesura in mezzo c'erano **undici istruzioni** (le contabilità di
+`attese` e il test dell'overrun). Ora ce n'è **una**, che è il minimo che questa
+ISA consenta — e la finestra si **stringe, non si chiude**. Da cui la
+riclassificazione onesta: `KBD_OVERRUN` è una **diagnosi**, e a garantire che
+non si sia perso niente è `somma`, confrontata da `ctest`.
+
+Il caso che conta davvero — due tasti che arrivano *mentre il sistema lavora* —
+resta rilevato: `2000:a,2100:b,2200:c,…` dà `err = 1` e `somma = 499`, cioè la
+`'b'` persa **e detto**.
+
+#### Difetto 4 di `traccia.py`: lo strumento non poteva vedere questo programma
+
+`traccia.py` costruiva da sé la riga di comando del simulatore
+(`run <vx> --trace`) e non aveva **nessun modo di passare `--kbd`**. Su un
+programma guidato da un device questo non è un disagio: il programma **non
+termina** — resta a pollare un flag che nessuno alzerà — e lo strumento restava
+appeso senza dire niente.
+
+Corretto, ed è una riga di disegno: le opzioni **della macchina** si passano dopo
+un `--`, esattamente come `vasm_check` le tiene in `ARGS` distinte dagli
+`IFLAGS` (§3.37). Più un `timeout` che trasforma la sospensione muta in una
+diagnosi che dice cosa manca.
+
+```
+python3 tools/traccia.py out/vasm/test_mondo.vx -- --kbd "2000:a,6000:b,…"
+```
+
+Risultato: **44 fasce, 0 tick, 18743 cicli — idle 86,9%, E 11,5%, boot 1,6%.**
+È la prima volta che l'idle compare in una traccia di questo progetto con un
+numero che significhi qualcosa, e la voce «CPU libera» del masthead qui è
+**corretta**: quel tempo lo si passa a guardare un registro di periferica perché
+non c'è lavoro, non perché si sta rubando la macchina a qualcuno. (Lo avevo
+detto al contrario a metà giornata, quando il poller era ancora un task normale
+travestito da idle: lì sarebbe stata CPU bruciata.)
+
+Non regressione verificata su `test_gestore` (250 fasce, 12 tick, invariato) e
+`test_coop` (124 fasce, 0 tick, invariato).
+
+#### I due difetti della pagina: CORRETTI, e finalmente VERIFICATI
+
+Erano stati trovati per ispezione e lasciati aperti perché non c'era modo di
+eseguire il JS. L'utente ha aperto la pagina e ha detto la frase che li ha resi
+riproducibili: **«ma c'è solo l'idle e il boot»**. Erano peggio di come li avevo
+descritti — `ORDINE` non filtrava solo la tabella del bilancio, **costruiva anche
+le corsie del diagramma e la legenda**, quindi un task il cui nome non fosse in
+quell'elenco non compariva da nessuna parte. `E` (11,5% della timeline) non
+c'era; in `test_coop` mancavano `B` e `C`, cioè due dei tre task.
+
+> **E UN MOTORE JS C'È: `gjs`.** SpiderMonkey, arriva con GNOME. Non ha un DOM, e
+> non serve: ciò che va verificato è la **logica sui dati**, cioè esattamente ciò
+> che esplode quando un programma ha una forma diversa da `test_gestore`. Con un
+> `getElementById` finto e due setter lo script della pagina gira e le eccezioni
+> si vedono. È in [`tools/traccia_dom.js`](../tools/traccia_dom.js), con la
+> ricetta in testa. **Da oggi il template non è più l'unico pezzo del progetto
+> che si spedisce letto invece che provato** — ed è il motivo per cui le due
+> correzioni di §3.38, fatte alla cieca, avevano lasciato passare questi.
+
+Prima della correzione, eseguito: `TypeError: can't access property "kernel",
+own.gestore is undefined`. Non più dedotto.
+
+Le correzioni, che non sono toppe:
+
+- **i proprietari si derivano dai dati.** I nomi noti tengono il colore e il
+  posto in scaletta (sono quelli per cui il foglio di stile ha una variabile);
+  gli altri arrivano in coda per tempo decrescente con un colore di riserva
+  letterale. Un elenco scritto a mano era una seconda verità da tenere allineata
+  ai programmi — proprio ciò che `traccia.py` evita altrove riconoscendo i corpi
+  per **convenzione**;
+- **la priorità nella chiave di corsia è sparita**, sostituita dalla **quota**.
+  La priorità nei dati non c'è — `traccia.py` deduce il proprietario dal `pc`,
+  non legge i TCB — quindi era un'etichetta costante che diceva il falso su ogni
+  programma che non fosse `test_gestore` (in `test_coop`, `A` è a priorità 3 e
+  la pagina scriveva «prio 1»). La quota è misurata;
+- **il paragrafo sul gestore si nasconde** quando quel task non c'è, invece di
+  lanciare. Stando dopo il disegno uccideva in silenzio tutta la metà inferiore
+  — grafico per routine, context switch, percentuali finali — mentre il
+  diagramma continuava a vedersi: è così che era passato inosservato l'11/09;
+- **la riga `loopI`** non si emette se quell'etichetta non esiste (l'idle di
+  `test_mondo` polla in `ti_poll`).
+
+Verificato con `gjs` su **tre** programmi, che è il punto: `test_mondo` (nessuna
+eccezione, corsie `idle`/`boot`/`E`, e la metà inferiore viva — `n-sw` = **9**,
+cioè 5 cessioni dell'idle più 4 blocchi di `E`, derivabile); `test_gestore`
+invariato (`q-gest` 97%, `n-sw` 29, colori propri); `test_coop`, che ora mostra
+anche `B` e `C`.
+
 ### 3.38 LO SCHEDULER SENZA IL TICK, e i tre difetti che il test ha stanato (11/09/2026, terza parte)
 
 `ctest` **30/30**, il nuovo è `coop`. L'ha chiesto l'utente con una frase che
@@ -4201,9 +4619,10 @@ servono i numeri della macchina.
 > cmake -B out -S . && cmake --build out -j && ctest --test-dir out
 > ```
 >
-> 26 test: le tre invarianti storiche, i nove test mirati (`coda`, `pool`,
-> `timeout`, `mailbox`, `scheduler`, `block`, `catena`, `gestore`, più
-> `proc`/`include`/`epsw` sulla toolchain), e i 13 programmi di `standalone/`
+> 32 test: le tre invarianti storiche, i test mirati (`coda`, `pool`,
+> `timeout`, `mailbox`, `scheduler`, `block`, `catena`, `gestore`, `semaforo`,
+> `mutex`, `coop`, `mondo`, più `proc`/`include`/`epsw`/`kbd` sulla toolchain e
+> sulla macchina), e i 13 programmi di `standalone/`
 > che devono continuare a girare da soli. I numeri
 > attesi stanno **ognuno accanto al programma che lo produce** — nel
 > `CMakeLists.txt` di `generic/test/`, di `rtos/test/`, o in quello di primo
@@ -4229,7 +4648,7 @@ servono i numeri della macchina.
 >
 > ```bash
 > ctest --test-dir out -R coda --output-on-failure   # un test solo, con l'output
-> ctest --test-dir out -N                            # elenca i 26 senza eseguirli
+> ctest --test-dir out -N                            # elenca i 32 senza eseguirli
 > cmake --build out -j --verbose                     # i comandi asm/ld esatti
 > ```
 >
@@ -4245,23 +4664,41 @@ Le sequenze attese, per chi deve leggerle senza aprire il build:
 | verifica | atteso | dove sta il numero |
 |---|---|---|
 | `saxpy` — istruzioni / vec-elem-ops / cicli | `17 40 94` | `CMakeLists.txt` |
-| `scheduler` — priorità, rotazione fra pari, idle > 0 | `74 5 10 59` | `rtos/test/` |
+| `scheduler` — priorità, rotazione fra pari, idle > 0 | `67 4 8 57` | `rtos/test/` |
 | `multi` — link con inclusione selettiva | `18 40 95` | `CMakeLists.txt` |
 | `coda` — invariante dei link (§3.14), `enqueue_dopo_nc` e `coda_peek` (§3.35) | `0 1 1 1 0 0 0 2 1 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0` | `generic/test/` |
 | `pool` — sei classi, alloc/free (§3.15) | `10 4 0 0 9 0 32 3 2 0 0 4 4 4 3 0 0 1 4` | `generic/test/` |
 | `timeout` — vettore di descrittori (§3.13) | `3 0 150 1 2 0 0 0 3 0 1` | `generic/test/` |
 | `mailbox` — send/receive con blocco (§3.10) | `0 1 2 11 22 0 33 0 0` | `rtos/test/` |
-| `block` — un task che DORME, e la CPU libera vera | `3 28` | `rtos/test/` |
-| `catena` — A→B→C, `send_s` da task, risveglio che non preempta | `3 3 3 778` | `rtos/test/` |
-| `gestore` — timeout+pool+mailbox sotto lo scheduler (§3.33) | `5 0 2609` | `rtos/test/` |
+| `block` — un task che DORME, e la CPU libera vera | `3 25` | `rtos/test/` |
+| `catena` — A→B→C, `send_s` da task, risveglio che non preempta | `3 3 3 632` | `rtos/test/` |
+| `gestore` — timeout+pool+mailbox sotto lo scheduler (§3.33) | `5 0 2566` | `rtos/test/` |
 | `semaforo` — l'inserimento ordinato di §13.6 (§3.35) | `123456 2 1 -6` | `rtos/test/` |
 | `mutex` — ceiling giusto contro ceiling sbagliato, §13.5 (§3.35) | `0 0 1 1 1` | `rtos/test/` |
+| `coop` — lo scheduler SENZA il tick (§3.38) | `0 5 5 5 0` | `rtos/test/` |
+| `mondo` — l'idle lettore che cede con `task_yield` (§3.39) | `0 5 495 5 714` | `rtos/test/` |
+| `vettori` — il contesto vettoriale sotto preemption (§3.40) | `0 0 20 19 39` | `rtos/test/` |
+| `kbd` — la tastiera in MMIO, letta in polling (§3.37) | `0 294 0 3 121` | `CMakeLists.txt` |
 | `proc` — `.proc`/`.endproc` (§3.6) | `100 200 300` | `CMakeLists.txt` |
-| `include` — `-I` e idempotenza (§3.16, §3.24) | `20 16 16 512 1` | `CMakeLists.txt` |
+| `include` — `-I` e idempotenza (§3.16, §3.24) | `24 16 16 512 1` | `CMakeLists.txt` |
 | `epsw` — `mfepsw`/`mtepsw` (§3.19) | `1 0 0 7` | `CMakeLists.txt` |
 
 Più i 13 programmi di `standalone/`, per cui si verifica che nessuno vada in
 errore, non cosa stampano.
+
+
+> **I cinque numeri spostati il 12/09/2026** — `scheduler`, `block`, `catena`,
+> `gestore`, `mondo` — sono tutti e soli contatori che **dipendono dai cicli**:
+> `ctx_save` guarda `PSW_VDIRTY` e spinge una parola di flag anche quando non c'è
+> niente di vettoriale da salvare, cioè ~9 istruzioni per commutazione sul
+> percorso **pulito**. Ogni numero **derivabile** è immobile (`3`, `3 3 3`,
+> `5 0`, `0 5 495 5`), ed è quella la non-regressione che conta: è il prezzo che
+> i task scalari pagano perché quelli vettoriali possano esistere (§3.40).
+
+> I due che dipendono dal **mondo** (`kbd` e `mondo`) restano deterministici
+> perché l'alimentatore del device è una traccia a cicli, cioè tempo **simulato**
+> (§3.37): la riga `--kbd` sta nell'`ARGS` del loro `vasm_check`, accanto ai
+> numeri attesi.
 
 > Nota: `rtos/demo/scheduler_demo.vasm` **fallisce di proposito** in modalità
 > legacy a file singolo, perché ha `.extern ready`: va necessariamente linkato.
@@ -4715,10 +5152,13 @@ Alla fine ctest 26/26.
 **Per guardare come girano i task (non e' una modifica, e' uno strumento):**
 ```
 python3 tools/traccia.py out/vasm/test_gestore.vx      # -> out/traccia.html
+python3 tools/traccia.py out/vasm/test_mondo.vx -- --kbd "2000:a,6000:b,10000:c,14000:d,18000:e"
 ```
 Dice chi gira e in quale intervallo, e quanto di quel tempo è kernel per suo
 conto (§3.34). Funziona su qualunque `.vx`; il disegno sta in
-`tools/traccia.template.html`.
+`tools/traccia.template.html`. Le opzioni **della macchina** si passano dopo un
+`--` (§3.39): un programma guidato da un device senza il suo alimentatore non
+termina, e lo strumento ora lo dice invece di restare appeso.
 
 **Per andare sul linguaggio ad alto livello:**
 ```

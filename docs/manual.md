@@ -112,6 +112,14 @@ Senza flag esegue il programma normalmente. `--trace` e `--debug` sono descritti
 in §2.4; `--kbd` alimenta la tastiera con una traccia a cicli ed è descritto in
 §3.1.
 
+C'è una quarta opzione, disponibile solo su `run`: **`--marche <file>`** scrive
+la registrazione del *marcatore* — i tag che il programma piazza scrivendo nei
+registri di `hal/marca.vinc`, più due canali che la macchina riempie da sola (chi
+possiede la CPU, e quando arriva un tasto). Il catalogo dei nomi è `marche.conf`,
+e `tools/marche.py leggi` traduce la registrazione in finestre e durate. Serve a
+misurare il **tempo di risposta**, che la traccia del `pc` non può dare: una
+finestra aperta in un task e chiusa in un altro attraversa le commutazioni.
+
 Esempio:
 
 ```bash
@@ -900,6 +908,36 @@ interrupt gira esattamente come prima.
 | `mtepc` | `rs1` | `epc = rs1` (dove tornerà la `reti`) | 1 |
 | `mfepsw` | `rd` | `rd = epsw` (la parola di stato del task interrotto) | 1 |
 | `mtepsw` | `rs1` | `epsw = rs1` (**in che regime** tornerà la `reti`) | 1 |
+| `mfvl` | `rd` | `rd = vl` — lettura **non distruttiva** della lunghezza vettoriale | 1 |
+| `mtvl` | `rs1` | `vl = min(rs1, VLMAX)` — **ripristino**, non richiesta | 1 |
+| `mfvmask` | `rd` | `rd = vmask` (64 bit) | 1 |
+| `mtvmask` | `rs1` | `vmask = rs1` | 1 |
+
+> **I quattro accessori vettoriali esistono per una cosa sola: rendere
+> salvabile il contesto** (12/09/2026). Prima di loro `vmask` era leggibile solo
+> da `vmerge` e dalle operazioni mascherate, e `vl` era soltanto *impostabile* —
+> `setvl` scrive e restituisce il valore nuovo, quindi leggerlo lo distrugge. Due
+> terzi dello stato architetturale vettoriale non erano accessibili al software,
+> e il context switch di un task vettoriale non era scrivibile.
+>
+> `mtvl` sta **accanto** a `setvl` e non al suo posto: `setvl` è la richiesta di
+> un calcolo («dammene fino a *n*»), `mtvl` è il ripristino di uno stato. Usare
+> `setvl` per ripristinare funzionerebbe *per caso*, perché il valore salvato è
+> già ≤ VLMAX.
+>
+> Nota di disegno, che si scopre solo provando a fermare la macchina: in RISC-V
+> «V» la maschera **è `v0`**, un registro vettoriale ordinario — non per economia
+> di codifica, ma perché il salvataggio di contesto non abbia un caso speciale.
+> Qui `vmask` è un registro a sé, e quella divergenza costa esattamente queste
+> due istruzioni.
+
+**`PSW_VDIRTY` (bit 1 della psw).** La macchina lo alza a ogni scrittura di stato
+dell'**estensione** — `v0..v7`, `vl`, `vmask` e i sedici registri **float**. Serve
+a `ctx_save`, che così salva i ~2,1 KB del banco **solo per i task che l'hanno
+toccato**: farlo sempre costerebbe ~1650 cicli per commutazione contro i ~300
+dello scalare, pagati anche da chi l'unità vettoriale non la sfiora. Viaggia
+nella psw, quindi nel frame e indietro con `reti`, perché è una proprietà del
+task che riprende. Le letture (`mfvl`, `mfvmask`) **non** lo alzano.
 
 **Come funziona il trap.** L'interruzione del timer è consegnata al **confine di
 istruzione**: quando `IE` è attivo, il timer è armato e il contatore dei cicli
