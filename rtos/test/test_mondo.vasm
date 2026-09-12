@@ -1,0 +1,416 @@
+; rtos/test/test_mondo.vasm — LO SCHEDULER GUIDATO DAL MONDO.
+;
+; Il gemello di test_coop, e i due vanno letti come una coppia: stesso kernel,
+; stesso modello cooperativo, zero interrupt, zero tick, la CPU che cambia mano
+; solo per volonta' di chi ce l'ha. Cambia UNA cosa sola — qui fuori c'e'
+; qualcosa che puo' succedere — e a cambiare non e' un dettaglio: e' chi mette
+; in moto il sistema.
+;
+; In test_coop il giro parte dal boot, si chiude su se stesso e non ha bisogno
+; di niente: il testimone e' gia' dentro, e l'idle e' irraggiungibile perche'
+; raggiungerlo sarebbe la fine. Qui il testimone entra da FUORI, un carattere
+; per volta, e fra un carattere e l'altro il sistema non ha niente da fare — ma
+; non e' finito: sta aspettando.
+;
+; --- L'IDLE E' IL LETTORE, E NON E' UNA STRANEZZA ---
+;
+; Senza una linea di interruzione nessuno puo' BLOCCARSI aspettando la tastiera:
+; non c'e' niente che la consegni, quindi chi si addormenta li' non si sveglia
+; piu'. La si aspetta in polling, cioe' consumando CPU — e l'unico posto dove
+; consumare CPU aspettando non toglie niente a nessuno e' l'ULTIMO livello, dove
+; sotto non c'e' nient'altro da affamare.
+;
+; Da cui la forma di questo file: l'idle fa tre cose, e nessuna e' un'attesa
+; bloccante.
+;
+;     polla -> manda -> CEDE
+;
+; "Nessuno e' pronto" qui non vuol dire che il sistema e' finito: vuol dire che
+; non c'e' lavoro, ed e' la definizione di idle. Che quel tempo lo passi a
+; guardare un registro di periferica e' come e' fatto il mondo quando il device
+; non ha un interrupt (hal/kbd.vinc, §3.37) — non e' lavoro, e' l'assenza di
+; lavoro.
+;
+; --- E CEDERE E' task_yield, NON UNA receive ---
+;
+; E' il punto che tiene in piedi tutto il resto, e la prima stesura di questo
+; file lo aveva sbagliato: faceva cedere l'idle con una receive su una mailbox
+; di ack. Funzionava e non andava bene, perche' un BLOCCO toglie il TCB dalle
+; code di ready — e §4 non dice "l'idle non aspetta", dice che l'ULTIMO LIVELLO
+; NON E' MAI VUOTO. E' su quello che poggia la terminazione della scansione, che
+; non ha il caso "nessuno eseguibile" (sched_scan_done lo dichiara un errore di
+; costruzione del sistema, non un ramo da scrivere).
+;
+; task_yield rimette il chiamante in fondo alla coda del PROPRIO livello:
+; l'idle non lascia mai il livello 7, quindi §4 resta vera ALLA LETTERA invece
+; di essere sostituita da un'invariante di programma. Ed e' §13.7, arrivata qui
+; da una porta diversa da quella del mutex (scheduler.vasm lo racconta per
+; esteso).
+;
+; La receive di ack, con questo, SPARISCE — e con lei una mailbox. Non serviva
+; ad aspettare: serviva a cedere. Il controllo di flusso adesso cade fuori
+; dall'ordine, e si puo' verificare: quando l'idle riprende, E ha per forza gia'
+; consumato, perche' la scansione scende al livello 7 solo dopo che E si e'
+; bloccato sulla propria mailbox vuota. Se non fosse vero, la send troverebbe il
+; testimone ancora linkato e risponderebbe CODA_LINKED — ed e' esattamente cio'
+; che il controllo sull'esito qui sotto asserisce.
+;
+; --- COSA GIRA, IN ORDINE ---
+;
+;   I (PRIO_IDLE) polla KBD_STATUS; al flag alzato legge KBD_DATA, mette il
+;                 carattere nel payload del testimone, lo manda a E e CEDE;
+;   E (livello 2) riceve, verifica che l'oggetto sia sempre lo stesso e che il
+;                 payload sia arrivato intatto, somma il carattere e torna ad
+;                 aspettarne un altro. E' lui a contare e a fermare il
+;                 programma, perche' e' lui a sapere quando il lavoro e' finito.
+;
+; E sta a livello 2 e l'idle a 7, ma la priorita' qui non decide niente — come
+; in test_coop: il pronto e' sempre uno solo. Si vede al boot, dove E e'
+; ESEGUIBILE dal primo istante e non gira lo stesso per duemila cicli, perche'
+; senza una sorgente di preemption nessuno gli da' la CPU finche' l'idle non
+; cede. Il primo carattere e' cio' che mette in moto E.
+;
+; --- LA send DA SOLA NON COMMUTA, ED E' IL MOTIVO PER CUI task_yield SERVE ---
+; send_s -> task_ready -> request_preempt arma g_resched e ritorna. L'unico
+; consumatore di quel flag e' sched_isr_exit, che qui non gira mai: senza la
+; cessione esplicita E resterebbe pronto per sempre e l'idle pollerebbe a vuoto
+; all'infinito. task_yield e' il consumatore sincrono che mancava, e infatti il
+; flag lo azzera lui.
+;
+; --- PERCHE' E' DETERMINISTICO PUR DIPENDENDO DAL MONDO (§3.37) ---
+; Lo stato del device e il suo alimentatore sono separati. Qui l'alimentatore e'
+; una traccia a cicli — vedi ARGS in CMakeLists.txt — che vive nel tempo
+; SIMULATO: rigiocarla da' sempre gli stessi numeri. Il giorno che al suo posto
+; ci sara' un thread che legge stdin, QUESTO FILE NON CAMBIERA'.
+;
+; La spaziatura della traccia e' l'unico parametro delicato, ed e' anche una
+; misura: fra un carattere e il successivo devono starci un giro completo
+; (I -> E -> I) e un tratto di attesa. Il device ha UN registro di ricezione e
+; nessun buffer, quindi il ritmo massimo che questo sistema regge E' il suo
+; giro. Se non ci sta, il carattere vecchio si perde — e quasi sempre NON in
+; silenzio: l'idle lo vede in KBD_OVERRUN e lo conta in `err`, invece di lasciar
+; sballare la somma senza che si capisca perche'. "Quasi" perche' c'e' una
+; finestra che non si chiude, ed e' descritta al punto di lettura: verificato che
+; due tasti dentro un giro (2000:a,2100:b,2200:c) danno err=1 e somma=499, cioe'
+; la 'b' persa e DETTO; due tasti a un ciclo di distanza sfuggono.
+;
+; --- I CINQUE NUMERI ---
+;   err     0   tre asserzioni e una diagnosi in un contatore solo. Le
+;               asserzioni: la send ha sempre trovato il testimone LIBERO (cioe'
+;               l'idle non ha mai preso il turno prima che E finisse), il
+;               messaggio che arriva a E e' quell'oggetto, e il payload e'
+;               arrivato intatto. La diagnosi e' KBD_OVERRUN, che ha un punto
+;               cieco dichiarato: a garantire che non si sia perso niente e'
+;               `somma`. DERIVABILE
+;   cntE    5   caratteri elaborati. DERIVABILE dalla traccia
+;   somma 495   'a'+'b'+'c'+'d'+'e' = 97+98+99+100+101, sommato da E LEGGENDO IL
+;               PAYLOAD. E' la prova che il dato ha attraversato la mailbox
+;               intatto: il kernel non legge e non scrive un byte del payload
+;               (§8.4), e qui si vede. DERIVABILE
+;   attese  5   quante volte l'idle ha dovuto aspettare davvero (almeno un giro
+;               di polling a vuoto per carattere). Vale 5 = uno per carattere
+;               perche' la traccia e' spaziata piu' del giro. DERIVABILE
+;   cntP        giri di polling a vuoto: il tempo in cui non c'era lavoro.
+;               DIPENDE DAI CICLI — e' l'unico dei cinque. In test_coop il
+;               numero omologo (cntI) non poteva che valere 0 e non misurava
+;               niente; qui misura per davvero, ed e' tutta la differenza fra i
+;               due programmi
+
+.include "tcb/tcb.vinc"
+.include "coda/coda_api.vinc"
+.include "mailbox/mailbox.vinc"
+.include "messaggio/messaggio.vinc"
+.include "hal/kbd.vinc"
+.include "marche/marche.vinc"  ; GENERATO da marche.conf: i canali e i marker
+
+; --------------------------------------------------------------------------
+;  LE DUE MISURE, e perche' sono due canali e non uno.
+;
+;  ATTESA sta tutta dentro l'idle: quanto il sistema e' rimasto fermo per
+;  mancanza di lavoro. RISPOSTA si apre nell'IDLE e si chiude in E, cioe'
+;  ATTRAVERSA task_yield -- ed e' la cosa che nessuno strumento di questo
+;  progetto sapeva misurare, perche' cambia proprietario a meta'.
+;
+;  Incrociate col canale 0 (il possesso della CPU, che la macchina registra da
+;  sola) danno la decomposizione che serve: di quei cicli, quanti con current =
+;  idle -- commutazione e scheduler -- e quanti con current = E, cioe' lavoro.
+;
+;  I nomi non stanno qui: stanno in marche.conf, che e' la loro UNICA
+;  dichiarazione, e da cui l'include qui sopra viene generato. Il .vasm usa
+;  MARCA_ATTESA e M_ATTESA_POLLING; lo strumento mostra "attesa del mondo" e
+;  "guarda il flag della tastiera"; e sono lo stesso file.
+; --------------------------------------------------------------------------
+
+.equ PRIO_E  2                 ; l'idle sta a PRIO_IDLE, che tcb.vinc pubblica
+
+.equ GIRI    5                 ; quanti caratteri porta la traccia
+
+; Il testimone. E' un MESSAGGIO con un payload di una parola sola, dichiarato
+; nella forma che messaggio.vinc prescrive a chi ha un formato proprio: una
+; .struct che comincia con i link, non una ".res MESSAGGIO" — li' payload e' un
+; INDIRIZZO e non un campo, e la lunghezza la decide chi compone il messaggio.
+; Il kernel di questi otto byte in piu' non sa niente e non deve saperne.
+.struct CARATTERE
+  .field pointers  LINK.size   ; +0  i link, l'idioma list_head
+  .field ch                    ; +8  il carattere letto dalla tastiera
+.ends
+
+  .data
+
+testimone: .res CARATTERE      ; UNO SOLO, e gira: come in test_coop
+
+mbE:     .res MAILBOX          ; l'UNICA mailbox: l'idle non aspetta niente
+
+err:     .word 0
+cntE:    .word 0               ; caratteri elaborati
+somma:   .word 0               ; la somma dei caratteri, fatta da E
+attese:  .word 0               ; caratteri per cui l'idle ha davvero aspettato
+cntP:    .word 0               ; giri di polling a vuoto
+inviato: .word 0               ; l'ultimo carattere che I ha messo nel payload:
+                               ; serve a E per verificare che sia arrivato quello
+
+; .global sui TCB e basta: non servono a nessun altro modulo, servono a chi
+; LEGGE la registrazione. Il canale 0 porta indirizzi di TCB, e `nm` pubblica
+; solo i simboli globali -- senza queste due righe lo strumento mostrerebbe 52 e
+; 76 invece di tcbI e tcbE. Costa zero a runtime, ed e' lo stesso vincolo che
+; §3.34 dichiara per le etichette di routine.
+  .global tcbI
+  .global tcbE
+tcbI:    .res TCB
+tcbE:    .res TCB
+
+stackI:  .space 64             ; parole: 256 byte a testa
+stackI_top:
+stackE:  .space 64
+stackE_top:
+
+  .text
+
+  .global main
+  .extern current
+  .extern sched_init
+  .extern prio_pcb
+  .extern send_s
+  .extern receive
+  .extern task_yield
+  .extern ctx_init
+; NESSUN interrupt, come in test_coop: niente irq_install, niente timer_init,
+; niente irq_enable, niente sched_isr_exit. La lista e' l'asserzione piu' forte
+; del file, e qui dice due cose in piu': la tastiera si legge SENZA, perche' il
+; device non ha una linea di interruzione (hal/kbd.vinc) e non deve averla per
+; essere utile; e l'unico modo di cambiare mano e' task_yield, che e' li' in
+; mezzo agli altri.
+
+; ==========================================================================
+;  BOOT. Due task. E parte ESEGUIBILE e accodato, l'idle parte a freddo.
+;
+;  E viene accodato direttamente al suo PCB e non via task_ready, per la stessa
+;  ragione di test_coop: task_ready valuterebbe la preemption e armerebbe
+;  g_resched prima ancora che esista un task in esecuzione da preemptare.
+; ==========================================================================
+main:
+  li r14, stackI_top       ; PRIMA di ogni call: main diventera' l'idle
+  call sched_init
+
+  li r1, mbE
+  call coda_init
+
+  ; --- E (livello 2) ---
+  li r1, stackE_top
+  li r2, taskE
+  call ctx_init
+  li r3, tcbE
+  sw r1, TCB.sp(r3)
+  li r1, PRIO_E
+  call prio_pcb
+  sw r1, TCB.pcb(r3)
+  sw r0, TCB.state(r3)     ; READY -- e restera' solo READY per migliaia di
+                           ; cicli: essere il piu' prioritario non basta, ci
+                           ; vuole qualcuno che ceda
+  mov r2, r3               ; &pcb == &pcb.coda
+  call enqueue_coda
+
+  ; --- I (PRIO_IDLE): parte a freddo, quindi RUNNING e fuori da ogni coda ---
+  li r3, tcbI
+  li r1, PRIO_IDLE
+  call prio_pcb
+  sw r1, TCB.pcb(r3)
+  li r1, current
+  sw r3, 0(r1)
+  li r5, RUNNING
+  sw r5, TCB.state(r3)
+
+  li r5, taskI
+  jr r5                    ; cold start dell'idle
+
+; ==========================================================================
+;  err_piu: un controllo non e' tornato. Un contatore solo per tutti, come in
+;  test_coop e test_mutex: cio' che conta e' che resti 0. Clobber: r1, r2.
+; ==========================================================================
+  .proc err_piu
+  li r1, err
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  .endproc err_piu
+
+; ==========================================================================
+;  I — L'IDLE, CHE QUI E' IL LETTORE (vedi la testa del file).
+;
+;  Il ciclo di polling e' lo "skip on flag" scritto con le istruzioni che questa
+;  ISA ha gia' (hal/kbd.vinc): una lw e una beq, nessuna primitiva attorno.
+;  Non ha un limite di tempo, e non deve averlo: e' l'idle, aspettare e' il suo
+;  mestiere. Quello che fa mentre aspetta e' CONTARE, cosi' il tempo in cui non
+;  c'e' lavoro smette di essere invisibile.
+;
+;  NON SI BLOCCA MAI, ed e' la proprieta' da preservare se un domani questo file
+;  si tocca: le uniche due chiamate che fa sono una send (che non sospende) e
+;  task_yield (che non lascia il livello 7).
+; ==========================================================================
+taskI:
+ti_giro:
+  li r6, 0                 ; "ho fatto almeno un giro a vuoto per questo
+                           ; carattere". Vive dentro il ciclo, dove non ci sono
+                           ; call: nessun registro da preservare
+
+  li r1, MARCA_ATTESA      ; APRE: da qui il sistema non ha niente da fare
+  li r2, M_ATTESA_POLLING
+  sw r2, 0(r1)             ; fuori dal ciclo di polling, non dentro: un tag per
+                           ; carattere, non uno per giro a vuoto
+
+ti_poll:
+  li r1, KBD_STATUS
+  lw r2, 0(r1)             ; lo STATO
+  beq r2, r0, ti_vuoto
+
+  ; --- IL DATO SUBITO DOPO LO STATO, e l'ordine non e' negoziabile ---
+  ; Fra le due lw c'e' una finestra, e ogni istruzione che ci si mette dentro la
+  ; allarga: se in quel tratto arriva un secondo tasto, la lw qui sotto
+  ; restituisce il SUPERSTITE e nello stesso colpo azzera l'overrun che era
+  ; appena stato alzato -- cioe' la perdita diventa invisibile, con lo stato
+  ; gia' letto che dice "tutto a posto". Costato un caso di prova che non
+  ; scattava piu' dopo aver accorciato il giro, ed e' una proprieta' del DEVICE,
+  ; non di questo file: la finestra si stringe a una istruzione, non si chiude —
+  ; leggere stato e dato sono due transazioni e fra loro il mondo continua.
+  ; Il controllo su KBD_OVERRUN resta quindi una DIAGNOSI, non l'asserzione: a
+  ; garantire che non si sia perso niente e' `somma`, confrontata da ctest.
+  li r1, KBD_DATA
+  lw r3, 0(r1)             ; il carattere, e il flag si abbassa QUI: e' il
+                           ; protocollo, e non c'e' nessun handshake da scrivere
+  li r1, inviato
+  sw r3, 0(r1)
+  li r1, testimone
+  sw r3, CARATTERE.ch(r1)  ; il payload: il kernel non lo leggera' mai
+
+  ; --- da qui in poi non c'e' piu' fretta: il device e' stato servito ---
+  li r1, MARCA_ATTESA
+  sw r0, 0(r1)             ; CHIUDE: il lavoro e' arrivato. Una istruzione sola,
+                           ; perche' r0 e' gia' zero
+  li r1, MARCA_RISPOSTA    ; APRE: la chiudera' E, dopo due commutazioni
+  li r2, M_RISPOSTA_CONSEGNA
+  sw r2, 0(r1)
+
+  beq r6, r0, ti_subito    ; il carattere c'era gia': non ho aspettato niente
+  li r1, attese
+  lw r3, 0(r1)
+  addi r3, r3, 1
+  sw r3, 0(r1)
+ti_subito:
+
+  li r3, KBD_OVERRUN
+  and r4, r2, r3
+  beq r4, r0, ti_no_ovr
+  call err_piu             ; un tasto perso: il giro e' piu' lungo
+                           ; dell'intervallo fra due battute
+ti_no_ovr:
+
+  li r1, mbE
+  li r2, testimone
+  call send_s              ; E torna eseguibile e piu' prioritario di me, quindi
+                           ; task_ready arma g_resched. NON COMMUTA: a dargli la
+                           ; CPU sara' il task_yield qui sotto
+  li r4, CODA_OK
+  beq r3, r4, ti_send_ok   ; il testimone era LIBERO, cioe' E aveva gia'
+                           ; consumato il precedente. E' l'asserzione che
+                           ; sostituisce la mailbox di ack: se l'ordine fosse
+                           ; sbagliato l'esito sarebbe CODA_LINKED
+  call err_piu
+ti_send_ok:
+
+  call task_yield          ; CEDO, e resto al livello 7: qui il sistema cambia
+                           ; mano, e la scansione mi ritrovera' nella mia coda
+  j ti_giro
+
+ti_vuoto:
+  li r1, cntP
+  lw r3, 0(r1)
+  addi r3, r3, 1
+  sw r3, 0(r1)
+  li r6, 1                 ; ho aspettato almeno un giro per questo carattere
+  j ti_poll
+
+; ==========================================================================
+;  E — l'elaboratore. Non sa che il dato venga dalla tastiera e non deve
+;  saperlo: riceve un messaggio, ne legge il payload e lo somma. E' il confine
+;  fra il driver e l'applicazione, tracciato da una mailbox invece che da una
+;  convenzione.
+;
+;  E' lui a fermare il programma, ed e' giusto che sia lui: l'idle non sa quando
+;  il lavoro e' finito, perche' non aspetta piu' nessuna risposta.
+; ==========================================================================
+taskE:
+  li r1, mbE
+  call receive             ; r2 = il testimone. Al primo giro si blocca qui e ci
+                           ; resta finche' non arriva il primo tasto
+  li r4, testimone
+  beq r2, r4, te_msg_ok
+  call err_piu
+te_msg_ok:
+
+  li r1, testimone
+  lw r2, CARATTERE.ch(r1)
+  li r3, inviato
+  lw r4, 0(r3)
+  beq r2, r4, te_ch_ok     ; il payload e' arrivato intatto
+  call err_piu
+  li r1, testimone         ; err_piu sporca r1 e r2: il carattere va riletto
+  lw r2, CARATTERE.ch(r1)
+te_ch_ok:
+
+  li r1, somma
+  lw r3, 0(r1)
+  add r3, r3, r2
+  sw r3, 0(r1)
+
+  li r1, MARCA_RISPOSTA
+  sw r0, 0(r1)             ; CHIUDE una finestra aperta DALL'IDLE: e' il punto
+                           ; di tutto l'esercizio -- la misura attraversa il
+                           ; cambio di proprietario, e nessuno strumento che
+                           ; guardi il pc puo' farlo
+
+  li r1, cntE
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  li r3, GIRI
+  beq r2, r3, te_fine
+  j taskE                  ; e la receive in cima trovera' la mailbox vuota:
+                           ; e' li' che l'idle riprende
+
+te_fine:
+  li r1, err
+  lw r5, 0(r1)
+  dumps r5                 ; 0 = niente perso, niente scambiato, ordine giusto
+  li r1, cntE
+  lw r5, 0(r1)
+  dumps r5                 ; 5 = i caratteri della traccia
+  li r1, somma
+  lw r5, 0(r1)
+  dumps r5                 ; 495 = 'a'+'b'+'c'+'d'+'e'
+  li r1, attese
+  lw r5, 0(r1)
+  dumps r5                 ; 5 = ogni volta l'idle ha aspettato davvero
+  li r1, cntP
+  lw r5, 0(r1)
+  dumps r5                 ; il tempo senza lavoro, misurato. Dipende dai cicli
+  halt

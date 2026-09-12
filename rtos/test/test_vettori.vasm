@@ -1,0 +1,336 @@
+; rtos/test/test_vettori.vasm — LE DUE META' DEL PROGETTO SI INCONTRANO.
+;
+; E' il primo programma in cui un TASK usa i registri vettoriali. Fino al
+; 12/09/2026 non ce n'era uno: sotto rtos/ e hal/ non compariva una sola
+; istruzione vettoriale, e i calcoli vettoriali (standalone/, linked/) giravano
+; senza kernel. Le due meta' del progetto non si erano mai toccate, e questo
+; e' il punto in cui si scopre cosa succede quando lo fanno.
+;
+; --- COSA VERIFICA, E PERCHE' SENZA PREEMPTION NON PROVEREBBE NIENTE ---
+;
+; A e B tengono un valore in v0 attraverso un tratto di codice in cui possono
+; essere interrotti. Se il contesto vettoriale non viaggia con il task, chi
+; riprende trova in v0 il valore dell'ALTRO — e la riduzione da' un numero
+; sbagliato.
+;
+; Il difetto esiste SOLO sotto preemption, ed e' per questo che qui il timer e'
+; armato e l'ISR arma il need_resched a ogni tick. In un programma cooperativo
+; (test_coop, test_mondo) la CPU cambia mano soltanto dove il task ha deciso, e
+; li' i vettori li ha gia' riposti: girerebbe corretto e non direbbe niente.
+;
+; A e B stanno allo STESSO livello, ed e' obbligatorio: a priorita' diverse il
+; piu' alto non lascerebbe mai la CPU all'altro e non ci sarebbe nessuno con cui
+; corrompersi. Qui il tick li fa RUOTARE fra pari (§3.30), quindi ogni tick e'
+; una commutazione con dello stato vettoriale vivo.
+;
+; --- COME SI ACCORGE DELLA CORRUZIONE SENZA CONFRONTARE FLOAT ---
+;
+; Questa ISA non ha un salto condizionato sui float. Il confronto si fa sui BIT:
+; si riduce v0 con vredsum, si scrive il float in memoria con fsw e lo si
+; rilegge con lw, che restituisce il pattern IEEE-754 come intero. Il valore
+; atteso e' catturato UNA VOLTA all'avvio, con la stessa identica sequenza:
+; cosi' il test non contiene nessuna costante float scritta a mano, e confronta
+; una misura con una misura.
+;
+; --- I CINQUE NUMERI ---
+;   errA    0   quante volte A ha ritrovato in v0 qualcosa che non era suo
+;   errB    0   idem per B
+;   cntA   20   giri completati da A, DERIVABILE: si ferma al ventesimo
+;   cntB        giri di B, che dipende dai cicli — B rincorre A e la rotazione
+;               non e' simmetrica rispetto a chi parte
+;   tick        i tick consumati, dipende dai cicli
+;
+; Il numero che conta e' che i primi due siano ZERO. Verificato disattivando il
+; salvataggio nel simulatore, e l'esito e':
+;
+;     senza salvataggio   19  0  20  19  25
+;     con salvataggio      0  0  20  19  39
+;
+; --- E LA DIFFERENZA FRA errA E errB VA LETTA, NON NASCOSTA ---
+; A se ne accorge OGNI giro tranne il primo; B non se ne accorge mai. Non e' una
+; proprieta' dei due task, che sono identici a meno del valore: e' la FASE. Il
+; tick e' periodico e il giro ha un costo fisso, quindi la preemption cade
+; sistematicamente dentro il tratto interrompibile di A e sistematicamente fuori
+; da quello di B. errB resta un osservabile simmetrico e utile, ma in questa
+; fase non e' un'asserzione: a rilevare il difetto e' errA.
+;
+; E' la stessa fragilita' di ogni misura che dipende dal tempo, ed e' meglio
+; scritta qui che scoperta il giorno che si cambia RITARDO.
+;
+; I tick passano da 25 a 39 perche' salvare il contesto allunga il programma:
+; il tempo di calcolo non cambia, cambia quanto ne serve in totale.
+
+.include "tcb/tcb.vinc"
+.include "coda/coda_api.vinc"
+.include "hal/hal.vinc"
+
+.equ PRIO_AB   1               ; A e B PARI: e' la rotazione a farli alternare
+.equ PRIO_I    7
+
+.equ GIRI      20
+.equ RITARDO   1000            ; il tratto in cui v0 deve sopravvivere (~2000 cicli)
+.equ PERIODO   4000            ; il tick cade DENTRO quel tratto, non fra i giri
+;
+; I DUE NUMERI NON SONO LIBERI, e il primo tentativo (120 e 300) LIVELLOCKAVA:
+; una commutazione con lo stato vettoriale costa ~1650 cicli — ctx_save e
+; ctx_restore piu' 8 vstore/vload da 76 cicli l'uno — quindi con un periodo di
+; 300 il task riprendeva e veniva ritrappato PRIMA di eseguire un'istruzione.
+; Il sistema girava al 100% dentro il salvataggio del contesto e non avanzava.
+;
+; E' la saturazione gia' misurata su test_catena (§3.32), amplificata di un
+; ordine di grandezza dal contesto vettoriale: il periodo del timer deve stare
+; comodamente sopra il costo di una commutazione, e con i vettori quel costo e'
+; dieci volte quello scalare. Un sistema che li usa non puo' avere il tick che
+; aveva prima.
+
+  .data
+
+errA:    .word 0
+errB:    .word 0
+cntA:    .word 0
+cntB:    .word 0
+cntI:    .word 0
+ticks:   .word 0
+
+; Il pattern IEEE-754 atteso, catturato all'avvio dalla stessa sequenza che poi
+; verifica: nessuna costante float scritta a mano in questo file.
+attesoA: .word 0
+attesoB: .word 0
+ossA:    .word 0               ; appoggio per fsw/lw: il float diventa bit
+ossB:    .word 0
+
+; .global per chi LEGGE le registrazioni del marcatore: il canale 0 porta
+; indirizzi di TCB, e nm pubblica solo i simboli globali. Costa zero a runtime.
+  .global tcbA
+  .global tcbB
+  .global tcbI
+tcbA:    .res TCB
+tcbB:    .res TCB
+tcbI:    .res TCB
+
+; --- 640 parole = 2560 byte a testa per A e B, e non e' generosita' ---
+; Un task che ha toccato l'unita' vettoriale si porta nel frame anche v0..v7,
+; f0..f15, vl e vmask: 8*64*4 + 16*4 + 12 = 2124 byte, piu' i 68 della parte
+; fissa. Con i 256 byte degli altri test questi due stack sfonderebbero, e il
+; fatto che la taglia dello stack dipenda ora da COSA FA il task e' la
+; conseguenza piu' concreta di tutto l'esercizio (vedi hal.vinc).
+stackA:  .space 640
+stackA_top:
+stackB:  .space 640
+stackB_top:
+stackI:  .space 64
+stackI_top:
+
+  .text
+
+  .global main
+  .extern current
+  .extern sched_init
+  .extern prio_pcb
+  .extern ctx_init
+  .extern request_preempt
+  .extern sched_isr_exit
+  .extern irq_install
+  .extern irq_arm
+  .extern irq_enable
+  .extern timer_init
+
+; ==========================================================================
+;  BOOT. A e B allo stesso livello e gia' accodati, l'idle sotto, il timer
+;  armato: da qui in poi la CPU cambia mano per conto suo.
+; ==========================================================================
+main:
+  li r14, stackI_top
+  call sched_init
+
+  ; --- A e B, PARI a livello 1 ---
+  li r1, stackA_top
+  li r2, taskA
+  call ctx_init
+  li r3, tcbA
+  sw r1, TCB.sp(r3)
+  li r1, PRIO_AB
+  call prio_pcb
+  sw r1, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r2, r3
+  call enqueue_coda
+
+  li r1, stackB_top
+  li r2, taskB
+  call ctx_init
+  li r3, tcbB
+  sw r1, TCB.sp(r3)
+  li r1, PRIO_AB
+  call prio_pcb
+  sw r1, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r2, r3
+  call enqueue_coda
+
+  ; --- l'idle: qui non e' il lettore di niente, e' quello di §4 ---
+  li r1, stackI_top
+  li r2, taskI
+  call ctx_init
+  li r3, tcbI
+  sw r1, TCB.sp(r3)
+  li r1, PRIO_I
+  call prio_pcb
+  sw r1, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r2, r3
+  call enqueue_coda
+
+  ; --- main diventa l'idle: RUNNING e fuori da ogni coda ---
+  li r3, tcbI
+  li r1, current
+  sw r3, 0(r1)
+  li r5, RUNNING
+  sw r5, TCB.state(r3)
+  li r1, pcb7            ; ... quindi va tolto dalla coda dove l'ho appena messo
+  call dequeue_testa
+
+  li r1, timer_isr
+  call irq_install
+  call irq_arm
+  li r1, PERIODO
+  call timer_init
+  call irq_enable
+
+  li r5, taskI
+  jr r5
+
+; ==========================================================================
+;  L'ISR: conta i tick e arma il need_resched, che e' cio' che fa RUOTARE A e
+;  B. Non tocca mai i vettori, ed e' voluto -- un'ISR vettoriale sarebbe un
+;  problema in piu' (la sua psw viva viene sovrascritta da reti, vedi vcpu.h).
+; ==========================================================================
+timer_isr:
+  mov r6, r1
+  li r1, ticks
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  call request_preempt
+  mov r1, r6
+  j sched_isr_exit
+
+; ==========================================================================
+;  cattura(r1 = dove mettere il pattern): riduce v0 e ne scrive i BIT.
+;  E' la stessa sequenza usata per l'atteso e per l'osservato, ed e' il motivo
+;  per cui il confronto e' fra due misure invece che con una costante.
+;  Foglia. Clobber: r2, f1.
+; ==========================================================================
+  .proc cattura
+  vredsum f1, v0
+  fsw f1, 0(r1)
+  .endproc cattura
+
+; ==========================================================================
+;  A. Il valore che tiene in v0 e' 1.0; B tiene 2.0. Se i due si scambiano lo
+;  stato, la riduzione passa da 64.0 a 128.0 e il pattern non torna.
+; ==========================================================================
+taskA:
+  li r1, 64
+  setvl r1, r1
+  fli f0, 1.0
+  vsplat v0, f0
+  li r1, attesoA
+  call cattura             ; il pattern atteso, una volta sola
+
+ta_giro:
+  vsplat v0, f0            ; v0 = [1.0 x 64]: da qui deve sopravvivere
+
+  li r6, RITARDO           ; --- il tratto interrompibile ---
+ta_ritardo:
+  addi r6, r6, -1
+  bne r6, r0, ta_ritardo
+
+  li r1, ossA
+  call cattura
+  li r1, ossA
+  lw r2, 0(r1)
+  li r1, attesoA
+  lw r3, 0(r1)
+  beq r2, r3, ta_ok
+  li r1, errA
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+ta_ok:
+
+  li r1, cntA
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  li r3, GIRI
+  beq r2, r3, ta_fine
+  j ta_giro
+
+ta_fine:
+  li r1, errA
+  lw r5, 0(r1)
+  dumps r5                 ; 0 = v0 e' sempre stato mio
+  li r1, errB
+  lw r5, 0(r1)
+  dumps r5                 ; 0
+  li r1, cntA
+  lw r5, 0(r1)
+  dumps r5                 ; 20
+  li r1, cntB
+  lw r5, 0(r1)
+  dumps r5                 ; dipende dai cicli
+  li r1, ticks
+  lw r5, 0(r1)
+  dumps r5                 ; dipende dai cicli
+  halt
+
+; ==========================================================================
+;  B, identico ad A con 2.0 al posto di 1.0. Non si ferma: a fermare tutto e'
+;  A, e i giri di B sono quello che sono.
+; ==========================================================================
+taskB:
+  li r1, 64
+  setvl r1, r1
+  fli f0, 2.0
+  vsplat v0, f0
+  li r1, attesoB
+  call cattura
+
+tb_giro:
+  vsplat v0, f0
+
+  li r6, RITARDO
+tb_ritardo:
+  addi r6, r6, -1
+  bne r6, r0, tb_ritardo
+
+  li r1, ossB
+  call cattura
+  li r1, ossB
+  lw r2, 0(r1)
+  li r1, attesoB
+  lw r3, 0(r1)
+  beq r2, r3, tb_ok
+  li r1, errB
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+tb_ok:
+
+  li r1, cntB
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  j tb_giro
+
+; ==========================================================================
+;  L'idle. Gira solo prima che A e B partano davvero; qui non misura niente di
+;  interessante e sta al suo posto perche' §4 lo richiede.
+; ==========================================================================
+taskI:
+  li r1, cntI
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  j taskI

@@ -118,7 +118,113 @@ ctx_save:
   sw r1, 0(r14)           ; psw del task (IE=1: girava abilitato)
   mfepc r1
   addi r14, r14, -4
-  sw r1, 0(r14)           ; epc in cima al frame
+  sw r1, 0(r14)           ; epc
+
+  ; ------------------------------------------------------------------------
+  ;  IL CONTESTO VETTORIALE, e SOLO se qualcuno l'ha toccato.
+  ;
+  ;  Salvarlo sempre costerebbe ~1260 cicli contro i ~120 dello scalare -- un
+  ;  fattore dieci su OGNI commutazione, pagato anche dai task che l'unita'
+  ;  vettoriale non la sfiorano. PSW_VDIRTY e' la domanda a cui rispondere in
+  ;  tre istruzioni prima di decidere.
+  ;
+  ;  Il frame diventa a TAGLIA VARIABILE, e la parola di flag e' l'ultima cosa
+  ;  spinta -- cioe' quella all'indirizzo piu' basso, offset 0 del contesto
+  ;  opaco. Deve stare li' perche' ctx_restore la legge PRIMA di sapere quanto
+  ;  e' grande cio' che sta ripristinando.
+  ;
+  ;  Il blocco sta sullo STACK del task e non nel TCB: il kernel vede TCB.sp
+  ;  come un puntatore opaco e non lo interpreta mai (§12.3), e un campo nel TCB
+  ;  gli farebbe conoscere una cosa che solo l'HAL sa leggere. Il prezzo lo paga
+  ;  lo stack di chi usa i vettori, che e' dove va pagato.
+  ; ------------------------------------------------------------------------
+  mfpsw r1
+  li r2, PSW_VDIRTY
+  and r1, r1, r2
+  beq r1, r0, cs_pulito
+
+  ; --- i 16 registri FLOAT. Non erano salvati DA SEMPRE, e nessun commento lo
+  ;     dichiarava: il frame nominava solo r1..r13, psw, epc, r15. Non e' un
+  ;     buco separabile da quello vettoriale -- vredsum riduce IN un float,
+  ;     quindi ogni calcolo vettoriale vero finisce li' dentro ---
+  addi r14, r14, -4
+  fsw f0, 0(r14)
+  addi r14, r14, -4
+  fsw f1, 0(r14)
+  addi r14, r14, -4
+  fsw f2, 0(r14)
+  addi r14, r14, -4
+  fsw f3, 0(r14)
+  addi r14, r14, -4
+  fsw f4, 0(r14)
+  addi r14, r14, -4
+  fsw f5, 0(r14)
+  addi r14, r14, -4
+  fsw f6, 0(r14)
+  addi r14, r14, -4
+  fsw f7, 0(r14)
+  addi r14, r14, -4
+  fsw f8, 0(r14)
+  addi r14, r14, -4
+  fsw f9, 0(r14)
+  addi r14, r14, -4
+  fsw f10, 0(r14)
+  addi r14, r14, -4
+  fsw f11, 0(r14)
+  addi r14, r14, -4
+  fsw f12, 0(r14)
+  addi r14, r14, -4
+  fsw f13, 0(r14)
+  addi r14, r14, -4
+  fsw f14, 0(r14)
+  addi r14, r14, -4
+  fsw f15, 0(r14)
+
+  ; --- vl e vmask PRIMA dei registri vettoriali: il salvataggio usa setvl, che
+  ;     vl lo distrugge. vmask e' a 64 bit e la sw ne scrive 32: due parole ---
+  mfvmask r1
+  srli r2, r1, 32
+  addi r14, r14, -4
+  sw r2, 0(r14)           ; vmask, parte alta
+  addi r14, r14, -4
+  sw r1, 0(r14)           ; vmask, parte bassa (la sw tronca)
+  mfvl r1
+  addi r14, r14, -4
+  sw r1, 0(r14)
+
+  ; --- VLMAX non e' cablato: setvl restituisce min(richiesta, VLMAX), quindi
+  ;     chiedere un numero assurdo E' il modo di farselo dire. Una costante qui
+  ;     sarebbe una seconda dichiarazione di quella di vcpu.h ---
+  li r3, 0x7fffffff
+  setvl r3, r3
+  slli r4, r3, 2          ; byte per registro vettoriale
+
+  sub r14, r14, r4
+  vstore v0, r14
+  sub r14, r14, r4
+  vstore v1, r14
+  sub r14, r14, r4
+  vstore v2, r14
+  sub r14, r14, r4
+  vstore v3, r14
+  sub r14, r14, r4
+  vstore v4, r14
+  sub r14, r14, r4
+  vstore v5, r14
+  sub r14, r14, r4
+  vstore v6, r14
+  sub r14, r14, r4
+  vstore v7, r14          ; v7 e' il piu' in basso: ctx_restore lo riprende per primo
+
+  li r1, 1
+  addi r14, r14, -4
+  sw r1, 0(r14)           ; flag = 1: sotto c'e' un blocco vettoriale
+  mov r1, r14
+  ret
+
+cs_pulito:
+  addi r14, r14, -4
+  sw r0, 0(r14)           ; flag = 0, e r0 e' gia' zero
   mov r1, r14             ; r1 = puntatore al contesto opaco (per il chiamante)
   ret
 
@@ -129,6 +235,80 @@ ctx_save:
 ; ==========================================================================
 ctx_restore:
   mov r14, r1
+  lw r1, 0(r14)           ; il flag: c'e' un blocco vettoriale sotto?
+  addi r14, r14, 4
+  beq r1, r0, cr_scalare
+
+  li r3, 0x7fffffff
+  setvl r3, r3            ; VL = VLMAX per ricaricare i registri PIENI
+  slli r4, r3, 2
+
+  vload v7, r14           ; in ordine inverso al salvataggio
+  add r14, r14, r4
+  vload v6, r14
+  add r14, r14, r4
+  vload v5, r14
+  add r14, r14, r4
+  vload v4, r14
+  add r14, r14, r4
+  vload v3, r14
+  add r14, r14, r4
+  vload v2, r14
+  add r14, r14, r4
+  vload v1, r14
+  add r14, r14, r4
+  vload v0, r14
+  add r14, r14, r4
+
+  lw r1, 0(r14)           ; vl del task: DOPO i vload, che lo avrebbero usato
+  addi r14, r14, 4
+  mtvl r1
+  lw r1, 0(r14)           ; vmask, parte bassa -- la lw ESTENDE IL SEGNO,
+  addi r14, r14, 4        ; quindi va ripulita prima di comporre
+  slli r1, r1, 32
+  srli r1, r1, 32
+  lw r2, 0(r14)           ; vmask, parte alta
+  addi r14, r14, 4
+  slli r2, r2, 32
+  or r1, r1, r2
+  mtvmask r1
+  flw f15, 0(r14)
+  addi r14, r14, 4
+  flw f14, 0(r14)
+  addi r14, r14, 4
+  flw f13, 0(r14)
+  addi r14, r14, 4
+  flw f12, 0(r14)
+  addi r14, r14, 4
+  flw f11, 0(r14)
+  addi r14, r14, 4
+  flw f10, 0(r14)
+  addi r14, r14, 4
+  flw f9, 0(r14)
+  addi r14, r14, 4
+  flw f8, 0(r14)
+  addi r14, r14, 4
+  flw f7, 0(r14)
+  addi r14, r14, 4
+  flw f6, 0(r14)
+  addi r14, r14, 4
+  flw f5, 0(r14)
+  addi r14, r14, 4
+  flw f4, 0(r14)
+  addi r14, r14, 4
+  flw f3, 0(r14)
+  addi r14, r14, 4
+  flw f2, 0(r14)
+  addi r14, r14, 4
+  flw f1, 0(r14)
+  addi r14, r14, 4
+  flw f0, 0(r14)
+  addi r14, r14, 4
+  ; NB: mtvl e mtvmask rialzano VDIRTY nella psw VIVA, che reti sovrascrive con
+  ; quella del frame. Il VDIRTY che conta e' quello, e c'e': lo stato e' stato
+  ; salvato proprio perche' era alzato quando il task e' uscito.
+
+cr_scalare:
   lw r1, 0(r14)           ; epc dal frame
   addi r14, r14, 4
   mtepc r1
@@ -193,14 +373,28 @@ ctx_restore:
 ; ==========================================================================
 hal_ctx_block:
   mtepc  r1               ; l'epc che ctx_save leggera': dove il task riprendera'
+  ; --- la psw con cui il task riprendera': IE:1 sempre, e VDIRTY COME ADESSO ---
+  ; Qui la epsw si COSTRUISCE invece di copiarla (non c'e' stata nessuna trap a
+  ; scriverla), e questo e' il punto in cui VDIRTY andrebbe perso: un task
+  ; vettoriale che si blocca volontariamente riprenderebbe con il flag basso, e
+  ; alla preemption successiva il suo stato non verrebbe salvato. Tre istruzioni
+  ; per non perderlo.
+  mfpsw  r3
+  li     r2, PSW_VDIRTY
+  and    r3, r3, r2
   li     r2, PSW_IE
-  mtepsw r2               ; ... e la psw: un task riprende sempre interrompibile
+  or     r2, r2, r3
+  mtepsw r2
   addi r14, r14, -4
-  sw r15, 0(r14)          ; slot r15, come _trap_entry: PRIMA di ogni call
-  call ctx_save           ; HAL, invariata: legge i CSR appena scritti
-  lw r15, 60(r1)          ; il nostro ritorno, che la call ha distrutto: sta nel
-                          ; frame, all'offset dello slot r15 (CTX_FRAME_SIZE-4)
-  ret                     ; r1 = contesto opaco, gia' pronto per il kernel
+  sw r15, 0(r14)          ; slot r15 del frame, come _trap_entry
+  ; --- j e non call, ed e' una semplificazione oltre che un obbligo ---
+  ; Saltando, r15 NON viene distrutto: il ret di ctx_save torna direttamente al
+  ; chiamante nostro, con r1 = contesto opaco gia' pronto. Prima qui c'era una
+  ; call seguita da "lw r15, 60(r1)" per recuperare il proprio ritorno dallo
+  ; slot del frame -- un offset cablato che con il frame a taglia VARIABILE
+  ; (§ctx_save) non sarebbe piu' stato costante. La coda-chiamata lo toglie di
+  ; mezzo invece di renderlo condizionale.
+  j ctx_save
 
 ; ==========================================================================
 ;  ctx_init(r1 = cima dello stack, r2 = entry del task) -> r1 = sp iniziale.
@@ -217,10 +411,13 @@ hal_ctx_block:
 ;  arrivava dalla epsw lasciata dalla trap precedente.
 ; ==========================================================================
 ctx_init:
-  addi r1, r1, -CTX_FRAME_SIZE  ; base del frame (offset 0 = slot epc)
-  sw r2, 0(r1)            ; epc = entry
+  addi r1, r1, -CTX_FRAME_SIZE  ; base del frame (offset 0 = flag vettoriale)
+  sw r0, 0(r1)            ; flag = 0: un task NASCE senza stato vettoriale, e
+                          ; lo stack e' gia' azzerato -- la riga c'e' perche' il
+                          ; layout si legga qui invece che dedurlo
+  sw r2, 4(r1)            ; epc = entry
   li r3, PSW_IE
-  sw r3, 4(r1)            ; psw = IE:1, il task parte interrompibile
+  sw r3, 8(r1)            ; psw = IE:1, il task parte interrompibile
   ret
 
 ; ==========================================================================

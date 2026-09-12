@@ -92,6 +92,7 @@ g_resched: .word 0        ; need_resched: !=0 => switch a uscita IRQ
   .global request_preempt
   .global sched_init
   .global task_block
+  .global task_yield
   .global task_ready
   .global prio_pcb
   .extern ctx_restore
@@ -155,6 +156,83 @@ task_block:
   li r4, SUSPENDED
   sw r4, TCB.state(r3)
   call scheduler         ; la scelta va rifatta (§12.4 caso 2), IE e' gia' 0
+  j dispatcher           ; e da li' non si torna
+
+; ==========================================================================
+;  task_yield(): CEDE IL TURNO RESTANDO ESEGUIBILE. Ritorna al chiamante quando
+;  lo scheduler lo risceglie, senza che nessuno debba risvegliarlo.
+;
+;  E' il gemello di task_block, e la differenza sta in DUE righe: lo stato resta
+;  READY e il TCB va in fondo alla coda del PROPRIO livello invece di restare
+;  dove il chiamante si era accodato. Da cui la proprieta' che rende questa
+;  primitiva diversa da tutte le altre uscite:
+;
+;      CHI CEDE NON LASCIA MAI IL PROPRIO LIVELLO.
+;
+;  E' la ragione per cui e' l'unica uscita volontaria che l'IDLE puo' usare. §4
+;  fa poggiare la terminazione della scansione su "l'ultimo livello non e' mai
+;  vuoto" (vedi sched_scan_done, che dichiara il caso contrario un errore di
+;  costruzione del sistema e non un ramo da scrivere): un idle che si BLOCCA lo
+;  svuota, un idle che CEDE no -- il suo TCB e' in PCB.coda, che e' esattamente
+;  dove la scansione lo cerchera'.
+;
+;  --- PERCHE' ESISTE: §13.7, E DUE CLIENTI INDIPENDENTI ---
+;
+;  §13.7 dice che mutex_unlock e' un punto di preemption e prescrive di armare
+;  request_preempt lasciando decidere "al percorso di uscita". Da contesto di
+;  TASK quel percorso non c'e': l'unico consumatore di g_resched e'
+;  sched_isr_exit, quindi il flag resta armato fino al tick successivo e la
+;  latenza diventa il periodo del timer invece della lunghezza della sezione
+;  critica. Il buco si chiude con un rientro sincrono che NON sospende, ed e'
+;  questo -- §13.7 lo descrive alla lettera: "le stesse otto righe di task_block
+;  con enqueue_coda al posto di SUSPENDED".
+;
+;  Il secondo cliente e' arrivato da un'altra porta (rtos/test/test_mondo.vasm):
+;  un lettore in polling che, senza interrupt, e' per costruzione l'idle, e che
+;  dopo aver consegnato quello che ha letto deve cedere. Due clienti che non si
+;  conoscono sono la ragione per cui questa e' una primitiva del kernel e non un
+;  idiom da ripetere nelle applicazioni.
+;
+;  --- CONSUMA IL need_resched, E NON E' UN DI PIU' ---
+;  Questa primitiva ESISTE per essere il consumatore sincrono che §13.7 dice
+;  mancante: uno switch che ignorasse il flag che e' nato per onorare sarebbe una
+;  contraddizione, e lascerebbe al tick successivo una rotazione gia' fatta.
+;  Nota l'asimmetria con task_block, che NON lo consuma: anche li' il flag resta
+;  stantio dopo uno switch, ed e' un'osservazione aperta -- non la tocco qui
+;  perche' quel percorso e' verificato da cinque test e la cosa va decisa a
+;  parte, non di rimbalzo.
+;
+;  --- CEDERE DENTRO UNA SEZIONE CRITICA E' LECITO, E VA SAPUTO ---
+;  Non si guarda TCB.crit, e la differenza con sp_mio_livello e' sostanziale:
+;  li' il kernel toglieva il turno a qualcuno CONTRO la sua volonta' (§13.2,
+;  "chi e' in sezione critica non si ruota"), qui e' il possessore stesso a
+;  chiederlo. E' la SECONDA causa di §13.5 -- il possessore che cede o si blocca
+;  dentro la sezione critica -- e resta quello che §13.5 dice che sia: un modo
+;  documentato di far popolare una coda che sotto un ceiling corretto sarebbe
+;  vuota, non un difetto da impedire qui dentro.
+;
+;  L'indirizzo di ripresa e' il NOSTRO r15, come in task_block: dentro
+;  hal_ctx_block r15 sara' gia' un altro (§8.8).
+;
+;  Il prezzo, dichiarato: cedere quando non c'e' nessun altro eseguibile costa
+;  comunque un ctx_save + una scansione + un ctx_restore, e ritrova se stessi.
+;  Non c'e' il ramo "sp_solo" della rotazione, perche' per averlo bisognerebbe
+;  scandire PRIMA di salvare il contesto, cioe' scandire due volte nel caso che
+;  conta. Chi cede sa di star pagando uno switch.
+; ==========================================================================
+task_yield:
+  mov r1, r15            ; l'indirizzo di ripresa: il ritorno al chiamante
+  call hal_ctx_block     ; r1 = contesto opaco del chiamante
+  li r2, current
+  lw r3, 0(r2)
+  sw r1, TCB.sp(r3)      ; il contesto vive nel TCB, come dopo una trap
+  sw r0, TCB.state(r3)   ; READY: e' QUI la differenza da task_block
+  lw r1, TCB.pcb(r3)     ; &pcb == &pcb.coda: nessuna conversione (§7.5)
+  mov r2, r3
+  call enqueue_coda      ; in FONDO al mio livello: cedere e' passare per ultimo
+  li r1, g_resched
+  sw r0, 0(r1)           ; la preemption chiesta la sto onorando io
+  call scheduler         ; la scelta va rifatta, IE e' gia' 0
   j dispatcher           ; e da li' non si torna
 
 ; ==========================================================================

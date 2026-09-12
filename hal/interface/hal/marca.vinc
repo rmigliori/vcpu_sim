@@ -1,0 +1,76 @@
+; hal/marca.vinc — IL MARCATORE: l'oscilloscopio a piu' tracce.
+;
+; Un tag all'inizio della regione che interessa e uno alla fine, con due
+; identificatori -- la CATEGORIA della misura e il PUNTO dentro quella
+; categoria. E' il toggle di un GPIO guardato con l'analizzatore di stato
+; logico, che e' come si misura davvero sul ferro; le versioni industriali sono
+; le stimulus port dell'ITM di CoreSight e SystemView di SEGGER.
+;
+; --- COSA MISURA, CHE LA TRACCIA DEL PC NON PUO' ---
+; La traccia (tools/traccia.py) dice CHI occupava la CPU e in quale intervallo.
+; Una finestra aperta in un task e chiusa in un ALTRO dice quanto e' durata una
+; RICHIESTA, attraverso le commutazioni: e' il tempo di RISPOSTA. La differenza
+; fra i due e' l'INTERFERENZA -- quanto ti e' costato il resto del sistema --
+; ed e' il numero che conta in un kernel realtime.
+;
+; --- IL CANALE E' L'INDIRIZZO, E IL VALORE E' IL PUNTO ---
+; Non una parola con dei campi impacchettati: l'assembler non valuta espressioni
+; (".equ B (A << 16)" non assembla, verificato), quindi comporre canale e valore
+; a tempo di compilazione non si puo'. Il rimedio e' migliore del problema --
+; 32 registri contigui, uno per canale, come l'ITM ne ha 32:
+;
+;     li  r1, MARCA_RISPOSTA     ; il canale: la CATEGORIA
+;     li  r2, P_CONSEGNA         ; il valore: il PUNTO. != 0 APRE
+;     sw  r2, 0(r1)
+;     ...
+;     sw  r0, 0(r1)              ; 0 CHIUDE, e r0 e' gia' zero: UNA istruzione
+;
+; Aprire costa TRE istruzioni, chiudere UNA. Il costo si conta a mano leggendo
+; il listato, ed e' voluto: un probe a costo zero sarebbe comodo e insegnerebbe
+; il falso, perche' sul ferro la strumentazione si paga sempre. Si paga anche
+; quando la registrazione e' spenta -- la sw viene eseguita lo stesso, e' solo
+; la macchina che non annota. IL COSTO STA NEL PROGRAMMA, NON NELL'OPZIONE.
+;
+; Da cui la regola d'uso: UN TAG E' UNA DOMANDA, non un ornamento. Si mette dove
+; stai chiedendo qualcosa e poi o lo togli, o lo tieni perche' quella grandezza
+; la vuoi sorvegliare. La sua presenza va giustificata come si giustifica un
+; EXPECT, perche' sposta i numeri che dipendono dai cicli.
+;
+; --- DUE CANALI LI SCRIVE LA MACCHINA, E COSTANO ZERO ---
+;   canale 0  ESECUZIONE: chi possiede la CPU. Il registratore osserva le
+;             scritture a `current` -- l'indirizzo lo prende dalla tabella dei
+;             simboli del .vx, niente da cablare -- e annota i CAMBI. Zero
+;             istruzioni nel kernel, e il possesso diventa un DATO invece di
+;             un'inferenza dal pc.
+;   canale 1  TASTO: quando un carattere diventa disponibile. Serve perche' il
+;             programma NON PUO' SAPERLO -- sa quando se n'e' accorto, e fra i
+;             due c'e' il ritardo del polling, che e' proprio una delle cose da
+;             misurare. Senza questo canale il tempo di risposta non e'
+;             scrivibile con i soli tag applicativi.
+;
+; Scriverci da programma e' un errore e la macchina lo dice.
+;
+; --- COSA MANCA ANCORA, E VA SAPUTO LEGGENDO QUI ---
+; I nomi. Oggi il canale e' un indirizzo e il punto un numero, e chi legge la
+; registrazione vede "canale 2, valore 1". Il passo successivo e' un FILE DI
+; CONFIGURAZIONE che associa nome visualizzato e identificatore, e da cui questo
+; .vinc venga GENERATO: due dichiarazioni dello stesso fatto -- una qui e una
+; nello strumento -- divergerebbero in silenzio, che e' il difetto appena
+; corretto in traccia.template.html (l'elenco ORDINE scritto a mano).
+; Finche' quel file non c'e', i nomi se li dichiara l'applicazione con degli
+; .equ sui canali generici qui sotto, ed e' esattamente il lavoro che il
+; generatore toglierebbe di mezzo.
+;
+; File FOGLIA: non include niente.
+
+.equ MARCA_ESEC    0x100100      ; canale 0 — RISERVATO alla macchina
+.equ MARCA_TASTO   0x100104      ; canale 1 — RISERVATO al device
+
+; I canali dell'applicazione. Si rinominano con un .equ al punto d'uso:
+;   .equ MARCA_RISPOSTA  MARCA_CH2
+.equ MARCA_CH2     0x100108
+.equ MARCA_CH3     0x10010C
+.equ MARCA_CH4     0x100110
+.equ MARCA_CH5     0x100114
+.equ MARCA_CH6     0x100118
+.equ MARCA_CH7     0x10011C

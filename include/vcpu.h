@@ -58,6 +58,85 @@ typedef struct
 
 #define KBD_TRACE_MAX 64
 
+// ---------------------------------------------------------------------------
+//  MARCATORE — l'oscilloscopio a piu' tracce  (PROTOTIPO, 12/09/2026)
+//
+//  L'idea e' dell'utente, e la forma e' quella con cui si misura sul ferro: un
+//  tag all'inizio della regione che interessa e uno alla fine, con due
+//  identificatori -- la CATEGORIA della misura e il PUNTO dentro quella
+//  categoria -- letti poi come i canali di un oscilloscopio. E' il toggle di un
+//  GPIO guardato con l'analizzatore di stato logico, formalizzato; le versioni
+//  industriali sono le stimulus port dell'ITM di CoreSight e SystemView.
+//
+//  --- COSA MISURA, CHE LA TRACCIA DEL PC NON PUO' ---
+//  La traccia dice CHI occupava la CPU. Una finestra aperta in un task e chiusa
+//  in un altro dice quanto e' durata una RICHIESTA, attraverso le commutazioni:
+//  e' il tempo di RISPOSTA. La differenza fra i due e' l'INTERFERENZA, cioe' il
+//  numero che conta in un kernel realtime e che qui non si e' mai misurato.
+//
+//  --- IL CANALE E' L'INDIRIZZO ---
+//  Non una parola con dei campi impacchettati: l'assembler non valuta
+//  espressioni (".equ B (A << 16)" non assembla), quindi comporre canale e
+//  valore a tempo di compilazione non si puo'. E il rimedio e' migliore del
+//  problema -- 32 registri contigui, uno per canale, come l'ITM ne ha 32:
+//
+//      li  r1, MARCA_RISPOSTA     ; il canale: una costante simbolica
+//      li  r2, P_CONSEGNA         ; il valore: != 0 APRE
+//      sw  r2, 0(r1)
+//      ...
+//      sw  r0, 0(r1)              ; 0 CHIUDE, e r0 e' gia' zero: UNA istruzione
+//
+//  --- PERCHE' NON UN'ISTRUZIONE NUOVA ---
+//  Stessa ragione di §3.37: il punto d'innesto esiste gia' (store_i32 ha l'if),
+//  ISA e assembler non si toccano, e il costo del tag e' quello di una sw --
+//  contabile a mano leggendo il listato. Un probe a costo zero sarebbe comodo e
+//  insegnerebbe il falso: sul ferro la strumentazione si paga sempre. E si paga
+//  ANCHE quando la registrazione e' spenta: la sw viene eseguita lo stesso, e'
+//  solo la macchina che non annota. Il costo sta nel programma, non nell'opzione.
+//
+//  --- DUE CANALI LI SCRIVE LA MACCHINA, E COSTANO ZERO ---
+//    MARCA_ESEC   chi possiede la CPU. Il registratore osserva le scritture a
+//                 `current` -- l'indirizzo glielo dice il loader, che ha la
+//                 tabella dei simboli -- e annota i CAMBI. Zero istruzioni nel
+//                 kernel, e il possesso diventa un DATO invece di un'inferenza
+//                 dal pc (che e' come traccia.py lo ricava oggi, con gli
+//                 artefatti di attribuzione che §3.34 dichiara).
+//    MARCA_TASTO  quando un carattere diventa disponibile. Serve perche' il
+//                 PROGRAMMA NON PUO' SAPERLO: sa quando se n'e' accorto, e fra
+//                 i due c'e' il ritardo del polling, che e' proprio una delle
+//                 cose da misurare. Senza questo canale il tempo di risposta
+//                 non e' scrivibile con i soli tag applicativi.
+//
+//  Quello che il canale MARCA_ESEC NON dice e' il PERCHE' della commutazione
+//  (preemption, blocco, cessione, fine turno): lo sa solo il dispatcher, e per
+//  averlo serve un tag nel kernel -- che costa cicli sul percorso caldo, cioe'
+//  rimisurare ogni EXPECT che dipende dai cicli. E' un passo a se', e prima
+//  vuole l'assemblaggio condizionale che l'assembler non ha.
+// ---------------------------------------------------------------------------
+#define MARCA_BASE     (MMIO_BASE + 0x100)
+#define MARCA_CANALI   32
+#define MARCA_ESEC     0        // riservato: lo scrive la macchina (current)
+#define MARCA_TASTO    1        // riservato: lo scrive il device
+
+// Un evento: "al ciclo N il canale C prende il valore V, mentre girava T".
+//
+// UN SOLO FORMATO per tutto, ed e' il motivo per cui non ci sono due tipi di
+// evento: aprire e' "V != 0", chiudere e' "V == 0", e il cambio di task e' il
+// canale 0 che prende un valore nuovo -- la chiusura del turno precedente e'
+// implicita nell'apertura del successivo. E' come si comporta un LIVELLO su un
+// oscilloscopio, dove un impulso non e' altro che un livello che va su e torna
+// giu'. Il prezzo, dichiarato: dentro una categoria non si annida, perche' un
+// canale ha un valore per volta. Due misure annidate vogliono due canali.
+typedef struct
+{
+  uint64_t cycle;
+  int      canale;
+  int32_t  valore;
+  int32_t  current;    // chi girava: lo timbra la macchina, non il programma
+} Marca;
+
+#define MARCHE_MAX 8192
+
 // Guard word at the bottom of the data segment: no object is ever placed at
 // address 0, so 0 is a NULL pointer that cannot collide with a real datum.
 // The codebase already assumed this in several places before it was enforced --
@@ -71,6 +150,41 @@ typedef struct
 
 // Program status word bits (scalar control layer).
 #define PSW_IE 0x1ULL   // interrupt enable
+
+// ---------------------------------------------------------------------------
+//  PSW_VDIRTY — "i registri vettoriali contengono qualcosa che a qualcuno serve"
+//
+//  Lo alza la MACCHINA a ogni scrittura di stato architetturale vettoriale
+//  (v0..v7, vl, vmask), e serve a una cosa sola: permettere a ctx_save di NON
+//  salvare duemila byte per i task che i vettori non li toccano.
+//
+//  Salvare sempre costerebbe ~1260 cicli per commutazione contro i ~120 dello
+//  scalare -- un fattore dieci, pagato anche da chi non usa l'unita' vettoriale.
+//
+//  --- PERCHE' STA NELLA PSW E NON IN UN REGISTRO SUO ---
+//  Perche' cosi' viaggia con il contesto senza una riga in piu': la trap copia
+//  la psw in epsw, ctx_save la mette nel frame, reti la rimette. Il task che
+//  riprende ritrova il proprio VDIRTY, e ctx_save non ha bisogno di azzerare
+//  niente -- fra un salvataggio e il ripristino successivo nessuno legge la psw
+//  viva, che reti sovrascrive comunque.
+//
+//  Una conseguenza da sapere: RIPRISTINARE uno stato vettoriale rialza VDIRTY
+//  (lo fanno mtvl/mtvmask/vload, che sono scritture), ed e' necessario -- un
+//  task ripreso e poi preemptato prima di toccare i vettori DEVE essere salvato
+//  lo stesso, altrimenti li ritroverebbe sporcati da un altro.
+//
+//  Quello che questo schema NON risparmia e' il caso del task vettoriale che
+//  esce e rientra senza che nessun altro usi i vettori nel frattempo: paga
+//  salvataggio e ripristino per niente. Evitarlo e' il salvataggio PIGRO vero
+//  (unita' disabilitata alla commutazione, trap alla prima istruzione
+//  vettoriale) e vuole una seconda sorgente di trap con una causa leggibile --
+//  la stessa decisione che §3.37 ha parcheggiato per l'interrupt della tastiera.
+//
+//  Nota sul percorso ISR: un'ISR che usasse i vettori alzerebbe VDIRTY nella psw
+//  VIVA, che reti sovrascrive. Un'ISR vettoriale e' un problema suo, e oggi non
+//  esiste.
+// ---------------------------------------------------------------------------
+#define PSW_VDIRTY 0x2ULL   // bit 1: stato vettoriale da salvare
 
 // ---------------------------------------------------------------------------
 //  Timing model (first-order, in-order, no chaining/overlap)
@@ -191,7 +305,29 @@ typedef enum
   // regime di interruzione del task interrotto. Servono per far ritornare una
   // ISR verso il kernel a interrupt DISABILITATI — §12.5 della proposta.
   OP_MFEPSW,  // a=rd                          -> r[rd] = epsw
-  OP_MTEPSW   // b=rs1                         -> epsw = r[rs1]
+  OP_MTEPSW,  // b=rs1                         -> epsw = r[rs1]
+
+  // Accesso allo stato architetturale vettoriale che NON e' in v0..v7.
+  //
+  // Servono a una cosa sola: rendere salvabile il contesto. Senza, il context
+  // switch di un task vettoriale non e' scrivibile — vmask era leggibile solo
+  // da vmerge e dalle operazioni mascherate, e vl solo IMPOSTABILE (setvl
+  // scrive e restituisce il valore nuovo, quindi leggerlo lo distrugge).
+  //
+  // mtvl esiste accanto a setvl e non al suo posto: setvl e' la richiesta di un
+  // CALCOLO ("dammene fino a n"), mtvl e' il ripristino di uno stato. Usare
+  // setvl per ripristinare funzionerebbe per caso, perche' il valore salvato e'
+  // gia' <= VLMAX, e confonderebbe due intenzioni diverse.
+  //
+  // NOTA DI DISEGNO, che si scopre solo provando a fermare la macchina: in
+  // RISC-V "V" la maschera E' v0, un registro vettoriale ordinario, e non per
+  // economia di codifica — perche' il context switch non abbia un caso
+  // speciale. Qui vmask e' un registro a se', e quella divergenza costa
+  // esattamente queste due istruzioni.
+  OP_MFVL,    // a=rd                          -> r[rd] = vl (NON distruttivo)
+  OP_MTVL,    // b=rs1                         -> vl = min(r[rs1], VLMAX)
+  OP_MFVMASK, // a=rd                          -> r[rd] = vmask (64 bit)
+  OP_MTVMASK  // b=rs1                         -> vmask = r[rs1]
 } OpCode;
 
 typedef struct
@@ -243,6 +379,15 @@ typedef struct
   int      kbd_trace_len;
   int      kbd_trace_pos;
 
+  // Marcatore (vedi MARCA_BASE). La registrazione si accende da riga di
+  // comando; le sw dei tag costano i loro cicli comunque, ed e' voluto.
+  Marca    marche[MARCHE_MAX];
+  int      marche_len;
+  uint64_t marche_perse;       // oltre il tetto: DICHIARATE, non perse in silenzio
+  int      marca_on;           // 1 = annota (--marche)
+  int64_t  marca_current_addr; // indirizzo di `current`, 0 = non noto al loader
+  int32_t  marca_current;      // ultimo valore visto: e' il timbro di ogni marca
+
   // statistics
   uint64_t instr_count;    // total executed instructions
   uint64_t vec_elem_ops;   // total per-element vector operations (measure of SIMD work)
@@ -261,6 +406,10 @@ void vcpu_init(VCpu* cpu);
 // I cicli devono essere non decrescenti (la traccia si consuma in ordine).
 // Ritorna 0, o -1 con il messaggio in 'err'. Va chiamata dopo vcpu_init.
 int vcpu_kbd_trace(VCpu* cpu, const char* spec, char* err, size_t errsz);
+
+// Annota una marca. La chiamano il device (MARCA_TASTO), lo store watcher
+// (MARCA_ESEC) e le sw dei tag applicativi.
+void vcpu_marca(VCpu* cpu, int canale, int32_t valore);
 
 // Assemble a .vasm file into 'prog'. Returns number of instructions, or -1 on
 // error (message written to 'err'). Data directives are written into cpu->mem.

@@ -46,13 +46,20 @@ vasm_check(mailbox MODE DUMPS PROGRAM test_mailbox
 #  non-regressione che conta: qui nessuno tiene un mutex, quindi la rotazione
 #  deve funzionare esattamente come prima.
 # ---------------------------------------------------------------------------
+#
+#  "67 4 8 57" dal 12/09/2026 (era "73 5 10 58"): ctx_save guarda PSW_VDIRTY e spinge una
+#  parola di flag anche quando non c'e' niente di vettoriale da salvare, e
+#  ctx_restore la rilegge -- ~9 istruzioni per commutazione sul percorso PULITO,
+#  cioe' il prezzo che i task scalari pagano perche' quelli vettoriali possano
+#  esistere. Nessuno dei quattro e' derivabile; cio' che si asserisce e' che siano tutti > 0, e il piu' importante resta cntD (il terzo), che senza la rotazione fra pari varrebbe zero.
+# ---------------------------------------------------------------------------
 vasm_object(t_scheduler SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_scheduler.vasm
                         INTERFACES vinc_coda vinc_tcb)
 
 vasm_program(test_scheduler OBJECTS t_scheduler LINK lib_kernel)
 
 vasm_check(scheduler MODE DUMPS PROGRAM test_scheduler
-           EXPECT "73 5 10 58")
+           EXPECT "67 4 8 57")
 
 # ---------------------------------------------------------------------------
 #  test_block — il blocco volontario: un task che dorme davvero.
@@ -71,13 +78,20 @@ vasm_check(scheduler MODE DUMPS PROGRAM test_scheduler
 #  e' che sia > 0: e' la CPU libera misurata mentre un task DORME, non mentre il
 #  sistema non e' ancora partito.
 # ---------------------------------------------------------------------------
+#
+#  "3 25" dal 12/09/2026 (era "3 28"): ctx_save guarda PSW_VDIRTY e spinge una
+#  parola di flag anche quando non c'e' niente di vettoriale da salvare, e
+#  ctx_restore la rilegge -- ~9 istruzioni per commutazione sul percorso PULITO,
+#  cioe' il prezzo che i task scalari pagano perche' quelli vettoriali possano
+#  esistere. cntW resta 3, che e' il numero DERIVABILE: si muove solo la CPU libera.
+# ---------------------------------------------------------------------------
 vasm_object(t_block SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_block.vasm
                     INTERFACES vinc_coda vinc_tcb vinc_mailbox)
 
 vasm_program(test_block OBJECTS t_block LINK lib_messaggi lib_kernel)
 
 vasm_check(block MODE DUMPS PROGRAM test_block
-           EXPECT "3 28")
+           EXPECT "3 25")
 
 # ---------------------------------------------------------------------------
 #  test_catena — la catena A -> B -> C: due salti di mailbox fatti da TASK.
@@ -105,13 +119,20 @@ vasm_check(block MODE DUMPS PROGRAM test_block
 #  saturazione di un sistema a priorita' statiche in miniatura. Il commento in
 #  cima al test riporta la soglia misurata.
 # ---------------------------------------------------------------------------
+#
+#  "3 3 3 632" dal 12/09/2026 (era "3 3 3 778"): ctx_save guarda PSW_VDIRTY e spinge una
+#  parola di flag anche quando non c'e' niente di vettoriale da salvare, e
+#  ctx_restore la rilegge -- ~9 istruzioni per commutazione sul percorso PULITO,
+#  cioe' il prezzo che i task scalari pagano perche' quelli vettoriali possano
+#  esistere. I tre derivabili restano 3 3 3. Il quarto cala del 19%, ed e' il test con piu' commutazioni per giro: quattro.
+# ---------------------------------------------------------------------------
 vasm_object(t_catena SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_catena.vasm
                      INTERFACES vinc_coda vinc_tcb vinc_mailbox)
 
 vasm_program(test_catena OBJECTS t_catena LINK lib_messaggi lib_kernel)
 
 vasm_check(catena MODE DUMPS PROGRAM test_catena
-           EXPECT "3 3 3 778")
+           EXPECT "3 3 3 632")
 
 # ---------------------------------------------------------------------------
 #  test_gestore — il gestore dei timeout come TASK: l'ultimo passo di §3.28.
@@ -142,6 +163,13 @@ vasm_check(catena MODE DUMPS PROGRAM test_catena
 #  mailbox -> A -> riarmo) non si chiude dentro un tick e cntA crolla a 0, che
 #  e' la saturazione gia' misurata su test_catena.
 # ---------------------------------------------------------------------------
+#
+#  "5 0 2566" dal 12/09/2026 (era "5 0 2609"): ctx_save guarda PSW_VDIRTY e spinge una
+#  parola di flag anche quando non c'e' niente di vettoriale da salvare, e
+#  ctx_restore la rilegge -- ~9 istruzioni per commutazione sul percorso PULITO,
+#  cioe' il prezzo che i task scalari pagano perche' quelli vettoriali possano
+#  esistere. cntA resta 5 e cntErr resta 0, cioe' i due numeri che non dipendono dai cicli.
+# ---------------------------------------------------------------------------
 vasm_object(t_gestore SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_gestore.vasm
                       INTERFACES vinc_coda vinc_tcb vinc_mailbox vinc_messaggio
                                  vinc_timeout vinc_gestore_timeout)
@@ -151,7 +179,7 @@ vasm_program(test_gestore OBJECTS t_gestore
                   lib_timeout)
 
 vasm_check(gestore MODE DUMPS PROGRAM test_gestore
-           EXPECT "5 0 2609")
+           EXPECT "5 0 2566")
 
 # ---------------------------------------------------------------------------
 #  test_semaforo — il semaforo contatore, e l'INSERIMENTO ORDINATO di §13.6.
@@ -255,3 +283,95 @@ vasm_program(test_coop OBJECTS t_coop LINK lib_messaggi lib_kernel)
 
 vasm_check(coop MODE DUMPS PROGRAM test_coop
            EXPECT "0 5 5 5 0")
+
+# ---------------------------------------------------------------------------
+#  test_mondo — LO SCHEDULER GUIDATO DAL MONDO, e il primo cliente di
+#  task_yield (12/09/2026).
+#
+#  Il gemello di test_coop, e la coppia va letta insieme: stesso kernel, stesso
+#  modello cooperativo, zero interrupt, zero tick. Cambia una cosa sola -- qui
+#  fuori c'e' qualcosa che puo' succedere -- e a cambiare e' chi mette in moto
+#  il sistema: in test_coop il boot, qui la tastiera.
+#
+#  E' anche il primo programma del progetto in cui l'RTOS e un DEVICE girano
+#  insieme: fino a ieri la tastiera era esercitata da tests/test_kbd.vasm, che
+#  non ha ne' task ne' scheduler.
+#
+#  L'IDLE E' IL LETTORE, e non e' una stranezza: senza linea di interruzione la
+#  tastiera si aspetta in polling, e l'unico posto dove consumare CPU aspettando
+#  non toglie niente a nessuno e' l'ultimo livello. L'idle fa tre cose -- polla,
+#  manda, CEDE -- e nessuna e' un'attesa bloccante.
+#
+#  CEDE CON task_yield, e li' sta il valore di questo test per il kernel. La
+#  prima stesura faceva cedere l'idle con una receive su una mailbox di ack:
+#  funzionava, e non andava bene -- un blocco toglie il TCB dalle code di ready,
+#  e §4 non dice "l'idle non aspetta", dice che l'ULTIMO LIVELLO NON E' MAI
+#  VUOTO, che e' cio' su cui poggia la terminazione della scansione. task_yield
+#  rimette il chiamante in fondo alla coda del PROPRIO livello, quindi §4 resta
+#  vera alla lettera. Con lui sparisce anche la mailbox di ack: il controllo di
+#  flusso cade fuori dall'ordine.
+#
+#  LA SPAZIATURA DELLA TRACCIA e' l'unico parametro delicato, ed e' anche una
+#  misura: fra due tasti deve starci un giro completo (I -> E -> I) piu' un
+#  tratto di attesa. Il device ha un registro di ricezione solo e nessun buffer,
+#  quindi il ritmo massimo che il sistema regge E' il suo giro.
+#
+#  Quattro numeri su cinque sono derivabili. Il quinto (cntP, i giri di polling
+#  a vuoto) dipende dai cicli, ed e' il tempo in cui non c'era lavoro: in
+#  test_coop il numero omologo non poteva che valere 0, perche' senza un mondo
+#  esterno "nessuno e' pronto" significa che il sistema e' finito.
+# ---------------------------------------------------------------------------
+#  Dal 12/09 porta anche i TAG del marcatore (hal/marca.vinc): due categorie,
+#  una interna all'idle e una che ATTRAVERSA task_yield. Costano 10 istruzioni
+#  per giro, e si vede: cntP si sposta, gli altri quattro numeri no, perche'
+#  non dipendono dai cicli. E' il prezzo dichiarato della strumentazione.
+#
+#  "0 5 495 5 714" dal 12/09/2026 (era "0 5 495 5 720"): ctx_save guarda PSW_VDIRTY e spinge una
+#  parola di flag anche quando non c'e' niente di vettoriale da salvare, e
+#  ctx_restore la rilegge -- ~9 istruzioni per commutazione sul percorso PULITO,
+#  cioe' il prezzo che i task scalari pagano perche' quelli vettoriali possano
+#  esistere. Quattro numeri su cinque immobili: si muove solo cntP.
+# ---------------------------------------------------------------------------
+vasm_object(t_mondo SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_mondo.vasm
+                    INTERFACES vinc_coda vinc_tcb vinc_mailbox vinc_messaggio
+                               vinc_hal vinc_marche)
+
+vasm_program(test_mondo OBJECTS t_mondo LINK lib_messaggi lib_kernel)
+
+vasm_check(mondo MODE DUMPS PROGRAM test_mondo
+           EXPECT "0 5 495 5 714"
+           ARGS   --kbd "2000:a,6000:b,10000:c,14000:d,18000:e")
+
+# ---------------------------------------------------------------------------
+#  test_vettori — LE DUE META' DEL PROGETTO SI INCONTRANO (12/09/2026).
+#
+#  Il primo programma in cui un TASK usa i registri vettoriali. Fino a oggi
+#  sotto rtos/ e hal/ non c'era una sola istruzione vettoriale, e i calcoli
+#  vettoriali giravano senza kernel: il buco era dichiarato in machine.vasm
+#  ("i registri vettoriali sono VOLATILI attraverso la preemption") e non
+#  poteva manifestarsi, perche' nessun task li usava.
+#
+#  A e B tengono un valore in v0 attraverso un tratto interrompibile, allo
+#  STESSO livello di priorita' -- quindi il tick li fa ruotare fra pari, e ogni
+#  rotazione e' una commutazione con stato vettoriale vivo. Il difetto esiste
+#  SOLO sotto preemption: cooperativamente i vettori si riporrebbero da soli.
+#
+#  errA ed errB devono essere ZERO. Disattivando il salvataggio nel simulatore
+#  l'esito e' "19 0 20 19 25": A se ne accorge ogni giro tranne il primo, B mai
+#  -- ed e' la FASE, non una differenza fra i due task. A rilevare il difetto e'
+#  errA; errB in questa fase e' un osservabile, non un'asserzione, e il .vasm lo
+#  dice invece di lasciarlo credere.
+#
+#  IL PERIODO DEL TIMER NON E' LIBERO: a 300 cicli il sistema LIVELLOCKA, perche'
+#  una commutazione con stato vettoriale costa ~1650 cicli e il task veniva
+#  ritrappato prima di eseguire un'istruzione. E' la saturazione di §3.32
+#  amplificata di un ordine di grandezza -- un sistema che usa i vettori non puo'
+#  tenere il tick che aveva prima.
+# ---------------------------------------------------------------------------
+vasm_object(t_vettori SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_vettori.vasm
+                      INTERFACES vinc_coda vinc_tcb vinc_hal)
+
+vasm_program(test_vettori OBJECTS t_vettori LINK lib_kernel)
+
+vasm_check(vettori MODE DUMPS PROGRAM test_vettori
+           EXPECT "0 0 20 19 39")

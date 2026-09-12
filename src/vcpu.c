@@ -47,12 +47,51 @@ static int32_t mmio_load(VCpu* cpu, int64_t addr)
   return 0;
 }
 
-// Nessun registro scrivibile, per adesso: l'abilitazione dell'interrupt non
-// esiste finche' non esiste l'interrupt. Il messaggio dice la verita' invece
-// di lasciar passare la scrittura in silenzio.
-static void mmio_store(int64_t addr, int32_t value)
+// ---------------------------------------------------------------------------
+//  Il marcatore: annota "al ciclo N il canale C prende il valore V".
+//
+//  Il timbro di CHI girava lo mette qui la macchina e non il programma, ed e'
+//  la meta' che rende il modello a due assi: la CATEGORIA la dichiara chi
+//  scrive il tag, il PROPRIETARIO lo sa solo il sistema. E' anche cio' che
+//  permette a del codice CONDIVISO -- una mailbox, un mutex -- di marcarsi
+//  senza sapere per conto di chi sta girando.
+//
+//  Oltre il tetto non si annota piu' e si CONTA quanto si e' perso: una
+//  finestra mancante che non si sappia mancante e' peggio di nessuna misura.
+// ---------------------------------------------------------------------------
+void vcpu_marca(VCpu* cpu, int canale, int32_t valore)
 {
-  (void) value;
+  if (!cpu->marca_on) return;
+  if (cpu->marche_len >= MARCHE_MAX) { cpu->marche_perse += 1; return; }
+  Marca* m = &cpu->marche[cpu->marche_len++];
+  m->cycle   = cpu->cycles;
+  m->canale  = canale;
+  m->valore  = valore;
+  m->current = cpu->marca_current;
+}
+
+static int is_marca(int64_t addr)
+{
+  return addr >= MARCA_BASE && addr < MARCA_BASE + MARCA_CANALI * 4;
+}
+
+// L'unico registro scrivibile e' il marcatore. L'abilitazione dell'interrupt
+// della tastiera continua a non esistere finche' non esiste l'interrupt: il
+// messaggio dice la verita' invece di lasciar passare la scrittura in silenzio.
+static void mmio_store(VCpu* cpu, int64_t addr, int32_t value)
+{
+  if (is_marca(addr))
+  {
+    int canale = (int) ((addr - MARCA_BASE) / 4);
+    // I canali 0 e 1 li scrive la macchina. Che un programma ci scriva non e'
+    // uno stato da gestire: e' un errore di costruzione, e va detto.
+    if (canale == MARCA_ESEC || canale == MARCA_TASTO)
+      fprintf(stderr, "runtime error: il canale %d e' riservato alla macchina\n",
+              canale);
+    else
+      vcpu_marca(cpu, canale, value);
+    return;
+  }
   fprintf(stderr, "runtime error: MMIO store to read-only register 0x%llx\n",
           (unsigned long long) addr);
 }
@@ -70,6 +109,10 @@ static void kbd_pump(VCpu* cpu)
     cpu->kbd_data  = cpu->kbd_trace[cpu->kbd_trace_pos].ch;
     cpu->kbd_ready = 1;
     cpu->kbd_trace_pos += 1;
+    // MARCA_TASTO: l'istante in cui il mondo ha bussato. Il programma non puo'
+    // marcarlo -- sa solo quando se n'e' accorto -- e la differenza fra i due
+    // E' il ritardo del polling, cioe' una delle cose da misurare.
+    vcpu_marca(cpu, MARCA_TASTO, cpu->kbd_data);
   }
 }
 
@@ -169,7 +212,7 @@ static int32_t load_i32(VCpu* cpu, int64_t addr)
 
 static void store_i32(VCpu* cpu, int64_t addr, int32_t value)
 {
-  if (is_mmio(addr)) { mmio_store(addr, value); return; }
+  if (is_mmio(addr)) { mmio_store(cpu, addr, value); return; }
   if (addr < 0 || (uint64_t) addr + sizeof(value) > MEM_SIZE)
   {
     fprintf(stderr, "runtime error: word store out of bounds at 0x%llx\n",
@@ -177,6 +220,18 @@ static void store_i32(VCpu* cpu, int64_t addr, int32_t value)
     return;
   }
   memcpy(&cpu->mem[addr], &value, sizeof(value));
+
+  // Il canale MARCA_ESEC: il possesso della CPU letto invece che dedotto.
+  // Si annota il CAMBIO e non la scrittura, perche' il dispatcher riscrive
+  // `current` a ogni uscita da ISR anche senza commutare -- la scrittura e'
+  // dichiaratamente idempotente (scheduler.vasm), e annotarla darebbe una
+  // marca per tick che non significa niente. Costa un confronto per store, e
+  // zero istruzioni nel kernel.
+  if (cpu->marca_on && addr == cpu->marca_current_addr && value != cpu->marca_current)
+  {
+    cpu->marca_current = value;
+    vcpu_marca(cpu, MARCA_ESEC, value);
+  }
 }
 
 // Write to a scalar register, honouring the hardwired-zero r0.
@@ -185,6 +240,45 @@ static void set_scalar(VCpu* cpu, int rd, int64_t value)
   if (rd != 0)
   {
     cpu->r[rd] = value;
+  }
+}
+
+// ---------------------------------------------------------------------------
+//  Scrive stato architetturale VETTORIALE? (v0..v7, vl, vmask)
+//
+//  Sta in un posto solo e non sparso nei case di execute(), ed e' una scelta di
+//  manutenzione: la regola e' "quali istruzioni sporcano l'unita' vettoriale",
+//  cioe' UNA cosa, e un giorno che se ne aggiunga una il compilatore non aiuta
+//  comunque -- ma almeno l'elenco da rileggere e' questo e non l'interprete
+//  intero.
+//
+//  Chi NON c'e' e' altrettanto significativo: le store (vstore, vstorex,
+//  vstorem) leggono e basta; le riduzioni (vredsum/vredmax/vredmin) scrivono un
+//  registro FLOAT, che il frame scalare non porta ma che e' un problema diverso
+//  e gia' esistente; mfvl e mfvmask sono letture, ed e' quello che permette a
+//  ctx_save di guardare il flag senza falsarlo.
+// ---------------------------------------------------------------------------
+static int sporca_estensione(int op)
+{
+  switch (op)
+  {
+    // --- stato vettoriale: v0..v7, vmask, vl ---
+    case OP_VLOAD: case OP_VLOADS: case OP_VLOADX:
+    case OP_VADD:  case OP_VSUB:   case OP_VMUL:   case OP_VMACC:
+    case OP_VSCALE: case OP_VSPLAT: case OP_VADDS:
+    case OP_VMIN:  case OP_VMAX:   case OP_VMERGE:
+    case OP_VADDM: case OP_VSUBM:  case OP_VMULM:
+    case OP_VMSLT: case OP_VMSGT:  case OP_VMSEQ:   // scrivono vmask
+    case OP_SETVL:                                  // scrive vl
+
+    // --- stato FLOAT: f0..f15 ---
+    case OP_FLI:  case OP_FLW:   case OP_FADD: case OP_FMUL:
+    case OP_FMACC: case OP_FMOV: case OP_FMIN: case OP_FMAX:
+    case OP_FSUB: case OP_FDIV:  case OP_FNEG: case OP_FSQRT:
+    case OP_VREDSUM: case OP_VREDMAX: case OP_VREDMIN:  // riducono IN un float
+      return 1;
+    default:
+      return 0;                    // mtvl e mtvmask lo alzano da soli
   }
 }
 
@@ -205,6 +299,7 @@ static uint64_t instr_cost(const Instr* in, int vl)
     case OP_STI: case OP_CLI: case OP_SETHANDLER: case OP_SETTIMER:
     case OP_MFPSW: case OP_MTPSW: case OP_MFEPC: case OP_MTEPC:
     case OP_MFEPSW: case OP_MTEPSW:
+    case OP_MFVL: case OP_MTVL: case OP_MFVMASK: case OP_MTVMASK:
       return CYC_SCALAR_ALU;
 
     case OP_DIV: case OP_REM:
@@ -333,6 +428,23 @@ static void execute(VCpu* cpu, const Instr* in)
       case OP_MFEPC: set_scalar(cpu, in->a, cpu->epc);           break;
       case OP_MFEPSW: set_scalar(cpu, in->a, (int64_t) cpu->epsw); break;
       case OP_MTEPSW: cpu->epsw = (uint64_t) cpu->r[in->b];        break;
+
+      // Lo stato vettoriale che non sta in v0..v7. mfvl e mfvmask sono LETTURE
+      // pure: non alzano VDIRTY, perche' leggere non sporca -- ed e' cio' che
+      // permette a ctx_save di guardare senza falsare la propria decisione.
+      case OP_MFVL:    set_scalar(cpu, in->a, cpu->vl);              break;
+      case OP_MFVMASK: set_scalar(cpu, in->a, (int64_t) cpu->vmask); break;
+      case OP_MTVL:
+      {
+        int64_t req = cpu->r[in->b];
+        cpu->vl = (req < 0) ? 0 : (req > VLMAX ? VLMAX : (int) req);
+        cpu->psw |= PSW_VDIRTY;
+        break;
+      }
+      case OP_MTVMASK:
+        cpu->vmask = (uint64_t) cpu->r[in->b];
+        cpu->psw |= PSW_VDIRTY;
+        break;
       case OP_MTEPC: cpu->epc = cpu->r[in->b];                   break;
       case OP_HALT: cpu->halted = 1;                                         break;
 
@@ -608,6 +720,10 @@ const char* vcpu_disasm(const Instr* in, char* buf, size_t bufsz)
     case OP_MFEPC:      snprintf(buf, bufsz, "mfepc r%d", in->a); break;
     case OP_MFEPSW:     snprintf(buf, bufsz, "mfepsw r%d", in->a); break;
     case OP_MTEPSW:     snprintf(buf, bufsz, "mtepsw r%d", in->b); break;
+    case OP_MFVL:       snprintf(buf, bufsz, "mfvl r%d", in->a); break;
+    case OP_MTVL:       snprintf(buf, bufsz, "mtvl r%d", in->b); break;
+    case OP_MFVMASK:    snprintf(buf, bufsz, "mfvmask r%d", in->a); break;
+    case OP_MTVMASK:    snprintf(buf, bufsz, "mtvmask r%d", in->b); break;
     case OP_MTEPC:      snprintf(buf, bufsz, "mtepc r%d", in->b); break;
     case OP_HALT:   snprintf(buf, bufsz, "halt"); break;
     case OP_VLOAD:  snprintf(buf, bufsz, "vload v%d, r%d", in->a, in->b); break;
@@ -900,6 +1016,7 @@ void vcpu_run_from(VCpu* cpu, const Instr* prog, int prog_len, RunMode mode, int
     cpu->pc += 1;
     cpu->instr_count += 1;
     cpu->cycles += instr_cost(in, cpu->vl);
+    if (sporca_estensione(in->op)) cpu->psw |= PSW_VDIRTY;
     execute(cpu, in);
   }
 }

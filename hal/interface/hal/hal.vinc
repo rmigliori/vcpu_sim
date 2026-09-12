@@ -28,6 +28,13 @@
 ; --------------------------------------------------------------------------
 .equ PSW_IE     1         ; bit 0: interrupt enable
 
+; bit 1: lo stato vettoriale (v0..v7, vl, vmask) e' stato SCRITTO da quando il
+; task gira. Lo alza la macchina; lo legge ctx_save per decidere se salvare
+; duemila byte o saltarli. Viaggia nella psw -- e quindi nel frame, e quindi
+; indietro con reti -- proprio perche' e' una proprieta' del TASK che riprende e
+; non della macchina in astratto. Il ragionamento per esteso sta in vcpu.h.
+.equ PSW_VDIRTY 2
+
 ; --------------------------------------------------------------------------
 ;  Il frame di contesto: 16 parole, 64 byte.
 ;
@@ -53,4 +60,15 @@
 ;  che ctx_save cambia quei frame resterebbero validi e sbagliati. Con la
 ;  taglia pubblicata la duplicazione si riduce a una costante sola.
 ; --------------------------------------------------------------------------
-.equ CTX_FRAME_SIZE  64   ; 16 parole: epc, psw, r13..r1, r15
+; La parte FISSA del frame: 17 parole — flag vettoriale, epc, psw, r13..r1, r15.
+; Non e' piu' la taglia del frame, ed e' il motivo per cui il nome andra' rivisto:
+; dal 12/09/2026 il frame e' a TAGLIA VARIABILE, perche' un task che ha toccato
+; l'unita' vettoriale si porta dietro anche v0..v7, vl e vmask — altri
+; 8*VLMAX*4 + 12 byte, cioe' 2060 con VLMAX 64. La parola di flag all'offset 0
+; dice quale dei due casi sia, e la legge ctx_restore prima di sapere quanto
+; grande sia cio' che sta ripristinando.
+;
+; Chi dimensiona uno stack deve sapere QUALE dei due: 68 byte per un task
+; scalare, ~2,2 KB per uno vettoriale. E' la ragione per cui gli stack smettono
+; di essere un numero che si copia da un test all'altro.
+.equ CTX_FRAME_SIZE  68

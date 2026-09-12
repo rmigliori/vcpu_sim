@@ -40,6 +40,56 @@ static void print_stats(const VCpu* cpu)
 // la ricevono entrambi i percorsi di esecuzione (legacy a file singolo e
 // "run" su un .vx) e non cambia niente per chi non la usa.
 static const char* g_kbd_spec = NULL;
+static const char* g_marche_out = NULL;
+
+// ---------------------------------------------------------------------------
+//  Il marcatore: accensione e scarico.
+//
+//  `current` si risolve dalla TABELLA DEI SIMBOLI del .vx, che il loader ha
+//  gia' in mano (e' la stessa che stampa `nm`: "740 D current"). Niente da
+//  passare a mano, niente indirizzo cablato -- il difetto che §3.37 aveva gia'
+//  segnalato due volte in un giorno. Se il programma quel simbolo non ce l'ha
+//  (un test che non linka il kernel), il canale dell'esecuzione resta vuoto e
+//  il resto funziona lo stesso.
+// ---------------------------------------------------------------------------
+static void marca_prepara(VCpu* cpu, const VImage* img)
+{
+  if (!g_marche_out) return;
+  cpu->marca_on = 1;
+  for (int i = 0; i < img->sym_count; ++i)
+    if (!img->symmap[i].is_code && strcmp(img->symmap[i].name, "current") == 0)
+    {
+      cpu->marca_current_addr = img->symmap[i].offset;
+      return;
+    }
+  fprintf(stderr, "marche: nessun simbolo 'current': il canale %d resta vuoto\n",
+          MARCA_ESEC);
+}
+
+static void marca_scarica(const VCpu* cpu)
+{
+  if (!g_marche_out) return;
+  FILE* f = fopen(g_marche_out, "w");
+  if (!f) { perror(g_marche_out); return; }
+  // I canali della macchina li dichiara LA REGISTRAZIONE, in una forma che il
+  // lettore possa leggere. Se se li scrivesse lui sarebbe una seconda verita' —
+  // lo stesso difetto che marche.conf esiste per togliere di mezzo.
+  fprintf(f, "# ciclo canale valore current\n");
+  fprintf(f, "# riservato %d esecuzione\n", MARCA_ESEC);
+  fprintf(f, "# riservato %d tasto\n", MARCA_TASTO);
+  for (int i = 0; i < cpu->marche_len; ++i)
+  {
+    const Marca* m = &cpu->marche[i];
+    fprintf(f, "%llu %d %d %d\n", (unsigned long long) m->cycle,
+            m->canale, m->valore, m->current);
+  }
+  fclose(f);
+  printf("marche: %d in %s", cpu->marche_len, g_marche_out);
+  if (cpu->marche_perse)
+    printf("  (PERSE %llu: oltre il tetto di %d)",
+           (unsigned long long) cpu->marche_perse, MARCHE_MAX);
+  printf("\n");
+}
 
 // Applica la traccia dopo vcpu_init, che azzera tutto. Ritorna 0 o 1.
 static int apply_kbd_trace(VCpu* cpu)
@@ -249,11 +299,13 @@ static int cmd_run(int argc, char** argv)
     if (strcmp(argv[i], "--trace") == 0)      mode = RUN_TRACE;
     else if (strcmp(argv[i], "--debug") == 0) mode = RUN_DEBUG;
     else if (strcmp(argv[i], "--kbd") == 0 && i + 1 < argc) g_kbd_spec = argv[++i];
+    else if (strcmp(argv[i], "--marche") == 0 && i + 1 < argc) g_marche_out = argv[++i];
     else path = argv[i];
   }
   if (!path)
   {
-    fprintf(stderr, "usage: %s run <prog.vx> [--trace|--debug] [--kbd <ciclo:car,...>]\n", argv[0]);
+    fprintf(stderr, "usage: %s run <prog.vx> [--trace|--debug] [--kbd <ciclo:car,...>]"
+                    " [--marche <file>]\n", argv[0]);
     return 2;
   }
 
@@ -272,9 +324,11 @@ static int cmd_run(int argc, char** argv)
   {
     vcpu_init(&cpu);
     if (apply_kbd_trace(&cpu) != 0) { vimage_free(img); free(img); return 2; }
+    marca_prepara(&cpu, img);
     int len = 0;
     int64_t entry = vx_load(img, &cpu, prog, &len);
     vcpu_run_from(&cpu, prog, len, mode, entry);
+    marca_scarica(&cpu);
     print_stats(&cpu);
     rc = 0;
   }

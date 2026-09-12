@@ -564,6 +564,32 @@ static int encode(char** toks, int n, Instr* out, char* err, size_t errsz)
     R('r', NUM_SCALAR); out->b = reg;
     out->op = OP_MTPSW;
   }
+  // Lo stato vettoriale che non sta in v0..v7: senza questi quattro il contesto
+  // di un task vettoriale non e' salvabile in software (vedi vcpu.h).
+  else if (strcmp(mn, "mfvl") == 0)
+  {
+    if (need(ARGS, 1, mn, err, errsz)) return -1;
+    R('r', NUM_SCALAR); out->a = reg;
+    out->op = OP_MFVL;
+  }
+  else if (strcmp(mn, "mtvl") == 0)
+  {
+    if (need(ARGS, 1, mn, err, errsz)) return -1;
+    R('r', NUM_SCALAR); out->b = reg;
+    out->op = OP_MTVL;
+  }
+  else if (strcmp(mn, "mfvmask") == 0)
+  {
+    if (need(ARGS, 1, mn, err, errsz)) return -1;
+    R('r', NUM_SCALAR); out->a = reg;
+    out->op = OP_MFVMASK;
+  }
+  else if (strcmp(mn, "mtvmask") == 0)
+  {
+    if (need(ARGS, 1, mn, err, errsz)) return -1;
+    R('r', NUM_SCALAR); out->b = reg;
+    out->op = OP_MTVMASK;
+  }
   else if (strcmp(mn, "mfepc") == 0)
   {
     if (need(ARGS, 1, mn, err, errsz)) return -1;
@@ -862,7 +888,7 @@ static int scalar_dest_reg(char** toks, int n)
   static const char* dest1[] = {
     "li", "mov", "add", "sub", "mul", "addi", "slli", "srli",
     "and", "or", "xor", "div", "rem", "lw", "setvl", "mfpsw", "mfepc",
-    "mfepsw", NULL
+    "mfepsw", "mfvl", "mfvmask", NULL
   };
   if (n < 2) return -1;
   int match = 0;
