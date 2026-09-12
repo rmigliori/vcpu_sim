@@ -61,9 +61,9 @@ enable_testing()
 add_subdirectory(hal)
 
 # ---------------------------------------------------------------------------
-#  Il catalogo delle misure: marche.conf -> un .vinc GENERATO.
+#  Il catalogo delle misure: marks.conf -> un .vinc GENERATO.
 #
-#  La sorgente e' marche.conf, e l'interfaccia che i programmi includono nasce
+#  La sorgente e' marks.conf, e l'interfaccia che i programmi includono nasce
 #  da li'. Cosi' i nomi che lo strumento mostra e gli .equ che il programma usa
 #  sono lo STESSO file, e non due che devono restare d'accordo -- il difetto che
 #  il 12/09/2026 ha fatto sparire un task intero da traccia.html.
@@ -74,22 +74,22 @@ add_subdirectory(hal)
 #  DEPENDS. CMAKE_CONFIGURE_DEPENDS fa rifare il configure quando il catalogo
 #  cambia, quindi il generato non resta indietro.
 # ---------------------------------------------------------------------------
-set(MARCHE_CONF ${CMAKE_SOURCE_DIR}/marche.conf)
-set(MARCHE_DIR  ${VASM_BINARY_DIR}/marche)
+set(MARKS_CONF ${CMAKE_SOURCE_DIR}/marks.conf)
+set(MARKS_DIR  ${VASM_BINARY_DIR}/marks)
 execute_process(
-  COMMAND ${CMAKE_COMMAND} -E env python3 ${CMAKE_SOURCE_DIR}/tools/marche.py
-          genera ${MARCHE_CONF} -o ${MARCHE_DIR}/marche/marche.vinc
-  RESULT_VARIABLE _marche_rc OUTPUT_VARIABLE _marche_out ERROR_VARIABLE _marche_err)
-if(NOT _marche_rc EQUAL 0)
-  message(FATAL_ERROR "marche.conf: ${_marche_err}")
+  COMMAND ${CMAKE_COMMAND} -E env python3 ${CMAKE_SOURCE_DIR}/tools/marks.py
+          generate ${MARKS_CONF} -o ${MARKS_DIR}/marks/marks.vinc
+  RESULT_VARIABLE _marks_rc OUTPUT_VARIABLE _marks_out ERROR_VARIABLE _marks_err)
+if(NOT _marks_rc EQUAL 0)
+  message(FATAL_ERROR "marks.conf: ${_marks_err}")
 endif()
-message(STATUS "marche: ${_marche_out}")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${MARCHE_CONF})
+message(STATUS "marks: ${_marks_out}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${MARKS_CONF})
 
-vasm_interface(vinc_marche
-  DIR        ${MARCHE_DIR}
-  HEADERS    marche/marche.vinc
-  INTERFACES vinc_hal)          # il generato include hal/marca.vinc
+vasm_interface(vinc_marks
+  DIR        ${MARKS_DIR}
+  HEADERS    marks/marks.vinc
+  INTERFACES vinc_hal)          # il generato include hal/marker.vinc
 
 add_subdirectory(generic)
 add_subdirectory(rtos)

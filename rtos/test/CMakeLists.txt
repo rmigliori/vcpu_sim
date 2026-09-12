@@ -321,7 +321,7 @@ vasm_check(coop MODE DUMPS PROGRAM test_coop
 #  test_coop il numero omologo non poteva che valere 0, perche' senza un mondo
 #  esterno "nessuno e' pronto" significa che il sistema e' finito.
 # ---------------------------------------------------------------------------
-#  Dal 12/09 porta anche i TAG del marcatore (hal/marca.vinc): due categorie,
+#  Dal 12/09 porta anche i TAG del marcatore (hal/marker.vinc): due categorie,
 #  una interna all'idle e una che ATTRAVERSA task_yield. Costano 10 istruzioni
 #  per giro, e si vede: cntP si sposta, gli altri quattro numeri no, perche'
 #  non dipendono dai cicli. E' il prezzo dichiarato della strumentazione.
@@ -334,7 +334,7 @@ vasm_check(coop MODE DUMPS PROGRAM test_coop
 # ---------------------------------------------------------------------------
 vasm_object(t_mondo SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_mondo.vasm
                     INTERFACES vinc_queue vinc_tcb vinc_mailbox vinc_message
-                               vinc_hal vinc_marche)
+                               vinc_hal vinc_marks)
 
 vasm_program(test_mondo OBJECTS t_mondo LINK lib_messaggi lib_kernel)
 

@@ -348,7 +348,7 @@ const tot = o => own[o].task + own[o].kernel;
    spariva dalla pagina, mentre la riga `totale` continuava a contarlo: E in
    test_mondo, B e C in test_coop. Un elenco scritto a mano e' una seconda
    verita' da tenere allineata ai programmi, ed e' esattamente cio' che
-   traccia.py evita altrove riconoscendo i corpi per CONVENZIONE.
+   trace.py evita altrove riconoscendo i corpi per CONVENZIONE.
 
    Adesso i proprietari li dicono i dati. I nomi noti tengono il loro colore e
    il loro posto in scaletta (sono quelli per cui il foglio di stile ha una
@@ -367,7 +367,7 @@ const ORDINE = [
 ].map(k => ({
   k, n: k,
   c: NOTI.includes(k) ? `var(--c-${k})` : RISERVA[iRis++ % RISERVA.length],
-  // La priorita' NON e' nei dati (traccia.py deduce il proprietario dal pc, non
+  // La priorita' NON e' nei dati (trace.py deduce il proprietario dal pc, non
   // legge i TCB), e scriverla a mano voleva dire il falso su ogni programma che
   // non fosse test_gestore. Al suo posto una quota, che e' misurata.
   p: (100 * tot(k) / gran).toFixed(1) + "%"

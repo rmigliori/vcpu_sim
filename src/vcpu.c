@@ -61,18 +61,18 @@ static int32_t mmio_load(VCpu* cpu, int64_t addr)
 // ---------------------------------------------------------------------------
 void vcpu_marca(VCpu* cpu, int canale, int32_t valore)
 {
-  if (!cpu->marca_on) return;
-  if (cpu->marche_len >= MARCHE_MAX) { cpu->marche_perse += 1; return; }
-  Marca* m = &cpu->marche[cpu->marche_len++];
+  if (!cpu->mark_on) return;
+  if (cpu->marks_len >= MARCHE_MAX) { cpu->marks_lost += 1; return; }
+  Marca* m = &cpu->marche[cpu->marks_len++];
   m->cycle   = cpu->cycles;
   m->canale  = canale;
   m->valore  = valore;
-  m->current = cpu->marca_current;
+  m->current = cpu->mark_current;
 }
 
 static int is_marca(int64_t addr)
 {
-  return addr >= MARCA_BASE && addr < MARCA_BASE + MARCA_CANALI * 4;
+  return addr >= MARK_BASE && addr < MARK_BASE + MARK_CHANNELS * 4;
 }
 
 // L'unico registro scrivibile e' il marcatore. L'abilitazione dell'interrupt
@@ -82,10 +82,10 @@ static void mmio_store(VCpu* cpu, int64_t addr, int32_t value)
 {
   if (is_marca(addr))
   {
-    int canale = (int) ((addr - MARCA_BASE) / 4);
+    int canale = (int) ((addr - MARK_BASE) / 4);
     // I canali 0 e 1 li scrive la macchina. Che un programma ci scriva non e'
     // uno stato da gestire: e' un errore di costruzione, e va detto.
-    if (canale == MARCA_ESEC || canale == MARCA_TASTO)
+    if (canale == MARK_EXEC || canale == MARK_KEY)
       fprintf(stderr, "runtime error: il canale %d e' riservato alla macchina\n",
               canale);
     else
@@ -109,10 +109,10 @@ static void kbd_pump(VCpu* cpu)
     cpu->kbd_data  = cpu->kbd_trace[cpu->kbd_trace_pos].ch;
     cpu->kbd_ready = 1;
     cpu->kbd_trace_pos += 1;
-    // MARCA_TASTO: l'istante in cui il mondo ha bussato. Il programma non puo'
+    // MARK_KEY: l'istante in cui il mondo ha bussato. Il programma non puo'
     // marcarlo -- sa solo quando se n'e' accorto -- e la differenza fra i due
     // E' il ritardo del polling, cioe' una delle cose da misurare.
-    vcpu_marca(cpu, MARCA_TASTO, cpu->kbd_data);
+    vcpu_marca(cpu, MARK_KEY, cpu->kbd_data);
   }
 }
 
@@ -221,16 +221,16 @@ static void store_i32(VCpu* cpu, int64_t addr, int32_t value)
   }
   memcpy(&cpu->mem[addr], &value, sizeof(value));
 
-  // Il canale MARCA_ESEC: il possesso della CPU letto invece che dedotto.
+  // Il canale MARK_EXEC: il possesso della CPU letto invece che dedotto.
   // Si annota il CAMBIO e non la scrittura, perche' il dispatcher riscrive
   // `current` a ogni uscita da ISR anche senza commutare -- la scrittura e'
   // dichiaratamente idempotente (scheduler.vasm), e annotarla darebbe una
   // marca per tick che non significa niente. Costa un confronto per store, e
   // zero istruzioni nel kernel.
-  if (cpu->marca_on && addr == cpu->marca_current_addr && value != cpu->marca_current)
+  if (cpu->mark_on && addr == cpu->mark_current_addr && value != cpu->mark_current)
   {
-    cpu->marca_current = value;
-    vcpu_marca(cpu, MARCA_ESEC, value);
+    cpu->mark_current = value;
+    vcpu_marca(cpu, MARK_EXEC, value);
   }
 }
 

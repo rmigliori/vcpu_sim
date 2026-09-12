@@ -1,6 +1,6 @@
-// tools/traccia_dom.js — un DOM finto, per ESEGUIRE lo script di traccia.html.
+// tools/trace_dom.js — un DOM finto, per ESEGUIRE lo script di traccia.html.
 //
-// Nasce il 12/09/2026 da un problema pratico: la pagina prodotta da traccia.py
+// Nasce il 12/09/2026 da un problema pratico: la pagina prodotta da trace.py
 // e' l'unico pezzo di questo progetto che non si poteva verificare. Non c'e'
 // node sulla macchina e Firefox headless non parte (l'istanza interattiva
 // tiene il profilo), quindi ogni correzione al template veniva spedita LETTA e
@@ -16,12 +16,12 @@
 //
 // --- COME SI USA ---
 //
-//   python3 tools/traccia.py out/vasm/test_mondo.vx -- --kbd "2000:a,6000:b"
+//   python3 tools/trace.py out/vasm/test_mondo.vx -- --kbd "2000:a,6000:b"
 //   python3 - <<'FINE' > /tmp/pagina.js
 //   import re; h=open('out/traccia.html').read()
 //   print(re.search(r'<script>(.*)</script>', h, re.S).group(1) + "\n_dump();")
 //   FINE
-//   gjs -c "$(cat tools/traccia_dom.js /tmp/pagina.js)"
+//   gjs -c "$(cat tools/trace_dom.js /tmp/pagina.js)"
 //
 // Un'eccezione la stampa gjs; _dump() mostra cosa e' finito in ogni elemento,
 // che e' come si controlla che una corsia o una riga di tabella ci sia davvero.

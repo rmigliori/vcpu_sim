@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""traccia.py — LA TRACCIA TEMPORALE: chi gira, e da quando a quando.
+"""trace.py — LA TRACCIA TEMPORALE: chi gira, e da quando a quando.
 
-    python3 tools/traccia.py out/vasm/test_gestore.vx        # -> out/traccia.html
+    python3 tools/trace.py out/vasm/test_gestore.vx        # -> out/traccia.html
 
 Un programma guidato da un DEVICE non e' autosufficiente: senza il suo
 alimentatore resta a pollare un flag che nessuno alzera' e non termina mai. Le
 opzioni della macchina si passano dopo un --, e sono le stesse che vasm_check
 mette in ARGS (§3.37):
 
-    python3 tools/traccia.py out/vasm/test_mondo.vx -- --kbd "2000:a,6000:b"
+    python3 tools/trace.py out/vasm/test_mondo.vx -- --kbd "2000:a,6000:b"
 
 Nasce il 07/09/2026 per chiudere un debito che l'handoff portava da §3.29: senza
 uno strumento che dica chi gira e in quale intervallo, ogni numero prodotto dai
@@ -59,7 +59,7 @@ Il costo e' un `asm` per modulo, che su questo progetto e' istantaneo.
 
 Una pagina HTML autosufficiente (i dati sono dentro; le uniche risorse esterne
 sono i font, che senza rete cadono sui fallback dichiarati). Il modello e'
-tools/traccia.template.html: si modifica quello per cambiare il disegno, e questo
+tools/trace.template.html: si modifica quello per cambiare il disegno, e questo
 file non si tocca.
 """
 
@@ -228,7 +228,7 @@ def analizza(vx, tmp, argomenti=()):
     except subprocess.TimeoutExpired:
         sys.exit(f"il programma non e' terminato in {TIMEOUT}s. Se dipende da un "
                  f"device, il suo alimentatore va passato dopo un --:\n"
-                 f"    python3 tools/traccia.py {vx} -- --kbd \"2000:a,6000:b\"")
+                 f"    python3 tools/trace.py {vx} -- --kbd \"2000:a,6000:b\"")
     ev, tick, cur = [], [], "boot"
     for line in trace.splitlines():
         if "timer trap" in line:
@@ -308,7 +308,7 @@ def main():
     # prova niente -- dice cosa c'e' sul disco, che e' proprio la meta' che non
     # era in dubbio. La prova e' che i due coincidano a schermo.
     stamp = datetime.datetime.now().strftime("%d/%m %H:%M:%S")
-    modello = open(os.path.join(QUI, "traccia.template.html")).read()
+    modello = open(os.path.join(QUI, "trace.template.html")).read()
     pagina = (modello
               .replace("/*__DATI__*/{}", json.dumps(dati))
               .replace("__PROGRAMMA__", os.path.basename(vx))

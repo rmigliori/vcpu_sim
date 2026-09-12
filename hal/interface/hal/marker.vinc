@@ -1,4 +1,4 @@
-; hal/marca.vinc — IL MARCATORE: l'oscilloscopio a piu' tracce.
+; hal/marker.vinc — IL MARCATORE: l'oscilloscopio a piu' tracce.
 ;
 ; Un tag all'inizio della regione che interessa e uno alla fine, con due
 ; identificatori -- la CATEGORIA della misura e il PUNTO dentro quella
@@ -7,7 +7,7 @@
 ; le stimulus port dell'ITM di CoreSight e SystemView di SEGGER.
 ;
 ; --- COSA MISURA, CHE LA TRACCIA DEL PC NON PUO' ---
-; La traccia (tools/traccia.py) dice CHI occupava la CPU e in quale intervallo.
+; La traccia (tools/trace.py) dice CHI occupava la CPU e in quale intervallo.
 ; Una finestra aperta in un task e chiusa in un ALTRO dice quanto e' durata una
 ; RICHIESTA, attraverso le commutazioni: e' il tempo di RISPOSTA. La differenza
 ; fra i due e' l'INTERFERENZA -- quanto ti e' costato il resto del sistema --
@@ -19,7 +19,7 @@
 ; a tempo di compilazione non si puo'. Il rimedio e' migliore del problema --
 ; 32 registri contigui, uno per canale, come l'ITM ne ha 32:
 ;
-;     li  r1, MARCA_RISPOSTA     ; il canale: la CATEGORIA
+;     li  r1, MARK_RESPONSE     ; il canale: la CATEGORIA
 ;     li  r2, P_CONSEGNA         ; il valore: il PUNTO. != 0 APRE
 ;     sw  r2, 0(r1)
 ;     ...
@@ -56,21 +56,21 @@
 ; CONFIGURAZIONE che associa nome visualizzato e identificatore, e da cui questo
 ; .vinc venga GENERATO: due dichiarazioni dello stesso fatto -- una qui e una
 ; nello strumento -- divergerebbero in silenzio, che e' il difetto appena
-; corretto in traccia.template.html (l'elenco ORDINE scritto a mano).
+; corretto in trace.template.html (l'elenco ORDINE scritto a mano).
 ; Finche' quel file non c'e', i nomi se li dichiara l'applicazione con degli
 ; .equ sui canali generici qui sotto, ed e' esattamente il lavoro che il
 ; generatore toglierebbe di mezzo.
 ;
 ; File FOGLIA: non include niente.
 
-.equ MARCA_ESEC    0x100100      ; canale 0 — RISERVATO alla macchina
-.equ MARCA_TASTO   0x100104      ; canale 1 — RISERVATO al device
+.equ MARK_EXEC    0x100100      ; canale 0 — RISERVATO alla macchina
+.equ MARK_KEY   0x100104      ; canale 1 — RISERVATO al device
 
 ; I canali dell'applicazione. Si rinominano con un .equ al punto d'uso:
-;   .equ MARCA_RISPOSTA  MARCA_CH2
-.equ MARCA_CH2     0x100108
-.equ MARCA_CH3     0x10010C
-.equ MARCA_CH4     0x100110
-.equ MARCA_CH5     0x100114
-.equ MARCA_CH6     0x100118
-.equ MARCA_CH7     0x10011C
+;   .equ MARK_RESPONSE  MARK_CH2
+.equ MARK_CH2     0x100108
+.equ MARK_CH3     0x10010C
+.equ MARK_CH4     0x100110
+.equ MARK_CH5     0x100114
+.equ MARK_CH6     0x100118
+.equ MARK_CH7     0x10011C

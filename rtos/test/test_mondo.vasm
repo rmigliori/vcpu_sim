@@ -121,7 +121,7 @@
 .include "mailbox/mailbox.vinc"
 .include "message/message.vinc"
 .include "hal/kbd.vinc"
-.include "marche/marche.vinc"  ; GENERATO da marche.conf: i canali e i marker
+.include "marks/marks.vinc"  ; GENERATO da marks.conf: i canali e i marker
 
 ; --------------------------------------------------------------------------
 ;  LE DUE MISURE, e perche' sono due canali e non uno.
@@ -135,9 +135,9 @@
 ;  sola) danno la decomposizione che serve: di quei cicli, quanti con current =
 ;  idle -- commutazione e scheduler -- e quanti con current = E, cioe' lavoro.
 ;
-;  I nomi non stanno qui: stanno in marche.conf, che e' la loro UNICA
+;  I nomi non stanno qui: stanno in marks.conf, che e' la loro UNICA
 ;  dichiarazione, e da cui l'include qui sopra viene generato. Il .vasm usa
-;  MARCA_ATTESA e M_ATTESA_POLLING; lo strumento mostra "attesa del mondo" e
+;  MARK_WAIT e M_WAIT_POLLING; lo strumento mostra "attesa del mondo" e
 ;  "guarda il flag della tastiera"; e sono lo stesso file.
 ; --------------------------------------------------------------------------
 
@@ -273,8 +273,8 @@ ti_round:
                            ; carattere". Vive dentro il ciclo, dove non ci sono
                            ; call: nessun registro da preservare
 
-  li r1, MARCA_ATTESA      ; APRE: da qui il sistema non ha niente da fare
-  li r2, M_ATTESA_POLLING
+  li r1, MARK_WAIT      ; APRE: da qui il sistema non ha niente da fare
+  li r2, M_WAIT_POLLING
   sw r2, 0(r1)             ; fuori dal ciclo di polling, non dentro: un tag per
                            ; carattere, non uno per giro a vuoto
 
@@ -303,11 +303,11 @@ ti_poll:
   sw r3, CHAR.ch(r1)  ; il payload: il kernel non lo leggera' mai
 
   ; --- da qui in poi non c'e' piu' fretta: il device e' stato servito ---
-  li r1, MARCA_ATTESA
+  li r1, MARK_WAIT
   sw r0, 0(r1)             ; CHIUDE: il lavoro e' arrivato. Una istruzione sola,
                            ; perche' r0 e' gia' zero
-  li r1, MARCA_RISPOSTA    ; APRE: la chiudera' E, dopo due commutazioni
-  li r2, M_RISPOSTA_CONSEGNA
+  li r1, MARK_RESPONSE    ; APRE: la chiudera' E, dopo due commutazioni
+  li r2, M_RESPONSE_DELIVERY
   sw r2, 0(r1)
 
   beq r6, r0, ti_now    ; il carattere c'era gia': non ho aspettato niente
@@ -382,7 +382,7 @@ te_ch_ok:
   add r3, r3, r2
   sw r3, 0(r1)
 
-  li r1, MARCA_RISPOSTA
+  li r1, MARK_RESPONSE
   sw r0, 0(r1)             ; CHIUDE una finestra aperta DALL'IDLE: e' il punto
                            ; di tutto l'esercizio -- la misura attraversa il
                            ; cambio di proprietario, e nessuno strumento che

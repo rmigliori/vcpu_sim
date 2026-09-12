@@ -9,4 +9,4 @@ get_filename_component(_iface_dir ${CMAKE_CURRENT_SOURCE_DIR} DIRECTORY)
 
 vasm_interface(vinc_hal
   DIR     ${_iface_dir}
-  HEADERS hal/hal.vinc hal/kbd.vinc hal/marca.vinc)
+  HEADERS hal/hal.vinc hal/kbd.vinc hal/marker.vinc)

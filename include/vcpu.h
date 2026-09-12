@@ -80,7 +80,7 @@ typedef struct
 //  valore a tempo di compilazione non si puo'. E il rimedio e' migliore del
 //  problema -- 32 registri contigui, uno per canale, come l'ITM ne ha 32:
 //
-//      li  r1, MARCA_RISPOSTA     ; il canale: una costante simbolica
+//      li  r1, MARK_RESPONSE     ; il canale: una costante simbolica
 //      li  r2, P_CONSEGNA         ; il valore: != 0 APRE
 //      sw  r2, 0(r1)
 //      ...
@@ -95,28 +95,28 @@ typedef struct
 //  solo la macchina che non annota. Il costo sta nel programma, non nell'opzione.
 //
 //  --- DUE CANALI LI SCRIVE LA MACCHINA, E COSTANO ZERO ---
-//    MARCA_ESEC   chi possiede la CPU. Il registratore osserva le scritture a
+//    MARK_EXEC   chi possiede la CPU. Il registratore osserva le scritture a
 //                 `current` -- l'indirizzo glielo dice il loader, che ha la
 //                 tabella dei simboli -- e annota i CAMBI. Zero istruzioni nel
 //                 kernel, e il possesso diventa un DATO invece di un'inferenza
-//                 dal pc (che e' come traccia.py lo ricava oggi, con gli
+//                 dal pc (che e' come trace.py lo ricava oggi, con gli
 //                 artefatti di attribuzione che §3.34 dichiara).
-//    MARCA_TASTO  quando un carattere diventa disponibile. Serve perche' il
+//    MARK_KEY  quando un carattere diventa disponibile. Serve perche' il
 //                 PROGRAMMA NON PUO' SAPERLO: sa quando se n'e' accorto, e fra
 //                 i due c'e' il ritardo del polling, che e' proprio una delle
 //                 cose da misurare. Senza questo canale il tempo di risposta
 //                 non e' scrivibile con i soli tag applicativi.
 //
-//  Quello che il canale MARCA_ESEC NON dice e' il PERCHE' della commutazione
+//  Quello che il canale MARK_EXEC NON dice e' il PERCHE' della commutazione
 //  (preemption, blocco, cessione, fine turno): lo sa solo il dispatcher, e per
 //  averlo serve un tag nel kernel -- che costa cicli sul percorso caldo, cioe'
 //  rimisurare ogni EXPECT che dipende dai cicli. E' un passo a se', e prima
 //  vuole l'assemblaggio condizionale che l'assembler non ha.
 // ---------------------------------------------------------------------------
-#define MARCA_BASE     (MMIO_BASE + 0x100)
-#define MARCA_CANALI   32
-#define MARCA_ESEC     0        // riservato: lo scrive la macchina (current)
-#define MARCA_TASTO    1        // riservato: lo scrive il device
+#define MARK_BASE     (MMIO_BASE + 0x100)
+#define MARK_CHANNELS   32
+#define MARK_EXEC     0        // riservato: lo scrive la macchina (current)
+#define MARK_KEY    1        // riservato: lo scrive il device
 
 // Un evento: "al ciclo N il canale C prende il valore V, mentre girava T".
 //
@@ -379,14 +379,14 @@ typedef struct
   int      kbd_trace_len;
   int      kbd_trace_pos;
 
-  // Marcatore (vedi MARCA_BASE). La registrazione si accende da riga di
+  // Marcatore (vedi MARK_BASE). La registrazione si accende da riga di
   // comando; le sw dei tag costano i loro cicli comunque, ed e' voluto.
   Marca    marche[MARCHE_MAX];
-  int      marche_len;
-  uint64_t marche_perse;       // oltre il tetto: DICHIARATE, non perse in silenzio
-  int      marca_on;           // 1 = annota (--marche)
-  int64_t  marca_current_addr; // indirizzo di `current`, 0 = non noto al loader
-  int32_t  marca_current;      // ultimo valore visto: e' il timbro di ogni marca
+  int      marks_len;
+  uint64_t marks_lost;       // oltre il tetto: DICHIARATE, non perse in silenzio
+  int      mark_on;           // 1 = annota (--marks)
+  int64_t  mark_current_addr; // indirizzo di `current`, 0 = non noto al loader
+  int32_t  mark_current;      // ultimo valore visto: e' il timbro di ogni marca
 
   // statistics
   uint64_t instr_count;    // total executed instructions
@@ -407,8 +407,8 @@ void vcpu_init(VCpu* cpu);
 // Ritorna 0, o -1 con il messaggio in 'err'. Va chiamata dopo vcpu_init.
 int vcpu_kbd_trace(VCpu* cpu, const char* spec, char* err, size_t errsz);
 
-// Annota una marca. La chiamano il device (MARCA_TASTO), lo store watcher
-// (MARCA_ESEC) e le sw dei tag applicativi.
+// Annota una marca. La chiamano il device (MARK_KEY), lo store watcher
+// (MARK_EXEC) e le sw dei tag applicativi.
 void vcpu_marca(VCpu* cpu, int canale, int32_t valore);
 
 // Assemble a .vasm file into 'prog'. Returns number of instructions, or -1 on
