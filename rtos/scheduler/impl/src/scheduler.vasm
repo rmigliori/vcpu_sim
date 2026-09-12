@@ -40,7 +40,7 @@
 
 ; Tipi comuni (TESTA, TCB, stati) condivisi con l'app: single source of truth.
 .include "tcb/tcb.vinc"
-.include "coda/coda_api.vinc"
+.include "queue/queue_api.vinc"
 
   .data
 
@@ -565,7 +565,7 @@ scheduler:
 
   ; --- scansione dall'alto: a ogni livello lo slot batte la coda (§4) ---
   ; Il PCB corrente sta in r7 e NON in uno scratch: dequeue_testa sporca r2, r4
-  ; e r5 (lo dichiara coda_api.vinc), quindi tenerlo in r5 lo farebbe avanzare
+  ; e r5 (lo dichiara queue_api.vinc), quindi tenerlo in r5 lo farebbe avanzare
   ; da un indirizzo spazzatura dalla seconda iterazione in poi. E' un bug che
   ; non si vede su un solo livello: lo scan si ferma sempre al primo giro finche'
   ; c'e' un preemptato in cima.

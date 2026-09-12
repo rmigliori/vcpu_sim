@@ -61,7 +61,7 @@
 ; il tempo di calcolo non cambia, cambia quanto ne serve in totale.
 
 .include "tcb/tcb.vinc"
-.include "coda/coda_api.vinc"
+.include "queue/queue_api.vinc"
 .include "hal/hal.vinc"
 
 .equ PRIO_AB   1               ; A e B PARI: e' la rotazione a farli alternare

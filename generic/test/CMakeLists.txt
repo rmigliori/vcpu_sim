@@ -17,13 +17,13 @@
 #  posto solo: e' `ctest` a confrontarli, non chi legge.
 # ---------------------------------------------------------------------------
 vasm_object(t_coda    SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_coda.vasm
-                      INTERFACES vinc_coda)
+                      INTERFACES vinc_queue)
 vasm_object(t_pool    SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_pool.vasm
-                      INTERFACES vinc_pool vinc_coda)
+                      INTERFACES vinc_pool vinc_queue)
 vasm_object(t_timeout SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_timeout.vasm
                       INTERFACES vinc_timeout)
 
-vasm_program(test_coda    OBJECTS t_coda    LINK lib_coda)
+vasm_program(test_coda    OBJECTS t_coda    LINK lib_queue)
 vasm_program(test_pool    OBJECTS t_pool    LINK lib_pool)
 vasm_program(test_timeout OBJECTS t_timeout LINK lib_timeout)
 

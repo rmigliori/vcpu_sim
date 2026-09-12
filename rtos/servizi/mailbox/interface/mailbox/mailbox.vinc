@@ -3,9 +3,9 @@
 ;
 ; Nato il 07/09/2026, e la ragione non e' l'ordine dei file. Una mailbox E' una
 ; TESTA — stessi link, stesso terzo campo, stessa dimensione — ma il terzo campo
-; NON ha la semantica che coda.vasm gli da':
+; NON ha la semantica che queue.vasm gli da':
 ;
-;   sulle teste CONTATE   count >= 0 e' il numero di nodi. Lo scrive coda.vasm;
+;   sulle teste CONTATE   count >= 0 e' il numero di nodi. Lo scrive queue.vasm;
 ;   sulla mailbox         count e' DESCRITTIVO col segno (§8.2): >0 messaggi in
 ;                         lista, -1 un TCB in attesa, 0 vuota. Lo scrive SOLO
 ;                         messageHandling.vasm, che per questo usa lo strato _nc.
@@ -36,14 +36,14 @@
 ; enqueue_coda_nc" il nome della primitiva e' l'unica cosa che dice quale
 ; disciplina e' in vigore.
 ;
-; .equ risolve al momento della definizione, quindi coda.vinc va incluso PRIMA:
+; .equ risolve al momento della definizione, quindi queue.vinc va incluso PRIMA:
 ; da §3.16 .include e' idempotente, includerlo qui non collide con chi lo ha gia'
 ; incluso a monte.
 
-.include "coda/coda.vinc"
+.include "queue/queue.vinc"
 
 .equ MAILBOX.count     TESTA.count   ; il contatore descrittivo con segno (§8.2)
 .equ MAILBOX.size      TESTA.size    ; ".res MAILBOX" alloca una mailbox
 
-; I link si leggono con i nomi di LINK, come su ogni nodo (coda.vinc): non c'e'
+; I link si leggono con i nomi di LINK, come su ogni nodo (queue.vinc): non c'e'
 ; nessun MAILBOX.fwd, perche' quella non e' una convenzione della mailbox.

@@ -61,7 +61,7 @@
 ; l'altro dormono DUE task (A aspetta la scadenza, G aspetta il tick).
 
 .include "tcb/tcb.vinc"
-.include "coda/coda_api.vinc"
+.include "queue/queue_api.vinc"
 .include "mailbox/mailbox.vinc"
 .include "messaggio/messaggio.vinc"
 .include "timeout/timeout.vinc"

@@ -83,7 +83,7 @@
 ; una volta sola, senza riprovare.
 
 .include "tcb/tcb.vinc"
-.include "coda/coda_api.vinc"
+.include "queue/queue_api.vinc"
 .include "semaforo/semaforo.vinc"
 
   .data

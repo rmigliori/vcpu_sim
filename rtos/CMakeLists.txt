@@ -3,7 +3,7 @@
 #
 #  Il criterio e' dell'utente ed e' letterale: un modulo sta qui se nomina un
 #  simbolo del kernel. Applicato ai simboli veri, e non alle intenzioni, da'
-#  una partizione senza residui -- machine.vasm, coda.vasm, pool.vasm,
+#  una partizione senza residui -- machine.vasm, queue.vasm, pool.vasm,
 #  timeout.vasm e messaggio.vinc non ne nominano nessuno e stanno fuori;
 #  scheduler.vasm e' il kernel, messageHandling.vasm chiama task_ready,
 #  task_block e current.

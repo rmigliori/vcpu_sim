@@ -1,4 +1,4 @@
-; kernel/coda.vasm — code di scheduling: lista circolare doppia con sentinella.
+; generic/queue/impl/src/queue.vasm — code di scheduling: lista circolare doppia con sentinella.
 ;
 ; Pattern struct list_head del kernel Linux: la testa e il nodo condividono i
 ; primi 8 byte (fwd,bwd) => lo stesso codice di insert/remove vale per entrambi.
@@ -59,7 +59,7 @@
 ; gestore delle code non sa, e non deve sapere, perche' gli si chieda di
 ; accodare in testa, in fondo o fra due elementi. Una enqueue_prio che leggesse
 ; la priorita' dal nodo dovrebbe sapere che il nodo e' un TCB, cioe' far
-; includere tcb.vinc a generic/coda: generic/ dipenderebbe da rtos/ e la
+; includere tcb.vinc a generic/queue: generic/ dipenderebbe da rtos/ e la
 ; cartella smetterebbe di essere sollevabile.
 ;
 ; Due conseguenze del contratto, da non lasciare implicite:
@@ -81,7 +81,7 @@
 ; CERCARE quel punto.
 ;
 ; Serve all'inserimento ordinato di §13.6, in cui la camminata sta nel chiamante
-; perche' confronta una chiave che coda.vasm non deve conoscere. Ma "come si
+; perche' confronta una chiave che queue.vasm non deve conoscere. Ma "come si
 ; passa da un nodo al successivo" e' rappresentazione, non interfaccia, e non ha
 ; motivo di uscire da qui. Oggi nessuno la conosce: i quattro moduli che leggono
 ; LINK.fwd/bwd fuori di questo file lo fanno su un nodo che sta FUORI da ogni
@@ -100,7 +100,7 @@
 ; nessuna ragione di sapere che la lista e' circolare.
 ;
 ; La prima chiamata si fa con corrente = TESTA, ed e' lecito per la ragione di
-; sempre: testa e nodo condividono i link (LINK annidato in TESTA, coda.vinc),
+; sempre: testa e nodo condividono i link (LINK annidato in TESTA, queue.vinc),
 ; quindi "il successore della testa" e "il primo nodo" sono la stessa lettura.
 ; E' lo stesso fatto su cui poggiano le due .global sullo stesso indirizzo qui
 ; sotto.
@@ -118,7 +118,7 @@
 ; Layout come struttura: offset simbolici (LINK.fwd/bwd/count) invece di 0/4/8.
 ; La struct descrive la TESTA (sentinella); il nodo condivide i primi due campi
 ; (fwd,bwd) -> stesso codice di insert/remove. Da qui arrivano anche i CODA_*.
-.include "coda/coda.vinc"
+.include "queue/queue.vinc"
 
   .text
 

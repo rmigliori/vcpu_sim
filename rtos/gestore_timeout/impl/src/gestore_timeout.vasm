@@ -33,7 +33,7 @@
 ; in lista" -- e comprende i due casi in cui si manda: mailbox vuota (0) e
 ; ricevente in attesa (-1).
 
-.include "coda/coda_api.vinc"
+.include "queue/queue_api.vinc"
 .include "mailbox/mailbox.vinc"
 .include "messaggio/messaggio.vinc"
 .include "pool/pool.vinc"

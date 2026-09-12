@@ -30,7 +30,7 @@
 ;  qui lo si sa per costruzione — il ceiling si dichiara nominando gli utenti.
 ; --------------------------------------------------------------------------
 
-.include "coda/coda.vinc"
+.include "queue/queue.vinc"
 
 .struct MUTEX
   .field coda       TESTA.size  ; +0  la coda d'attesa: sentinella + contatore.

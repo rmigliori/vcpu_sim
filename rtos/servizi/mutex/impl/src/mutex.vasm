@@ -67,7 +67,7 @@
 ; coda del mutex, non in una coda di ready, quindi si scrive il campo PRIMA di
 ; accodarlo e la proprieta' regge lo stesso.
 
-.include "coda/coda_api.vinc"
+.include "queue/queue_api.vinc"
 .include "mutex/mutex.vinc"
 .include "tcb/tcb.vinc"
 

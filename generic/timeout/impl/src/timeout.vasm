@@ -42,7 +42,7 @@
 ; stanno in rtos/, e un modulo di generic/ che li nominasse smetterebbe di essere
 ; generic (la regola sta in generic/CMakeLists.txt). Il ciclo del task-gestore
 ; sta quindi in rtos/gestore_timeout/, e questo file resta con i soli irq_save/
-; irq_restore, la stessa firma esatta di coda.vasm.
+; irq_restore, la stessa firma esatta di queue.vasm.
 ;
 ; Quello che NON si poteva spezzare e' il motivo per cui la primitiva formatta
 ; invece di limitarsi a restituire i campi: la transizione ARMED -> FREE deve

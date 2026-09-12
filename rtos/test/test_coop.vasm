@@ -59,7 +59,7 @@
 ;              legge nella TERMINAZIONE del test, non in questo numero
 
 .include "tcb/tcb.vinc"
-.include "coda/coda_api.vinc"
+.include "queue/queue_api.vinc"
 .include "mailbox/mailbox.vinc"
 .include "messaggio/messaggio.vinc"
 

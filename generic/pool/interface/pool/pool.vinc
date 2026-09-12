@@ -9,7 +9,7 @@
 ; (non esiste "il blocco sbagliato"), che alloc e free sono un dequeue e un
 ; enqueue quindi O(1), e che il fallimento e' una condizione sola e limitata.
 ;
-; INCLUDE coda.vinc, ed e' una dipendenza vera e non una comodita': BLOCCO *e'*
+; INCLUDE queue.vinc, ed e' una dipendenza vera e non una comodita': BLOCCO *e'*
 ; un nodo di lista (fwd/bwd in testa, stesso idioma list_head), e una free-list
 ; e' una TESTA con i blocchi come nodi. Chi usa il pool usa le code.
 ;
@@ -21,7 +21,7 @@
 ; chi include, quindi un modulo che non ha dichiarato l'interfaccia delle code
 ; non lo trova e non assembla. E' il vincolo che la ristrutturazione del
 ; 06/09/2026 e' venuta a costruire.
-.include "coda/coda.vinc"
+.include "queue/queue.vinc"
 
 ; --------------------------------------------------------------------------
 ;  Le sei classi, per potenze di due sull'AREA DATI UTENTE.
@@ -47,7 +47,7 @@
 ; --------------------------------------------------------------------------
 ;  Il blocco, visto dal pool. Nessun campo prima dei link: l'indirizzo
 ;  consegnato al cliente E' la base dell'allocazione, quindi niente offset
-;  negativi e la regola di coda.vasm ("il puntatore al link e' il puntatore al
+;  negativi e la regola di queue.vasm ("il puntatore al link e' il puntatore al
 ;  buffer") vale sia quando il blocco e' accodato da qualche parte sia quando
 ;  sta nella free-list, che lo lincia attraverso quegli stessi due campi.
 ;
@@ -59,7 +59,7 @@
 ;
 ;  Ne segue un vincolo, ed e' a carico di chi definisce un formato da appoggiare
 ;  su un blocco, non nostro: le prime due parole sono i link (l'idioma di
-;  coda.vinc, condiviso da ogni nodo di lista), la terza e' del POOL, e il
+;  queue.vinc, condiviso da ogni nodo di lista), la terza e' del POOL, e il
 ;  formato dispone di cio' che comincia a +12. Il pool non conosce nessun
 ;  formato e non va toccato per aggiungerne uno; e' il formato che si adatta.
 ;  messaggio.vinc lo fa dal suo lato, dando un nome proprio (PAYLOAD.pool) alla
@@ -70,7 +70,7 @@
 ;  blocco e ".res BLOCCO" non va usata — si usano le BLOCCOnn qui sotto.
 ; --------------------------------------------------------------------------
 .struct BLOCCO
-  .field pointers LINK.size ; +0  i link, annidati da coda.vinc <- l'indirizzo
+  .field pointers LINK.size ; +0  i link, annidati da queue.vinc <- l'indirizzo
                             ;     consegnato e' questo, cioe' &blocco.pointers
   .field pool               ; +8  taglia dell'area dati, scritta a pool_init e mai
                           ;     piu' toccata: e' una proprieta' permanente del
@@ -129,7 +129,7 @@
 ;  dentro. Riconosce tre cose che non deve accettare — un buffer che non viene
 ;  dal pool, un doppio rilascio, e il rilascio di un buffer ANCORA accodato in
 ;  una lista. Le ultime due si vedono dai link, grazie all'invariante di
-;  coda.vasm (un nodo fuori da ogni lista ha fwd == bwd == 0).
+;  queue.vasm (un nodo fuori da ogni lista ha fwd == bwd == 0).
 ; --------------------------------------------------------------------------
 .equ POOL_OK        0
 .equ POOL_VUOTO     1   ; classe esaurita: riprovare piu' tardi

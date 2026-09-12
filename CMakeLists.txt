@@ -126,7 +126,7 @@ vasm_check(proc       MODE DUMPS EXPECT "100 200 300"
 # link), quindi i suoi -I se li scrive a mano invece di riceverli da
 # INTERFACES. La lista cresce di uno a ogni libreria che si sposta, ed e' il
 # vincolo che funziona: il file nomina tcb.vinc e pool.vinc, e pool.vinc tira
-# dentro coda.vinc. Le cartelle si prendono dai target e non a percorso, cosi'
+# dentro queue.vinc. Le cartelle si prendono dai target e non a percorso, cosi'
 # seguono le librerie se si spostano ancora.
 #
 # Resta legacy di proposito: e' il test dell'assemblatore, e passargli i -I a
@@ -140,7 +140,7 @@ vasm_check(proc       MODE DUMPS EXPECT "100 200 300"
 vasm_check(include    MODE DUMPS EXPECT "24 16 16 512 1"
            IFLAGS -I$<TARGET_PROPERTY:vinc_tcb,INTERFACE_INCLUDE_DIRECTORIES>
                   -I$<TARGET_PROPERTY:vinc_pool,INTERFACE_INCLUDE_DIRECTORIES>
-                  -I$<TARGET_PROPERTY:vinc_coda,INTERFACE_INCLUDE_DIRECTORIES>
+                  -I$<TARGET_PROPERTY:vinc_queue,INTERFACE_INCLUDE_DIRECTORIES>
            SOURCE ${CMAKE_SOURCE_DIR}/tests/test_include.vasm)
 vasm_check(epsw       MODE DUMPS EXPECT "1 0 0 7"
            SOURCE ${CMAKE_SOURCE_DIR}/tests/test_epsw.vasm)

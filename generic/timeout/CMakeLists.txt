@@ -2,7 +2,7 @@
 #  lib_timeout — il gestore dei timeout a messaggio (§9).
 #
 #  Sta in generic/ per il criterio letterale: timeout.vasm externa irq_save e
-#  irq_restore e nient'altro, la stessa firma esatta di coda.vasm. Non nomina
+#  irq_restore e nient'altro, la stessa firma esatta di queue.vasm. Non nomina
 #  lo scheduler, quindi non e' rtos.
 #
 #  Una cosa da sapere e non da scoprire: tmo_now e' un contatore di tick, e

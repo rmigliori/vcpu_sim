@@ -19,7 +19,7 @@
 ; Pipeline (-I: ogni sorgente qui sotto ha una .include da risolvere):
 ;   I=-Ilinked/scheduler/include
 ;   ./build/vcpu_sim asm $I linked/scheduler/hal/machine.vasm            -o build/machine.vo
-;   ./build/vcpu_sim asm $I linked/scheduler/kernel/coda.vasm            -o build/coda.vo
+;   ./build/vcpu_sim asm $I linked/scheduler/kernel/queue.vasm            -o build/coda.vo
 ;   ./build/vcpu_sim asm $I linked/scheduler/kernel/scheduler.vasm       -o build/scheduler.vo
 ;   ./build/vcpu_sim asm $I linked/scheduler/kernel/messageHandling.vasm -o build/msg.vo
 ;   ./build/vcpu_sim asm $I tests/test_mailbox.vasm                      -o build/test_mailbox.vo
@@ -29,7 +29,7 @@
 ;
 ; Atteso, in ordine:  0  1  2  11  22  0  33  0  0
 
-.include "coda/coda_api.vinc"
+.include "queue/queue_api.vinc"
 .include "tcb/tcb.vinc"
 .include "messaggio/messaggio.vinc"
 

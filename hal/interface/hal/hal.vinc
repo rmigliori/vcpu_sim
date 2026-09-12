@@ -11,7 +11,7 @@
 ; regola. Diceva "come in ogni .vinc: le procedure si importano con .extern, che
 ; e' un'altra cosa", e contraddiceva §8.6 della proposta, per cui un fornitore
 ; pubblica anche "gli indirizzi delle entry se e' un'API". Ha ceduto la regola:
-; generic/coda ha ora un coda_api.vinc con le entry e il contratto di chiamata,
+; generic/queue ha ora un queue_api.vinc con le entry e il contratto di chiamata,
 ; e l'HAL e' il prossimo — finche' non ce l'ha, chi chiama irq_save o
 ; ctx_restore continua a scriversi gli .extern a mano e a scoprire da
 ; machine.vasm in quali registri passano gli argomenti.

@@ -86,7 +86,7 @@
 ; non ha ricevuto, e non riceve finche' l'ISR non consegna.
 
 .include "tcb/tcb.vinc"
-.include "coda/coda_api.vinc"
+.include "queue/queue_api.vinc"
 .include "mailbox/mailbox.vinc"
 
   .data

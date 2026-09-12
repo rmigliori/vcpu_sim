@@ -2,12 +2,12 @@
 ;
 ; Interfaccia CONDIVISA fra chi manda e chi riceve, non del kernel:
 ; kernel/messageHandling.vasm sa muovere i messaggi ma non ne legge un byte
-; (§8.4). Include coda.vinc perche' un messaggio E' un nodo di lista e una
+; (§8.4). Include queue.vinc perche' un messaggio E' un nodo di lista e una
 ; mailbox E' una TESTA.
 ;
 ; Nato il 05/09/2026 spezzando types.vinc (§12.6, passo 4).
 
-.include "coda/coda.vinc"
+.include "queue/queue.vinc"
 
 ; Messaggio: per il kernel e' SOLO un nodo di coda. Due link, e da +8 in poi il
 ; payload — che il kernel non legge e non scrive MAI: comporlo correttamente e'

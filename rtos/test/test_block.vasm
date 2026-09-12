@@ -34,7 +34,7 @@
 ; sbaglia esattamente cosi', contando un bordo che non c'e'.)
 
 .include "tcb/tcb.vinc"
-.include "coda/coda_api.vinc"
+.include "queue/queue_api.vinc"
 .include "mailbox/mailbox.vinc"
 
   .data

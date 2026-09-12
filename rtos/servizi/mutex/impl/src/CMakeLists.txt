@@ -9,5 +9,5 @@
 # puo' diventare eseguibile qualcuno che durante la sezione critica non poteva.
 vasm_library(lib_mutex
   SOURCES    ${CMAKE_CURRENT_SOURCE_DIR}/mutex.vasm
-  INTERFACES vinc_coda vinc_mutex vinc_tcb
-  LINK       lib_coda)
+  INTERFACES vinc_queue vinc_mutex vinc_tcb
+  LINK       lib_queue)

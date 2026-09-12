@@ -58,7 +58,7 @@
 ; test_mailbox si scrive i propri stub.
 
 .include "tcb/tcb.vinc"
-.include "coda/coda_api.vinc"
+.include "queue/queue_api.vinc"
 
   .data
 

@@ -3,12 +3,12 @@
 ;
 ; Stessa forma di mailbox.vinc e per la stessa ragione (§3.27 dell'handoff): il
 ; layout e' quello di TESTA, ma il terzo campo ha una convenzione che non e'
-; quella di coda.vasm, e finche' il codice scrive "TESTA.count" quella
+; quella di queue.vasm, e finche' il codice scrive "TESTA.count" quella
 ; convenzione sta in un commento invece che nel codice.
 ;
 ; --- LE TRE CONVENZIONI DEL TERZO CAMPO, IN UN COLPO D'OCCHIO ---
 ;
-;   teste CONTATE     count >= 0 = numero di nodi         lo scrive coda.vasm
+;   teste CONTATE     count >= 0 = numero di nodi         lo scrive queue.vasm
 ;   MAILBOX.count     DESCRITTIVO col segno (§8.2)        lo scrive la mailbox
 ;   SEMAFORO.risorse  CONTABILE: disponibili meno in      lo scrive il semaforo
 ;                     attesa (§13.1)
@@ -40,9 +40,9 @@
 ; DERIVA — se il campo di TESTA venisse rinominato questa riga non assembla piu'
 ; invece di produrre un offset sbagliato.
 ;
-; .equ risolve al momento della definizione, quindi coda.vinc va incluso PRIMA.
+; .equ risolve al momento della definizione, quindi queue.vinc va incluso PRIMA.
 
-.include "coda/coda.vinc"
+.include "queue/queue.vinc"
 
 .equ SEMAFORO.risorse  TESTA.count   ; il contatore CONTABILE (§13.1)
 .equ SEMAFORO.size     TESTA.size    ; ".res SEMAFORO" alloca un semaforo

@@ -73,7 +73,7 @@
 ; test dipende dal periodo del timer.
 
 .include "tcb/tcb.vinc"
-.include "coda/coda_api.vinc"
+.include "queue/queue_api.vinc"
 .include "mutex/mutex.vinc"
 .include "mailbox/mailbox.vinc"
 

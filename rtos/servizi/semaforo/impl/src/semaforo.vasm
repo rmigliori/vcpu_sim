@@ -14,7 +14,7 @@
 ;
 ;   risorse = DISPONIBILI - IN ATTESA, e i nodi in lista sono max(0, -risorse)
 ;
-; Contabilita' in mano a noi => si usa SOLO lo strato _nc di coda.vasm (una sola
+; Contabilita' in mano a noi => si usa SOLO lo strato _nc di queue.vasm (una sola
 ; disciplina per testa). Mai enqueue_coda/dequeue_testa su un semaforo:
 ; muoverebbero un contatore che qui significa un'altra cosa.
 ;
@@ -74,7 +74,7 @@
 ; conteggio, o il cui tempo di tenuta, non e' stato analizzato: si aggiusta
 ; nell'analisi, non nel runtime. E' lo stesso principio di §13.5 sul ceiling.
 
-.include "coda/coda_api.vinc"
+.include "queue/queue_api.vinc"
 .include "semaforo/semaforo.vinc"
 .include "tcb/tcb.vinc"
 
@@ -99,7 +99,7 @@
 ;  posizionale.
 ;
 ;  Non-foglia (chiama coda_init), corpo lineare, un solo ret, API pubblica ->
-;  .proc/.endproc. coda_init non tocca r2 (lo dichiara coda_api.vinc), quindi il
+;  .proc/.endproc. coda_init non tocca r2 (lo dichiara queue_api.vinc), quindi il
 ;  conteggio arriva intatto alla sw.
 ; ==========================================================================
   .proc sem_init
@@ -150,9 +150,9 @@ sem_wait_fine:
 ;  L'ATTESA: la camminata di §13.6, e dove si ferma.
 ;
 ;  Con N in attesa chi affiora al post deve essere il PIU' PRIORITARIO, quindi
-;  la lista e' tenuta ordinata all'INSERIMENTO. Lo splice lo fa coda.vasm
+;  la lista e' tenuta ordinata all'INSERIMENTO. Lo splice lo fa queue.vasm
 ;  (enqueue_dopo_nc) e la scansione passa da coda_peek: qui sta solo la
-;  POLITICA, cioe' il confronto — che e' l'unica cosa che coda.vasm non puo'
+;  POLITICA, cioe' il confronto — che e' l'unica cosa che queue.vasm non puo'
 ;  sapere, perche' dovrebbe sapere che il nodo e' un TCB (§13.6).
 ;
 ;  Il confronto e' una blt SUI PUNTATORI ai PCB, resa possibile dall'invariante
@@ -168,7 +168,7 @@ sem_wait_fine:
 ;  decremento l'abbiamo gia' fatto noi. Cosi' il limite della sezione critica
 ;  che §13.6 chiede di DICHIARARE e' strutturale — questo ciclo non puo' girare
 ;  piu' di N volte nemmeno se la lista fosse corrotta — e la circolarita' resta
-;  dentro coda.vasm, che e' l'unico posto che ha ragione di conoscerla.
+;  dentro queue.vasm, che e' l'unico posto che ha ragione di conoscerla.
 ; --------------------------------------------------------------------------
 sem_wait_attendi:
   li r5, current

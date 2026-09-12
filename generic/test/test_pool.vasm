@@ -8,7 +8,7 @@
 ;   - i tre rifiuti di buf_free: doppio rilascio, buffer estraneo, e (implicito
 ;     nel primo) buffer ancora accodato.
 ;
-; Il doppio rilascio si vede grazie all'invariante dei link di coda.vasm: dopo
+; Il doppio rilascio si vede grazie all'invariante dei link di queue.vasm: dopo
 ; il primo buf_free il blocco e' nella free-list, quindi ha i link non nulli.
 ;
 ; machine.vasm entra nel link per irq_save/irq_restore (li vogliono i wrapper _s
@@ -20,7 +20,7 @@
 ; Pipeline (-I: ogni sorgente qui sotto ha una .include da risolvere):
 ;   I=-Ilinked/scheduler/include
 ;   ./build/vcpu_sim asm $I linked/scheduler/hal/machine.vasm      -o build/machine.vo
-;   ./build/vcpu_sim asm $I linked/scheduler/kernel/coda.vasm      -o build/coda.vo
+;   ./build/vcpu_sim asm $I linked/scheduler/kernel/queue.vasm      -o build/coda.vo
 ;   ./build/vcpu_sim asm $I linked/scheduler/kernel/scheduler.vasm -o build/scheduler.vo
 ;   ./build/vcpu_sim asm $I linked/scheduler/kernel/pool.vasm      -o build/pool.vo
 ;   ./build/vcpu_sim asm $I tests/test_pool.vasm                   -o build/test_pool.vo
@@ -31,7 +31,7 @@
 ; Atteso, in ordine:  10 4 0  0 9  0 32 3  2 0  0 4  4 4  3  0 0  1 4
 
 .include "pool/pool.vinc"
-.include "coda/coda.vinc"
+.include "queue/queue.vinc"
 
   .data
 

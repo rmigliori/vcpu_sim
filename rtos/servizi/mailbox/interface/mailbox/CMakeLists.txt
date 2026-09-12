@@ -5,4 +5,4 @@ get_filename_component(_iface_dir ${CMAKE_CURRENT_SOURCE_DIR} DIRECTORY)
 vasm_interface(vinc_mailbox
   DIR        ${_iface_dir}
   HEADERS    mailbox/mailbox.vinc
-  INTERFACES vinc_coda)
+  INTERFACES vinc_queue)

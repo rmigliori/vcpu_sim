@@ -20,5 +20,5 @@
 # lo dichiara e' il test, che il payload lo compone davvero.
 vasm_library(lib_messaggi
   SOURCES    ${CMAKE_CURRENT_SOURCE_DIR}/messageHandling.vasm
-  INTERFACES vinc_coda vinc_mailbox vinc_tcb
-  LINK       lib_coda)
+  INTERFACES vinc_queue vinc_mailbox vinc_tcb
+  LINK       lib_queue)

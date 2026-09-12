@@ -23,14 +23,14 @@
 #
 #  Sono davvero due cose diverse e il progetto lo mostra: lib_kernel LINKa le
 #  code ma non ne dichiara l'interfaccia, perche' scheduler.vasm chiama
-#  enqueue_coda senza aver bisogno di una sola costante di coda.vinc. Tenerle
+#  enqueue_coda senza aver bisogno di una sola costante di queue.vinc. Tenerle
 #  in due parole chiave e non in una lista sola e' quello che rende quel fatto
 #  leggibile al punto di chiamata invece che deducibile da com'e' fatto un
 #  target definito altrove.
 #
 #  Si propagano anche con regole diverse, ed e' la ragione per cui la chiusura
 #  e' calcolata due volte da due funzioni distinte. I -I sono transitivi FRA
-#  INTERFACCE (tcb.vinc contiene .include "coda.vinc": chi nomina la prima deve
+#  INTERFACCE (tcb.vinc contiene .include "queue.vinc": chi nomina la prima deve
 #  ricevere la cartella della seconda) ma NON attraversano un arco fra
 #  librerie: se lo facessero, chi dichiara LINK lib_messaggi si ritroverebbe
 #  gratis i -I di code, TCB e HAL, e potrebbe includerne gli header senza
@@ -83,7 +83,7 @@ endfunction()
 # che conosce; la chiusura transitiva la calcola _vasm_closure qui sotto.
 #
 # INTERFACES sono le interfacce che questa include a sua volta: tcb.vinc
-# contiene .include "coda.vinc", quindi vinc_tcb dichiara INTERFACES vinc_coda
+# contiene .include "queue.vinc", quindi vinc_tcb dichiara INTERFACES vinc_queue
 # e chi nomina il primo riceve la cartella del secondo. Non e' un LINK: qui non
 # ci sono simboli da risolvere, un .vinc non emette un byte.
 function(vasm_interface name)
@@ -195,7 +195,7 @@ endfunction()
 
 # --- una libreria vera: sorgenti + dipendenze verso altre librerie ----------
 #
-#  vasm_library(lib_pool SOURCES pool.vasm INTERFACES vinc_pool LINK lib_coda)
+#  vasm_library(lib_pool SOURCES pool.vasm INTERFACES vinc_pool LINK lib_queue)
 #
 #  Le due specie di dipendenza dell'intestazione di questo file:
 #    INTERFACES  le interfacce (.vinc) da cui prende costanti -> diventano -I
@@ -203,7 +203,7 @@ endfunction()
 #                sul comando di ld, chiuse transitivamente
 #
 #  La chiusura e' il punto: un programma che linka lib_messaggi non deve sapere
-#  che sotto ci sono lib_coda e lib_hal. Prima quella conoscenza stava scritta a
+#  che sotto ci sono lib_queue e lib_hal. Prima quella conoscenza stava scritta a
 #  mano nell'intestazione di ogni test, come lista ordinata di .vo.
 function(vasm_library name)
   cmake_parse_arguments(A "" "" "SOURCES;INTERFACES;LINK" ${ARGN})

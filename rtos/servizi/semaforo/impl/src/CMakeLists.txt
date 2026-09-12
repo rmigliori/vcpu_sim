@@ -11,5 +11,5 @@
 # campo tranne lo state.
 vasm_library(lib_semaforo
   SOURCES    ${CMAKE_CURRENT_SOURCE_DIR}/semaforo.vasm
-  INTERFACES vinc_coda vinc_semaforo vinc_tcb
-  LINK       lib_coda)
+  INTERFACES vinc_queue vinc_semaforo vinc_tcb
+  LINK       lib_queue)

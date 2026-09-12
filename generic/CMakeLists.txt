@@ -21,7 +21,7 @@
 # In ordine di dipendenza, come ovunque nell'albero: messaggio prima di
 # timeout, che dal 07/09/2026 ne usa il formato per comporre il messaggio di
 # scadenza (timeout_scaduto).
-add_subdirectory(coda)
+add_subdirectory(queue)
 add_subdirectory(pool)
 add_subdirectory(messaggio)
 add_subdirectory(timeout)

@@ -4,7 +4,7 @@
 #
 # E' l'unica dipendenza che generic/ ha verso il basso, ed e' un contratto di
 # due simboli: e' questo che rende la cartella sollevabile altrove.
-vasm_library(lib_coda
-  SOURCES    ${CMAKE_CURRENT_SOURCE_DIR}/coda.vasm
-  INTERFACES vinc_coda
+vasm_library(lib_queue
+  SOURCES    ${CMAKE_CURRENT_SOURCE_DIR}/queue.vasm
+  INTERFACES vinc_queue
   LINK       lib_hal)

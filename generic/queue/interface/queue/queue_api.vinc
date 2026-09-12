@@ -1,5 +1,5 @@
-; coda/coda_api.vinc — INTERFACCIA DI CHIAMATA di generic/coda: le entry e il
-; contratto con cui si chiamano. I tipi stanno accanto, in coda.vinc, ed e'
+; queue/queue_api.vinc — INTERFACCIA DI CHIAMATA di generic/queue: le entry e il
+; contratto con cui si chiamano. I tipi stanno accanto, in queue.vinc, ed e'
 ; questo file a includerli: un cliente ne include UNO SOLO e ha tutto.
 ;
 ; Nato il 07/09/2026. Prima gli .extern se li scriveva ogni cliente a mano, e
@@ -15,11 +15,11 @@
 ; stesso modulo dichiara .global e' un errore secco dell'assembler
 ; ("'enqueue_coda' is both defined and .extern"). Quindi:
 ;
-;   coda.vinc      i TIPI            lo include il FORNITORE (coda.vasm) e gli
+;   queue.vinc      i TIPI            lo include il FORNITORE (queue.vasm) e gli
 ;                                    altri header i cui nodi sono liste —
 ;                                    tcb.vinc, messaggio.vinc, pool.vinc:
 ;                                    vogliono TESTA, non le procedure
-;   coda_api.vinc  i TIPI + le ENTRY lo include CHI CHIAMA
+;   queue_api.vinc  i TIPI + le ENTRY lo include CHI CHIAMA
 ;
 ; Ne discendono due regole, e la seconda serve a rendere la prima impossibile da
 ; violare per sbaglio:
@@ -36,7 +36,7 @@
 ; prima avevano gli .extern scritti a mano in cima a ogni sorgente, e che
 ; sarebbe andato perso spostandoli qui dentro se gli _api si concatenassero.
 
-.include "coda/coda.vinc"
+.include "queue/queue.vinc"
 
 ; --------------------------------------------------------------------------
 ;  CONVENZIONE DEI REGISTRI
@@ -52,7 +52,7 @@
 ;  (0 = vuota). r3 arriva intatto al chiamante.
 ;
 ;  Le tre discipline — contate, _nc (contatore al chiamante), _s (protette) —
-;  e la regola "una sola disciplina per testa" stanno in cima a coda.vasm, che
+;  e la regola "una sola disciplina per testa" stanno in cima a queue.vasm, che
 ;  e' il posto dove si spiegano; qui c'e' come si chiamano.
 ; --------------------------------------------------------------------------
 

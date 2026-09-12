@@ -1,6 +1,6 @@
 ; kernel/messageHandling.vasm — mailbox: send e receive.
 ;
-; Una MAILBOX *e'* una testa di coda (kernel/coda.vasm): stesso layout, stesse
+; Una MAILBOX *e'* una testa di coda (kernel/queue.vasm): stesso layout, stesse
 ; primitive. Cambia solo la convenzione del contatore, ed e' li' che sta tutto
 ; il disegno.
 ;
@@ -21,7 +21,7 @@
 ; nodi di tipo diverso in lista, e da li' non si torna indietro.
 ;
 ; UNA MAILBOX PER TASK: chi deve ricevere ha la sua. Quindi il negativo vale solo
-; -1, e non serve l'inserimento ordinato per priorita' che coda.vasm non ha —
+; -1, e non serve l'inserimento ordinato per priorita' che queue.vasm non ha —
 ; con piu' riceventi svegliare in ordine FIFO sarebbe un'inversione di priorita'
 ; silenziosa. Ne discende anche che nessuno puo' rubare il messaggio al
 ; risvegliato: la receive NON ha bisogno del ciclo di ricontrollo che un semaforo
@@ -37,8 +37,8 @@
 ; interpretarlo di chi lo riceve; a chi serve un header proprio — il gestore dei
 ; timeout, per esempio — se lo dichiara dentro il payload, e resta affare suo.
 ;
-; Contabilita' in mano a noi => si usa SOLO lo strato _nc di coda.vasm (una sola
-; disciplina per testa, vedi la regola in coda.vasm). Mai enqueue_coda/
+; Contabilita' in mano a noi => si usa SOLO lo strato _nc di queue.vasm (una sola
+; disciplina per testa, vedi la regola in queue.vasm). Mai enqueue_coda/
 ; dequeue_testa su una mailbox: decrementerebbero un contatore che qui significa
 ; un'altra cosa.
 ;
@@ -54,7 +54,7 @@
 ;                          di lui. Non facciamo ipotesi su come lasci IE: la
 ;                          receive ristabilisce la sezione critica da sola.
 
-.include "coda/coda_api.vinc"
+.include "queue/queue_api.vinc"
 .include "mailbox/mailbox.vinc"
 .include "tcb/tcb.vinc"
 
@@ -90,7 +90,7 @@
 ;  sfilato, e un rifiuto a quel punto lascerebbe la mailbox a meta' — TCB fuori,
 ;  messaggio non dentro, contatore a -1. Controllando prima, il contratto e'
 ;  netto: o il messaggio e' accodato, o non e' stato toccato niente.
-;  I link si leggono con gli offset di LINK, come fa coda.vasm su ogni nodo: sono
+;  I link si leggono con gli offset di LINK, come fa queue.vasm su ogni nodo: sono
 ;  la parte del messaggio che appartiene al kernel, e cosi' resta vero che qui
 ;  dentro non si referenzia nessun campo di MESSAGGIO.
 ;
@@ -219,7 +219,7 @@ receive_doppio:
 
 ; ==========================================================================
 ;  send_s(r1 = &mailbox, r2 = &messaggio): la send in sezione critica, per l'uso
-;  da TASK (IE=1). Stessa forma dei wrapper _s di coda.vasm — non-foglia, corpo
+;  da TASK (IE=1). Stessa forma dei wrapper _s di queue.vasm — non-foglia, corpo
 ;  lineare, un solo ret, API pubblica -> .proc/.endproc. La psw viaggia in r5 e
 ;  va conservata attraverso la call; irq_save/irq_restore non toccano r1/r2,
 ;  quindi gli argomenti della send restano intatti.

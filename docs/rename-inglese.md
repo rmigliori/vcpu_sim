@@ -1,9 +1,28 @@
-# Il rename all'inglese — elenco da approvare
+# Il rename all'inglese — elenco approvato
+
+> ## ✔ APPROVATO il 13/09/2026, senza varianti
+>
+> L'utente ha approvato l'elenco **così com'è**: tutte e sei le scelte di §1
+> (compresa `scadenza` → **`expiry`** e non `deadline`), il vocabolario di §2 e
+> l'API di §3. Da qui in avanti questo documento **non è una proposta**: è il
+> contratto contro cui i commit si verificano, e una divergenza fra il codice e
+> queste tabelle è un difetto del codice.
+>
+> Se qualcosa va cambiato dopo, si cambia **qui prima** e nel codice poi.
 
 > Deciso il **13/09/2026** (§3.42 di [`stato-lavori.md`](stato-lavori.md)): **i
-> nomi passano all'inglese, i commenti restano in italiano**. Questo documento è
-> l'elenco che si approva **prima** di toccare un file. Non è la spiegazione
-> della decisione: quella sta in §3.42.
+> nomi passano all'inglese, i commenti restano in italiano**. Non è la
+> spiegazione della decisione: quella sta in §3.42.
+
+> ### Una regola che il primo commit ha imposto, e non era nell'elenco
+>
+> **Un commento che nomina un FILE non è lingua, è un riferimento.** `coda.vasm`
+> dentro un commento italiano diventa `queue.vasm`, perché il file si chiama
+> così: lasciarlo sarebbe la «doppia verità» che il progetto ha già fra i debiti,
+> e sarebbe **creata di nuovo apposta**. La prosa italiana intorno non si tocca.
+>
+> Distinzione, in una riga: si traduce ciò che **nomina**, non ciò che
+> **spiega**.
 
 ---
 

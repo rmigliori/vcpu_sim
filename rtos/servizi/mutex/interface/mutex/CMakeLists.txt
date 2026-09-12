@@ -6,4 +6,4 @@ get_filename_component(_iface_dir ${CMAKE_CURRENT_SOURCE_DIR} DIRECTORY)
 vasm_interface(vinc_mutex
   DIR        ${_iface_dir}
   HEADERS    mutex/mutex.vinc
-  INTERFACES vinc_coda)
+  INTERFACES vinc_queue)

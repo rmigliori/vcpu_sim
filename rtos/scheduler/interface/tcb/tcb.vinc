@@ -2,8 +2,8 @@
 ; stati. E' quello che mailbox, semafori e mutex devono conoscere del kernel per
 ; parlargli, e nient'altro.
 ;
-; Include coda.vinc perche' il TCB E' un nodo di lista: annida il blocco LINK a
-; offset 0, cosi' il puntatore al TCB E' il puntatore ai link e coda.vasm non ha
+; Include queue.vinc perche' il TCB E' un nodo di lista: annida il blocco LINK a
+; offset 0, cosi' il puntatore al TCB E' il puntatore ai link e queue.vasm non ha
 ; bisogno di nessun container_of. Fino al 07/09/2026 i due link erano
 ; ridichiarati qui a mano, con l'obbligo non verificato di restare allineati a
 ; TESTA.
@@ -16,11 +16,11 @@
 ; di quel confine: quando sara' sanata, questo file smettera' di essere incluso
 ; da chi non e' kernel — e il grep a zero sara' la prova che il confine e' vero.
 
-.include "coda/coda.vinc"
+.include "queue/queue.vinc"
 
 ; Descrittore di task.
 .struct TCB
-  .field pointers  LINK.size   ; +0  i link, annidati da coda.vinc
+  .field pointers  LINK.size   ; +0  i link, annidati da queue.vinc
   .field sp                    ; +8  contesto opaco salvato
   .field pcb                   ; +12 INDIRIZZO del PCB del suo livello (§7.3)
   .field state                 ; +16 stato corrente
@@ -67,7 +67,7 @@
 ;  PCB — un descrittore per livello di priorita' (§3, §4 della proposta).
 ;
 ;  La TESTA e' ANNIDATA, non puntata: §3 lo lasciava "da valutare" e la forma
-;  e' quella di LINK in coda.vinc. Costa zero e rende vere due cose:
+;  e' quella di LINK in queue.vinc. Costa zero e rende vere due cose:
 ;
 ;    - si risparmia una lw per ogni livello scandito, e la scansione e' il
 ;      percorso piu' caldo del kernel;
