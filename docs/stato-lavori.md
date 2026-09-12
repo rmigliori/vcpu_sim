@@ -28,11 +28,16 @@
 > è misurata: **una sola istruzione in più** su un ramo mai eseguito muove
 > l'impronta di **dieci programmi su quindici** mentre `ctest` resta 32/32.
 >
-> **Da fare al prossimo giro, e va detto subito:** il push. Fuori c'è ancora
-> `299be2c`, cioè **prima della fusione**. Da mandare ci sono il merge, i quattro
-> commit di preparazione, gli otto del rename e **il tag**, che non viaggia da
-> solo (`git push origin italiano-pre-rename`). E poi si può cancellare il ramo
-> `mutex-cede-solo-se-serve`, locale e remoto.
+> **PUSHATO** il 13/09 a fine giornata, su richiesta: `origin/master` è a
+> `463191b` — quindici commit, dalla fusione all'ultimo del rename — e il tag
+> **`italiano-pre-rename` è fuori** (`6bb3383`), mandato a parte perché i tag non
+> viaggiano da soli. Fuori non resta niente, salvo il commit che aggiorna questo
+> paragrafo: un commit non può nominare il proprio hash.
+>
+> **Resta da cancellare il ramo `mutex-cede-solo-se-serve`**, locale e remoto: è
+> fuso per intero in `master` e non serve più. Non l'ho fatto di mia iniziativa
+> perché cancellare un ramo remoto è l'unica cosa irreversibile di questa
+> giornata.
 >
 > Il 12/09 aveva fatto tre cose, e la terza è la più grossa.
 >
@@ -2965,8 +2970,14 @@ Sono la parte che vale per il futuro, perché ognuna è costata un errore vero.
 **`tools/trace.py` su `test_events` dice «boot 100%», cioè non riconosce i corpi
 dei task** — una fascia sola, zero tick. Verificato in un worktree sul tag:
 **risultato identico prima del rename**, quindi non è una regressione di questi
-commit. Va guardato a parte, e stona con il «idle 86,9%» del 12/09: una delle due
-misure non dice quello che sembra.
+commit.
+
+E lo strumento **non è rotto in generale**: sullo stesso albero, `test_tmgr` dà
+una ripartizione sensata (ISR 11,4%, A 8,8%, boot 2,8%). È `test_events`
+l'anomalia, ed è proprio il programma su cui il 12/09 si era letto **«idle
+86,9%»**. Una delle due misure non dice quello che sembra, e va guardato a
+parte — con l'avvertenza che le fasce sono **dedotte**, come lo strumento stesso
+dichiara.
 
 ---
 
@@ -4280,7 +4291,7 @@ chiuso. **`tools/trace.py`**, cartella nuova al primo livello decisa
 dall'utente, produce una pagina HTML autosufficiente:
 
 ```bash
-python3 tools/trace.py out/vasm/test_tmgr.vx      # -> out/traccia.html
+python3 tools/trace.py out/vasm/test_tmgr.vx      # -> out/trace.html
 ```
 
 `out/` è già ignorato da git, quindi la pagina non sporca il working tree; il
@@ -5570,70 +5581,58 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 > autorevole. Le formule superate sono state tolte, non archiviate: la cronaca
 > di come ci si è arrivati sta in §3, che è il posto giusto per il passato.
 
-**Il prossimo passo — semafori e mutex, §13:**
+> **Tolte il 13/09/2026, per la stessa ragione:** la formula «il prossimo passo —
+> semafori e mutex, §13» mandava su una sezione **chiusa dal 12/09**, e quelle
+> per le decisioni del 07/09 e i difetti del build dicevano «alla fine `ctest`
+> 26/26» quando i test sono **32**. Erano diventate esattamente ciò che il
+> riquadro qui sopra mette in guardia dal tenere.
+
+**IL PROSSIMO PASSO — l'assemblaggio condizionale (`.ifdef` e `-D`):**
 ```
-Leggi docs/proposta-kernel-realtime.md §13 per intero, poi §8 (la mailbox) e
-§7.4 (perche' il ceiling). Come ci si e' arrivati sta in docs/stato-lavori.md
-§3.25 e §3.26 -- e §3.26 contiene decisioni che nella proposta NON ci sono
-ancora. Nascono in rtos/services/, accanto alla mailbox.
+Leggi docs/stato-lavori.md dal riquadro «RIPRENDI DA QUI», poi la nota
+«Dove va il filtro condizionale» dentro la sezione del prossimo passo.
 
-DECISO, da non riaprire senza una ragione nuova:
-  - priority ceiling, non ereditarieta' (§7.4);
-  - il semaforo NON e' una mailbox: contatore contabile contro descrittivo
-    (§13.1), e non e' lo stesso tipo con un parametro diverso;
-  - il mutex E' la sezione critica, cioe' cli con un limite per risorsa
-    (§13.2), e non ci si blocca tenendolo (§13.4);
-  - la coda del mutex esiste per far DEGRADARE un ceiling sbagliato invece
-    che appendere, non per essere usata (§13.5);
-  - l'ordinamento per priorita' e' del chiamante: queue.vasm prende una
-    enqueue_dopo agnostica e non sa perche' la si chiama (§13.6);
-  - sem_wait NON ha timeout: e' una deduzione da §9 (il timeout e' una
-    consegna in mailbox), non una scelta fra due uscite (§3.26);
-  - 0 e' la priorita' PIU' ALTA (§3.28), quindi §13.5 promuove al ceiling
-    con un MINIMO, non con un massimo: e' il verso che si sbaglia rileggendo;
-  - un solo TCB in attesa per mailbox, contatore che si incrementa per i
-    messaggi, invariante count >= -1 (§3.26).
+Serve perche' le tre categorie fisse del marcatore -- scheduler, dispatcher,
+ISR -- stanno nel KERNEL: senza un modo di compilarle via, il kernel resta
+strumentato per sempre e ogni EXPECT che dipende dai cicli si sposta una
+volta e non torna piu'.
 
-APERTO: SEMAPHORE.resources, il terzo campo di HEAD nominato dal proprietario.
-Deciso nella FORMA (un .equ derivato da HEAD.count, come MAILBOX.count in
-§3.27) e non scritto, perche' il semaforo non ha ancora codice.
+GIA' GUARDATO, da non ri-scoprire: l'assembler legge il sorgente UNA VOLTA
+SOLA -- pass 1 scorre le righe con inc_next_line e salva le righe di codice
+per pass 2, e vale identico per assemble() e assemble_object(). Quindi il
+filtro ha un punto di strozzatura unico, inc_next_line in src/assembler.c,
+e le due passate non possono divergere per costruzione.
 
-Alla fine ctest deve dare 26/26.
-```
+DECISO: .ifdef interroga SOLO i simboli di -D, non quelli di .equ. Le .equ
+si raccolgono durante pass 1 e IN ORDINE, quindi .ifdef su una .equ
+dipenderebbe da dove sta scritta -- la stessa trappola silenziosa di .word
+con una costante, che e' gia' fra i debiti. Quattro direttive (.ifdef,
+.ifndef, .else, .endif) e -D NOME come PRESENZA: -DNOME=valore e' un'altra
+funzione e non serve a compilare via la strumentazione.
 
-**Per riportare nella proposta le decisioni del 07/09 (sola scrittura):**
-```
-Leggi docs/stato-lavori.md §3.26 e la tabella in fondo "Cosa resta da
-scrivere". Cinque voci di quel giorno sono verbalizzate solo nell'handoff:
-vanno riportate in docs/proposta-kernel-realtime.md nelle sezioni che la
-tabella indica. Non c'e' niente da decidere: e' trascrizione.
+Alla fine ctest 32/32 e tools/fingerprint.sh con diff VUOTO -- e si
+controlla l'EXIT CODE del build, non il suo log (§3.43).
 ```
 
-**Per le intestazioni dei test — l'unico debito che peggiora col tempo:**
+**Per i quattro documenti sullo scheduler (il nucleo fattuale, non ancora
+cominciato):**
 ```
-Leggi docs/stato-lavori.md §3.24 e la sezione di §5 "Ristrutturazione
-dell'albero". L'albero e' fatto; resta la doppia verita' nelle intestazioni
-dei test: le pipeline scritte a mano nominano linked/scheduler/, che non
-esiste piu', e ripetono i numeri attesi. Vanno riscritte con COSA verifica
-il test e PERCHE'; pipeline e numeri se ne vanno dove li esegue la macchina.
-tests/test_include.vasm e' gia' cosi' e vale da modello. I quattro test
-dell'RTOS (scheduler, block, catena, gestore) sono gia' scritti bene e
-valgono da modello anche loro. Alla fine ctest 26/26, stessi numeri.
-```
+Leggi docs/stato-lavori.md, il riquadro «I QUATTRO DOCUMENTI SULLO
+SCHEDULER». Forma e lingue sono decise il 12/09; quel che manca e' il
+NUCLEO FATTUALE -- il posto unico in cui stanno i numeri, con scritto COME
+sono stati ottenuti, che i quattro testi citano invece di ripetere.
 
-**Per i difetti minori del build (piccoli e indipendenti):**
-```
-Leggi docs/stato-lavori.md, punto 2 della sezione di §5 "Ristrutturazione
-dell'albero": CMAKE_SOURCE_DIR dove va PROJECT_SOURCE_DIR, -Wall globale e
-non guardato dal compilatore, file(GLOB) senza CONFIGURE_DEPENDS, la
-collisione fra il programma multi e il test multi. Resta anche --emit-deps
-nell'assembler, per avere le dipendenze scoperte invece che dichiarate.
-Alla fine ctest 26/26.
+Tre regole, e sono quelle del codice: un nucleo fattuale solo; il didattico
+e' la sorgente e quello per il collega una compressione; ogni numero o e'
+misurato, e si dice come, o e' dedotto, e si dice da cosa.
+
+Dove si puo', quel posto si GENERA dalla build invece di scriverlo: e' la
+mossa di marks.conf applicata alla prosa.
 ```
 
 **Per guardare come girano i task (non e' una modifica, e' uno strumento):**
 ```
-python3 tools/trace.py out/vasm/test_tmgr.vx      # -> out/traccia.html
+python3 tools/trace.py out/vasm/test_tmgr.vx      # -> out/trace.html
 python3 tools/trace.py out/vasm/test_events.vx -- --kbd "2000:a,6000:b,10000:c,14000:d,18000:e"
 ```
 Dice chi gira e in quale intervallo, e quanto di quel tempo è kernel per suo

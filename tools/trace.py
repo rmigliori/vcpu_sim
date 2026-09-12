@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """trace.py — LA TRACCIA TEMPORALE: chi gira, e da quando a quando.
 
-    python3 tools/trace.py out/vasm/test_tmgr.vx        # -> out/traccia.html
+    python3 tools/trace.py out/vasm/test_tmgr.vx        # -> out/trace.html
 
 Un programma guidato da un DEVICE non e' autosufficiente: senza il suo
 alimentatore resta a pollare un flag che nessuno alzera' e non termina mai. Le
@@ -284,7 +284,7 @@ def analizza(vx, tmp, argomenti=()):
 def main():
     ap = argparse.ArgumentParser(description="Traccia temporale di un programma vcpu_sim")
     ap.add_argument("programma", help="il .vx da tracciare (es. out/vasm/test_tmgr.vx)")
-    ap.add_argument("-o", "--out", help="la pagina da scrivere (default: out/traccia.html)")
+    ap.add_argument("-o", "--out", help="la pagina da scrivere (default: out/trace.html)")
     ap.add_argument("--json", help="scrive anche i dati grezzi qui")
     ap.add_argument("argomenti", nargs="*", metavar="-- OPZIONI",
                     help="dopo un --: opzioni per la MACCHINA, non per questo "
@@ -294,8 +294,8 @@ def main():
     a = ap.parse_args()
 
     vx = a.programma
-    uscita = a.out or os.path.join(RADICE, "out", "traccia.html")
-    tmp = os.path.dirname(os.path.abspath(uscita)) or "."
+    out_path = a.out or os.path.join(RADICE, "out", "trace.html")
+    tmp = os.path.dirname(os.path.abspath(out_path)) or "."
     os.makedirs(tmp, exist_ok=True)
 
     dati = analizza(vx, tmp, a.argomenti)
@@ -313,10 +313,10 @@ def main():
               .replace("/*__DATI__*/{}", json.dumps(dati))
               .replace("__PROGRAMMA__", os.path.basename(vx))
               .replace("__GENERATA__", stamp))
-    open(uscita, "w").write(pagina)
+    open(out_path, "w").write(pagina)
 
     gran = sum(c for _, _, c in dati["own"])
-    print(f"{uscita}: {len(dati['fasce'])} fasce, {len(dati['tick'])} tick, "
+    print(f"{out_path}: {len(dati['fasce'])} fasce, {len(dati['tick'])} tick, "
           f"{dati['fine']} cicli")
     print(f"  la pagina deve dire «generata {stamp}»: se ne dice un'altra, "
           f"il browser mostra una copia in cache (ctrl-shift-R)")
