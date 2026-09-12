@@ -53,7 +53,7 @@
 
   .data
 
-testa:  .res HEAD
+head:  .res HEAD
 n1:     .res NODE
 n2:     .res NODE
 n3:     .res NODE           ; il terzo serve solo a (8): per infilare FRA due
@@ -68,29 +68,29 @@ stack_top:
 
 main:
   li r14, stack_top
-  li r1, testa
+  li r1, head
   call queue_init
 
   ; --- (1) primo accodamento: nodo nuovo, link nulli ---
-  li r1, testa
+  li r1, head
   li r2, n1
   call enqueue_tail
   dumps r3                ; 0 = QUEUE_OK
-  li r1, testa
+  li r1, head
   lw r5, HEAD.count(r1)
   dumps r5                ; 1
 
   ; --- (2) stesso nodo di nuovo: rifiutato, e il contatore NON si muove ---
-  li r1, testa
+  li r1, head
   li r2, n1
   call enqueue_tail
   dumps r3                ; 1 = QUEUE_LINKED
-  li r1, testa
+  li r1, head
   lw r5, HEAD.count(r1)
   dumps r5                ; 1: intatto, perche' il controllo viene prima
 
   ; --- (3) la rimozione fa uscire il nodo E glielo dice ---
-  li r1, testa
+  li r1, head
   call dequeue_head
   li r5, n1
   sub r5, r2, r5
@@ -101,7 +101,7 @@ main:
   dumps r5                ; 0 = link azzerati
 
   ; --- (4) e quindi adesso si puo' riaccodare ---
-  li r1, testa
+  li r1, head
   li r2, n1
   call enqueue_tail
   dumps r3                ; 0 = QUEUE_OK
@@ -109,19 +109,19 @@ main:
   ; --- (5) remove di un nodo che non sta in nessuna lista: il caso speculare.
   ;         Senza controllo scriverebbe attraverso i link nulli, cioe' su 0(r0) ---
   li r1, n2
-  li r2, testa
+  li r2, head
   call remove_buffer
   dumps r3                ; 2 = QUEUE_UNLINKED
-  li r1, testa
+  li r1, head
   lw r5, HEAD.count(r1)
   dumps r5                ; 1: intatto anche qui
 
   ; --- (6) remove legittima ---
   li r1, n1
-  li r2, testa
+  li r2, head
   call remove_buffer
   dumps r3                ; 0 = QUEUE_OK
-  li r1, testa
+  li r1, head
   lw r5, HEAD.count(r1)
   dumps r5                ; 0
   li r1, n1
@@ -131,7 +131,7 @@ main:
   dumps r5                ; 0 = link azzerati anche qui
 
   ; --- (7) coda vuota: non e' un errore, e' un esito ---
-  li r1, testa
+  li r1, head
   call dequeue_head
   dumps r2                ; 0
 
@@ -139,10 +139,10 @@ main:
   ;         Da qui in giu' la testa e' gestita con le _nc e il contatore resta
   ;         fermo a 0: una sola disciplina per testa, anche dentro un test.
   ;         Costruisco [n1, n2] e infilo n3 FRA i due, passando n1 come prec ---
-  li r1, testa
+  li r1, head
   li r2, n1
   call enqueue_tail_nc
-  li r1, testa
+  li r1, head
   li r2, n2
   call enqueue_tail_nc
   li r1, n1               ; prec e' un NODE, non la sentinella
@@ -158,17 +158,17 @@ main:
   dumps r3                ; 1 = QUEUE_LINKED
 
   ; --- (10) l'ordine e' [n1, n3, n2], e lo si legge svuotando ---
-  li r1, testa
+  li r1, head
   call dequeue_head_nc
   li r5, n1
   sub r5, r2, r5
   dumps r5                ; 0
-  li r1, testa
+  li r1, head
   call dequeue_head_nc
   li r5, n3
   sub r5, r2, r5
   dumps r5                ; 0 = n3 e' finito FRA n1 e n2
-  li r1, testa
+  li r1, head
   call dequeue_head_nc
   li r5, n2
   sub r5, r2, r5
@@ -177,11 +177,11 @@ main:
   ; --- (11) con prec = sentinella e' l'inserimento in testa. E' la proprieta'
   ;          "la primitiva nuova contiene le vecchie", verificata invece che
   ;          assunta: se un giorno i due ingressi divergessero, si vede qui ---
-  li r1, testa
+  li r1, head
   li r2, n1
   call enqueue_after_nc
   dumps r3                ; 0 = QUEUE_OK
-  li r1, testa
+  li r1, head
   lw r5, LINK.fwd(r1)
   li r6, n1
   sub r5, r5, r6
@@ -191,14 +191,14 @@ main:
   ;          conteggio, che qui e' del test (tre nodi) come nel kernel e' del
   ;          proprietario della testa: la sentinella non si incontra mai, e la
   ;          circolarita' della lista resta dentro coda.vasm ---
-  li r1, testa
+  li r1, head
   li r2, n2
   call enqueue_tail_nc
-  li r1, testa
+  li r1, head
   li r2, n3
   call enqueue_tail_nc      ; [n1, n2, n3]
 
-  li r1, testa
+  li r1, head
   call queue_peek
   li r5, n1
   sub r5, r2, r5
@@ -217,17 +217,17 @@ main:
   ; --- (13) ... e la lista e' rimasta esattamente com'era. E' la meta' del
   ;          contratto che non si vede leggendo la primitiva: guarda e non tocca,
   ;          quindi tre peek di fila non sono tre dequeue ---
-  li r1, testa
+  li r1, head
   call dequeue_head_nc
   li r5, n1
   sub r5, r2, r5
   dumps r5                ; 0
-  li r1, testa
+  li r1, head
   call dequeue_head_nc
   li r5, n2
   sub r5, r2, r5
   dumps r5                ; 0
-  li r1, testa
+  li r1, head
   call dequeue_head_nc
   li r5, n3
   sub r5, r2, r5

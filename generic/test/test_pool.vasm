@@ -37,7 +37,7 @@
 
 ; Un buffer del cliente, statico: pool == 0 perche' il .data nasce azzerato.
 ; E' esattamente cio' che buf_free deve rifiutare senza toccare niente.
-statico: .space 4         ; fwd, bwd, pool, dati[0]
+static_block: .space 4         ; fwd, bwd, pool, dati[0]
 stack:   .space 64
 stack_top:
 
@@ -110,7 +110,7 @@ main:
   dumps r5                ; 4: intatto
 
   ; --- (7) un buffer che non viene dal pool: pool == 0, nessuna classe ---
-  li r2, statico
+  li r2, static_block
   call buf_free
   dumps r1                ; 3 = POOL_FOREIGN
 

@@ -164,7 +164,7 @@ mbE:     .res MAILBOX          ; l'UNICA mailbox: l'idle non aspetta niente
 err:     .word 0
 cntE:    .word 0               ; caratteri elaborati
 sum:   .word 0               ; la somma dei caratteri, fatta da E
-attese:  .word 0               ; caratteri per cui l'idle ha davvero aspettato
+waited:  .word 0               ; caratteri per cui l'idle ha davvero aspettato
 cntP:    .word 0               ; giri di polling a vuoto
 sent: .word 0               ; l'ultimo carattere che I ha messo nel payload:
                                ; serve a E per verificare che sia arrivato quello
@@ -311,7 +311,7 @@ ti_poll:
   sw r2, 0(r1)
 
   beq r6, r0, ti_now    ; il carattere c'era gia': non ho aspettato niente
-  li r1, attese
+  li r1, waited
   lw r3, 0(r1)
   addi r3, r3, 1
   sw r3, 0(r1)
@@ -407,7 +407,7 @@ te_end:
   li r1, sum
   lw r5, 0(r1)
   dumps r5                 ; 495 = 'a'+'b'+'c'+'d'+'e'
-  li r1, attese
+  li r1, waited
   lw r5, 0(r1)
   dumps r5                 ; 5 = ogni volta l'idle ha aspettato davvero
   li r1, cntP

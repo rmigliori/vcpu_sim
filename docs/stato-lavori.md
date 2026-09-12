@@ -1,8 +1,9 @@
 # Stato dei lavori — `vcpu_sim`
 
 > Ultimo aggiornamento: **13 settembre 2026** (§3.42 il primo ramo si fonde e la
-> **lingua è decisa**; il 12/09: §3.39 `task_yield`, §3.40 il marcatore e il
-> contesto vettoriale, §3.41 **§13 chiusa**)
+> **lingua è decisa**; §3.43 **il rename è FATTO**, provato byte per byte; il
+> 12/09: §3.39 `task_yield`, §3.40 il marcatore e il contesto vettoriale, §3.41
+> **§13 chiusa**)
 > Scopo: fotografia dello stato per riprendere il lavoro a distanza di giorni
 > senza dover ricostruire il contesto.
 
@@ -12,11 +13,28 @@
 
 > ### ▶ RIPRENDI DA QUI (14/09/2026 o dopo)
 >
-> `ctest` **32/32**. Il **13/09** non ha scritto codice: ha **fuso** il primo ramo
-> del progetto e ha **deciso la lingua** (§3.42) — due cose che erano rimaste
-> aperte apposta, e che adesso non lo sono più. Il prossimo passo è il **rename**,
-> e l'elenco delle coppie è pronto da approvare. Il 12/09 aveva fatto tre cose, e
-> la terza è la più grossa.
+> `ctest` **32/32**. Il **13/09** ha chiuso tre cose che erano rimaste aperte
+> apposta: ha **fuso** il primo ramo del progetto, ha **deciso la lingua**
+> (§3.42), e ha **fatto il rename** (§3.43) — otto commit, `5b72bd1`→`24dca22`.
+>
+> **L'ALBERO È IN INGLESE.** Tutti e **72 i simboli esportati**, le strutture, i
+> campi, le costanti, sei cartelle, tredici file, i nomi dei test. I **commenti
+> restano in italiano**, che è la decisione, non un residuo.
+>
+> E la prova non è un argomento: i **quattordici programmi** hanno hash
+> **identici** a quelli del tag `italiano-pre-rename` — `.text`, `.data` e i
+> valori del `.symmap`. Lo stesso programma con altre etichette. Lo strumento è
+> [`tools/fingerprint.sh`](../tools/fingerprint.sh), e la ragione per cui esiste
+> è misurata: **una sola istruzione in più** su un ramo mai eseguito muove
+> l'impronta di **dieci programmi su quindici** mentre `ctest` resta 32/32.
+>
+> **Da fare al prossimo giro, e va detto subito:** il push. Fuori c'è ancora
+> `299be2c`, cioè **prima della fusione**. Da mandare ci sono il merge, i quattro
+> commit di preparazione, gli otto del rename e **il tag**, che non viaggia da
+> solo (`git push origin italiano-pre-rename`). E poi si può cancellare il ramo
+> `mutex-cede-solo-se-serve`, locale e remoto.
+>
+> Il 12/09 aveva fatto tre cose, e la terza è la più grossa.
 >
 > **§3.40 — IL CONTESTO VETTORIALE SI SALVA, e le due metà del progetto si sono
 > incontrate.** `test_vectors` è il primo programma in cui un **task** usa
@@ -120,10 +138,11 @@
 > | **commenti** | **4044 righe** su 8844 di `.vasm`/`.vinc` | **no** |
 >
 > E la differenza che decide non è la dimensione, è la seconda colonna. Un rename
-> ha una prova: `ctest` 32/32 **più conteggi di istruzioni e cicli identici su
-> tutti e 32 i test**, che è più forte del solo verde — è il metodo di §3.24, i
-> `.vx` confrontati byte per byte. Tradurre un commento che *è* l'argomento non ha
-> nessuna prova: si può solo rileggere.
+> ha una prova — ed è stata fatta lo stesso giorno (§3.43): `ctest` 32/32 **più**
+> i quattordici `.vx` con `.text`, `.data` e valori del `.symmap` **identici** a
+> prima. È il metodo di §3.24 ristretto a ciò che un rename ha il permesso di
+> toccare. Tradurre un commento che *è* l'argomento non ha nessuna prova: si può
+> solo rileggere.
 >
 > Da cui: la metà che si rimpiange è quella che **si recupera con una verifica**,
 > e la metà che non si recupera è quella dove scrivere nella propria lingua è
@@ -132,10 +151,12 @@
 > ND Satcom è il ragionamento.
 >
 > **Il rename ripara anche una collisione vera**, che non è cosmetica: `coda`
-> nel progetto significa **due cose** — il modulo (*queue*) e la posizione
-> (*tail*). `queue_init` inizializza una coda, `enqueue_tail` accoda **in fondo**,
-> e il contrario è `enqueue_head`. Stessa parola per due concetti che non
-> c'entrano niente, dall'inizio del progetto, e in italiano non si vede.
+> nel progetto significava **due cose** — il modulo (*queue*) e la posizione
+> (*tail*). I nomi di prima, che qui vanno lasciati perché sono l'esempio:
+> `coda_init` inizializzava una **coda**, `enqueue_coda` accodava **in fondo**, e
+> il suo contrario era `enqueue_testa`. Stessa parola per due concetti che non
+> c'entrano niente, dall'inizio del progetto, e in italiano non si vede. Oggi sono
+> `queue_init`, `enqueue_tail` ed `enqueue_head`, e la differenza si legge.
 >
 > **Scartata: la doppia versione**, italiana e inglese in parallelo, «tanto quella
 > italiana prima o poi muore». È la regola dei quattro documenti applicata al
@@ -154,40 +175,21 @@
 > quest'ordine non è rimandare — è l'unico ordine in cui il costo si conosce prima
 > di impegnarlo.
 >
-> ### ▶▶ IL PROSSIMO PASSO, IN DUE RIGHE E IN QUEST'ORDINE
+> ### ▶▶ IL PROSSIMO PASSO, IN UNA RIGA
 >
-> **1. IL RENAME**, perché tocca **34 file su 55** più **39 `CMakeLists`** e
-> quindi non può convivere con un ramo aperto né stare nello stesso commit di un
-> cambiamento semantico — altrimenti «i cicli non si muovono» non vuol più dire
-> niente. Otto commit piccoli, con l'impronta confrontata a ogni passo.
+> ~~**1. IL RENAME**~~ — **FATTO** il 13/09 (§3.43), otto commit e la prova byte
+> per byte. L'elenco approvato resta in [`rename-inglese.md`](rename-inglese.md),
+> e da lì in avanti **non è più una proposta**: è il contratto, e una divergenza
+> fra il codice e quelle tabelle è un difetto del codice.
 >
-> **L'elenco è scritto e aspetta un sì**: [`rename-inglese.md`](rename-inglese.md).
-> Si approvano tre cose e non centocinquanta coppie — **le sei scelte vere**, il
-> **vocabolario** (una parola italiana, una inglese, applicata ovunque: approvato
-> quello, le etichette interne seguono da sé) e l'**API esportata**, che è
-> l'interfaccia e merita una decisione invece di una regola. La scelta che conta
-> è la terza: `scadenza` → **`expiry`** e **non** `deadline`, perché nei quattro
-> documenti *deadline* è il vincolo temporale di un task — la «D» di *deadline
-> monotonic* — e usarla per l'istante in cui scatta un timeout creerebbe **adesso
-> e per scelta** una collisione peggiore di quella di `coda`, che almeno è un
-> residuo.
->
-> **E la rete c'è già**, provata prima di fidarsene (`3fba9fe`):
-> [`tools/fingerprint.sh`](../tools/fingerprint.sh) confronta la parte del `.vx`
-> che un rename **non ha il permesso di toccare**. Su un rename vero il diff è
-> vuoto; su **una sola istruzione in più** in `scheduler.vasm`, per giunta su un
-> ramo mai eseguito, il diff scatta su **dieci programmi su quindici** mentre
-> `ctest` resta **32/32**. Cioè: la suite da sola non avrebbe visto quel
-> cambiamento. I due strumenti falliscono su cose diverse e si usano insieme.
->
-> **2. L'ASSEMBLAGGIO CONDIZIONALE** (`.ifdef` e `-D`), che è il prerequisito di
+> **E ADESSO: L'ASSEMBLAGGIO CONDIZIONALE** (`.ifdef` e `-D`), che è il prerequisito di
 > tutto il resto del marcatore. L'utente ha impostato tre **categorie fisse**
 > nello strumento — `scheduler`, `dispatcher`, `ISR` — e quelle stanno nel
 > kernel: senza un modo di compilarle via, il kernel resta strumentato **per
 > sempre** e ogni `EXPECT` che dipende dai cicli si sposta una volta e non torna
 > più. L'assembler oggi conosce diciassette direttive e nessuna condizionale.
-> Dopo il rename, così le categorie nascono col nome giusto invece di prenderlo
-> e cambiarlo.
+> L'albero è ora in inglese, quindi le categorie nascono col nome giusto invece
+> di prenderlo e cambiarlo dopo.
 >
 > È anche ciò che rende scrivibile `start_misura(FFT, primoStage)` come l'utente
 > l'ha scritta: oggi serve l'idioma in linea a tre istruzioni, perché **non ci
@@ -2892,6 +2894,79 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.43 IL RENAME È FATTO, E LA PROVA È BYTE PER BYTE (13/09/2026)
+
+Otto commit, `5b72bd1`→`24dca22`, e una prova invece di un argomento: i
+**quattordici programmi** che la build produce hanno gli hash **identici** a
+quelli del tag `italiano-pre-rename` — `.text`, `.data` e i valori del
+`.symmap`. Lo stesso programma, con altre etichette.
+
+Cosa è passato: **tutti e 72 i `.global`** sono ora inglesi, più le strutture, i
+campi, le costanti, una settantina di etichette interne, sei cartelle, tredici
+file, i nomi dei test in `ctest` e le citazioni di codice nei documenti.
+
+#### Le tre cose che il rename ha *riparato*, e non erano di lingua
+
+1. **`coda` significava due cose.** Il modulo (*queue*) e la posizione (*tail*).
+   `queue_init` inizializza una coda, `enqueue_tail` accoda in fondo, e il suo
+   contrario è `enqueue_head`. La peggiore era `dequeue_testa`, che l'occhio
+   legge «toglie dalla coda» e che fa l'opposto: adesso è `dequeue_head`;
+2. **`DESCRITTORE.stato` e `TCB.state`** erano lo stesso concetto in due lingue,
+   in due strutture. Ora coincidono;
+3. **le intestazioni** di dodici file nominavano percorsi spariti con §3.24
+   (`kernel/`, `include/`, la cartella vecchia). Corrette lungo la strada.
+
+#### E le cinque regole che il rename ha *imposto*, che non erano nell'elenco
+
+Sono la parte che vale per il futuro, perché ognuna è costata un errore vero.
+
+1. **Un commento che nomina un file non è lingua, è un riferimento.**
+   `coda.vasm` dentro un commento italiano diventa `queue.vasm`. Si traduce ciò
+   che **nomina**, non ciò che **spiega**;
+2. **Le parole si dividono in due gruppi, e un `sed` globale non lo sa.** Il
+   primo tentativo di §6 ha tradotto la **prosa**: *«in quest'ordine»* era
+   diventato *«in quest'order»*, *«l'ISR che lo sveglia»* → *«che lo wake»*. Una
+   trentina di righe rovinate, buttate e rifatte. Gli identificatori composti si
+   sostituiscono ovunque, le parole che sono anche italiano **solo prima del
+   `;`**. Un identificatore si può cercare e sostituire; una parola no, perché la
+   stessa parola fa due mestieri nella stessa riga — ed è, in piccolo, la ragione
+   per cui i commenti non si traducono a macchina;
+3. **La lista dei file si costruisce dal pattern che si sta per applicare.** Al
+   commit 6 l'ho costruita da un pattern e poi ho applicato sostituzioni più
+   larghe: `test_mutex.vasm` è rimasto fuori e il build è caduto;
+4. **Un nome generato si rinomina alla sorgente.** `MARK_WAIT` non esisteva
+   perché quel simbolo lo **genera** `marks.conf` da `categoria ATTESA`:
+   rinominare gli usi non bastava. Vale per ogni `.equ` derivato e per ogni
+   `.field`, che è lo stesso caso — `DESCRIPTOR.state` non compare finché la
+   dichiarazione dice `.field stato`;
+5. **`docs/rename-inglese.md` va escluso da ogni rename automatico.** È l'unico
+   file in cui il nome **vecchio** deve sopravvivere. Il `sed` su `docs/*.md`
+   l'ha ridotto a `tmgr_init → tmgr_init`, cioè a niente.
+
+#### Due difetti del METODO, e sono i più importanti
+
+> **`ctest` verde non vuol dire che il build sia passato.** Al commit 5 due `.vo`
+> non assemblavano, i `.vx` **vecchi** sono rimasti sul disco, e `ctest` **e**
+> l'impronta sono venuti verdi **entrambi**, onestamente, su quelli. Guardavo il
+> log con `grep "error"` invece dell'**exit code**. I tre comandi si incatenano
+> con `&&`, e sta scritto in testa a `fingerprint.sh`.
+
+> **La cartella di build ricorda programmi che non esistono più.** La base di
+> riferimento conteneva `scheduler_demo.vx`, **ritirato il 07/09** e mai
+> ricostruito né rimosso: contava **quindici** programmi dove la build ne fa
+> **quattordici**. Dopo un rename di file ci sono entrambe le grafie, la vecchia
+> congelata. La base si prende da un build **pulito**.
+
+#### Una cosa trovata e non toccata
+
+**`tools/trace.py` su `test_events` dice «boot 100%», cioè non riconosce i corpi
+dei task** — una fascia sola, zero tick. Verificato in un worktree sul tag:
+**risultato identico prima del rename**, quindi non è una regressione di questi
+commit. Va guardato a parte, e stona con il «idle 86,9%» del 12/09: una delle due
+misure non dice quello che sembra.
 
 ---
 
