@@ -95,6 +95,7 @@ g_resched: .word 0        ; need_resched: !=0 => switch a uscita IRQ
   .global task_yield
   .global task_ready
   .global prio_pcb
+  .global sched_pronto_sopra
   .extern ctx_restore
   .extern hal_ctx_block
 
@@ -267,6 +268,61 @@ task_ready_preempt:
   call request_preempt
   lw r15, 0(r14)
   addi r14, r14, 4
+  ret
+
+; ==========================================================================
+;  sched_pronto_sopra(r1 = &PCB limite) -> r1 = 1 se esiste un task ESEGUIBILE
+;  a un livello strettamente piu' prioritario del limite, 0 altrimenti.
+;
+;  --- E' LA PRIMA DOMANDA CHE SI PUO' FARE ALLO SCHEDULER SENZA MUOVERLO ---
+;
+;  `scheduler` sceglie e SFILA: e' un comando, non una domanda, quindi non e'
+;  interrogabile -- chiederglielo per sapere costerebbe rimettere dentro cio'
+;  che ha tolto. Questa e' la stessa scansione senza l'effetto, ed e' cio' che
+;  permette a un chiamante di decidere se valga la pena pagare una commutazione
+;  PRIMA di pagarla.
+;
+;  Il prezzo e' quello gia' dichiarato in tcb.vinc: 12 cicli per livello vuoto,
+;  quindi 96 nel caso peggiore (otto livelli). Contro i ~460 di un context
+;  switch, e' il motivo per cui la domanda conviene anche quando la risposta e'
+;  "si'".
+;
+;  --- IL LIMITE E' ESCLUSIVO, E CHI CHIAMA SCEGLIE COSA INCLUDERE ---
+;  Perche' le due domande utili sono diverse:
+;
+;    mutex_unlock   "qualcuno mi BATTE adesso che sono sceso dal ceiling?"
+;                   -> limite = il proprio PCB. I pari non contano: un unlock
+;                      non e' una fine turno.
+;    un ceditore    "c'e' qualcuno a cui cedere?"
+;                   -> limite = il proprio PCB + PCB.size, cioe' il proprio
+;                      livello INCLUSO: cedere a un pari e' lo scopo.
+;
+;  Un livello e' popolato se ha qualcuno in coda O nello slot: sono i due posti
+;  in cui un eseguibile puo' stare, ed e' la stessa coppia che guarda sched_scan.
+;  Guardarne uno solo direbbe il falso proprio sul task preemptato, cioe' su
+;  quello che ha piu' diritto di ripartire.
+;
+;  Sta nel kernel per la stessa ragione di prio_pcb: l'aritmetica che fa E'
+;  l'invariante di §7.3 (tabella dei PCB contigua e in ordine), e farla uscire
+;  significherebbe che un secondo modulo la conosce senza garantirla.
+;
+;  FOGLIA e NON DISTRUTTIVA: non tocca una sola struttura. Clobber: r1, r2, r3.
+; ==========================================================================
+sched_pronto_sopra:
+  li r2, pcb0
+sps_scan:
+  beq r2, r1, sps_nessuno      ; arrivato al limite senza trovare niente
+  lw r3, PCB.preemptato(r2)
+  bne r3, r0, sps_ce_ne_uno
+  lw r3, TESTA.count(r2)       ; &pcb == &pcb.coda (§7.5)
+  bne r3, r0, sps_ce_ne_uno
+  addi r2, r2, PCB.size
+  j sps_scan
+sps_nessuno:
+  li r1, 0
+  ret
+sps_ce_ne_uno:
+  li r1, 1
   ret
 
 ; ==========================================================================

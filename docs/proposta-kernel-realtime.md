@@ -2365,17 +2365,44 @@ arma il flag e lascia che sia il percorso di uscita a decidere.
 > scheduler («c'è qualcuno sopra di me?») oggi non esiste: `scheduler` sfila il
 > TCB che sceglie, quindi non è interrogabile.
 >
-> Su quel test il guadagno di latenza misurato è **37 cicli** su una
-> commutazione, contro un periodo del timer di 500. È un cattivo affare *lì*, e
-> va detto: `test_mutex` esercita le transizioni di stato del ceiling, non il
-> caso in cui un task più prioritario resta fermo per un tick intero. La
-> giustificazione non è il throughput medio, è che la latenza diventa
-> **deterministica** — il costo si paga sempre e si conosce, l'attesa evitata era
-> variabile e limitata solo dal tick. È lo scambio che un kernel realtime fa
-> per definizione.
+> **Correzione**: una prima lettura aveva riportato «37 cicli di guadagno di
+> latenza». Era **deriva di fase**, non una misura — le commutazioni sono sette
+> in ogni variante, e uno spostamento di quell'ordine si spiega con la diversa
+> lunghezza del percorso. Per misurare davvero il guadagno servirebbe sapere
+> *quando* il contendente è diventato pronto, cioè un tag dentro `task_ready`:
+> strumentazione di kernel, che ha il suo prerequisito (assemblaggio
+> condizionale).
 >
-> L'ottimizzazione — cedere solo se serve davvero — resta aperta e richiede
-> quella query non distruttiva.
+> La giustificazione non è quindi un numero su questo test: è che la latenza
+> diventa **deterministica**. Il costo si paga sempre e si conosce; l'attesa
+> evitata era variabile e limitata solo dal tick. È lo scambio che un kernel
+> realtime fa per definizione.
+
+> **AGGIORNAMENTO, stessa giornata — SI CHIEDE PRIMA DI PAGARE.** L'argomento
+> per armare *incondizionatamente* (il riquadro dell'11/09) era che
+> l'informazione per decidere non c'è più. Vale finché non si **guarda**:
+> `sched_pronto_sopra(r1 = &PCB limite)` è una scansione di **sola lettura** —
+> 12 cicli per livello vuoto, ≤96 nel caso peggiore, contro i ~460 di una
+> commutazione — e l'informazione la recupera invece di dedurla. Esiste perché
+> `scheduler` **sfila** il TCB che sceglie, quindi è un comando e non una
+> domanda.
+>
+> `mutex_unlock` la interroga con il **proprio** PCB come limite: i pari non
+> contano, perché un unlock non è una fine turno. Se la risposta è «nessuno»,
+> non arma e non cede — e `g_resched` torna a significare «qualcun altro ha
+> chiesto un rescheduling» invece di essere armato e consumato dalla stessa
+> funzione a due istruzioni di distanza.
+>
+> Misurato su `test_mutex`, che ha **quattro** unlock: la domanda ne salta
+> **due**, cioè esattamente le cessioni che rientravano su se stesse. Il costo
+> di §13.7 scende dal +22% al **+13%** sul programma senza cessione. Le altre
+> due trovano davvero qualcuno sopra e commutano all'unlock invece che al tick.
+>
+> Che sia solo la metà è una proprietà di **questo** test, non del rimedio:
+> `test_mutex` è costruito per avere un contendente pronto durante la sezione
+> critica, ed è il caso peggiore. §13.5 sostiene che sotto un ceiling corretto
+> quella coda sia **sempre** vuota — in un sistema dichiarato bene la risposta
+> sarebbe «nessuno» quasi sempre.
 
 > **Una cosa di questa sezione è stata confermata l'11/09/2026**, e non era
 > ovvia: `mutex_unlock` arma il flag **incondizionatamente**, anche quando nulla

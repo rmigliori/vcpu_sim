@@ -2771,26 +2771,63 @@ ramo *sp_solo*, perché averlo vorrebbe dire scandire prima di salvare»), qui
 misurato invece che previsto. Ed è anche una proprietà dello strumento da
 ricordare: **una cessione a vuoto è invisibile sul canale 0**, correttamente.
 
-> **Su quel test l'affare è cattivo, e va detto.** Il guadagno di latenza
-> misurato è **37 cicli** su una commutazione, contro un periodo del timer di
-> 500. Ma `test_mutex` esercita le *transizioni di stato* del ceiling, non il
-> caso in cui un task più prioritario resta fermo per un tick intero — e con un
-> tick di 500 cicli e una commutazione da ~460 quel sistema è già vicino alla
-> saturazione.
+> **UNA CORREZIONE, e vale la pena tenerla scritta.** Una prima lettura aveva
+> riportato «37 cicli di guadagno di latenza». Era **deriva di fase, non una
+> misura**: le commutazioni sono **sette in ogni variante** — senza cessione, con
+> cessione incondizionata, con la domanda — e uno spostamento di
+> quell'ordine si spiega con la diversa lunghezza del percorso, non con una
+> preemption anticipata. Per misurare il guadagno davvero bisognerebbe sapere
+> *quando* il contendente è diventato pronto, cioè un tag dentro `task_ready`:
+> strumentazione di kernel, che ha il suo prerequisito (§1 del prossimo passo).
 >
-> La giustificazione non è il throughput medio: è che la latenza diventa
-> **deterministica**. Il costo si paga sempre e si conosce; l'attesa evitata era
-> variabile e limitata solo dal tick. È lo scambio che un kernel realtime fa per
-> definizione, ed è esattamente ciò che §13.7 argomenta.
+> La giustificazione quindi non è un numero su questo test: è che la latenza
+> diventa **deterministica**. Il costo si paga sempre e si conosce; l'attesa
+> evitata era variabile e limitata solo dal tick.
 
-#### Cosa resta, e non è §13
+#### E poi: SI CHIEDE PRIMA DI PAGARE (ramo `mutex-cede-solo-se-serve`)
 
-L'ottimizzazione: cedere **solo se serve**. Richiede una domanda non distruttiva
-allo scheduler — *c'è qualcuno sopra di me?* — che oggi non esiste, perché
-`scheduler` **sfila** il TCB che sceglie e quindi non è interrogabile.
-Costerebbe una scansione (≤96 cicli, il caso peggiore dichiarato in `tcb.vinc`)
-al posto di una commutazione (~460). È un'aggiunta al kernel, e va decisa a
-parte.
+L'idea è dell'utente — *«non potrebbe essere una prima ottimizzazione vedere se
+la coda è vuota?»* — e la risposta è sì, purché sia **la coda giusta**.
+
+Non quella del mutex: è già interrogata due istruzioni sopra, e sul percorso
+normale era vuota per definizione, quindi non dice niente sul caso di §13.7 (un
+task svegliato da un'**ISR** durante la sezione critica, che con quel mutex non
+c'entra). Sono le **code dei PCB**, e la domanda esatta è *esiste un eseguibile
+più prioritario di `prio_prec`?*
+
+`sched_pronto_sopra(r1 = &PCB limite)` è quella domanda: la stessa scansione di
+`sched_scan` **senza l'effetto**. Esiste perché `scheduler` *sfila* il TCB che
+sceglie — è un comando, non una domanda, e interrogarlo costerebbe rimettere
+dentro ciò che ha tolto. Guarda **coda e slot** a ogni livello, perché sono i due
+posti in cui un eseguibile può stare, e il limite è **esclusivo** perché le due
+domande utili sono diverse: `mutex_unlock` esclude i pari (un unlock non è una
+fine turno), un ceditore li include (cedere a un pari è lo scopo).
+
+Con la domanda in mano **cade l'argomento dell'armare incondizionatamente**: la
+nota dell'11/09 lo giustificava con «l'informazione non c'è più», vero finché non
+si guarda.
+
+Misurato su `test_mutex`, che ha **quattro** unlock:
+
+| | istruzioni | cicli | cessioni |
+|---|---|---|---|
+| senza cessione (prima di §13.7) | 3038 | 6321 | 0 |
+| arma e cede **sempre** | 3679 | 7700 (+22%) | 4 |
+| **chiede, poi cede** | 3434 | 7143 (+13%) | **2** |
+
+Le due cessioni saltate sono esattamente quelle che rientravano su se stesse, e i
+245 cicli recuperati sono le loro. Le altre due trovano davvero qualcuno sopra.
+
+Che sia **solo la metà** è una proprietà di *questo* test e non del rimedio:
+`test_mutex` è costruito per avere un contendente pronto durante la sezione
+critica, cioè è il caso peggiore. §13.5 sostiene che sotto un ceiling corretto
+quella coda sia **sempre vuota** — in un sistema dichiarato bene la risposta
+sarebbe «nessuno» quasi sempre, e il risparmio quasi totale.
+
+> `task_yield` **non** è stata toccata: resta una primitiva che salva il contesto
+> prima di scandire, con il prezzo dichiarato nel suo commento. Un chiamante che
+> voglia evitarlo chiede prima, ed è quello che fa `mutex_unlock`. Il suo unico
+> altro cliente — l'idle di `test_mondo` — cede sempre a ragione.
 
 ---
 
