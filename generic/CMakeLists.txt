@@ -15,7 +15,7 @@
 #
 #  Ne segue una regola per chi aggiunge qui dentro: se un modulo di generic/
 #  finisce per nominare un simbolo o un header di rtos/, non e' generic. Vale
-#  anche per i suoi test — ed e' esattamente il difetto che test_coda aveva,
+#  anche per i suoi test — ed e' esattamente il difetto che test_queue aveva,
 #  sanato prima di cominciare a spostare.
 # ---------------------------------------------------------------------------
 # In ordine di dipendenza, come ovunque nell'albero: messaggio prima di

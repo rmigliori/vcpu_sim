@@ -19,7 +19,7 @@
 > la terza è la più grossa.
 >
 > **§3.40 — IL CONTESTO VETTORIALE SI SALVA, e le due metà del progetto si sono
-> incontrate.** `test_vettori` è il primo programma in cui un **task** usa
+> incontrate.** `test_vectors` è il primo programma in cui un **task** usa
 > `v0..v7`. Il buco era dichiarato in `machine.vasm` dal 05/09 e non poteva
 > manifestarsi perché nessun task li usava; adesso è chiuso. Lungo la strada è
 > venuto fuori che **i sedici registri float non erano salvati affatto**, e
@@ -29,16 +29,16 @@
 >
 > **§3.40 — IL MARCATORE**, l'oscilloscopio a più tracce, idea dell'utente: tag
 > di apertura e chiusura con categoria e punto, due canali riempiti dalla
-> macchina a costo zero, i nomi in un catalogo (`marche.conf`) da cui il `.vinc`
+> macchina a costo zero, i nomi in un catalogo (`marks.conf`) da cui il `.vinc`
 > è **generato**. Misura il **tempo di risposta** — una finestra che attraversa
 > le commutazioni — che la traccia del `pc` non può dare.
 >
 > **§3.39 — `task_yield`**, e la coppia dei test «stupidi» chiusa con
-> `test_mondo`. Ma la cosa che conta non è il test: è la **primitiva di kernel**
+> `test_events`. Ma la cosa che conta non è il test: è la **primitiva di kernel**
 > che scriverlo ha reso dovuta.
 >
 > **`task_yield` È SCRITTA** ([`scheduler.vasm`](../rtos/scheduler/impl/src/scheduler.vasm)),
-> ed è **§13.7 alla lettera**: le otto righe di `task_block` con `enqueue_coda`
+> ed è **§13.7 alla lettera**: le otto righe di `task_block` con `enqueue_tail`
 > al posto di `SUSPENDED`. Cedere restando eseguibili. La differenza non è di
 > stile — un **blocco** toglie il TCB dalle code di ready, uno **yield** lo
 > rimette in fondo alla coda del *proprio* livello — ed è quella che permette a
@@ -51,7 +51,7 @@
 > receive nell'idle?»* — e la risposta è che non serviva ad aspettare, serviva a
 > **cedere**, cioè era uno yield scritto con l'unica primitiva che c'era.
 >
-> Ha stanato anche il **quarto difetto** di `traccia.py` — non poteva passare
+> Ha stanato anche il **quarto difetto** di `trace.py` — non poteva passare
 > `--kbd`, quindi su un programma guidato da un device restava appeso invece di
 > tracciarlo. Corretto (le opzioni della macchina dopo un `--`), e la traccia ora
 > dice **idle 86,9%**: la prima volta che l'idle compare in una misura di questo
@@ -67,7 +67,7 @@
 > sparivano del tutto (`E` qui, `B` e `C` in `test_coop`).
 >
 > **`gjs` (SpiderMonkey) c'è**, e con un DOM finto di venti righe
-> ([`tools/traccia_dom.js`](../tools/traccia_dom.js), ricetta in testa al file)
+> ([`tools/trace_dom.js`](../tools/trace_dom.js), ricetta in testa al file)
 > lo script della pagina gira e le eccezioni si vedono. Entrambi i difetti sono
 > **corretti e verificati su tre programmi** (§3.39).
 >
@@ -88,7 +88,7 @@
 > - **«un chiamante solo»** non era la domanda giusta. Il criterio dei «due
 >   clienti che non si conoscono» serviva a decidere se `task_yield` fosse una
 >   primitiva o un pezzo di test. Qui la ragione è un'altra: l'aritmetica che
->   `sched_pronto_sopra` fa **è** l'invariante di §7.3 — tabella dei PCB contigua
+>   `sched_ready_above` fa **è** l'invariante di §7.3 — tabella dei PCB contigua
 >   e in ordine — e farla uscire dal kernel vorrebbe dire un secondo modulo che
 >   la conosce senza garantirla. È lo stesso argomento di `prio_pcb`, già dentro;
 > - **«un test solo, il caso peggiore»** resta vero. Ma per un kernel realtime il
@@ -133,8 +133,8 @@
 >
 > **Il rename ripara anche una collisione vera**, che non è cosmetica: `coda`
 > nel progetto significa **due cose** — il modulo (*queue*) e la posizione
-> (*tail*). `coda_init` inizializza una coda, `enqueue_coda` accoda **in fondo**,
-> e il contrario è `enqueue_testa`. Stessa parola per due concetti che non
+> (*tail*). `queue_init` inizializza una coda, `enqueue_tail` accoda **in fondo**,
+> e il contrario è `enqueue_head`. Stessa parola per due concetti che non
 > c'entrano niente, dall'inizio del progetto, e in italiano non si vede.
 >
 > **Scartata: la doppia versione**, italiana e inglese in parallelo, «tanto quella
@@ -213,7 +213,7 @@
 > Il resto in fila, dal più vicino:
 >
 > - ~~**§13.7**~~ — **CHIUSA PER INTERO** (§3.41 e §3.42): `mutex_unlock` arma e
->   CEDE, e dal 13/09 **chiede prima di pagare** — `sched_pronto_sopra`, la prima
+>   CEDE, e dal 13/09 **chiede prima di pagare** — `sched_ready_above`, la prima
 >   domanda di sola lettura che si possa fare allo scheduler. Non resta niente;
 > - **il salvataggio PIGRO**: oggi un task vettoriale che esce e rientra senza
 >   che nessun altro usi i vettori paga salvataggio e ripristino per niente.
@@ -223,7 +223,7 @@
 >   l'interrupt della tastiera. Si ripresenta, ed è la seconda volta;
 > - **il disegno** delle marche: corsie per canale, barre **a strisce** per
 >   proprietario, e la sovrapposizione allineata al trigger, che è dove il jitter
->   si vede. Con `test_vettori` adesso c'è finalmente qualcosa da disegnare.
+>   si vede. Con `test_vectors` adesso c'è finalmente qualcosa da disegnare.
 >
 > Poi resta **la decisione grossa: cosa deve *fare* l'eseguibile che mostra il
 > sistema al lavoro**. Il disaccordo sull'ordine (qui sotto) si è ridotto: il
@@ -231,7 +231,7 @@
 >
 > Restano sei debiti piccoli aperti e non chiusi apposta:
 >
-> - **il controllo sullo slot in `sched_pronto_sopra` è CODICE CORRETTO E MAI
+> - **il controllo sullo slot in `sched_ready_above` è CODICE CORRETTO E MAI
 >   ESEGUITO** — entrato in `master` con la fusione del 13/09, e scritto qui
 >   perché non venga ingoiato insieme a essa. Verificato per esecuzione: su tutta
 >   la suite le due `lw` girano lo **stesso** numero di volte, cioè quel ramo non
@@ -254,7 +254,7 @@
 >   È l'ultimo pezzo del debito dell'11/09 — i due difetti *strutturali* della
 >   pagina sono chiusi (§3.39), questo è prosa e va riscritta sapendo cosa deve
 >   dire;
-> - **`tools/traccia.py --testo`**, proposto e non scritto: stamperebbe la
+> - **`tools/trace.py --testo`**, proposto e non scritto: stamperebbe la
 >   timeline nel terminale invece di scrivere l'HTML, che è quello che serve
 >   quando si vuole solo controllare l'ordine dei turni. Una ventina di righe.
 >
@@ -279,7 +279,7 @@
 > 1. **un nucleo fattuale solo.** I numeri stanno in un posto — con scritto
 >    *come* sono stati ottenuti — e i quattro testi lo citano invece di
 >    ripeterlo. Dove si può, quel posto si **genera** dalla build invece di
->    scriverlo a mano: è la mossa di `marche.conf` applicata alla prosa. Quattro
+>    scriverlo a mano: è la mossa di `marks.conf` applicata alla prosa. Quattro
 >    testi che ripetono gli stessi numeri sono quattro verità, e la prosa non ha
 >    un compilatore;
 > 2. **il didattico è la sorgente, quello per il collega è una compressione.**
@@ -311,7 +311,7 @@
 > questo che la tastiera è arrivata adesso. Poi un eseguibile che usi lo stato
 > dell'arte del sistema.
 >
-> **I due sono fatti**: `test_coop` (§3.38) e `test_mondo` (§3.39), e vanno letti
+> **I due sono fatti**: `test_coop` (§3.38) e `test_events` (§3.39), e vanno letti
 > come una coppia — stesso kernel, con e senza qualcosa che possa succedere.
 > Quello che resta è l'eseguibile, e **cosa debba fare è la decisione aperta**.
 >
@@ -384,7 +384,7 @@
 >
 > Due cose da sapere leggendo il codice nuovo:
 >
-> - **`coda_peek` è dell'utente**, e la forma finale pure: un argomento solo, e
+> - **`queue_peek` è dell'utente**, e la forma finale pure: un argomento solo, e
 >   la fine del giro la riconosce il chiamante **contando**. Un ciclo limitato da
 >   un conteggio non scappa nemmeno su una lista corrotta, ed è il limite che
 >   §13.6 chiede di dichiarare invece di lasciare implicito;
@@ -414,17 +414,17 @@
 > - **§3.31** `test_block`: un task che si blocca su una mailbox vuota, l'ISR
 >   che gli consegna, e l'idle che gira **mentre lui dorme** — la CPU libera
 >   misurata sul serio;
-> - **§3.32** `test_catena`: A→B→C, cioè il **primo dei due passi** della
+> - **§3.32** `test_chain`: A→B→C, cioè il **primo dei due passi** della
 >   simulazione di §3.28. Mette in gioco tre percorsi mai eseguiti prima —
 >   `send_s` da task, il ramo di `task_ready` che **non** preempta, la scansione
 >   che attraversa livelli popolati — e, misurando, ha mostrato la
 >   **saturazione**: a 800 cicli di periodo l'ultimo anello muore di fame senza
 >   che nessuna asserzione scatti;
-> - **§3.34** `tools/traccia.py`, la **traccia temporale**: chi gira e in quale
+> - **§3.34** `tools/trace.py`, la **traccia temporale**: chi gira e in quale
 >   intervallo, e quanto di quel tempo è kernel per suo conto. Chiude il debito
 >   aperto da §3.29, che adesso ha una risposta;
-> - **§3.33** `rtos/gestore_timeout/`, il **primo task di sistema** del progetto
->   (cartella nuova, decisa dall'utente), e `test_gestore`: §8, §9 e §10 girano
+> - **§3.33** `rtos/timeout_manager/`, il **primo task di sistema** del progetto
+>   (cartella nuova, decisa dall'utente), e `test_tmgr`: §8, §9 e §10 girano
 >   per la prima volta insieme sotto lo scheduler vero. **§3.28 è chiusa.** E
 >   §9.2 aveva un test che non poteva funzionare — `count == 0` mentre il caso
 >   normale è `count == −1` — corretto e misurato.
@@ -437,7 +437,7 @@
 > 1. ~~**`task_yield` e §13.7**~~ — **CHIUSA** il 12/09: la primitiva (§3.39) e
 >    la chiamata da `mutex_unlock` (§3.41). §13 non ha più punti aperti;
 > 2. **il semaforo davanti al pool** (§13.8, terzo corollario): oggi chi trova
->    vuota una classe riceve `POOL_VUOTO` e ripassa più tardi (§9.2). È il primo
+>    vuota una classe riceve `POOL_EMPTY` e ripassa più tardi (§9.2). È il primo
 >    cliente vero che il semaforo avrebbe, e il limite è dichiarato — chi gira
 >    nel percorso del tick non può bloccarsi, quindi il gestore dei timeout
 >    resterebbe sul ramo non bloccante;
@@ -455,11 +455,11 @@
 >
 > - ~~**cinque voci di §3.26**~~ — **RIPORTATE** il 10/09 (§3.35). Della tabella
 >   in fondo a §3.26 resta solo l'ultima riga, gli `_api`, che non riguarda §13;
-> - ~~`SEMAFORO.risorse`~~ — **SCRITTO** (§3.35), nella forma decisa: un `.equ`
->   derivato da `TESTA.count`. Con una correzione a §13.1 che il codice ha
+> - ~~`SEMAPHORE.resources`~~ — **SCRITTO** (§3.35), nella forma decisa: un `.equ`
+>   derivato da `HEAD.count`. Con una correzione a §13.1 che il codice ha
 >   imposto — il `sem: .word 0, 0, 10` della proposta **non è scrivibile**,
->   perché una `TESTA` vuota non è fatta di zeri;
-> - ~~**la traccia temporale**~~ — **FATTA** (§3.34): `tools/traccia.py` dice chi
+>   perché una `HEAD` vuota non è fatta di zeri;
+> - ~~**la traccia temporale**~~ — **FATTA** (§3.34): `tools/trace.py` dice chi
 >   gira e in quale intervallo, e la domanda di §3.29 ha una risposta (l'idle non
 >   conta il doppio, ha **fasce** molto più lunghe);
 > - il **linker/locator** (`.align`, `.section`, regioni e mappa) e la domanda
@@ -481,7 +481,7 @@
 > - **il ceiling non ha una direzione conservativa** — per eccesso è inversione
 >   di priorità dichiarata come politica, ed è per questo che §13.5 deve
 >   esistere;
-> - **codice**: `enqueue_dopo_nc` (§13.6) e `coda_api.vinc`, l'interfaccia che
+> - **codice**: `enqueue_after_nc` (§13.6) e `queue_api.vinc`, l'interfaccia che
 >   pubblica anche le entry col contratto di chiamata;
 > - **scoperta che ferma il mutex**: le priorità non esistono ancora. Vedi sotto.
 >
@@ -599,9 +599,9 @@ Quattro pezzi, nell'ordine in cui sono nati:
 
 | Pezzo | Dove | §  |
 |---|---|---|
-| Mailbox: `send`/`send_s`/`receive`, contatore con segno, strato `_nc` | `kernel/messageHandling.vasm`, `kernel/coda.vasm` | §3.10 |
+| Mailbox: `send`/`send_s`/`receive`, contatore con segno, strato `_nc` | `kernel/messageHandling.vasm`, `kernel/queue.vasm` | §3.10 |
 | Gestore dei timeout: vettore di descrittori, `timeout_arm`/`timeout_cancel` | `kernel/timeout.vasm`, `include/timeout.vinc` | §3.13 |
-| Invariante dei link nelle code + esito in `r3`, e il puntatore nullo imposto dalla toolchain | `kernel/coda.vasm`, `include/vcpu.h`, `src/` | §3.14 |
+| Invariante dei link nelle code + esito in `r3`, e il puntatore nullo imposto dalla toolchain | `kernel/queue.vasm`, `include/vcpu.h`, `src/` | §3.14 |
 | Pool di buffer, sei classi dimensionate 10/4/0/0/0/0 | `kernel/pool.vasm`, `include/pool.vinc` | §3.15 |
 
 A cui si aggiunge, dal 05/09/2026 e su un fronte diverso (il build), `-I`
@@ -743,7 +743,7 @@ livello.
 | HAL | completo (§3.21) | [`hal/`](../hal/) |
 | Code, pool, timeout, formato messaggi | completo, indipendente dallo scheduler (§3.24) | [`generic/`](../generic/) |
 | Kernel + scheduler a priorità + mailbox + gestore timeout + semaforo e mutex | completo: PCB, slot, rotazione fra pari (tranne per chi è in sezione critica, §3.36), blocco volontario **e cessione volontaria** (`task_yield`, §3.39), task di sistema (§3.28–§3.33), §13 scritta (§3.35). **§13 CHIUSA per intero** (§3.41) | [`rtos/`](../rtos/) |
-| Device in MMIO (tastiera, polling) | primo pezzo: registri sopra la RAM, alimentati da una traccia a cicli (§3.37); usato dall'RTOS in `test_mondo` (§3.39) | [`hal/kbd.vinc`](../hal/interface/hal/kbd.vinc), [`src/vcpu.c`](../src/vcpu.c) |
+| Device in MMIO (tastiera, polling) | primo pezzo: registri sopra la RAM, alimentati da una traccia a cicli (§3.37); usato dall'RTOS in `test_events` (§3.39) | [`hal/kbd.vinc`](../hal/interface/hal/kbd.vinc), [`src/vcpu.c`](../src/vcpu.c) |
 | Sincronizzatore fra più VM e modelli di hardware | **da fare** — solo progettato (11/09/2026) | [`docs/proposta-sincronizzazione.md`](proposta-sincronizzazione.md) |
 | Linguaggio alto livello `vc` | **da fare** — solo progettato | [`docs/proposta-linguaggio-alto-livello.md`](proposta-linguaggio-alto-livello.md) |
 
@@ -841,7 +841,7 @@ e1ebb2f timeout e messaggio: generic/ e' completa
 a440ebc coda in generic/: la cartella che deve poter vivere senza scheduler
 71a9800 hal esce da linked/scheduler: prima cartella per libreria, e il -I morde
 4437546 INTERFACES e LINK: la coppia resta, e la specie diventa un controllo
-913d3f7 test_coda si dichiara il nodo: generic non chiede piu' l'header del kernel
+913d3f7 test_queue si dichiara il nodo: generic non chiede piu' l'header del kernel
 a834cfe La parola di provenienza e' del pool: proprieta' rovesciata
 9785d6d Handoff §3.23: come deve essere fatto l'albero, e le tre domande aperte
 127de06 Sei librerie su un DAG: types.vinc spezzato e dipendenze transitive
@@ -946,7 +946,7 @@ in tre strati con contratto netto:
   `_trap_entry` (frame di contesto da 60 byte), `ctx_init` (frame finto, come
   `pxPortInitialiseStack` di FreeRTOS), `timer_init`/`irq_arm`/`irq_enable`, e
   `irq_save`/`irq_restore` a coppia — **componibili**, quindi corretti anche annidati.
-- [`generic/coda/impl/src/coda.vasm`](../generic/coda/impl/src/coda.vasm) — 5 primitive `list_head` con unlink
+- [`generic/queue/impl/src/queue.vasm`](../generic/queue/impl/src/queue.vasm) — 5 primitive `list_head` con unlink
   O(1), più le varianti `_s` protette da sezione critica.
 - [`rtos/scheduler/impl/src/scheduler.vasm`](../rtos/scheduler/impl/src/scheduler.vasm) — kernel **puro**: politica
   round-robin + **preemption differita** (`need_resched` di Linux /
@@ -1086,7 +1086,7 @@ Una label separata prima di `.proc` ora è un errore (`duplicate label`), non
 un no-op silenzioso — comportamento verificato esplicitamente. Aggiunto anche
 un controllo che `.proc` compaia solo in `.text` (serviva comunque passare
 `section` a `handle_proc_directive` per poter definire il simbolo come
-codice). Aggiornati `coda.vasm` (le quattro `_s`) e `docs/manual.md` §4.2.1.
+codice). Aggiornati `queue.vasm` (le quattro `_s`) e `docs/manual.md` §4.2.1.
 
 **Esito nel codice reale: nessuna delle tre routine nuove di
 `scheduler.vasm` usa `.proc`**, e non è un fallimento della feature — è quello
@@ -1097,7 +1097,7 @@ finale che non ritorna, quindi non hanno epilogo), e `scheduler`/`dispatcher`/
 `sched_dispatch` sono per scelta esplicita dell'utente routine "private" (un
 solo chiamante per costruzione, non un'API generica) da scrivere a mano anche
 quando la forma sarebbe lineare. Il primo uso vero è arrivato subito dopo,
-in `coda.vasm` (vedi sotto): i quattro wrapper `_s`, che hanno esattamente la
+in `queue.vasm` (vedi sotto): i quattro wrapper `_s`, che hanno esattamente la
 forma giusta *e* sono API pubblica riusabile.
 
 **Le tre routine kernel finali** (`linked/scheduler/kernel/scheduler.vasm`):
@@ -1121,8 +1121,8 @@ comparabili in ordine di grandezza). Il cambio nei numeri assoluti è lo stesso
 tipo di effetto collaterale già visto in §3.4 (più `call` nel percorso IRQ
 spostano l'allineamento del timer), non una regressione.
 
-**`coda.vasm`: applicato `.proc`/`.endproc` ai quattro wrapper `_s`**
-(`enqueue_coda_s`, `enqueue_testa_s`, `dequeue_testa_s`, `remove_buffer_s`),
+**`queue.vasm`: applicato `.proc`/`.endproc` ai quattro wrapper `_s`**
+(`enqueue_tail_s`, `enqueue_head_s`, `dequeue_head_s`, `remove_buffer_s`),
 su segnalazione dell'utente dopo aver visto il file aperto nell'IDE. Sono
 esattamente il caso d'uso pensato per la direttiva: non-foglia, corpo lineare,
 un solo `ret`, ed **esportati** (`.global`) — API pubblica riusabile da
@@ -1130,7 +1130,7 @@ qualunque task, non routine private a chiamante singolo come `scheduler`/
 `dispatcher`. `.proc` genera solo il prologo/epilogo di r15; il salvataggio
 della psw attorno alla `call` raw (necessario perché la raw usa r5 come
 scratch) resta scritto a mano dentro il blocco. Verificato con un test mirato
-(`enqueue_coda_s`/`dequeue_testa_s` sotto `IE=1`, ordine FIFO e count finale
+(`enqueue_tail_s`/`dequeue_head_s` sotto `IE=1`, ordine FIFO e count finale
 corretti) e con l'invariante (2) invariata (105/74: i wrapper `_s` non sono
 usati dalla demo).
 
@@ -1191,12 +1191,12 @@ Due chiarimenti chiesti e risposti prima di implementare:
   il prologo (quindi l'indirizzo di ogni riga del corpo) non è noto finché non
   si è letto tutto il corpo; è comunque coerente con "corpo lineare, un solo
   esit" già richiesto dalla direttiva. Nessuno dei quattro usi reali in
-  `coda.vasm` viola questo vincolo (corpi già senza etichette/direttive).
+  `queue.vasm` viola questo vincolo (corpi già senza etichette/direttive).
 
 **Limite importante, documentato in `docs/manual.md` §4.2.1**: è un'analisi
 **statica** delle sole istruzioni scritte nel corpo — non vede cosa sporca una
 routine chiamata. Conseguenza diretta: **i quattro wrapper `_s` in
-`coda.vasm` (§3.5) NON vengono semplificati da questa feature.** Il loro
+`queue.vasm` (§3.5) NON vengono semplificati da questa feature.** Il loro
 salvataggio a mano di `r5` (la psw) attorno alla `call irq_save`/
 `irq_restore` resta necessario, perché `r5` non è mai scritto da
 un'istruzione visibile nel corpo della `.proc` — arriva da un side-effect
@@ -1246,7 +1246,7 @@ make                                    # pulito, zero warning — OK
 # invarianti esistenti (§4) — stessi numeri di sempre
 ./build/vcpu_sim standalone/saxpy.vasm                          # 17/40/94 — OK
 ./build/vcpu_sim asm linked/scheduler/hal/machine.vasm      -o build/machine.vo
-./build/vcpu_sim asm linked/scheduler/kernel/coda.vasm      -o build/coda.vo
+./build/vcpu_sim asm linked/scheduler/kernel/queue.vasm      -o build/coda.vo
 ./build/vcpu_sim asm linked/scheduler/kernel/scheduler.vasm -o build/scheduler.vo
 ./build/vcpu_sim asm linked/scheduler/scheduler_demo.vasm   -o build/scheduler_demo.vo
 ./build/vcpu_sim ld build/scheduler_demo.vo build/scheduler.vo \
@@ -1365,7 +1365,7 @@ richiedente alla sua mailbox a una certa scadenza. Verbalizzata nella proposta
 come **§7.5** (decisione) più la nuova **§9** (il meccanismo: descrittore =
 messaggio, gestore nella ISR del tick, lista non ordinata come primo passo,
 cancellazione con il campo `dove`). Aggiornati anche §1, §3 (diagramma delle
-classi + layout MESSAGGIO), §8 e §10 della proposta; le vecchie §8/§9 sono
+classi + layout MESSAGE), §8 e §10 della proposta; le vecchie §8/§9 sono
 diventate §9/§10.
 
 Le questioni (2) e (3) restano aperte, riassunte in §5.
@@ -1391,7 +1391,7 @@ ambiguo in una finestra. L'utente ha proposto modulo-e-segno, cioè un contatore
 bit di tipo a bit 31 litiga con l'estensione di segno di `lw` e che senza `andi`
 la maschera costa, e il compromesso è il **complemento a due con semantica
 descrittiva**: stessa idea dell'utente, encoding che la macchina regala. Poi
-l'utente ha bocciato il mio `MESSAGGIO` con header di kernel da 20 byte
+l'utente ha bocciato il mio `MESSAGE` con header di kernel da 20 byte
 (`scadenza`/`mailbox`/`dove`): il messaggio è **solo** `fwd`/`bwd`/`payload`, e
 quei campi vanno nel payload del servizio che li usa. Da lì è nato tutto il
 modello a interfacce di §8.6.
@@ -1401,8 +1401,8 @@ modello a interfacce di §8.6.
 | File | Cosa |
 |---|---|
 | `kernel/messageHandling.vasm` | **nuovo**: `send` (raw), `send_s` (`.proc`), `receive` |
-| `kernel/coda.vasm` | strato `_nc` (4 primitive), che è il **corpo** di quelle contate: cadono in sequenza, niente `call`, niente splicing duplicato |
-| `include/types.vinc` | `MESSAGGIO` (fwd/bwd/payload), `PAYLOAD` (messageType/clientTag/messageCode/replyMailbox/specifiche), `MSG_REQUEST`/`MSG_REPLY` |
+| `kernel/queue.vasm` | strato `_nc` (4 primitive), che è il **corpo** di quelle contate: cadono in sequenza, niente `call`, niente splicing duplicato |
+| `include/types.vinc` | `MESSAGE` (fwd/bwd/payload), `PAYLOAD` (messageType/clientTag/messageCode/replyMailbox/specifiche), `MSG_REQUEST`/`MSG_REPLY` |
 | `tests/test_mailbox.vasm` | **nuovo**, dà `0 1 2 11 22 0 33 0 0` |
 
 Il test esercita anche la **consegna diretta** senza avere uno scheduler, con un
@@ -1411,10 +1411,10 @@ equivale a «far girare adesso la controparte», quindi lo stub di `task_block`
 esegue la `send` che sveglierà il chiamante e ritorna.
 
 **Prova oggettiva che il confine è al posto giusto:** `messageHandling.vasm` non
-referenzia **nessun** campo di `MESSAGGIO` (grep a zero) — usa solo `TESTA` per
+referenzia **nessun** campo di `MESSAGE` (grep a zero) — usa solo `HEAD` per
 la mailbox e `TCB.state` per il ricevente.
 
-**Invariante (2) cambiata: 105/74 → 104/73.** `dequeue_testa` ha una `beq` in
+**Invariante (2) cambiata: 105/74 → 104/73.** `dequeue_head` ha una `beq` in
 più sul percorso non vuoto (il test strutturale del corpo condiviso). È lo stesso
 effetto già visto in §3.4 e §3.5, non una regressione: stesso numero di tick, che
 è 8 per costruzione. Una prima stesura usava un `j` e costava due istruzioni
@@ -1462,7 +1462,7 @@ diverso e più semplice, ed è quello adottato:
 
 **Il modello precedente non era solo più complicato: era rotto.** La
 dimostrazione è in §9.6 della proposta e vale la pena averla in mente, perché è
-il tipo di difetto che i test non trovano: `dequeue_testa` non azzera i link del
+il tipo di difetto che i test non trovano: `dequeue_head` non azzera i link del
 nodo che sfila, quindi una `timeout_cancel` con `dove == MSG_MAILBOX` su un
 messaggio già consumato riscrive `mbox.fwd` e porta `count` a `-1` — che nella
 convenzione con segno significa *c'è un TCB in attesa*. La `send` successiva
@@ -1493,13 +1493,13 @@ Poi allineati i punti del documento che raccontavano ancora il modello caduto:
 | Dove | Cosa diceva |
 |---|---|
 | §1 | «Nessun pool: i buffer sono statici e li possiede chi li manda» |
-| §3 | classe `TIMEOUT` con `attesa : TESTA` e `timeout_tick()`, relazione `TIMEOUT o-- MESSAGGIO` |
+| §3 | classe `TIMEOUT` con `attesa : HEAD` e `timeout_tick()`, relazione `TIMEOUT o-- MESSAGE` |
 | §3 e §7.5 | il TCB ha una coppia di link sola «perché in lista ci va il messaggio, non il TCB» |
-| §8.2 | `coda.vasm` serve anche «alla lista dei timeout» |
+| §8.2 | `queue.vasm` serve anche «alla lista dei timeout» |
 | §8.5 | la `send` è raw «perché il gestore gira nella ISR del tick» |
 | §10 | `kernel/timeout.vasm`, «gestore dei timeout a messaggio» |
 
-Aggiunte al diagramma di §3 le classi `DESCRITTORE` e `POOL`. Normalizzate le
+Aggiunte al diagramma di §3 le classi `DESCRIPTOR` e `POOL`. Normalizzate le
 date: quello che i documenti chiamavano 31/08 era in realtà il 30/08 — tre
 sessioni in un giorno solo, non due giorni.
 
@@ -1543,7 +1543,7 @@ azzerata, quindi non serve nessuna `timeout_init`.
 
 | File | Cosa |
 |---|---|
-| `include/timeout.vinc` | **nuovo**: `DESCRITTORE` (stato/scadenza/replyMailbox/clientTag/messageCode), `TMO_FREE`/`TMO_ARMED`, esiti `TMO_OK`/`TMO_FULL`/`TMO_DUP`/`TMO_NONE` |
+| `include/timeout.vinc` | **nuovo**: `DESCRIPTOR` (stato/scadenza/replyMailbox/clientTag/messageCode), `TMO_FREE`/`TMO_ARMED`, esiti `TMO_OK`/`TMO_FULL`/`TMO_DUP`/`TMO_NONE` |
 | `kernel/timeout.vasm` | **nuovo**: `tmo_now`, il vettore (10 caselle), `timeout_arm`, `timeout_cancel` |
 | `tests/test_timeout.vasm` | **nuovo**, dà `3 0 150 1 2 0 0 0 3 0 1` |
 
@@ -1595,8 +1595,8 @@ l'ha bocciata («non metterei un campo prima dei link nemmeno se avessi una
 pistola puntata alla tempia») e ha ragione con un argomento più forte del gusto:
 in questo progetto ogni struttura si sovrappone a offset 0 andando avanti, e un
 campo negativo significa che il puntatore consegnato non è la base
-dell'allocazione — cioè il `container_of` che `coda.vasm` si vanta di non avere.
-Ho allora proposto di mettere la parola dentro `MESSAGGIO`; l'utente l'ha spinta
+dell'allocazione — cioè il `container_of` che `queue.vasm` si vanta di non avere.
+Ho allora proposto di mettere la parola dentro `MESSAGE`; l'utente l'ha spinta
 un livello più su ancora, **dentro il payload**, e anche lì aveva ragione: così
 il pool è un *cliente* del messaggio invece che comproprietario del tipo, che è
 la stessa regola con cui era stato bocciato l'header di kernel da 20 byte
@@ -1614,10 +1614,10 @@ del contatore con segno della mailbox. L'utente ha proposto invece di guardare i
 per una ragione che il segno non copriva — prende anche il rilascio di un buffer
 **ancora accodato in una mailbox**, che il segno avrebbe accettato perché quel
 buffer è legittimamente «fuori dal pool». Ma così com'era non funzionava:
-`dequeue_testa` **non azzera i link del nodo che sfila**, quindi un buffer che
+`dequeue_head` **non azzera i link del nodo che sfila**, quindi un buffer che
 ha attraversato una mailbox arriva a `buf_free` con i link sporchi e verrebbe
 rifiutato pur essendo legittimo. È la stessa identica riga su cui è caduto il
-modello dei timeout di §9.6. Da qui l'azzeramento è sceso dentro `coda.vasm`, ed
+modello dei timeout di §9.6. Da qui l'azzeramento è sceso dentro `queue.vasm`, ed
 è diventata un'invariante generale.
 
 **L'ultimo giro, sull'errore.** Avevo proposto un hook fatale raggiunto con `j`
@@ -1630,11 +1630,11 @@ morire. Quindi esito di ritorno in `r3`. La diagnostica resta sufficiente perch�
 **il chiamante ha già tutto il contesto: testa e nodo li ha passati lui.**
 
 **Il puntatore nullo, trovato dal test e non dal ragionamento.** Il primo giro di
-`tests/test_coda.vasm` non rifiutava il doppio accodamento: `testa` finiva
+`tests/test_queue.vasm` non rifiutava il doppio accodamento: `testa` finiva
 all'**indirizzo 0** (primo oggetto del primo modulo nel link), quindi i link di
 un nodo accodato valevano 0 ed erano indistinguibili da «non in lista». Non era
 un difetto nuovo: il codice **assumeva già** che 0 fosse nullo in tre punti
-(`dequeue_testa` che restituisce 0 per coda vuota, `current == 0` = nessun task,
+(`dequeue_head` che restituisce 0 per coda vuota, `current == 0` = nessun task,
 `buf_alloc` che restituirà 0 per «nessun blocco»), semplicemente nessuno l'aveva
 mai imposto e nessun oggetto ci era mai finito sopra. Ora il segmento dati parte
 da 4 — `NULL_GUARD` in `include/vcpu.h`, applicato dal linker e dal percorso a
@@ -1645,12 +1645,12 @@ riempita, così la parola di guardia è zero e non memoria di scarto.
 
 | File | Cosa |
 |---|---|
-| `kernel/coda.vasm` | azzeramento dei link sulla rimozione, controllo sull'inserimento, esito in `r3`; il controllo sta **prima** del contatore, se no un rifiuto lascerebbe la testa incoerente |
+| `kernel/queue.vasm` | azzeramento dei link sulla rimozione, controllo sull'inserimento, esito in `r3`; il controllo sta **prima** del contatore, se no un rifiuto lascerebbe la testa incoerente |
 | `kernel/messageHandling.vasm` | `send` controlla in cima e restituisce l'esito; il controllo non è delegato all'enqueue perché sul percorso della consegna diretta arriverebbe a TCB già sfilato |
-| `include/types.vinc` | `CODA_OK`/`CODA_LINKED`/`CODA_UNLINKED`, `PAYLOAD.pool` come primo campo |
+| `include/types.vinc` | `QUEUE_OK`/`QUEUE_LINKED`/`QUEUE_UNLINKED`, `PAYLOAD.pool` come primo campo |
 | `include/vcpu.h`, `src/assembler.c`, `src/toolchain.c` | `NULL_GUARD`: i dati partono da 4 |
 | `docs/manual.md` §3 | l'indirizzo 0 è riservato — la prima etichetta in `.data` vale 4 |
-| `tests/test_coda.vasm` | **nuovo**, dà `0 1 1 1 0 0 0 2 1 0 0 0 0` |
+| `tests/test_queue.vasm` | **nuovo**, dà `0 1 1 1 0 0 0 2 1 0 0 0 0` |
 
 **Due punti dove l'esito è ignorato di proposito, e non è una svista**:
 `receive` quando accoda il proprio TCB (sta per bloccarsi, non ha nessuno a cui
@@ -1682,7 +1682,7 @@ l'arrotondamento e il non-ripiego. 456 byte di blocchi più 72 di teste.
 
 | File | Cosa |
 |---|---|
-| `include/pool.vinc` | **nuovo**: le sei taglie, la vista `BLOCCO`, le sei `BLOCCOnn` per `.res`, gli esiti `POOL_*` |
+| `include/pool.vinc` | **nuovo**: le sei taglie, la vista `BLOCK`, le sei `BLOCCOnn` per `.res`, gli esiti `POOL_*` |
 | `kernel/pool.vasm` | **nuovo**: le sei teste, i blocchi, `pool_init`, `buf_alloc`, `buf_free`, più le due mappature taglia→classe |
 | `tests/test_pool.vasm` | **nuovo**, dà `10 4 0 0 9 0 32 3 2 0 0 4 4 4 3 0 0 1 4` |
 
@@ -1697,19 +1697,19 @@ Quattro cose da non perdere di vista, tutte nei commenti del sorgente:
 - **`buf_free` non ha parametri oltre al buffer**, e i suoi tre rifiuti sono
   esattamente quelli che servono: `POOL_LINKED` (il blocco sta ancora in una
   lista — prende il doppio rilascio *e* il rilascio di un buffer ancora accodato
-  in una mailbox) e `POOL_ESTRANEO` (taglia non valida, quindi anche un buffer
+  in una mailbox) e `POOL_FOREIGN` (taglia non valida, quindi anche un buffer
   statico del cliente, che ha `pool == 0`). Il primo esiste solo grazie
   all'invariante dei link di §3.14.
 - **Nessuna delle due routine ha una sezione critica propria**: la catena
   taglia→classe è aritmetica sull'argomento, e l'unico atto sullo stato è un
-  `dequeue_testa_s`/`enqueue_coda_s` che si protegge da sé.
+  `dequeue_head_s`/`enqueue_tail_s` che si protegge da sé.
 - **`pool_riempi` salva `r10..r13`.** Gli argomenti devono migrare fuori da
-  `r1..r6` perché `enqueue_coda` usa `r3` per l'esito e `r4`/`r5` come scratch;
+  `r1..r6` perché `enqueue_tail` usa `r3` per l'esito e `r4`/`r5` come scratch;
   salvarli tiene il contratto di `pool_init` pulito invece di lasciare una
   trappola per un chiamante futuro.
 
 **Primo modulo che include due `.vinc`** (`pool.vinc` per sé, `types.vinc` per
-`TESTA`), e funziona proprio perché sono foglia: se uno dei due includesse
+`HEAD`), e funziona proprio perché sono foglia: se uno dei due includesse
 l'altro darebbe `duplicate constant`. È la conferma pratica della regola presa
 in §3.13.
 
@@ -1798,9 +1798,9 @@ non farle diventare illeggibili. Unica eccezione voluta: `tests/test_include.vas
 tiene una grafia relativa, perché è esattamente ciò che testa.
 
 **`pool.vinc` ora include `types.vinc`**, ed è la modellazione che §5 indicava
-come giusta: `BLOCCO` *è* un nodo di lista, una free-list è una `TESTA` con i
+come giusta: `BLOCK` *è* un nodo di lista, una free-list è una `HEAD` con i
 blocchi come nodi. `timeout.vinc` resta invece foglia, ma per una ragione sua e
-non per un limite della toolchain: il `DESCRITTORE` non entra mai in una lista
+non per un limite della toolchain: il `DESCRIPTOR` non entra mai in una lista
 (§9.3), quindi non ha niente da chiedere a `types.vinc`.
 
 **Punto 4 — CMake.** `CMakeLists.txt` più `cmake/vasm.cmake` (le funzioni) e
@@ -1851,7 +1851,7 @@ spostando di proposito un atteso da `98 65` a `98 66`, il test fallisce.
 > sequenze stampate — e le invarianti di §4 sono i **valori**, non i byte
 > dell'immagine. Ma è un cambiamento di layout reale e va saputo: se un giorno
 > un'invariante si sposta di poco su uno di questi tre, questo è il primo posto
-> dove guardare. `test_coda.vx` resta identico perché per lui l'ordine
+> dove guardare. `test_queue.vx` resta identico perché per lui l'ordine
 > dell'archivio coincide con quello della lista.
 
 **Trovato per strada e corretto**: §7.10 del manuale mostrava ancora `105/74` per
@@ -1902,7 +1902,7 @@ perché.
 
 **Chiuso anche un punto vecchio:** `dispatcher` prende il TCB **in input**. §6
 della proposta lo diceva già («salto, TCB in input»); il codice no — `scheduler`
-ha il TCB in `r2` dopo `dequeue_testa`, lo scrive in `current`, e `dispatcher` lo
+ha il TCB in `r2` dopo `dequeue_head`, lo scrive in `current`, e `dispatcher` lo
 rilegge da lì due istruzioni dopo. Con l'input esplicito il commit di `current`
 si sposta dalla politica al meccanismo, che è il difetto annotato in §5.
 
@@ -2010,7 +2010,7 @@ Prima dava `undefined reference to 'sched_dispatch'`. Ora **si chiude**, e
 tutto il resto indipendente dall'hardware», e fino a oggi non era vera.
 
 **Un guadagno che non avevo previsto: tre eseguibili si sono alleggeriti.** Le
-intestazioni di `test_coda`, `test_pool` e `test_timeout` spiegavano che
+intestazioni di `test_queue`, `test_pool` e `test_timeout` spiegavano che
 `machine.vo` «si tira dietro `_trap_entry` → `sched_dispatch` → `scheduler.vasm`»;
 ora non più, e `scheduler.vasm` **non entra più nel link** di quei tre. Resta in
 `test_mailbox` per una ragione sola e legittima: è lui a definire `current`, che
@@ -2039,17 +2039,17 @@ Passo 4 di §12.6, l'ultimo. Due metà, verificate separatamente.
 
 **`types.vinc` spezzato in tre.** Teneva insieme code, task e messaggi: un unico
 file di interfaccia per tre fornitori diversi, quindi ogni modulo dipendeva da
-tutto — il pool si portava dietro `TCB` e `MESSAGGIO` senza nominarli mai. Ora:
+tutto — il pool si portava dietro `TCB` e `MESSAGE` senza nominarli mai. Ora:
 
 | File | Contiene | Dipende da |
 |---|---|---|
-| `coda.vinc` | `TESTA`, `CODA_*` | — (il più basso e il più incluso) |
-| `tcb.vinc` | `TCB`, `READY`/`RUNNING`/`SUSPENDED` | `coda.vinc` |
-| `messaggio.vinc` | `MESSAGGIO`, `PAYLOAD`, `MSG_*` | `coda.vinc` |
-| `pool.vinc` | `BLOCCO`, `POOL_*` | `coda.vinc` (era `types.vinc`) |
+| `queue.vinc` | `HEAD`, `CODA_*` | — (il più basso e il più incluso) |
+| `tcb.vinc` | `TCB`, `READY`/`RUNNING`/`SUSPENDED` | `queue.vinc` |
+| `message.vinc` | `MESSAGE`, `PAYLOAD`, `MSG_*` | `queue.vinc` |
+| `pool.vinc` | `BLOCK`, `POOL_*` | `queue.vinc` (era `types.vinc`) |
 | `hal.vinc`, `timeout.vinc` | — | foglie |
 
-Le tre dipendenze hanno tutte la stessa ragione: **`TCB`, `MESSAGGIO` e `BLOCCO`
+Le tre dipendenze hanno tutte la stessa ragione: **`TCB`, `MESSAGE` e `BLOCK`
 sono nodi di lista.** Ogni sorgente include ciò che *nomina*, non un
 aggregatore. Nessun numero si è mosso, ed era il punto: le costanti sono le
 stesse, cambia solo chi le riceve.
@@ -2114,12 +2114,12 @@ coda/
     CMakeLists.txt            add_subdirectory(src)
     src/
       CMakeLists.txt          sorgenti + librerie da linkare (anche la propria interfaccia)
-      coda.vasm
+      queue.vasm
   interface/
     CMakeLists.txt            add_subdirectory(coda)
     coda/                     <- ripete il nome della libreria
       CMakeLists.txt          la libreria d'interfaccia + cosa linka a sua volta
-      coda.vinc
+      queue.vinc
 ```
 
 > #### Perché quel livello `interface/<nome>/` non è decorazione
@@ -2132,7 +2132,7 @@ coda/
 > un commento.
 >
 > Con `interface/<nome>/` ogni libreria propaga la **propria** cartella e il file
-> si include come `coda/coda.vinc`. Chi include `tcb/tcb.vinc` senza aver linkato
+> si include come `coda/queue.vinc`. Chi include `tcb/tcb.vinc` senza aver linkato
 > l'interfaccia del kernel non riceve quel `-I` e **non assembla**. Il grafo
 > smette di essere documentazione e diventa un vincolo imposto dalla macchina —
 > per le *costanti*, esattamente come §3.21 l'ha ottenuto per i *simboli*
@@ -2154,7 +2154,7 @@ dell'utente**, e non vanno trattate come acquisite:
 
 1. **`impl/` deve guadagnarsi il suo livello.** Così com'è contiene solo `src/`:
    due livelli per uno. Proposta: `impl/` tiene `src/` **e** `test/`, e
-   `tests/test_coda.vasm` — che è il test unitario di `lib_coda`, non un test di
+   `tests/test_queue.vasm` — che è il test unitario di `lib_coda`, non un test di
    sistema — si sposta in `coda/impl/test/`. Resterebbero in un `tests/` di primo
    livello solo i test che verificano il **simulatore**: `test_epsw`,
    `test_proc`, `test_include`, `standalone/`.
@@ -2172,7 +2172,7 @@ dell'utente**, e non vanno trattate come acquisite:
    `target_link_libraries`.
 
 **Il prezzo, detto per intero:** cinque librerie su sei sono **un solo file
-sorgente**, che finirebbe tre livelli sotto (`rtos/coda/impl/src/coda.vasm`) —
+sorgente**, che finirebbe tre livelli sotto (`rtos/coda/impl/src/queue.vasm`) —
 sette cartelle e quattro `CMakeLists.txt` per ~200 righe. Si paga volentieri
 perché il vincolo sui `-I` frutta **adesso**, non «quando il progetto crescerà», e
 perché i confini non sono inventati: sono quelli dimostrati in §3.21-§3.22.
@@ -2216,11 +2216,11 @@ qualcun altro:
 | modulo | simboli che chiede | usa lo scheduler? |
 |---|---|---|
 | `machine.vasm` | nessuno | no → `hal/` |
-| `coda.vasm` | `irq_save`, `irq_restore` | no → `generic/` |
+| `queue.vasm` | `irq_save`, `irq_restore` | no → `generic/` |
 | `timeout.vasm` | `irq_save`, `irq_restore` | no → `generic/` |
-| `pool.vasm` | `coda_init`, `enqueue_coda`, `enqueue_coda_s`, `dequeue_testa_s` | no → `generic/` |
-| `messaggio.vinc` | (solo `coda.vinc`) | no → `generic/` |
-| `scheduler.vasm` | `enqueue_coda`, `dequeue_testa`, `ctx_restore` | **è** lo scheduler → `rtos/` |
+| `pool.vasm` | `queue_init`, `enqueue_tail`, `enqueue_tail_s`, `dequeue_head_s` | no → `generic/` |
+| `message.vinc` | (solo `queue.vinc`) | no → `generic/` |
+| `scheduler.vasm` | `enqueue_tail`, `dequeue_head`, `ctx_restore` | **è** lo scheduler → `rtos/` |
 | `messageHandling.vasm` | + `task_ready`, `task_block`, `current` | sì → `rtos/` |
 
 Da cui la conseguenza che ha ridisegnato l'albero: **`hal/` e `generic/` non
@@ -2235,7 +2235,7 @@ Due cose che la tabella dice e che non erano scritte da nessuna parte:
 - **il pool non nomina un solo simbolo dell'HAL.** La sezione critica gli
   arriva già confezionata dai wrapper `_s` delle code. Sta un gradino più
   lontano dalla macchina delle code stesse;
-- **`timeout` entra in `generic/` per la firma esatta di `coda.vasm`.** Con una
+- **`timeout` entra in `generic/` per la firma esatta di `queue.vasm`.** Con una
   cosa da sapere: `tmo_now` è un contatore di tick e l'incremento appartiene al
   percorso del tick, che non esiste ancora. Quando esisterà sarà il timer ISR a
   muovere quella parola — resta un legame verso l'HAL, non verso il kernel,
@@ -2296,7 +2296,7 @@ o `PRIVATE` lo scrivi lì, ogni volta**; la fusione avrebbe tolto l'unico segno
 visibile della distinzione *conservandone la sostanza*. E c'è un caso nel
 progetto che si legge oggi e che sarebbe sparito: **`lib_kernel` linka le code
 ma non ne dichiara l'interfaccia**, perché `scheduler.vasm` chiama
-`enqueue_coda` senza aver bisogno di una costante di `coda.vinc`.
+`enqueue_tail` senza aver bisogno di una costante di `queue.vinc`.
 
 Il difetto vero erano i **nomi**. Quindi `LIBS` → `INTERFACES` ovunque, anche in
 `vasm_interface` (dove il `LINK` fra due `.vinc` non era un link: un `.vinc` non
@@ -2309,7 +2309,7 @@ tempo di configure una libreria in `INTERFACES` o un'interfaccia in `LINK`.
 #### Il vincolo sui `-I` esiste, e ha morso da solo
 
 Era il motivo per cui valeva la pena pagare sette cartelle per ~200 righe.
-Provato deliberatamente: aggiungendo `.include "hal/hal.vinc"` a `coda.vasm`,
+Provato deliberatamente: aggiungendo `.include "hal/hal.vinc"` a `queue.vasm`,
 che non dichiara `vinc_hal`, l'assemblaggio si ferma con `cannot open include`.
 
 Ma la prova migliore non l'ha cercata nessuno: **`test_include` è fallito due
@@ -2321,7 +2321,7 @@ Un dettaglio dell'assembler che §3.23 non aveva registrato e che è portante:
 [`assembler.c:1171`](../src/assembler.c#L1171) cerca in `inc->base_dir`, che è
 fissato **una volta sola dal file di primo livello**
 ([`assembler.c:1127`](../src/assembler.c#L1127)) e **non** dalla cartella di chi
-include. Quindi `tcb.vinc` che include `"coda/coda.vinc"` non può risolverlo per
+include. Quindi `tcb.vinc` che include `"coda/queue.vinc"` non può risolverlo per
 via relativa: o arriva il `-I`, o non assembla. Il vincolo vale anche per gli
 archi interfaccia→interfaccia, più forte di quanto §3.23 sperasse.
 
@@ -2344,20 +2344,20 @@ sola: l'unico programma che la linka è il test, che il kernel se lo finge.
 
 Nessuno dei due sposta un file, e per questo si verificano ad albero fermo.
 
-**La parola di provenienza è del pool.** `BLOCCO.pool` (+8) e `PAYLOAD.pool`
-(payload+0) sono la **stessa parola**, e `BLOCCO.dati` (+12) cade su
+**La parola di provenienza è del pool.** `BLOCK.pool` (+8) e `PAYLOAD.pool`
+(payload+0) sono la **stessa parola**, e `BLOCK.data` (+12) cade su
 `PAYLOAD.messageType`: le due geometrie sono incastrate al byte. Nel codice la
-dipendenza non c'era già — `pool.vasm` nomina solo `BLOCCO.*` — ma il
+dipendenza non c'era già — `pool.vasm` nomina solo `BLOCK.*` — ma il
 **commento** dichiarava la proprietà al contrario, e così scritto il pool si
 definiva a partire da un formato che non conosce. Ora `pool.vinc` possiede
 dodici byte di testa e consegna da +12 un'area opaca, e il vincolo è formulato a
-carico di chi definisce un formato; `messaggio.vinc` prende il ruolo opposto.
+carico di chi definisce un formato; `message.vinc` prende il ruolo opposto.
 
-**`test_coda` si dichiara il nodo.** Dichiarava i nodi `.res TCB` e per farlo
+**`test_queue` si dichiara il nodo.** Dichiarava i nodi `.res TCB` e per farlo
 includeva `tcb.vinc`, cioè l'interfaccia dello scheduler, pur essendo il test
 della libreria più bassa: `generic/` si trascinava dentro il kernel attraverso
-il proprio test. Ora una `.struct NODO` propria — due link più otto byte opachi,
-che dicono qualcosa in più del vecchio TCB (che `coda.vasm` non assume niente
+il proprio test. Ora una `.struct NODE` propria — due link più otto byte opachi,
+che dicono qualcosa in più del vecchio TCB (che `queue.vasm` non assume niente
 sulla taglia del nodo) — e **16 byte come TCB apposta**, per non muovere
 l'immagine dati.
 
@@ -2454,7 +2454,7 @@ Da lì discendono due cose che prima erano domande aperte:
 
 #### Il semaforo non è una mailbox, e per un motivo preciso
 
-Sembravano lo stesso oggetto: una `TESTA`, un contatore con segno, task accodati
+Sembravano lo stesso oggetto: una `HEAD`, un contatore con segno, task accodati
 sul negativo. La differenza è la **natura del contatore**, e l'utente l'ha messa
 a fuoco correggendo una propria semplificazione:
 
@@ -2498,7 +2498,7 @@ discussione:
 > male degradi invece di appendere**.
 
 E siccome sotto ceiling corretto è vuota sempre, un TCB accodato a un mutex è
-**un'anomalia osservabile** a costo zero — stesso mestiere di `CODA_LINKED` e
+**un'anomalia osservabile** a costo zero — stesso mestiere di `QUEUE_LINKED` e
 dell'invariante `fwd == bwd == 0`.
 
 #### L'inserimento ordinato, e il confine che stava per essere violato
@@ -2507,18 +2507,18 @@ Con N attese servono risveglio per priorità e inserimento ordinato — ai semaf
 e ai mutex, **non** alle code di ready (già una per livello, dentro cui il FIFO è
 il round-robin) e non alla mailbox (un ricevente solo).
 
-La forma ovvia era una `enqueue_prio` in `coda.vasm`. **Sarebbe stata una
+La forma ovvia era una `enqueue_prio` in `queue.vasm`. **Sarebbe stata una
 violazione del confine appena costruito**: leggere la priorità dal nodo significa
-sapere che il nodo è un TCB, quindi `generic/coda` includerebbe `tcb/tcb.vinc` e
+sapere che il nodo è un TCB, quindi `generic/queue` includerebbe `tcb/tcb.vinc` e
 `generic/` dipenderebbe da `rtos/` — il difetto tolto la mattina stessa (§3.24)
 che rientra dalla finestra.
 
 La regola l'ha data l'utente, ed è quella giusta: *il gestore delle code non deve
 sapere perché gli si chiede di accodare in testa, in coda o fra due elementi.*
-Quindi `coda.vasm` guadagna `enqueue_dopo(prec, nodo)` — puro maneggio di link — e
+Quindi `queue.vasm` guadagna `enqueue_dopo(prec, nodo)` — puro maneggio di link — e
 la camminata sta in `rtos/`, dove i TCB si conoscono. E non è nemmeno una terza
-disciplina: `TESTA` è una **sentinella** in lista circolare, quindi
-`enqueue_testa` è «dopo la sentinella» e `enqueue_coda` è «dopo `testa.bwd`».
+disciplina: `HEAD` è una **sentinella** in lista circolare, quindi
+`enqueue_head` è «dopo la sentinella» e `enqueue_tail` è «dopo `testa.bwd`».
 La primitiva nuova le contiene entrambe.
 
 #### Cosa è stato scritto
@@ -2625,10 +2625,10 @@ La riga, detta in modo che si possa applicare:
 > Il kernel controlla ciò che, non controllato, **corromperebbe le proprie
 > strutture**. Non controlla se l'uso che ne fai ha senso.
 
-Il pool ne è la prova: `coda.vasm` verifica `fwd == bwd == 0` non per proteggere
+Il pool ne è la prova: `queue.vasm` verifica `fwd == bwd == 0` non per proteggere
 chi scrive, ma perché un `enqueue` di un nodo già in lista distrugge una lista
 che appartiene anche ad altri — e infatti §10.3 non ferma la macchina,
-restituisce `CODA_LINKED` e lascia all'applicativo la decisione di continuare.
+restituisce `QUEUE_LINKED` e lascia all'applicativo la decisione di continuare.
 Il controllo è per giunta gratis, perché quei due link la primitiva li sta già
 guardando.
 
@@ -2652,7 +2652,7 @@ L'utente ha proposto, **come esperimento e dichiarandolo poi un baco
 concettuale**: e se il ceiling fosse sempre definito sopra la priorità del task
 più prioritario del sistema? Sembra una semplificazione enorme — §13.5 perde la
 ragione di esistere per costruzione (la premessa (2) non può cadere), la coda del
-mutex diventa irraggiungibile, spariscono `count`, la `TESTA` e persino `owner`,
+mutex diventa irraggiungibile, spariscono `count`, la `HEAD` e persino `owner`,
 24 byte diventano 8.
 
 **È un baco, e sta nella parola «conservativo».** Il valore del ceiling *è*
@@ -2759,10 +2759,10 @@ nessuno può scegliere il destinatario* — e i due `li` vogliono il motivo
 accanto. E il taglio regge anche §9: con un ricevente solo il messaggio di
 scadenza **non può essere prelevato da nessun altro**.
 
-#### Il codice: `enqueue_dopo_nc`
+#### Il codice: `enqueue_after_nc`
 
 La primitiva agnostica di §13.6, e **non è codice nuovo**: è una seconda
-etichetta sullo stesso indirizzo di `enqueue_testa_nc` — `nm` le dà entrambe a
+etichetta sullo stesso indirizzo di `enqueue_head_nc` — `nm` le dà entrambe a
 `31`. Il corpo di `r1` legge solo `fwd`/`bwd`, che sentinella e nodo
 condividono, quindi «dopo la sentinella» e «in testa» sono la stessa istruzione:
 la proprietà di §13.6 («la primitiva nuova le contiene») non è raccontata in un
@@ -2786,9 +2786,9 @@ verifica che con `prec` = sentinella si torni all'inserimento in testa: il
 con le `_nc` e il contatore resta a 0 — una sola disciplina per testa, anche in
 un test, altrimenti l'esempio insegnerebbe la cosa sbagliata.
 
-#### Il codice: `coda_api.vinc`, e l'interfaccia che pubblica le entry
+#### Il codice: `queue_api.vinc`, e l'interfaccia che pubblica le entry
 
-Osservazione dell'utente: `coda.vinc` non dichiara gli `.extern` delle
+Osservazione dell'utente: `queue.vinc` non dichiara gli `.extern` delle
 primitive, quindi **l'interfaccia non è completa**. Vero, e contraddiceva §8.6
 della proposta, che dice che un fornitore pubblica «gli indirizzi delle entry se
 è un'API»; la regola opposta stava scritta in `hal.vinc` («qui ci sono solo
@@ -2809,9 +2809,9 @@ Tre fatti verificati sull'assembler, e il secondo è quello che decide la forma:
 Da cui due file e due regole:
 
 ```
-coda.vinc      i TIPI            lo include il FORNITORE e gli header i cui
+queue.vinc      i TIPI            lo include il FORNITORE e gli header i cui
                                  nodi sono liste (tcb, messaggio, pool)
-coda_api.vinc  i tipi + le ENTRY lo include CHI CHIAMA — un file solo
+queue_api.vinc  i tipi + le ENTRY lo include CHI CHIAMA — un file solo
 ```
 
 > 1. un modulo include il `.vinc` dei **tipi** del proprio fornitore e l'`_api`
@@ -2828,20 +2828,20 @@ ogni sorgente e che si sarebbe perso spostandoli nell'header.
 Il guadagno vero non sono gli `.extern`: è il **contratto di chiamata** —
 argomenti, ritorno, e quali registri sporca ogni entry — che prima si trovava
 solo aprendo l'implementazione. Con due dettagli che stavano fra le righe:
-`dequeue_testa` non restituisce un `CODA_*` (la coda vuota è un esito, non un
+`dequeue_head` non restituisce un `CODA_*` (la coda vuota è un esito, non un
 errore) e lascia `r3` intatto; i wrapper `_s` non sono foglia e sporcano `r5`
 oltre a ciò che sporca la raw.
 
 Sei clienti aggiornati (`pool`, `messageHandling`, `scheduler`, la demo,
-`test_coda`, `test_mailbox`): una riga di `.include` al posto della lista di
+`test_queue`, `test_mailbox`): una riga di `.include` al posto della lista di
 `.extern`. **Due commenti riscritti perché la divisione li ha resi falsi**, ed è
 la parte che vale la pena ricordare:
 
 - [`rtos/scheduler/impl/src/CMakeLists.txt`](../rtos/scheduler/impl/src/CMakeLists.txt)
   documentava *questo esatto caso* come la giustificazione di due parole chiave
   invece di una: «il kernel LINKa le code ma non ne dichiara l'interfaccia,
-  perché `scheduler.vasm` chiama `enqueue_coda` senza aver bisogno di una sola
-  costante di `coda.vinc`». Non è più vero. La distinzione non muore ma si
+  perché `scheduler.vasm` chiama `enqueue_tail` senza aver bisogno di una sola
+  costante di `queue.vinc`». Non è più vero. La distinzione non muore ma si
   sposta: **chi chiama include**, quindi LINK e INTERFACES coincidono per i
   chiamanti diretti e divergono solo su ciò che si linka per conto di qualcun
   altro — oggi `lib_hal`, e solo perché l'HAL non ha ancora il suo `_api`;
@@ -2854,7 +2854,7 @@ Il mutex **non è scrivibile oggi**, e il blocco non sta in §13:
 
 ```
 .struct TCB          fwd, bwd, sp, state    — 16 byte, nessuna priorità
-ready:  .res TESTA   UNA sola coda di ready — non una per livello
+ready:  .res HEAD   UNA sola coda di ready — non una per livello
 scheduler            round-robin
 ```
 
@@ -2890,7 +2890,7 @@ il contratto scritto.
 | §13.3 | la forma della dichiarazione del ceiling (`.equ` che nomina l'utente più prioritario, nel `.vinc` del fornitore) |
 | §13.1 | «sotto non c'è rete» non chiede una rete |
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
-| ~~—~~ | ~~il terzo campo di `TESTA` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
+| ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
 
 ---
@@ -2911,7 +2911,7 @@ partendo dai 6321 cicli della base pre-§13.7. Dopo la fusione l'albero misura
 
 Le due obiezioni erano mie, erano vere, e hanno perso lo stesso:
 
-- **«`sched_pronto_sopra` ha un chiamante solo.»** Il criterio dei «due clienti
+- **«`sched_ready_above` ha un chiamante solo.»** Il criterio dei «due clienti
   che non si conoscono» era nato la mattina prima per decidere se `task_yield`
   fosse una primitiva o un pezzo di test, e lì era il criterio giusto. Qui la
   domanda è un'altra: quella routine sta nel kernel perché l'aritmetica che fa
@@ -2933,7 +2933,7 @@ flag non voleva più dire «qualcuno ha chiesto un rescheduling», non voleva di
 niente. Il ramo ripara quello, e il −7% è l'effetto collaterale.
 
 **Il debito che la fusione porta dentro** è dichiarato nel riquadro e non va
-ingoiato con essa: il controllo sullo slot in `sched_pronto_sopra` è codice
+ingoiato con essa: il controllo sullo slot in `sched_ready_above` è codice
 corretto e **mai eseguito**, e nessun test se ne accorgerebbe se qualcuno
 cambiasse il modo in cui gli slot si riempiono.
 
@@ -2967,8 +2967,8 @@ porta a ND Satcom è il ragionamento.
 
 **Il rename ripara una collisione, e non è cosmetica.** `coda` nel progetto
 significa **due cose diverse**: il modulo (*queue*) e la posizione (*tail*).
-`coda_init` inizializza una coda; `enqueue_coda` accoda **in fondo**, e il suo
-contrario è `enqueue_testa`. Stessa parola per due concetti che non c'entrano
+`queue_init` inizializza una coda; `enqueue_tail` accoda **in fondo**, e il suo
+contrario è `enqueue_head`. Stessa parola per due concetti che non c'entrano
 niente, dall'inizio del progetto, e in italiano non si vede. In inglese si separa
 da sola: `queue_init` contro `enqueue_tail`/`enqueue_head`, e `dequeue_head` che
 finalmente dice che toglie dalla **testa** e non «dalla coda».
@@ -3057,7 +3057,7 @@ task svegliato da un'**ISR** durante la sezione critica, che con quel mutex non
 c'entra). Sono le **code dei PCB**, e la domanda esatta è *esiste un eseguibile
 più prioritario di `prio_prec`?*
 
-`sched_pronto_sopra(r1 = &PCB limite)` è quella domanda: la stessa scansione di
+`sched_ready_above(r1 = &PCB limite)` è quella domanda: la stessa scansione di
 `sched_scan` **senza l'effetto**. Esiste perché `scheduler` *sfila* il TCB che
 sceglie — è un comando, non una domanda, e interrogarlo costerebbe rimettere
 dentro ciò che ha tolto. Guarda **coda e slot** a ogni livello, perché sono i due
@@ -3089,7 +3089,7 @@ sarebbe «nessuno» quasi sempre, e il risparmio quasi totale.
 > `task_yield` **non** è stata toccata: resta una primitiva che salva il contesto
 > prima di scandire, con il prezzo dichiarato nel suo commento. Un chiamante che
 > voglia evitarlo chiede prima, ed è quello che fa `mutex_unlock`. Il suo unico
-> altro cliente — l'idle di `test_mondo` — cede sempre a ragione.
+> altro cliente — l'idle di `test_events` — cede sempre a ragione.
 
 ---
 
@@ -3120,7 +3120,7 @@ Tre cose sono state decise discutendo, e nessuna era nella proposta iniziale:
   niente da cablare — e annota i *cambi*. `tasto` marca l'istante in cui un
   carattere diventa disponibile, e serve perché **il programma non può saperlo**:
   sa quando se n'è accorto, e la differenza fra i due è il ritardo del polling;
-- **i nomi stanno in un catalogo**, `marche.conf`, che è la **sorgente** da cui
+- **i nomi stanno in un catalogo**, `marks.conf`, che è la **sorgente** da cui
   il `.vinc` viene generato e che il lettore rilegge. Una sorgente, due
   consumatori. Un file di nomi *accanto* agli `.equ` sarebbe stato la doppia
   verità che quello stesso giorno aveva fatto sparire un task da `traccia.html`.
@@ -3129,7 +3129,7 @@ Un dettaglio che vale: il costo del tag **si paga anche quando la registrazione
 è spenta** — la `sw` viene eseguita comunque, è solo la macchina che non annota.
 Un probe a costo zero sarebbe stato comodo e avrebbe insegnato il falso.
 
-Misurato su `test_mondo`, che è stato strumentato con due categorie:
+Misurato su `test_events`, che è stato strumentato con due categorie:
 
 ```
 --- per categoria ---
@@ -3179,7 +3179,7 @@ Poi, scrivendo il test, è emerso il resto:
 - **il blocco sta sullo stack del task, non nel TCB**: il kernel vede `TCB.sp`
   come puntatore opaco e non deve conoscere una cosa che solo l'HAL sa leggere.
 
-#### `test_vettori`: le due metà del progetto si incontrano
+#### `test_vectors`: le due metà del progetto si incontrano
 
 Il primo programma in cui un **task** usa i registri vettoriali. A e B tengono un
 valore in `v0` attraverso un tratto interrompibile, allo **stesso livello** —
@@ -3229,7 +3229,7 @@ dovuta, e che l'utente ha deciso di far scrivere.
 
 I due file vanno letti insieme, e il confronto è il contenuto:
 
-| | `test_coop` (§3.38) | `test_mondo` |
+| | `test_coop` (§3.38) | `test_events` |
 |---|---|---|
 | chi mette in moto il giro | il boot | la **tastiera**, un carattere per volta |
 | l'idle | irraggiungibile, e raggiungerlo sarebbe la fine | **è il motore**: 86,9% del tempo |
@@ -3267,11 +3267,11 @@ il pezzo che manca in mezzo non è una `receive`: è lo yield.
 | Dove | Cosa |
 |---|---|
 | [`scheduler.vasm`](../rtos/scheduler/impl/src/scheduler.vasm) | **`task_yield`**, accanto a `task_block`, di cui è il gemello |
-| [`test_mondo.vasm`](../rtos/test/test_mondo.vasm) **(nuovo)** | il primo cliente, e con lui **spariscono** la mailbox di ack e il suo giro |
+| [`test_events.vasm`](../rtos/test/test_events.vasm) **(nuovo)** | il primo cliente, e con lui **spariscono** la mailbox di ack e il suo giro |
 | `rtos/test/CMakeLists.txt` | il `vasm_check` con l'`ARGS --kbd` |
 
 `task_yield` è **§13.7 alla lettera** — quella sezione lo descrive come *«le
-stesse otto righe di `task_block` con `enqueue_coda` al posto di `SUSPENDED`»* —
+stesse otto righe di `task_block` con `enqueue_tail` al posto di `SUSPENDED`»* —
 e ciò che lo rende una primitiva di kernel invece di un idiom da ripetere sono
 **due clienti che non si conoscono**: `mutex_unlock`, che deve onorare subito un
 `request_preempt` da contesto di task, e un lettore in polling che non aspetta
@@ -3310,7 +3310,7 @@ quando il lavoro è finito.
 **Il controllo di flusso cade fuori dall'ordine**, e si verifica: quando l'idle
 riprende, `E` ha per forza già consumato, perché la scansione scende al livello 7
 solo dopo che `E` si è bloccato sulla mailbox vuota. Se non fosse vero la `send`
-troverebbe il testimone ancora linkato e risponderebbe `CODA_LINKED` — ed è
+troverebbe il testimone ancora linkato e risponderebbe `QUEUE_LINKED` — ed è
 esattamente ciò che il test asserisce sull'esito. È l'asserzione che ha preso il
 posto della mailbox di ack.
 
@@ -3359,9 +3359,9 @@ Il caso che conta davvero — due tasti che arrivano *mentre il sistema lavora* 
 resta rilevato: `2000:a,2100:b,2200:c,…` dà `err = 1` e `somma = 499`, cioè la
 `'b'` persa **e detto**.
 
-#### Difetto 4 di `traccia.py`: lo strumento non poteva vedere questo programma
+#### Difetto 4 di `trace.py`: lo strumento non poteva vedere questo programma
 
-`traccia.py` costruiva da sé la riga di comando del simulatore
+`trace.py` costruiva da sé la riga di comando del simulatore
 (`run <vx> --trace`) e non aveva **nessun modo di passare `--kbd`**. Su un
 programma guidato da un device questo non è un disagio: il programma **non
 termina** — resta a pollare un flag che nessuno alzerà — e lo strumento restava
@@ -3373,7 +3373,7 @@ un `--`, esattamente come `vasm_check` le tiene in `ARGS` distinte dagli
 diagnosi che dice cosa manca.
 
 ```
-python3 tools/traccia.py out/vasm/test_mondo.vx -- --kbd "2000:a,6000:b,…"
+python3 tools/trace.py out/vasm/test_events.vx -- --kbd "2000:a,6000:b,…"
 ```
 
 Risultato: **44 fasce, 0 tick, 18743 cicli — idle 86,9%, E 11,5%, boot 1,6%.**
@@ -3384,7 +3384,7 @@ non c'è lavoro, non perché si sta rubando la macchina a qualcuno. (Lo avevo
 detto al contrario a metà giornata, quando il poller era ancora un task normale
 travestito da idle: lì sarebbe stata CPU bruciata.)
 
-Non regressione verificata su `test_gestore` (250 fasce, 12 tick, invariato) e
+Non regressione verificata su `test_tmgr` (250 fasce, 12 tick, invariato) e
 `test_coop` (124 fasce, 0 tick, invariato).
 
 #### I due difetti della pagina: CORRETTI, e finalmente VERIFICATI
@@ -3399,9 +3399,9 @@ c'era; in `test_coop` mancavano `B` e `C`, cioè due dei tre task.
 
 > **E UN MOTORE JS C'È: `gjs`.** SpiderMonkey, arriva con GNOME. Non ha un DOM, e
 > non serve: ciò che va verificato è la **logica sui dati**, cioè esattamente ciò
-> che esplode quando un programma ha una forma diversa da `test_gestore`. Con un
+> che esplode quando un programma ha una forma diversa da `test_tmgr`. Con un
 > `getElementById` finto e due setter lo script della pagina gira e le eccezioni
-> si vedono. È in [`tools/traccia_dom.js`](../tools/traccia_dom.js), con la
+> si vedono. È in [`tools/trace_dom.js`](../tools/trace_dom.js), con la
 > ricetta in testa. **Da oggi il template non è più l'unico pezzo del progetto
 > che si spedisce letto invece che provato** — ed è il motivo per cui le due
 > correzioni di §3.38, fatte alla cieca, avevano lasciato passare questi.
@@ -3415,23 +3415,23 @@ Le correzioni, che non sono toppe:
   posto in scaletta (sono quelli per cui il foglio di stile ha una variabile);
   gli altri arrivano in coda per tempo decrescente con un colore di riserva
   letterale. Un elenco scritto a mano era una seconda verità da tenere allineata
-  ai programmi — proprio ciò che `traccia.py` evita altrove riconoscendo i corpi
+  ai programmi — proprio ciò che `trace.py` evita altrove riconoscendo i corpi
   per **convenzione**;
 - **la priorità nella chiave di corsia è sparita**, sostituita dalla **quota**.
-  La priorità nei dati non c'è — `traccia.py` deduce il proprietario dal `pc`,
+  La priorità nei dati non c'è — `trace.py` deduce il proprietario dal `pc`,
   non legge i TCB — quindi era un'etichetta costante che diceva il falso su ogni
-  programma che non fosse `test_gestore` (in `test_coop`, `A` è a priorità 3 e
+  programma che non fosse `test_tmgr` (in `test_coop`, `A` è a priorità 3 e
   la pagina scriveva «prio 1»). La quota è misurata;
 - **il paragrafo sul gestore si nasconde** quando quel task non c'è, invece di
   lanciare. Stando dopo il disegno uccideva in silenzio tutta la metà inferiore
   — grafico per routine, context switch, percentuali finali — mentre il
   diagramma continuava a vedersi: è così che era passato inosservato l'11/09;
 - **la riga `loopI`** non si emette se quell'etichetta non esiste (l'idle di
-  `test_mondo` polla in `ti_poll`).
+  `test_events` polla in `ti_poll`).
 
-Verificato con `gjs` su **tre** programmi, che è il punto: `test_mondo` (nessuna
+Verificato con `gjs` su **tre** programmi, che è il punto: `test_events` (nessuna
 eccezione, corsie `idle`/`boot`/`E`, e la metà inferiore viva — `n-sw` = **9**,
-cioè 5 cessioni dell'idle più 4 blocchi di `E`, derivabile); `test_gestore`
+cioè 5 cessioni dell'idle più 4 blocchi di `E`, derivabile); `test_tmgr`
 invariato (`q-gest` 97%, `n-sw` 29, colori propri); `test_coop`, che ora mostra
 anche `B` e `C`.
 
@@ -3446,7 +3446,7 @@ sembrare *il* modo in cui il sistema funziona.
 
 #### Cosa dimostra
 
-Un testimone — **un solo `MESSAGGIO`** — che gira A→B→C→A cinque volte, con il
+Un testimone — **un solo `MESSAGE`** — che gira A→B→C→A cinque volte, con il
 timer **mai armato** e `IE` a zero per tutta la vita del programma. La lista
 degli `.extern` è l'asserzione più forte del file: niente `irq_install`, niente
 `timer_init`, niente `irq_enable`, niente `sched_isr_exit`.
@@ -3488,7 +3488,7 @@ dire niente è l'opposto di come si comporta il resto della toolchain. Costava u
 **Non corretto**: rifiutarlo in fase di assemblaggio è una modifica a
 `assembler.c`, e va decisa. Nel test il valore si scrive nel boot.
 
-#### Difetti 2 e 3: `traccia.py` non reggeva un programma senza tick
+#### Difetti 2 e 3: `trace.py` non reggeva un programma senza tick
 
 La pagina HTML **non disegnava niente**, e la causa era una riga sola:
 
@@ -3508,7 +3508,7 @@ il tick in un sistema preemptivo, il **passaggio di turno** in uno cooperativo.
 Quando i tick mancano la pagina disegna quelli (15 confini, escluso il boot), e
 il titolo dello zoom cambia, perché «Un tick, fascia per fascia» direbbe il falso.
 
-> Verificata la non regressione su `test_gestore`, che ha 12 tick e prende il
+> Verificata la non regressione su `test_tmgr`, che ha 12 tick e prende il
 > ramo di prima. Il JS non si è potuto **eseguire** in fase di correzione (non
 > c'è `node` sulla macchina, e Firefox era aperto sul profilo dell'utente quindi
 > l'istanza headless non parte): **l'utente ha confermato che la pagina si vede**.
@@ -3525,7 +3525,7 @@ Due cose vanno lette sapendo cosa sono, e sono limiti dello **strumento**:
 - **19 cicli per turno attribuiti a `boot`**: sono `controlla` e `err_piu`,
   procedure locali del test che girano per conto del task chiamante ma stanno
   fisicamente fra `main` e `taskA` nel listato. Stessa famiglia del caso
-  `gestore_tick` di §3.34, in una forma che quella correzione non copre — lì il
+  `tmgr_tick` di §3.34, in una forma che quella correzione non copre — lì il
   rimedio era fermare il corpo al primo simbolo *pubblicato*, e qui il simbolo
   pubblicato che precede è proprio `main`;
 - **`_trap_entry` e `sched_isr_exit` compaiono in un programma senza interrupt**.
@@ -3536,7 +3536,7 @@ Due cose vanno lette sapendo cosa sono, e sono limiti dello **strumento**:
   giusto, il nome è fuorviante.
 
 Resta anche, non toccato, che tutto il **testo narrativo** della pagina è scritto
-attorno a `test_gestore` (il gestore a priorità 0, §3.29, l'idle che non conta il
+attorno a `test_tmgr` (il gestore a priorità 0, §3.29, l'idle che non conta il
 doppio): su qualunque altro programma è fuorviante, e adesso si vede.
 
 ---
@@ -3752,8 +3752,8 @@ rilevare non è «sei promosso» ma **«tieni un mutex»**.
 |---|---|
 | [`tcb.vinc`](../rtos/scheduler/interface/tcb/tcb.vinc) | `TCB.crit` (+20), e il riquadro sul perché non è la priorità nominale |
 | [`scheduler.vasm`](../rtos/scheduler/impl/src/scheduler.vasm) | `sp_mio_livello`: `lw` + `bne` e si va a `sp_solo` |
-| [`mutex.vasm`](../rtos/servizi/mutex/impl/src/mutex.vasm) | `lock` incrementa; `unlock` decrementa su di sé e incrementa su chi riceve la consegna diretta |
-| [`mutex.vinc`](../rtos/servizi/mutex/interface/mutex/mutex.vinc) | la terza causa che c'è stata dal 07 all'11/09, scritta perché la sua assenza non è gratuita |
+| [`mutex.vasm`](../rtos/services/mutex/impl/src/mutex.vasm) | `lock` incrementa; `unlock` decrementa su di sé e incrementa su chi riceve la consegna diretta |
+| [`mutex.vinc`](../rtos/services/mutex/interface/mutex/mutex.vinc) | la terza causa che c'è stata dal 07 all'11/09, scritta perché la sua assenza non è gratuita |
 | [`test_mutex.vasm`](../rtos/test/test_mutex.vasm) | `call request_preempt` nell'ISR: la storia A prova ora anche la rotazione |
 | `CMakeLists.txt`, `rtos/test/CMakeLists.txt` | `TCB.size` 20 → 24; `test_scheduler` 74→73 e 59→58 |
 | `proposta-kernel-realtime.md` | §13.5 (la quarta premessa), §2 (la terna, e lo yield che non esiste), §7.4 (la casella «nulla»), §13.7 (perché armare incondizionatamente è giusto), §13.9 |
@@ -3807,10 +3807,10 @@ legittimo solo se il contratto sta scritto.
 
 ---
 
-### 3.35 §13 È SCRITTA: semaforo e mutex, e la primitiva che l'utente ha aggiunto a `coda.vasm` (10/09/2026)
+### 3.35 §13 È SCRITTA: semaforo e mutex, e la primitiva che l'utente ha aggiunto a `queue.vasm` (10/09/2026)
 
 **La sessione che chiude §13.** `ctest` **28/28** — le 26 di prima intatte, più
-`semaforo` e `mutex`. Il codice sta in `rtos/servizi/`, accanto alla mailbox,
+`semaforo` e `mutex`. Il codice sta in `rtos/services/`, accanto alla mailbox,
 esattamente dove `servizi/CMakeLists.txt` diceva da giorni che sarebbe nato.
 
 E la proposta è stata riallineata: le **cinque voci** che §3.26 lasciava fuori
@@ -3822,22 +3822,22 @@ Ero partito male: stavo per mettere la camminata di §13.6 nello **scheduler**,
 come routine condivisa fra `sem_wait` e `mutex_lock`, per non scriverla due
 volte. Alla domanda dell'utente — *«cominci dal kernel per fare cosa?»* — non
 c'era una risposta buona: §13.6 dice dove va la camminata, ed è *dentro `sem_wait`
-o `mutex_lock`*. Il confine che §13.6 protegge è quello verso `generic/coda`, non
+o `mutex_lock`*. Il confine che §13.6 protegge è quello verso `generic/queue`, non
 verso lo scheduler.
 
 Poi due passaggi, e il secondo ha corretto il primo:
 
-1. **«Perché l'inserimento ordinato non lo metti in `coda.vasm`? Il chiamante
-   deve solo selezionare *dove*.»** — È già così, ed è `enqueue_dopo_nc`. Quello
-   che mancava non era l'inserimento, era la **scansione**: `enqueue_dopo_nc` dice
+1. **«Perché l'inserimento ordinato non lo metti in `queue.vasm`? Il chiamante
+   deve solo selezionare *dove*.»** — È già così, ed è `enqueue_after_nc`. Quello
+   che mancava non era l'inserimento, era la **scansione**: `enqueue_after_nc` dice
    dove mettere il nodo e non c'è niente che permetta di *cercare* quel punto.
    Avevo proposto una `enqueue_ordinato_nc` con l'**offset della chiave** come
-   argomento — `coda.vasm` legge una parola a un offset che gli dice il
+   argomento — `queue.vasm` legge una parola a un offset che gli dice il
    chiamante — che è una forma che §13.6 non aveva considerato e che non crea il
    ciclo `generic/ → rtos/`.
-2. **«Metti una `peek` in `coda.vasm` e confronti la tua chiave nel
+2. **«Metti una `peek` in `queue.vasm` e confronti la tua chiave nel
    chiamante.»** — Ed è meglio, perché il confronto è **politica** e con
-   l'offset una scheggia di politica rientrava dentro `coda.vasm`. Poi la forma
+   l'offset una scheggia di politica rientrava dentro `queue.vasm`. Poi la forma
    finale: **«per fare quello che vuoi tu detectando la testa, il chiamante lo
    può fare con il numero di elementi accodati, no?»**
 
@@ -3852,14 +3852,14 @@ sentinella. **L'argomento dell'utente è più forte del mio, e va tenuto:**
 > gira N volte non scappa nemmeno su una lista corrotta; uno che cerca la
 > sentinella girerebbe per sempre.
 
-Da cui `coda_peek(corrente) -> corrente.fwd`, un argomento, due istruzioni. Sta
+Da cui `queue_peek(corrente) -> corrente.fwd`, un argomento, due istruzioni. Sta
 **fuori dai due assi dei suffissi**, e va detto perché non è una dimenticanza:
 non è `_nc` (il contatore non lo tocca nessuno: legge e basta) e non avrà una
 `_s` (la sezione critica deve comprendere tutta la camminata).
 
 **La ragione per cui esiste, e non è il risparmio di istruzioni.** Oggi i quattro
-moduli che leggono `LINK.fwd`/`bwd` fuori da `coda.vasm` — `messageHandling`,
-`pool`, `test_coda` — lo fanno su un nodo che sta **fuori da ogni lista**, per
+moduli che leggono `LINK.fwd`/`bwd` fuori da `queue.vasm` — `messageHandling`,
+`pool`, `test_queue` — lo fanno su un nodo che sta **fuori da ogni lista**, per
 verificare `fwd == bwd == 0`. Non attraversano niente. `sem_wait` sarebbe stato il
 primo a camminare davvero, e quindi il primo modulo del progetto a dipendere dal
 fatto che la lista è **circolare** e che la testa è una **sentinella**: forma
@@ -3903,8 +3903,8 @@ il guadagno: le priorità dei task diventano **nomi** invece di `pcbN` cablati.
 
 #### Il semaforo, e le due frasi di §13.1 che il codice ha smentito
 
-`sem_init`/`sem_wait`/`sem_post`, più `semaforo.vinc` col tipo come `.equ`
-derivati da `TESTA` (la forma di §3.27).
+`sem_init`/`sem_wait`/`sem_post`, più `semaphore.vinc` col tipo come `.equ`
+derivati da `HEAD` (la forma di §3.27).
 
 **Il decremento si paga sempre, poi si guarda il segno.** Non ci sono due rami:
 `risorse--` e basta, e se il risultato è negativo ci si accoda. È il contatore
@@ -3914,7 +3914,7 @@ risveglio non c'è niente da pagare.
 
 Due cose che §13.1 diceva e che non reggono:
 
-- **`sem: .word 0, 0, 10` non è scrivibile.** Una `TESTA` vuota non è fatta di
+- **`sem: .word 0, 0, 10` non è scrivibile.** Una `HEAD` vuota non è fatta di
   zeri (`fwd = bwd = &se stessa`) e un `.word` non accetta etichette. È lo stesso
   motivo per cui `sched_init` esiste, scritto in §6 della proposta da prima di
   §13. Il conteggio iniziale è un **argomento** di `sem_init`. L'osservazione di
@@ -3932,20 +3932,20 @@ Due cose che §13.1 diceva e che non reggono:
 
 #### Il mutex, e la struttura che non è quella scritta in §13.3
 
-`mutex_init`/`mutex_lock`/`mutex_unlock`. §13.3 disegnava `MUTEX` come «`TESTA` +
+`mutex_init`/`mutex_lock`/`mutex_unlock`. §13.3 disegnava `MUTEX` come «`HEAD` +
 tre campi» lasciando aperto se il `count` andasse di disciplina contata o `_nc`.
 La forma vera:
 
-- **una `.struct` con la `TESTA` ANNIDATA**, come fa `PCB` in `tcb.vinc` — non
-  dei `.equ` derivati come mailbox e semaforo, perché quelli *sono* una `TESTA` e
-  il mutex ha tre campi in più; ma la `TESTA` si annida e non si ridichiara, così
+- **una `.struct` con la `HEAD` ANNIDATA**, come fa `PCB` in `tcb.vinc` — non
+  dei `.equ` derivati come mailbox e semaforo, perché quelli *sono* una `HEAD` e
+  il mutex ha tre campi in più; ma la `HEAD` si annida e non si ridichiara, così
   `&mutex == &mutex.coda` e il mutex si passa dritto alle primitive di coda;
 - **`_nc` e contatore al mutex**, perché l'inserimento ordinato esiste solo in
-  quella variante. Una testa, una sola disciplina. Il nome `MUTEX.attese` non
+  quella variante. Una testa, una sola disciplina. Il nome `MUTEX.waiters` non
   cambia il significato (è il numero di nodi, la convenzione generica): serve a
   portarsi dietro l'invariante di §13.5, «vale 0 sempre»;
 - **niente contatore diagnostico e niente `assert`**, e §13.5 lo chiedeva. Il
-  campo c'è comunque perché la `TESTA` ce l'ha: chi vuole sorvegliare **lo
+  campo c'è comunque perché la `HEAD` ce l'ha: chi vuole sorvegliare **lo
   legge**, e non costa un'istruzione a nessun altro.
 
 La promozione è un **minimo**: `blt ceiling, current.pcb` e si scrive solo se
@@ -3957,11 +3957,11 @@ funzionare senza che nessuno se ne accorga.
 
 Sono i primi test della serie in cui **nessun numero dipende dai cicli**, e
 nemmeno la sequenza degli eventi: l'ISR non conta i tick, guarda lo **stato**
-(`SEMAFORO.risorse`, `MUTEX.owner`, `MUTEX.attese`) e agisce quando il sistema ha
+(`SEMAPHORE.resources`, `MUTEX.owner`, `MUTEX.waiters`) e agisce quando il sistema ha
 la forma che serve.
 
-**`test_semaforo` — `123456 2 1 -6`.** Sei task che arrivano al semaforo in un
-ordine diverso da quello di priorità, e `ordine` è la lista letta con `coda_peek`
+**`test_semaphore` — `123456 2 1 -6`.** Sei task che arrivano al semaforo in un
+ordine diverso da quello di priorità, e `ordine` è la lista letta con `queue_peek`
 e resa in cifre. H e F non sono in nessuna coda al boot: li rende eseguibili
 l'ISR, ed è l'unico modo di farli arrivare fuori ordine, visto che lo scheduler
 sceglie sempre il più prioritario fra i pronti.
@@ -4069,7 +4069,7 @@ dell'unlock? Tre popolazioni, e solo una è scoperta:
    escludeva;
 2. **il primo della coda del mutex** → **già corretto nel codice**, e dipende
    dall'**ordine**: `mutex_unlock` ripristina `TCB.pcb` *prima* del
-   `dequeue_testa_nc`, quindi la `blt` di `task_ready` confronta l'affiorante
+   `dequeue_head_nc`, quindi la `blt` di `task_ready` confronta l'affiorante
    con il **nominale** e non col ceiling. Se l'affiorante è più prioritario,
    arma e l'ex detentore verrà preemptato; se è meno prioritario, non arma e
    l'ex detentore **continua a tenere la CPU**. Col ripristino dopo il dequeue il
@@ -4182,15 +4182,15 @@ al posto della scansione generale).
 
 | Dove | Cosa |
 |---|---|
-| [`coda.vasm`](../generic/coda/impl/src/coda.vasm) | `coda_peek`, e il riquadro sul perché un argomento solo |
-| [`coda_api.vinc`](../generic/coda/interface/coda/coda_api.vinc) | il contratto di `coda_peek`, e che sta fuori dai due assi |
-| [`test_coda.vasm`](../generic/test/test_coda.vasm) | sezioni (12) e (13): la camminata, e che tre `peek` di fila non sono tre `dequeue` |
+| [`queue.vasm`](../generic/queue/impl/src/queue.vasm) | `queue_peek`, e il riquadro sul perché un argomento solo |
+| [`queue_api.vinc`](../generic/queue/interface/coda/queue_api.vinc) | il contratto di `queue_peek`, e che sta fuori dai due assi |
+| [`test_queue.vasm`](../generic/test/test_queue.vasm) | sezioni (12) e (13): la camminata, e che tre `peek` di fila non sono tre `dequeue` |
 | [`scheduler.vasm`](../rtos/scheduler/impl/src/scheduler.vasm) | `prio_pcb` |
-| `rtos/servizi/semaforo/` **(nuova)** | `semaforo.vinc` + `semaforo.vasm` |
-| `rtos/servizi/mutex/` **(nuova)** | `mutex.vinc` + `mutex.vasm` |
-| `rtos/test/` | `test_semaforo.vasm`, `test_mutex.vasm` |
-| `rtos/servizi/CMakeLists.txt` | i tre servizi, e la tabella di **cosa stai aspettando** che li distingue |
-| `proposta-kernel-realtime.md` | §13 da SPECIFICATI a IMPLEMENTATI; §13.1 (due correzioni + «sotto non c'è rete»), §13.3 (struttura vera + dove si dichiara il ceiling + `prio_pcb`), §13.5 (niente direzione conservativa), §13.6 (`coda_peek`), §13.7 (il buco), §13.8 riscritta come **deduzione** con i tre corollari, §13.9 nuova; §8.1 (l'argomento vero), §7.5 (emendata), §1 |
+| `rtos/services/semaforo/` **(nuova)** | `semaphore.vinc` + `semaphore.vasm` |
+| `rtos/services/mutex/` **(nuova)** | `mutex.vinc` + `mutex.vasm` |
+| `rtos/test/` | `test_semaphore.vasm`, `test_mutex.vasm` |
+| `rtos/services/CMakeLists.txt` | i tre servizi, e la tabella di **cosa stai aspettando** che li distingue |
+| `proposta-kernel-realtime.md` | §13 da SPECIFICATI a IMPLEMENTATI; §13.1 (due correzioni + «sotto non c'è rete»), §13.3 (struttura vera + dove si dichiara il ceiling + `prio_pcb`), §13.5 (niente direzione conservativa), §13.6 (`queue_peek`), §13.7 (il buco), §13.8 riscritta come **deduzione** con i tre corollari, §13.9 nuova; §8.1 (l'argomento vero), §7.5 (emendata), §1 |
 
 **La tabella in fondo a §3.26 è chiusa**, tranne l'ultima riga — estendere gli
 `_api` a `pool`, `timeout`, `messaggio`, `hal` — che non riguarda §13.
@@ -4201,15 +4201,15 @@ al posto della scansione generale).
 
 Il debito che §3.29 aveva aperto — «senza uno strumento che dica *chi gira e da
 quando a quando* ogni numero resta un'osservazione invece di una misura» — è
-chiuso. **`tools/traccia.py`**, cartella nuova al primo livello decisa
+chiuso. **`tools/trace.py`**, cartella nuova al primo livello decisa
 dall'utente, produce una pagina HTML autosufficiente:
 
 ```bash
-python3 tools/traccia.py out/vasm/test_gestore.vx      # -> out/traccia.html
+python3 tools/trace.py out/vasm/test_tmgr.vx      # -> out/traccia.html
 ```
 
 `out/` è già ignorato da git, quindi la pagina non sporca il working tree; il
-modello del disegno è `tools/traccia.template.html`, che si modifica senza
+modello del disegno è `tools/trace.template.html`, che si modifica senza
 toccare lo script.
 
 #### Il proprietario non è nel trace: si deduce
@@ -4228,8 +4228,8 @@ Due cose hanno richiesto più cura di quanto sembrasse:
   `--emit-expanded` per averne le etichette, e la base di ciascuno si ricava da
   un simbolo globale presente sia nel listato sia nel programma linkato;
 - **dove finisce un corpo.** Deve fermarsi al primo simbolo **pubblicato** che lo
-  segue, non a fine modulo. Il caso che lo dimostra è `gestore_tick`: sta nello
-  stesso modulo di `gestore_task` ma gira **dentro l'ISR**, e attribuendolo al
+  segue, non a fine modulo. Il caso che lo dimostra è `tmgr_tick`: sta nello
+  stesso modulo di `tmgr_task` ma gira **dentro l'ISR**, e attribuendolo al
   gestore spostava 1.800 cicli dalla corsia sbagliata. Le etichette interne
   (`loopI`, `gestore_drena`, `isr_manda`) sono locali e restano dentro il corpo,
   che è esattamente la distinzione che serve.
@@ -4240,7 +4240,7 @@ base. Si ricava dal nome del `.vx`, che è l'unico legame affidabile.
 
 #### Cosa si vede, che i contatori non dicevano
 
-| | `test_gestore` |
+| | `test_tmgr` |
 |---|---|
 | idle | 27.187 (54,7%) |
 | gestore | 11.268 (22,7%) |
@@ -4258,17 +4258,17 @@ base. Si ricava dal nome del `.vx`, che è l'unico legame affidabile.
   proprie a lunghi tratti di kernel. Non è il kernel che si prende tempo che non
   gli spetta;
 - **il gestore spende il 97% del proprio tempo fuori dal proprio corpo** (353
-  cicli in `gestore_task`, 11.268 in tutto): il suo ciclo sono quattro chiamate,
+  cicli in `tmgr_task`, 11.268 in tutto): il suo ciclo sono quattro chiamate,
   e il lavoro sta dentro quelle.
 
-Funziona anche su `test_catena` (96 fasce, i tre anelli a 13,8/13,4/11,7%) e su
+Funziona anche su `test_chain` (96 fasce, i tre anelli a 13,8/13,4/11,7%) e su
 `test_block` (50 fasce, l'ISR al 46,6% perché il programma è corto e il boot pesa).
 
 ---
 
 ### 3.33 Il gestore dei timeout è un task, e §9.2 aveva un test che non poteva funzionare (07/09/2026, ottava parte)
 
-**26 test. §3.28 è chiusa**: la simulazione completa gira. `test_gestore` è il
+**26 test. §3.28 è chiusa**: la simulazione completa gira. `test_tmgr` è il
 primo programma in cui **§8, §9 e §10 girano insieme sotto lo scheduler vero** —
 mailbox, timeout e pool erano implementati da giorni e non si erano mai
 incontrati nello stesso binario.
@@ -4282,27 +4282,27 @@ seconda è quella che ha aperto una cartella nuova:
   `rtos/` non è generic**. Il ciclo del gestore chiama `receive` e `send`:
   fuori. Il commento in `timeout.vasm` che si aspettava lì la scansione era
   anteriore alla ristrutturazione di §3.24, ed è la regola nuova a vincere;
-- `rtos/servizi/` dice che **un servizio si riconosce da una firma sola: chiama
+- `rtos/services/` dice che **un servizio si riconosce da una firma sola: chiama
   `task_ready` e `task_block`**. Il gestore non li chiama — non blocca nessuno,
   si blocca lui sulla propria mailbox come un task qualunque. È il primo **task
   di sistema** del progetto, una terza specie dopo il kernel e i servizi, e ha
-  una cartella sua: `rtos/gestore_timeout/`.
+  una cartella sua: `rtos/timeout_manager/`.
 
 | dove | cosa |
 |---|---|
-| `generic/timeout` | il vettore e la sua disciplina: `timeout_arm`, `timeout_cancel`, **`timeout_scaduto`** |
-| `rtos/gestore_timeout` | il task: `gestore_init`, `gestore_task`, `gestore_tick` |
+| `generic/timeout` | il vettore e la sua disciplina: `timeout_arm`, `timeout_cancel`, **`timeout_expired`** |
+| `rtos/timeout_manager` | il task: `tmgr_init`, `tmgr_task`, `tmgr_tick` |
 
-La riga di confine è `timeout_scaduto`, e **formatta senza mandare**. Non è un
+La riga di confine è `timeout_expired`, e **formatta senza mandare**. Non è un
 compromesso: la transizione `ARMED → FREE` deve stare nella stessa sezione
 critica in cui si decide di consegnare — restituire i campi e lasciare al
 chiamante la liberazione riaprirebbe il bug del riciclo dell'handle (§9.5) — e
 formattare non porta dentro niente di `rtos/`, perché il formato del payload è
-`generic/messaggio`.
+`generic/message`.
 
 #### Il buffer prima della scadenza, e un invariante che smette di essere un ramo
 
-`gestore_task` fa `buf_alloc` **prima** di chiedere una scadenza. Così una
+`tmgr_task` fa `buf_alloc` **prima** di chiedere una scadenza. Così una
 scadenza non può essere consumata senza un posto dove metterla, e il «pool vuoto
 ⇒ il timeout arriva tardi invece di non arrivare» di §9.2 diventa **strutturale**
 invece che un ramo da ricordarsi: senza buffer non si arriva nemmeno a guardare
@@ -4331,7 +4331,7 @@ manda: mailbox vuota (0) e ricevente in attesa (−1). §9.2 della proposta è
 corretta, con il numero accanto.
 
 Nota onesta sulla copertura: il ramo che **coalesce** non viene mai eseguito in
-questo test (verificato sulla traccia — le 14 istruzioni di `gestore_tick` girano
+questo test (verificato sulla traccia — le 14 istruzioni di `tmgr_tick` girano
 tutte 12 volte), perché con il periodo scelto il gestore drena sempre entro il
 tick. Quello che il test dimostra è che la condizione *opposta* è quella giusta,
 non che la coalescenza funzioni: per quella servirebbe un tick più fitto del giro
@@ -4361,7 +4361,7 @@ preemption in più.
 
 ### 3.32 La catena A→B→C, e la saturazione che si è vista misurando (07/09/2026, settima parte)
 
-**25 test.** [`rtos/test/test_catena.vasm`](../rtos/test/test_catena.vasm) è il
+**25 test.** [`rtos/test/test_chain.vasm`](../rtos/test/test_chain.vasm) è il
 **primo dei due passi** che restavano del test di §3.28: A svegliato dall'ISR
 manda a B, B manda a C, C conta. Resta il secondo, il gestore dei timeout come
 task, che è l'unico a tirare dentro anche il pool (§10).
@@ -4594,11 +4594,11 @@ guardare con la traccia temporale.
 #### Due bug trovati eseguendo, che il ragionamento non aveva visto
 
 1. **`sched_init` è non-foglia, e il boot la chiamava senza stack.** La vecchia
-   demo se la cavava perché la sua unica chiamata di boot (`coda_init`) è foglia;
+   demo se la cavava perché la sua unica chiamata di boot (`queue_init`) è foglia;
    con `r14 = 0` il prologo scrive a `-4`. Lo stack va armato **per primo** in
    `main`, e può essere quello del task che partirà a freddo.
-2. **La scansione teneva il PCB corrente in `r5`, che `dequeue_testa` sporca** —
-   lo dichiara `coda_api.vinc`. Dalla seconda iterazione avanzava da un indirizzo
+2. **La scansione teneva il PCB corrente in `r5`, che `dequeue_head` sporca** —
+   lo dichiara `queue_api.vinc`. Dalla seconda iterazione avanzava da un indirizzo
    spazzatura. Ora sta in `r7`. È un bug che **non si vede con un livello solo**:
    finché in cima c'è un preemptato lo scan si ferma al primo giro, e il test
    dava `0 392 0` — H mai eseguito — senza nessun errore.
@@ -4676,7 +4676,7 @@ esattamente la cosa che si sbaglia rileggendo.
 #### Il modello a PCB è scritto, e ha rivelato cosa manca
 
 Nel working tree (**non committato: la demo non linka**, vedi in fondo) ci sono
-già `TCB` a 20 byte con `pcb`, `PCB` con la `TESTA` **annidata**, `N_LIVELLI 8`,
+già `TCB` a 20 byte con `pcb`, `PCB` con la `HEAD` **annidata**, `N_LIVELLI 8`,
 `PREEMPTED`, la tabella degli otto PCB scritti **uno per uno**, `sched_init` e la
 scansione di §4 con lo slot che batte la coda.
 
@@ -4701,8 +4701,8 @@ casi con destini opposti:
 
 | il task… | finisce | perché |
 |---|---|---|
-| **preemptato da uno più prioritario** | `PCB.preemptato` | non ha consumato il turno: non deve pagarlo |
-| ha **esaurito il turno** | in fondo a `PCB.coda` | il turno l'ha avuto: tocca a un pari |
+| **preemptato da uno più prioritario** | `PCB.preempted` | non ha consumato il turno: non deve pagarlo |
+| ha **esaurito il turno** | in fondo a `PCB.queue` | il turno l'ha avuto: tocca a un pari |
 | ha **ceduto** o si è **bloccato** | coda / altrove | come già scritto |
 
 **E non serve un quanto**, che è la seconda correzione dell'utente dopo che
@@ -4764,10 +4764,10 @@ quello sbagliato.
 - **quanti livelli**: non è deciso e non è deducibile. È il primo numero del
   sistema, dimensiona il vettore statico dei PCB ed è il caso peggiore della
   scansione. Vincoli noti: il gestore dei timeout a 0 (§9.2), l'idle in fondo;
-- **il PCB con la `TESTA` annidata**, che §3 lasciava «da valutare» e che
-  §3.27 rende scrivibile: `.field coda TESTA.size`, l'idioma di `LINK`. In più,
+- **il PCB con la `HEAD` annidata**, che §3 lasciava «da valutare» e che
+  §3.27 rende scrivibile: `.field coda HEAD.size`, l'idioma di `LINK`. In più,
   con la testa a offset 0 vale `&pcb == &pcb.coda`, quindi il PCB si passa
-  **direttamente** a `enqueue_coda` — il contratto di §7.5 un livello sopra, e
+  **direttamente** a `enqueue_tail` — il contratto di §7.5 un livello sopra, e
   una `lw` in meno per ogni livello scandito.
 
 ---
@@ -4775,18 +4775,18 @@ quello sbagliato.
 ### 3.27 I link in un posto solo, e il campo che prende il nome del proprietario (07/09/2026, seconda parte)
 
 **Sessione di sola discussione, finita in codice.** Nessuna decisione di kernel:
-si è chiuso il punto lasciato aperto da §3.26 — il terzo campo di `TESTA`
+si è chiuso il punto lasciato aperto da §3.26 — il terzo campo di `HEAD`
 nominato dal proprietario — e nel farlo è emerso un difetto più grosso di quello
 che si stava discutendo. `ctest` 23/23, i sei `.vx` **identici byte per byte**.
 
 #### La domanda da cui è partita, e la risposta sbagliata
 
-L'utente ha chiesto perché `coda.vasm` non offra `incrementa`/`decrementa`/`testa`
+L'utente ha chiesto perché `queue.vasm` non offra `incrementa`/`decrementa`/`testa`
 sul contatore, così che chi ne ha una convenzione propria non debba conoscere la
 struttura della testa. Non era mai stato deciso — anzi §8.3 dice l'opposto, «la
 contabilità è del chiamante».
 
-La risposta è no, e la ragione non è quella che sembra. `coda.vasm` **l'aritmetica
+La risposta è no, e la ragione non è quella che sembra. `queue.vasm` **l'aritmetica
 la fa**: `addi 1`, `addi -1`, e `beq r5, r0` per la vacuità. Ma quel test è
 corretto solo perché sulle sue teste `count >= 0` — e i due clienti che vorrebbero
 l'accessor sono precisamente quelli per cui è falso: sulla mailbox `count == -1`
@@ -4799,7 +4799,7 @@ attendenti accompagna uno **sfilamento**. Stessa istruzione, direzione opposta.
 Da cui la formulazione che vale oltre il caso:
 
 > Un modulo non esporta le funzioni che sa calcolare, esporta le operazioni di
-> cui **garantisce un'invariante**. In `enqueue_coda` l'incremento non è una
+> cui **garantisce un'invariante**. In `enqueue_tail` l'incremento non è una
 > routine chiamata dallo splice: sono tre istruzioni che ci **cadono dentro** con
 > una `j`, apposta perché non esista un percorso in cui una avviene senza l'altro.
 
@@ -4811,10 +4811,10 @@ funzioni del kernel?* È giusta, e distingue una cosa che si stava confondendo:
 **la `.struct` incapsula l'offset, non il nome.**
 
 E ha aperto il difetto vero, che non riguardava la mailbox: **dieci `.struct`
-ridichiaravano `fwd`/`bwd`** — `TESTA`, `TCB`, `MESSAGGIO`, `BLOCCO` e le sei
+ridichiaravano `fwd`/`bwd`** — `HEAD`, `TCB`, `MESSAGE`, `BLOCK` e le sei
 `BLOCCOnn` — venti righe copiate che dovevano coincidere e che niente verificava.
-`messaggio.vinc` lo documentava perfino come idioma. Controprova eseguita:
-invertendo l'ordine dentro `TESTA`, una `.struct` parallela ha continuato a dire
+`message.vinc` lo documentava perfino come idioma. Controprova eseguita:
+invertendo l'ordine dentro `HEAD`, una `.struct` parallela ha continuato a dire
 8 dove la prima diceva 4, **senza un errore di assemblaggio**.
 
 #### La soluzione è dell'utente, ed è l'annidamento
@@ -4834,7 +4834,7 @@ riserva il blocco senza ridichiararlo. `.struct` annidate l'assembler le rifiuta
   .field bwd
 .ends
 
-.struct MESSAGGIO
+.struct MESSAGE
   .field pointers  LINK.size   ; i link, non ridichiarati
   .field payload
 .ends
@@ -4854,7 +4854,7 @@ possiamo scrivere**, e la restrizione coincide con una decisione già presa inve
 che aggiungerne una.
 
 Prova di robustezza: invertendo `fwd`/`bwd` dentro `LINK`, `LINK.fwd` è passato a
-4 **in tutte e dieci le strutture insieme**, e `TESTA.count`/`MESSAGGIO.payload`
+4 **in tutte e dieci le strutture insieme**, e `HEAD.count`/`MESSAGE.payload`
 sono rimasti a 8 perché il blocco conserva la sua dimensione.
 
 #### Il terzo campo: `.equ` derivato, non `.struct` propria
@@ -4865,15 +4865,15 @@ dichiarazione dello stesso layout, cioè il difetto appena tolto rimesso dentro
 per un campo solo. La forma giusta è la derivazione:
 
 ```asm
-.equ MAILBOX.count  TESTA.count   ; non copia: E' quel numero con un altro nome
-.equ MAILBOX.size   TESTA.size    ; e ".res MAILBOX" alloca
+.equ MAILBOX.count  HEAD.count   ; non copia: E' quel numero con un altro nome
+.equ MAILBOX.size   HEAD.size    ; e ".res MAILBOX" alloca
 ```
 
 L'utente ha chiuso da sé l'obiezione residua: *questo introduce una dipendenza dai
 nomi dei campi, ma il kernel dipende già dai nomi delle procedure, quindi è ok*.
 Sì — **un'interfaccia è un insieme di nomi** — con la precisazione che il guadagno
 non è togliere la dipendenza ma cambiarne la forma: da cablata in sette istruzioni
-a **dichiarata in una riga e verificata dal compilatore**, perché se `TESTA`
+a **dichiarata in una riga e verificata dal compilatore**, perché se `HEAD`
 rinominasse il campo l'`.equ` non assembla (`invalid value`) invece di produrre un
 offset sbagliato in silenzio. Ed è la risposta letterale alla domanda di partenza:
 le funzioni del kernel non cambiano, cambia la riga che dichiara la derivazione.
@@ -4885,7 +4885,7 @@ un limite aggirabile:** `.equ push pippo` fallisce anche su un'etichetta *locale
 (verificato), perché le costanti e le etichette sono due spazi di nomi risolti in
 momenti diversi — numeri all'assemblaggio, indirizzi al link. Il meccanismo esiste
 ma sta dal lato del **fornitore**: sono le due `.global` sullo stesso indirizzo di
-`enqueue_dopo_nc`/`enqueue_testa_nc` (§13.6). Un campo lo ribattezza il cliente,
+`enqueue_after_nc`/`enqueue_head_nc` (§13.6). Un campo lo ribattezza il cliente,
 una procedura solo chi la implementa.
 
 E non lo si vorrebbe comunque, per una ragione di significato:
@@ -4907,7 +4907,7 @@ decisione. Si pagherebbe indirezione, nel percorso delle code, per una varietà
 eliminata apposta.
 
 E il polimorfismo che serve c'è già in due forme, entrambe risolte
-all'assemblaggio: quello **di struttura** (`coda.vasm` opera su ogni nodo che
+all'assemblaggio: quello **di struttura** (`queue.vasm` opera su ogni nodo che
 abbia i link al posto convenuto — `LINK` gli dà finalmente un nome invece di
 lasciarlo come coincidenza fra dieci dichiarazioni) e quello **di nome** (due
 `.global` sullo stesso indirizzo). È il caso raro in cui si prende il vantaggio
@@ -4917,27 +4917,27 @@ del meccanismo senza il suo prezzo.
 
 | Dove | Cosa |
 |---|---|
-| [`coda.vinc`](../generic/coda/interface/coda/coda.vinc) | `.struct LINK` e i due vincoli in testa; `TESTA` annida invece di ridichiarare |
-| `tcb.vinc`, `messaggio.vinc`, `pool.vinc` | le altre nove strutture annidano `LINK`; i commenti che documentavano l'idioma vecchio riscritti |
-| `coda.vasm`, `pool.vasm`, `test_coda.vasm` | 44 accessi da `TESTA.fwd/bwd` (e 2 da `BLOCCO.fwd/bwd`) a `LINK.fwd/bwd` |
-| [`mailbox.vinc`](../rtos/servizi/mailbox/interface/mailbox/mailbox.vinc) **(nuovo)** | il tipo `MAILBOX` come `.equ` derivati, col perché della derivazione contro la copia |
+| [`queue.vinc`](../generic/queue/interface/coda/queue.vinc) | `.struct LINK` e i due vincoli in testa; `HEAD` annida invece di ridichiarare |
+| `tcb.vinc`, `message.vinc`, `pool.vinc` | le altre nove strutture annidano `LINK`; i commenti che documentavano l'idioma vecchio riscritti |
+| `queue.vasm`, `pool.vasm`, `test_queue.vasm` | 44 accessi da `HEAD.fwd/bwd` (e 2 da `BLOCK.fwd/bwd`) a `LINK.fwd/bwd` |
+| [`mailbox.vinc`](../rtos/services/mailbox/interface/mailbox/mailbox.vinc) **(nuovo)** | il tipo `MAILBOX` come `.equ` derivati, col perché della derivazione contro la copia |
 | `mailbox/CMakeLists.txt` | nasce `interface/`, e la nota che lo prevedeva («il giorno che la mailbox avesse dei codici di esito propri») aveva indovinato il quando e sbagliato il cosa: non codici, un **tipo** |
 | `messageHandling.vasm` | sette accessi a `MAILBOX.count`, e il motivo accanto ai due `li` — la voce che §3.26 lasciava aperta |
 | `tests/test_include.vasm` | il commento nominava `duplicate constant TCB.fwd`, che non esiste più |
 
 **Zero cambiamenti binari**: sei `.vx` confrontati byte per byte con quelli di
 prima, tutti identici. Era prevedibile e va detto perché è ciò che rende il
-passaggio a costo nullo — gli offset non si sono mossi (`TESTA.count` = 8,
-`TESTA.size` = 12, `TCB.sp` = 8, `MESSAGGIO.payload` = 8): è cambiato **da dove
+passaggio a costo nullo — gli offset non si sono mossi (`HEAD.count` = 8,
+`HEAD.size` = 12, `TCB.sp` = 8, `MESSAGE.payload` = 8): è cambiato **da dove
 vengono**, non quanto valgono.
 
 #### Cosa resta
 
-- ~~**`SEMAFORO.risorse` non è scritto**~~ — **SCRITTO il 10/09/2026 (§3.35)**,
-  esattamente nella forma decisa qui: un `.equ` derivato da `TESTA.count`, col
+- ~~**`SEMAPHORE.resources` non è scritto**~~ — **SCRITTO il 10/09/2026 (§3.35)**,
+  esattamente nella forma decisa qui: un `.equ` derivato da `HEAD.count`, col
   motivo del nome diverso (contabile, non descrittivo) accanto. Scrivendolo è
   però caduta una frase di §13.1 della proposta: il `sem: .word 0, 0, 10` non è
-  scrivibile, perché una `TESTA` vuota non è fatta di zeri;
+  scrivibile, perché una `HEAD` vuota non è fatta di zeri;
 - **niente di questa sessione è nella proposta.** Sono due voci: `LINK` come
   idioma di dichiarazione dei nodi (tocca §3, che elenca le strutture) e il campo
   nominato dal proprietario (§8.2 e §13.3). La tabella di §3.26 resta valida per
@@ -4956,7 +4956,7 @@ emettere: `.struct`/`.field` sono tipi record, `.res TIPO` è storage tipizzato,
 `.include` idempotente più `-I` è un sistema di header, `.global`/`.extern` è il
 linkage, e le due forme di oggi — l'`.equ` derivato e `.field pointers LINK.size`
 — sono `typedef` e membro incorporato, cioè roba di front-end. In più la ABI è
-**scritta** (`coda_api.vinc`: argomenti, esito, scratch, chi è foglia), ed è la
+**scritta** (`queue_api.vinc`: argomenti, esito, scratch, chi è foglia), ed è la
 specifica da cui un generatore di codice partirebbe.
 
 Il confine fra i due strati si vede rotto in un punto preciso, ed è il debito di
@@ -5073,7 +5073,7 @@ Le sequenze attese, per chi deve leggerle senza aprire il build:
 | `saxpy` — istruzioni / vec-elem-ops / cicli | `17 40 94` | `CMakeLists.txt` |
 | `scheduler` — priorità, rotazione fra pari, idle > 0 | `67 4 8 57` | `rtos/test/` |
 | `multi` — link con inclusione selettiva | `18 40 95` | `CMakeLists.txt` |
-| `coda` — invariante dei link (§3.14), `enqueue_dopo_nc` e `coda_peek` (§3.35) | `0 1 1 1 0 0 0 2 1 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0` | `generic/test/` |
+| `coda` — invariante dei link (§3.14), `enqueue_after_nc` e `queue_peek` (§3.35) | `0 1 1 1 0 0 0 2 1 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0` | `generic/test/` |
 | `pool` — sei classi, alloc/free (§3.15) | `10 4 0 0 9 0 32 3 2 0 0 4 4 4 3 0 0 1 4` | `generic/test/` |
 | `timeout` — vettore di descrittori (§3.13) | `3 0 150 1 2 0 0 0 3 0 1` | `generic/test/` |
 | `mailbox` — send/receive con blocco (§3.10) | `0 1 2 11 22 0 33 0 0` | `rtos/test/` |
@@ -5199,8 +5199,8 @@ lavoro passa all'altro fronte.
 > Erano scrivibili subito due pezzi. Il **vettore di descrittori** con
 > `timeout_arm`/`timeout_cancel` è fatto (§3.13): sono manipolazioni in sezione
 > critica e non toccano nessuna mailbox, tanto che il suo test non ne usa
-> nessuna. Resta il **pool** — una `TESTA` con i buffer come nodi, quindi
-> `buf_alloc`/`buf_free` sono `dequeue_testa_s`/`enqueue_coda_s` e non c'è
+> nessuna. Resta il **pool** — una `HEAD` con i buffer come nodi, quindi
+> `buf_alloc`/`buf_free` sono `dequeue_head_s`/`enqueue_tail_s` e non c'è
 > meccanismo nuovo — verificabile con lo stesso trucco di
 > `tests/test_mailbox.vasm` (in un sistema a un flusso solo, «bloccarsi» equivale
 > a «far girare adesso la controparte»).
@@ -5253,7 +5253,7 @@ contiene in realtà transizioni di stato, manipolazione di code e commit di
    silenzio.
 
 4. **Il TCB ha una sola coppia di link** (§7.5, decisa il 30/08/2026), quindi
-   `coda.vasm` resta intatta e il suo contratto «il puntatore al link È il
+   `queue.vasm` resta intatta e il suo contratto «il puntatore al link È il
    puntatore al buffer» pure. La decisione regge, ma **l'argomento che la
    sostiene è cambiato** con la riprogettazione dei timeout (§3.11): non più
    «in lista ci va il messaggio invece del TCB», bensì — più semplicemente —
@@ -5289,7 +5289,7 @@ da ogni coda e da ogni slot: zero chirurgia sulle liste. Invariante che ne
 discende: **`TCB.pcb` cambia solo per il task puntato da `current`**. In più,
 sotto ICPP su monoprocessore la coda d'attesa del mutex non viene mai usata
 (nessuno che voglia il mutex può preemptare chi lo tiene), quindi non serve
-l'inserimento ordinato per priorità che `coda.vasm` non ha. Il rischio del
+l'inserimento ordinato per priorità che `queue.vasm` non ha. Il rischio del
 ceiling («il ceiling dichiarato male salta in silenzio») si toglie con **una
 `blt`** in `mutex_lock`: se `current.pcb` è più prioritario di `mutex.ceiling`,
 errore rumoroso.
@@ -5313,7 +5313,7 @@ chiusa in §7.5):
 **Non si scrive codice finché §7.4 non è chiusa**: tocca il layout di strutture
 statiche.
 
-`hal/machine.vasm` e `kernel/coda.vasm` sopravvivono intatti al ridisegno.
+`hal/machine.vasm` e `kernel/queue.vasm` sopravvivono intatti al ridisegno.
 
 ### Ristrutturazione del build in target CMake (FATTA il 05/09/2026, salvo il punto 3)
 
@@ -5368,7 +5368,7 @@ Stesso file, due grafie. Finché è così, migrare a CMake sposterebbe i path ne
 
 - ~~**L'idempotenza di `.include` smette di essere un accessorio e diventa un
   prerequisito.**~~ **Risolta al punto 1.** Era questa: la modellazione giusta è
-  `vinc_pool` che dipende da `vinc_types` (`BLOCCO` *è* un nodo di lista), ma non
+  `vinc_pool` che dipende da `vinc_types` (`BLOCK` *è* un nodo di lista), ma non
   si poteva scrivere, e con le `INTERFACE` library la disciplina «i `.vinc` sono
   foglia» non sarebbe stata più applicabile, perché la propagazione è transitiva
   per definizione e nessuno può impedire che lo stesso `.vinc` arrivi due volte.
@@ -5500,7 +5500,7 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 Leggi docs/proposta-kernel-realtime.md §13 per intero, poi §8 (la mailbox) e
 §7.4 (perche' il ceiling). Come ci si e' arrivati sta in docs/stato-lavori.md
 §3.25 e §3.26 -- e §3.26 contiene decisioni che nella proposta NON ci sono
-ancora. Nascono in rtos/servizi/, accanto alla mailbox.
+ancora. Nascono in rtos/services/, accanto alla mailbox.
 
 DECISO, da non riaprire senza una ragione nuova:
   - priority ceiling, non ereditarieta' (§7.4);
@@ -5510,7 +5510,7 @@ DECISO, da non riaprire senza una ragione nuova:
     (§13.2), e non ci si blocca tenendolo (§13.4);
   - la coda del mutex esiste per far DEGRADARE un ceiling sbagliato invece
     che appendere, non per essere usata (§13.5);
-  - l'ordinamento per priorita' e' del chiamante: coda.vasm prende una
+  - l'ordinamento per priorita' e' del chiamante: queue.vasm prende una
     enqueue_dopo agnostica e non sa perche' la si chiama (§13.6);
   - sem_wait NON ha timeout: e' una deduzione da §9 (il timeout e' una
     consegna in mailbox), non una scelta fra due uscite (§3.26);
@@ -5519,8 +5519,8 @@ DECISO, da non riaprire senza una ragione nuova:
   - un solo TCB in attesa per mailbox, contatore che si incrementa per i
     messaggi, invariante count >= -1 (§3.26).
 
-APERTO: SEMAFORO.risorse, il terzo campo di TESTA nominato dal proprietario.
-Deciso nella FORMA (un .equ derivato da TESTA.count, come MAILBOX.count in
+APERTO: SEMAPHORE.resources, il terzo campo di HEAD nominato dal proprietario.
+Deciso nella FORMA (un .equ derivato da HEAD.count, come MAILBOX.count in
 §3.27) e non scritto, perche' il semaforo non ha ancora codice.
 
 Alla fine ctest deve dare 26/26.
@@ -5558,12 +5558,12 @@ Alla fine ctest 26/26.
 
 **Per guardare come girano i task (non e' una modifica, e' uno strumento):**
 ```
-python3 tools/traccia.py out/vasm/test_gestore.vx      # -> out/traccia.html
-python3 tools/traccia.py out/vasm/test_mondo.vx -- --kbd "2000:a,6000:b,10000:c,14000:d,18000:e"
+python3 tools/trace.py out/vasm/test_tmgr.vx      # -> out/traccia.html
+python3 tools/trace.py out/vasm/test_events.vx -- --kbd "2000:a,6000:b,10000:c,14000:d,18000:e"
 ```
 Dice chi gira e in quale intervallo, e quanto di quel tempo è kernel per suo
 conto (§3.34). Funziona su qualunque `.vx`; il disegno sta in
-`tools/traccia.template.html`. Le opzioni **della macchina** si passano dopo un
+`tools/trace.template.html`. Le opzioni **della macchina** si passano dopo un
 `--` (§3.39): un programma guidato da un device senza il suo alimentatore non
 termina, e lo strumento ora lo dice invece di restare appeso.
 

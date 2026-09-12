@@ -1,4 +1,4 @@
-; rtos/test/test_catena.vasm — LA CATENA A -> B -> C: due salti di mailbox fatti
+; rtos/test/test_chain.vasm — LA CATENA A -> B -> C: due salti di mailbox fatti
 ; da TASK, e il risveglio che non preempta.
 ;
 ; E' il primo dei due passi che restano del test di §3.28, ed e' stato separato

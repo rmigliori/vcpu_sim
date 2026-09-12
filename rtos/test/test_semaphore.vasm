@@ -1,4 +1,4 @@
-; rtos/test/test_semaforo.vasm — il semaforo contatore, e soprattutto
+; rtos/test/test_semaphore.vasm — il semaforo contatore, e soprattutto
 ; L'INSERIMENTO ORDINATO di §13.6: chi affiora al post e' il piu' prioritario.
 ;
 ; --- COSA VERIFICA, E PERCHE' SEI TASK ---

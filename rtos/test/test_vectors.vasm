@@ -1,4 +1,4 @@
-; rtos/test/test_vettori.vasm — LE DUE META' DEL PROGETTO SI INCONTRANO.
+; rtos/test/test_vectors.vasm — LE DUE META' DEL PROGETTO SI INCONTRANO.
 ;
 ; E' il primo programma in cui un TASK usa i registri vettoriali. Fino al
 ; 12/09/2026 non ce n'era uno: sotto rtos/ e hal/ non compariva una sola
@@ -15,7 +15,7 @@
 ;
 ; Il difetto esiste SOLO sotto preemption, ed e' per questo che qui il timer e'
 ; armato e l'ISR arma il need_resched a ogni tick. In un programma cooperativo
-; (test_coop, test_mondo) la CPU cambia mano soltanto dove il task ha deciso, e
+; (test_coop, test_events) la CPU cambia mano soltanto dove il task ha deciso, e
 ; li' i vettori li ha gia' riposti: girerebbe corretto e non direbbe niente.
 ;
 ; A e B stanno allo STESSO livello, ed e' obbligatorio: a priorita' diverse il
@@ -77,7 +77,7 @@
 ; 300 il task riprendeva e veniva ritrappato PRIMA di eseguire un'istruzione.
 ; Il sistema girava al 100% dentro il salvataggio del contesto e non avanzava.
 ;
-; E' la saturazione gia' misurata su test_catena (§3.32), amplificata di un
+; E' la saturazione gia' misurata su test_chain (§3.32), amplificata di un
 ; ordine di grandezza dal contesto vettoriale: il periodo del timer deve stare
 ; comodamente sopra il costo di una commutazione, e con i vettori quel costo e'
 ; dieci volte quello scalare. Un sistema che li usa non puo' avere il tick che

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """trace.py — LA TRACCIA TEMPORALE: chi gira, e da quando a quando.
 
-    python3 tools/trace.py out/vasm/test_gestore.vx        # -> out/traccia.html
+    python3 tools/trace.py out/vasm/test_tmgr.vx        # -> out/traccia.html
 
 Un programma guidato da un DEVICE non e' autosufficiente: senza il suo
 alimentatore resta a pollare un flag che nessuno alzera' e non termina mai. Le
 opzioni della macchina si passano dopo un --, e sono le stesse che vasm_check
 mette in ARGS (§3.37):
 
-    python3 tools/trace.py out/vasm/test_mondo.vx -- --kbd "2000:a,6000:b"
+    python3 tools/trace.py out/vasm/test_events.vx -- --kbd "2000:a,6000:b"
 
 Nasce il 07/09/2026 per chiudere un debito che l'handoff portava da §3.29: senza
 uno strumento che dica chi gira e in quale intervallo, ogni numero prodotto dai
@@ -283,7 +283,7 @@ def analizza(vx, tmp, argomenti=()):
 
 def main():
     ap = argparse.ArgumentParser(description="Traccia temporale di un programma vcpu_sim")
-    ap.add_argument("programma", help="il .vx da tracciare (es. out/vasm/test_gestore.vx)")
+    ap.add_argument("programma", help="il .vx da tracciare (es. out/vasm/test_tmgr.vx)")
     ap.add_argument("-o", "--out", help="la pagina da scrivere (default: out/traccia.html)")
     ap.add_argument("--json", help="scrive anche i dati grezzi qui")
     ap.add_argument("argomenti", nargs="*", metavar="-- OPZIONI",

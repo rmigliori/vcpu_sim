@@ -94,7 +94,7 @@ vasm_check(block MODE DUMPS PROGRAM test_block
            EXPECT "3 25")
 
 # ---------------------------------------------------------------------------
-#  test_catena — la catena A -> B -> C: due salti di mailbox fatti da TASK.
+#  test_chain — la catena A -> B -> C: due salti di mailbox fatti da TASK.
 #
 #  Primo dei due passi che restano del test di §3.28 (l'altro e' il gestore dei
 #  timeout come task, che tira dentro anche il pool). Mette in gioco tre pezzi
@@ -126,16 +126,16 @@ vasm_check(block MODE DUMPS PROGRAM test_block
 #  cioe' il prezzo che i task scalari pagano perche' quelli vettoriali possano
 #  esistere. I tre derivabili restano 3 3 3. Il quarto cala del 19%, ed e' il test con piu' commutazioni per giro: quattro.
 # ---------------------------------------------------------------------------
-vasm_object(t_catena SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_catena.vasm
+vasm_object(t_chain SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_chain.vasm
                      INTERFACES vinc_queue vinc_tcb vinc_mailbox)
 
-vasm_program(test_catena OBJECTS t_catena LINK lib_messaggi lib_kernel)
+vasm_program(test_chain OBJECTS t_chain LINK lib_messaggi lib_kernel)
 
-vasm_check(catena MODE DUMPS PROGRAM test_catena
+vasm_check(chain MODE DUMPS PROGRAM test_chain
            EXPECT "3 3 3 632")
 
 # ---------------------------------------------------------------------------
-#  test_gestore — il gestore dei timeout come TASK: l'ultimo passo di §3.28.
+#  test_tmgr — il gestore dei timeout come TASK: l'ultimo passo di §3.28.
 #
 #  Tenuto per ultimo apposta: e' l'unico che tira dentro anche il pool (§10),
 #  quindi arriva quando lo scheduler a priorita', il blocco volontario e la
@@ -161,7 +161,7 @@ vasm_check(catena MODE DUMPS PROGRAM test_catena
 #
 #  Il periodo e' 4000 cicli: sotto i 2000 il giro (tick -> gestore -> pool ->
 #  mailbox -> A -> riarmo) non si chiude dentro un tick e cntA crolla a 0, che
-#  e' la saturazione gia' misurata su test_catena.
+#  e' la saturazione gia' misurata su test_chain.
 # ---------------------------------------------------------------------------
 #
 #  "5 0 2566" dal 12/09/2026 (era "5 0 2609"): ctx_save guarda PSW_VDIRTY e spinge una
@@ -170,19 +170,19 @@ vasm_check(catena MODE DUMPS PROGRAM test_catena
 #  cioe' il prezzo che i task scalari pagano perche' quelli vettoriali possano
 #  esistere. cntA resta 5 e cntErr resta 0, cioe' i due numeri che non dipendono dai cicli.
 # ---------------------------------------------------------------------------
-vasm_object(t_gestore SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_gestore.vasm
+vasm_object(t_tmgr SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_tmgr.vasm
                       INTERFACES vinc_queue vinc_tcb vinc_mailbox vinc_message
                                  vinc_timeout vinc_timeout_manager)
 
-vasm_program(test_gestore OBJECTS t_gestore
+vasm_program(test_tmgr OBJECTS t_tmgr
              LINK lib_timeout_manager lib_messaggi lib_kernel lib_pool
                   lib_timeout)
 
-vasm_check(gestore MODE DUMPS PROGRAM test_gestore
+vasm_check(tmgr MODE DUMPS PROGRAM test_tmgr
            EXPECT "5 0 2566")
 
 # ---------------------------------------------------------------------------
-#  test_semaforo — il semaforo contatore, e l'INSERIMENTO ORDINATO di §13.6.
+#  test_semaphore — il semaforo contatore, e l'INSERIMENTO ORDINATO di §13.6.
 #
 #  E' il primo test della serie in cui il numero che conta non misura QUANTO ma
 #  IN CHE ORDINE: 'ordine' e' la lista d'attesa letta con queue_peek e resa in
@@ -200,12 +200,12 @@ vasm_check(gestore MODE DUMPS PROGRAM test_gestore
 #  il primo test della serie di cui si possa dire. Il periodo del timer non
 #  entra in nessuno di loro: sposta solo QUANDO le cose accadono, non quali.
 # ---------------------------------------------------------------------------
-vasm_object(t_semaforo SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_semaforo.vasm
+vasm_object(t_semaphore SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_semaphore.vasm
                        INTERFACES vinc_queue vinc_tcb vinc_semaphore)
 
-vasm_program(test_semaforo OBJECTS t_semaforo LINK lib_semaphore lib_kernel)
+vasm_program(test_semaphore OBJECTS t_semaphore LINK lib_semaphore lib_kernel)
 
-vasm_check(semaforo MODE DUMPS PROGRAM test_semaforo
+vasm_check(semaphore MODE DUMPS PROGRAM test_semaphore
            EXPECT "123456 2 1 -6")
 
 # ---------------------------------------------------------------------------
@@ -285,7 +285,7 @@ vasm_check(coop MODE DUMPS PROGRAM test_coop
            EXPECT "0 5 5 5 0")
 
 # ---------------------------------------------------------------------------
-#  test_mondo — LO SCHEDULER GUIDATO DAL MONDO, e il primo cliente di
+#  test_events — LO SCHEDULER GUIDATO DAL MONDO, e il primo cliente di
 #  task_yield (12/09/2026).
 #
 #  Il gemello di test_coop, e la coppia va letta insieme: stesso kernel, stesso
@@ -332,18 +332,18 @@ vasm_check(coop MODE DUMPS PROGRAM test_coop
 #  cioe' il prezzo che i task scalari pagano perche' quelli vettoriali possano
 #  esistere. Quattro numeri su cinque immobili: si muove solo cntP.
 # ---------------------------------------------------------------------------
-vasm_object(t_mondo SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_mondo.vasm
+vasm_object(t_events SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_events.vasm
                     INTERFACES vinc_queue vinc_tcb vinc_mailbox vinc_message
                                vinc_hal vinc_marks)
 
-vasm_program(test_mondo OBJECTS t_mondo LINK lib_messaggi lib_kernel)
+vasm_program(test_events OBJECTS t_events LINK lib_messaggi lib_kernel)
 
-vasm_check(mondo MODE DUMPS PROGRAM test_mondo
+vasm_check(events MODE DUMPS PROGRAM test_events
            EXPECT "0 5 495 5 714"
            ARGS   --kbd "2000:a,6000:b,10000:c,14000:d,18000:e")
 
 # ---------------------------------------------------------------------------
-#  test_vettori — LE DUE META' DEL PROGETTO SI INCONTRANO (12/09/2026).
+#  test_vectors — LE DUE META' DEL PROGETTO SI INCONTRANO (12/09/2026).
 #
 #  Il primo programma in cui un TASK usa i registri vettoriali. Fino a oggi
 #  sotto rtos/ e hal/ non c'era una sola istruzione vettoriale, e i calcoli
@@ -368,10 +368,10 @@ vasm_check(mondo MODE DUMPS PROGRAM test_mondo
 #  amplificata di un ordine di grandezza -- un sistema che usa i vettori non puo'
 #  tenere il tick che aveva prima.
 # ---------------------------------------------------------------------------
-vasm_object(t_vettori SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_vettori.vasm
+vasm_object(t_vectors SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_vectors.vasm
                       INTERFACES vinc_queue vinc_tcb vinc_hal)
 
-vasm_program(test_vettori OBJECTS t_vettori LINK lib_kernel)
+vasm_program(test_vectors OBJECTS t_vectors LINK lib_kernel)
 
-vasm_check(vettori MODE DUMPS PROGRAM test_vettori
+vasm_check(vectors MODE DUMPS PROGRAM test_vectors
            EXPECT "0 0 20 19 39")

@@ -64,7 +64,7 @@
 ; --- LE FASI SONO LEGATE ALLO STATO, NON AI TICK ---
 ; L'ISR non conta il tempo: guarda MUTEX.owner e MUTEX.waiters e agisce solo
 ; quando il sistema ha la forma che serve. E' la lezione presa scrivendo
-; test_semaforo, dove le fasi a tick facevano arrivare un task troppo presto e
+; test_semaphore, dove le fasi a tick facevano arrivare un task troppo presto e
 ; il caso interessante non veniva mai eseguito. Qui in piu' e' l'unico modo di
 ; cogliere una finestra che dura una sezione critica.
 ;

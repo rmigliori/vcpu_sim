@@ -24,6 +24,16 @@
 > Distinzione, in una riga: si traduce ciò che **nomina**, non ciò che
 > **spiega**.
 
+> ### ⚠ QUESTO FILE VA ESCLUSO DA OGNI RENAME AUTOMATICO
+>
+> È l'unico documento del progetto in cui il nome **vecchio** deve sopravvivere:
+> è fatto di coppie vecchio→nuovo. Un `sed` passato su `docs/*.md` lo riduce a
+> `tmgr_init` → `tmgr_init`, cioè a niente — ed è successo, al commit 8, e si è
+> recuperato solo perché era già in git.
+>
+> Vale per chiunque, e per qualunque rename futuro: **`docs/rename-inglese.md`
+> si aggiorna a mano o non si aggiorna.**
+
 ---
 
 ## 0. Come si approva questo elenco

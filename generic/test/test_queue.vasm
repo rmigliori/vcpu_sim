@@ -1,4 +1,4 @@
-; tests/test_coda.vasm — test mirato dell'INVARIANTE DEI LINK di kernel/coda.vasm:
+; tests/test_queue.vasm — test mirato dell'INVARIANTE DEI LINK di kernel/coda.vasm:
 ;
 ;   un nodo che non sta in nessuna lista ha fwd == bwd == 0
 ;
@@ -32,10 +32,10 @@
 ;   ./build/vcpu_sim asm $I linked/scheduler/hal/machine.vasm      -o build/machine.vo
 ;   ./build/vcpu_sim asm $I linked/scheduler/kernel/coda.vasm      -o build/coda.vo
 ;   ./build/vcpu_sim asm $I linked/scheduler/kernel/scheduler.vasm -o build/scheduler.vo
-;   ./build/vcpu_sim asm $I tests/test_coda.vasm                   -o build/test_coda.vo
-;   ./build/vcpu_sim ld build/test_coda.vo build/coda.vo \
-;                       build/scheduler.vo build/machine.vo -o build/test_coda.vx
-;   ./build/vcpu_sim run build/test_coda.vx
+;   ./build/vcpu_sim asm $I tests/test_queue.vasm                   -o build/test_queue.vo
+;   ./build/vcpu_sim ld build/test_queue.vo build/coda.vo \
+;                       build/scheduler.vo build/machine.vo -o build/test_queue.vx
+;   ./build/vcpu_sim run build/test_queue.vx
 ;
 ; Atteso, in ordine:  0 1 1 1 0 0 0 2 1 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0
 

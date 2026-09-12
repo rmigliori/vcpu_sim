@@ -114,9 +114,9 @@ in §2.4; `--kbd` alimenta la tastiera con una traccia a cicli ed è descritto i
 
 C'è una quarta opzione, disponibile solo su `run`: **`--marche <file>`** scrive
 la registrazione del *marcatore* — i tag che il programma piazza scrivendo nei
-registri di `hal/marca.vinc`, più due canali che la macchina riempie da sola (chi
-possiede la CPU, e quando arriva un tasto). Il catalogo dei nomi è `marche.conf`,
-e `tools/marche.py leggi` traduce la registrazione in finestre e durate. Serve a
+registri di `hal/marker.vinc`, più due canali che la macchina riempie da sola (chi
+possiede la CPU, e quando arriva un tasto). Il catalogo dei nomi è `marks.conf`,
+e `tools/marks.py leggi` traduce la registrazione in finestre e durate. Serve a
 misurare il **tempo di risposta**, che la traccia del `pc` non può dare: una
 finestra aperta in un task e chiusa in un altro attraversa le commutazioni.
 
@@ -479,7 +479,7 @@ breakpoint at 5
   dati parte da 4, sia nel percorso a file singolo sia nel linker (`NULL_GUARD`
   in [`include/vcpu.h`](../include/vcpu.h)), così **0 è un puntatore nullo** che
   non può coincidere con nessun oggetto reale. Serve a tutto il codice che usa
-  0 come «niente»: `dequeue_testa` restituisce 0 per coda vuota, `current == 0`
+  0 come «niente»: `dequeue_head` restituisce 0 per coda vuota, `current == 0`
   significa «nessun task in esecuzione», e le liste del kernel riconoscono un
   nodo fuori da ogni coda dai link nulli. Conseguenza pratica: la prima
   etichetta dichiarata in `.data` vale 4, non 0.
@@ -710,7 +710,7 @@ a mano e il commento fa da traccia leggibile del blocco:
 **Limite importante**: è un'analisi statica delle sole istruzioni scritte nel
 corpo, **non** vede cosa sporca una routine chiamata. Un registro il cui
 valore arriva da una `call` (come la `psw` nell'idioma `irq_save`/
-`irq_restore` in `generic/coda/impl/src/coda.vasm`, dove la routine
+`irq_restore` in `generic/queue/impl/src/queue.vasm`, dove la routine
 chiamata scrive `r5` ma il corpo della `.proc` lo tratta solo in memoria) resta
 invisibile allo scanner e va ancora salvato a mano intorno alla `call`,
 esattamente come prima.
@@ -748,7 +748,7 @@ sul percorso a file singolo sia su `asm`, nelle due forme abituali:
 
 ```bash
 ./build/vcpu_sim -I rtos/scheduler/interface -I generic/pool/interface \
-                 -I generic/coda/interface tests/test_include.vasm
+                 -I generic/queue/interface tests/test_include.vasm
 ./build/vcpu_sim asm -Igeneric/pool/interface -Igeneric/coda/interface \
                  generic/test/test_pool.vasm -o build/test_pool.vo
 ```
@@ -1373,8 +1373,8 @@ salvare. È la stessa scelta della ABI vettoriale di RISC-V (vettori caller-save
 
 **Scheduler e dispatcher separati.** La ISR del timer fa tre cose: (A) salva il
 contesto del task uscente sul suo stack e ne aggiorna `sp` nel TCB; (C) rimette il
-task in fondo alla ready queue (`enqueue_coda`); poi invoca lo **scheduler**
-(*politica*: `dequeue_testa` sceglie il prossimo) e il **dispatcher**
+task in fondo alla ready queue (`enqueue_tail`); poi invoca lo **scheduler**
+(*politica*: `dequeue_head` sceglie il prossimo) e il **dispatcher**
 (*meccanismo*: ricarica `sp`, ripristina i registri, `mtepc`, `reti`).
 
 **Avvio del primo task.** `reti` esegue `psw = epsw`, e non esiste un modo per
@@ -1403,7 +1403,7 @@ dall'uno all'altro. È un esempio a **file singolo** che tiene *tutto* insieme
 (kernel e applicazione) come riferimento didattico compatto; la versione §7.10 lo
 spezza in kernel riutilizzabile + demo e mostra un confine più realistico.
 
-### 7.10 HAL, kernel puro e preemption differita (`hal/` + `generic/coda/` + `rtos/`)
+### 7.10 HAL, kernel puro e preemption differita (`hal/` + `generic/queue/` + `rtos/`)
 
 Il mini-kernel di §7.9 mescola software di base e applicazione in un solo file.
 Ora che i **puntatori a funzione** attraversano la toolchain (rilocazione
@@ -1413,7 +1413,7 @@ sistema reale (l'*arch/port* di Linux e FreeRTOS rispetto al core portabile):
 | File | Strato | Ruolo | Esporta |
 |------|--------|-------|---------|
 | `hal/impl/src/machine.vasm` | **HAL** (hardware) | vettore di trap, save/restore contesto (`ctx_save`/`ctx_restore`), timer, `sti`, sezioni critiche | `_trap_entry`, `ctx_restore`, `ctx_init`, `timer_init`, `irq_arm`, `irq_enable`, `irq_save`, `irq_restore` |
-| `generic/coda/impl/src/coda.vasm` | generic | le 5 routine di coda (`list_head`) | `coda_init`, `enqueue_coda`, `enqueue_testa`, `dequeue_testa`, `remove_buffer` |
+| `generic/queue/impl/src/queue.vasm` | generic | le 5 routine di coda (`list_head`) | `queue_init`, `enqueue_tail`, `enqueue_head`, `dequeue_head`, `remove_buffer` |
 | `rtos/scheduler/impl/src/scheduler.vasm` | **kernel puro** | orchestrazione + politica RR + dispatch, **nessun CSR** | `sched_dispatch`, `irq_install`, `request_preempt`, `ready`, `current` |
 | `rtos/demo/scheduler_demo.vasm` | applicazione | boot (`main`) + due task + `timer_isr` + dati | `main` |
 
@@ -1448,7 +1448,7 @@ routine che non si mischiano:
   per rimettere in esecuzione `current` — con o senza switch è l'unico modo di
   uscire dalla trap.
 - **`scheduler`** (chi è il prossimo — la politica): round-robin a coda
-  singola (`enqueue_coda` dell'uscente, `dequeue_testa` del prossimo). Cambiare
+  singola (`enqueue_tail` dell'uscente, `dequeue_head` del prossimo). Cambiare
   politica (RR → priorità) significa riscrivere **solo `scheduler`**: HAL,
   `sched_dispatch` e `dispatcher` restano intatti.
 - **`dispatcher`** (mette in esecuzione — meccanismo puro): chiama l'HAL
@@ -1474,12 +1474,12 @@ con inclusione selettiva):
 
 ```bash
 # Un -I per libreria: e' la cartella interface/ che ogni libreria pubblica, e
-# il nome incluso porta il nome della libreria ("coda/coda.vinc", "tcb/tcb.vinc").
+# il nome incluso porta il nome della libreria ("coda/queue.vinc", "tcb/tcb.vinc").
 Ihal=-Ihal/interface
 Icoda=-Igeneric/coda/interface
-Itcb="-Irtos/scheduler/interface $Icoda"      # tcb.vinc include coda/coda.vinc
+Itcb="-Irtos/scheduler/interface $Icoda"      # tcb.vinc include coda/queue.vinc
 ./build/vcpu_sim asm $Ihal hal/impl/src/machine.vasm           -o build/machine.vo
-./build/vcpu_sim asm $Icoda generic/coda/impl/src/coda.vasm    -o build/coda.vo
+./build/vcpu_sim asm $Icoda generic/queue/impl/src/queue.vasm    -o build/coda.vo
 ./build/vcpu_sim asm $Itcb rtos/scheduler/impl/src/scheduler.vasm -o build/scheduler.vo
 ./build/vcpu_sim asm $Itcb rtos/demo/scheduler_demo.vasm       -o build/scheduler_demo.vo
 ./build/vcpu_sim ld build/scheduler_demo.vo build/scheduler.vo build/coda.vo \
@@ -1497,7 +1497,7 @@ punto: ogni strato ignora i dettagli degli altri.
 **Sezioni critiche sulle code.** Le routine di coda fanno aggiornamenti
 multi-passo **non atomici**. Finché ogni chiamata avviene a interrupt disabilitati
 (il boot prima di `irq_enable`, l'ISR dentro la trap) non c'è corsa. Ma un *task*
-gira a `IE=1`: se il timer si interpone a metà di un `enqueue_coda`, la lista resta
+gira a `IE=1`: se il timer si interpone a metà di un `enqueue_tail`, la lista resta
 incoerente e `scheduler` la corrompe. Su un monoprocessore in-order la sezione
 critica è semplicemente **disabilitare gli interrupt** (una `fence` non darebbe
 atomicità: servirebbe con multicore + RMW atomica, che questa ISA non ha).
@@ -1508,10 +1508,10 @@ lock-free e chiamabile da ISR (già a `IE=0`); un **wrapper protetto** col suffi
 `_s` la racchiude in una sezione critica. L'HAL fornisce la coppia componibile
 `irq_save() → r5 = psw; IE=0` e `irq_restore(r5)`: usa **save/restore** e non
 `cli`/`sti` secco, così resta corretta anche annidata o con `IE` già a zero. I
-wrapper (`enqueue_coda_s`, `enqueue_testa_s`, `dequeue_testa_s`, `remove_buffer_s`)
+wrapper (`enqueue_tail_s`, `enqueue_head_s`, `dequeue_head_s`, `remove_buffer_s`)
 sono NON-FOGLIA: salvano `r15` e conservano la `psw` sullo stack attraverso la
 chiamata alla raw. `irq_save`/`irq_restore` usano `r5` e non toccano `r1`/`r2`,
-quindi gli argomenti (e il valore di ritorno di `dequeue_testa`) restano intatti.
+quindi gli argomenti (e il valore di ritorno di `dequeue_head`) restano intatti.
 Le ISR e il boot usano le raw; il **task** usa i wrapper `_s`.
 
 ---

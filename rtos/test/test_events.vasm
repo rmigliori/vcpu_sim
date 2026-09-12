@@ -1,4 +1,4 @@
-; rtos/test/test_mondo.vasm — LO SCHEDULER GUIDATO DAL MONDO.
+; rtos/test/test_events.vasm — LO SCHEDULER GUIDATO DAL MONDO.
 ;
 ; Il gemello di test_coop, e i due vanno letti come una coppia: stesso kernel,
 ; stesso modello cooperativo, zero interrupt, zero tick, la CPU che cambia mano

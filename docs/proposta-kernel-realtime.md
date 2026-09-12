@@ -14,7 +14,7 @@
 > **Stato: quattro decisioni prese (§7.1–7.3, §7.5), una aperta (§7.4).**
 > Lo scheduler è ancora tutto da scrivere e non si scrive prima di §7.4. La
 > **mailbox** invece è stata progettata e implementata (§8):
-> [`rtos/servizi/mailbox/…/messageHandling.vasm`](../rtos/servizi/mailbox/impl/src/messageHandling.vasm)
+> [`rtos/services/mailbox/…/messageHandling.vasm`](../rtos/services/mailbox/impl/src/messageHandling.vasm)
 > esiste, gira ed è testato. Il **gestore dei timeout** è progettato ma non
 > scritto (§9): modello a vettore di descrittori con interfaccia procedurale e
 > pool di buffer, che sostituisce quello a messaggio prestato dal cliente — §9.6
@@ -35,7 +35,7 @@ un'estensione per l'anteprima (*Markdown Preview Mermaid Support*).
   - **PCB** (*Priority Control Block*): uno per ogni coda di priorità, con due
     campi — l'indirizzo della coda di quel livello e l'indirizzo dell'eventuale
     TCB preemptato a quel livello.
-  - **Mailbox**: *è* una testa di coda di `coda.vasm`, con il contatore usato
+  - **Mailbox**: *è* una testa di coda di `queue.vasm`, con il contatore usato
     con segno (§8). Una per task, e l'invariante è `count >= -1`. Era anche
     l'**unico punto di blocco di un task** (§7.5): dal 06/09/2026 **non più**,
     perché il semaforo blocca. Resta l'unico raggiungibile da una **consegna di
@@ -44,7 +44,7 @@ un'estensione per l'anteprima (*Markdown Preview Mermaid Support*).
     risorse disponibili (che non sono nodi), negativo = task accodati — e per
     questo **non** sono una mailbox con un parametro diverso (§13.1). Sono
     l'unico oggetto che non nasce «tutti zeri»: il conteggio iniziale arriva da
-    `sem_init`, perché una `TESTA` vuota non è scrivibile con un `.word`.
+    `sem_init`, perché una `HEAD` vuota non è scrivibile con un `.word`.
   - **Mutex**: implementati, **§13**. Ceiling statico (§7.4), e sono *la
     sezione critica* — la stessa disciplina di `irq_save`/`irq_restore` con un
     limite calcolato per risorsa invece che infinito (§13.2). Sotto un ceiling
@@ -55,7 +55,7 @@ un'estensione per l'anteprima (*Markdown Preview Mermaid Support*).
     richiesta/risposta è memoria del cliente prestata al fornitore per la durata
     della richiesta (§8.6). Dove un cliente che possa prestarla non c'è — il
     gestore dei timeout, che compone il messaggio alla scadenza — si passa da un
-    **pool** di buffer a taglia fissa, che è a sua volta una `TESTA` con i buffer
+    **pool** di buffer a taglia fissa, che è a sua volta una `HEAD` con i buffer
     come nodi (§9).
 - **Esiste sempre un task idle**, a priorità minima, che non rilascia mai la
   CPU: viene solo preemptato.
@@ -83,8 +83,8 @@ attuale finiscono nello stesso posto:
 
 | Il task… | …finisce | perché |
 |---|---|---|
-| è stato **preemptato** da un più prioritario | in `PCB.preemptato` | riprenderà da dove stava |
-| ha finito il **turno** fra pari | in fondo a `PCB.coda` | tocca a un altro dello stesso livello |
+| è stato **preemptato** da un più prioritario | in `PCB.preempted` | riprenderà da dove stava |
+| ha finito il **turno** fra pari | in fondo a `PCB.queue` | tocca a un altro dello stesso livello |
 | si è **bloccato** | nella coda del semaforo o del mutex | non è più eseguibile |
 
 Le tre righe erano scritte come «controvoglia / l'ha ceduta lui / si è bloccato»,
@@ -120,20 +120,20 @@ succede quando al suo livello è solo.
 ## 3. Le strutture statiche
 
 Le code sono quelle già implementate in
-[`generic/coda/…/coda.vasm`](../generic/coda/impl/src/coda.vasm): liste circolari
+[`generic/queue/…/queue.vasm`](../generic/queue/impl/src/queue.vasm): liste circolari
 doppie con sentinella, idioma `list_head` del kernel Linux.
 
 ```mermaid
 classDiagram
     direction LR
 
-    class TESTA {
+    class HEAD {
         +fwd : void*
         +bwd : void*
         +count : word
-        coda_init()
-        enqueue_coda()
-        dequeue_testa()
+        queue_init()
+        enqueue_tail()
+        dequeue_head()
         remove_buffer()
     }
 
@@ -147,27 +147,27 @@ classDiagram
     }
 
     class PCB {
-        +coda : TESTA*
+        +coda : HEAD*
         +preemptato : TCB*
     }
 
-    class SEMAFORO {
-        +coda : TESTA
+    class SEMAPHORE {
+        +coda : HEAD
         +conteggio : word
     }
 
     class MUTEX {
-        +coda : TESTA
+        +coda : HEAD
         +owner : TCB*
         da definire in §7.4
     }
 
     class MAILBOX {
-        E' una TESTA
+        E' una HEAD
         +count con segno
     }
 
-    class MESSAGGIO {
+    class MESSAGE {
         +fwd : void*
         +bwd : void*
         +payload : bytes
@@ -184,12 +184,12 @@ classDiagram
 
     class TIMEOUT {
         task a priorita' massima
-        +descrittori : N x DESCRITTORE
+        +descrittori : N x DESCRIPTOR
         timeout_arm()
         timeout_cancel()
     }
 
-    class DESCRITTORE {
+    class DESCRIPTOR {
         +scadenza : word
         +clientTag : word
         +messageCode : word
@@ -197,25 +197,25 @@ classDiagram
     }
 
     class POOL {
-        E' una TESTA
+        E' una HEAD
         buf_alloc()
         buf_free()
     }
 
-    TCB ..|> TESTA : condivide fwd/bwd
+    TCB ..|> HEAD : condivide fwd/bwd
     TCB --> PCB : livello di appartenenza
-    PCB --> TESTA : coda del livello
+    PCB --> HEAD : coda del livello
     PCB ..> TCB : slot preemptato
-    MAILBOX ..|> TESTA : e' una testa, con count con segno
-    SEMAFORO ..> TCB : coda di attesa
+    MAILBOX ..|> HEAD : e' una testa, con count con segno
+    SEMAPHORE ..> TCB : coda di attesa
     MUTEX ..> TCB : coda di attesa + owner
-    MESSAGGIO ..|> TESTA : condivide fwd/bwd
-    PAYLOAD ..> MESSAGGIO : si sovrappone a payload
-    TIMEOUT *-- DESCRITTORE : vettore statico, mai in lista
+    MESSAGE ..|> HEAD : condivide fwd/bwd
+    PAYLOAD ..> MESSAGE : si sovrappone a payload
+    TIMEOUT *-- DESCRIPTOR : vettore statico, mai in lista
     TIMEOUT ..> POOL : preleva un buffer alla scadenza
     TIMEOUT ..> MAILBOX : send del messaggio formattato
-    POOL ..|> TESTA : e' una testa; i buffer sono i nodi
-    MAILBOX o-- MESSAGGIO : gia' consegnati
+    POOL ..|> HEAD : e' una testa; i buffer sono i nodi
+    MAILBOX o-- MESSAGE : gia' consegnati
     MAILBOX o-- TCB : ricevente in attesa (count < 0)
 ```
 
@@ -223,7 +223,7 @@ classDiagram
 > fra clienti e fornitori di servizi, e `messageHandling.vasm` non ne legge un
 > byte (§8).
 
-> Il TCB non **eredita** da TESTA: ne condivide i primi otto byte, così lo
+> Il TCB non **eredita** da HEAD: ne condivide i primi otto byte, così lo
 > stesso codice di insert/remove vale per la testa e per i nodi.
 
 ### Layout dei campi
@@ -240,7 +240,7 @@ classDiagram
 
 > **Una coppia di link sola** (§7.5): il TCB può stare in una lista alla volta,
 > e le posizioni previste sono mutuamente esclusive — coda di ready, coda
-> d'attesa, oppure `PCB.preemptato`, che è un puntatore e non una lista. Nessun
+> d'attesa, oppure `PCB.preempted`, che è un puntatore e non una lista. Nessun
 > secondo link per le attese a tempo: un timeout armato non mette in lista
 > **niente** — è una casella nel vettore del gestore (§9.3).
 
@@ -251,7 +251,7 @@ classDiagram
 | +0 | `coda` | indirizzo della coda di questo livello |
 | +4 | `preemptato` | TCB interrotto a questo livello, 0 se nessuno |
 
-**TESTA** — 12 byte (già esistente, invariata)
+**HEAD** — 12 byte (già esistente, invariata)
 
 | Off | Campo | Significato |
 |---|---|---|
@@ -259,22 +259,22 @@ classDiagram
 | +4 | `bwd` | ultimo nodo |
 | +8 | `count` | elementi in coda |
 
-**MAILBOX** — *è* una `TESTA`, 12 byte, nessun campo in più
+**MAILBOX** — *è* una `HEAD`, 12 byte, nessun campo in più
 
 Non serve un campo `owner`: il TCB in attesa sta **dentro** la lista, quindi la
 `send` se lo trova sfilandolo. Cambia solo la convenzione del contatore (§8).
 
-**MESSAGGIO** — due link e un payload
+**MESSAGE** — due link e un payload
 
 | Off | Campo | Significato |
 |---|---|---|
-| +0 | `fwd` | link (idioma `list_head`, come `TESTA` e `TCB`) |
+| +0 | `fwd` | link (idioma `list_head`, come `HEAD` e `TCB`) |
 | +4 | `bwd` | |
 | +8.. | `payload` | `payload[0]`: il kernel non lo legge e non lo scrive **mai** |
 
 `payload` è un **indirizzo, non un campo**: la lunghezza la decide chi compone il
-messaggio. Ne segue che `MESSAGGIO.size` non è la dimensione di un messaggio e
-`.res MESSAGGIO` non va usata.
+messaggio. Ne segue che `MESSAGE.size` non è la dimensione di un messaggio e
+`.res MESSAGE` non va usata.
 
 **PAYLOAD** — testa comune del payload, 20 byte (il primo è `pool`, la
 provenienza del buffer — §10.2), poi le specifiche
@@ -308,7 +308,7 @@ mascherare costerebbe materializzare la maschera in un registro.
 | `current` | indirizzo del TCB in esecuzione (già esistente, sopravvive — §7.1) |
 
 > **Un'indirezione in meno.** Se ogni PCB ha esattamente una coda e sono
-> entrambi statici, la `TESTA` può stare **dentro** il PCB invece di essere
+> entrambi statici, la `HEAD` può stare **dentro** il PCB invece di essere
 > puntata: si risparmia una `lw` per ogni livello scandito, e la scansione è il
 > percorso più caldo del kernel. Il puntatore serve solo se un giorno più PCB
 > devono condividere la stessa coda. *Da valutare.*
@@ -346,7 +346,7 @@ flowchart TD
     A --> B{"pcb.preemptato<br/>occupato?"}
     B -- sì --> C["TCB = pcb.preemptato<br/>svuota lo slot"]
     B -- no --> D{"pcb.coda<br/>non vuota?"}
-    D -- sì --> E["TCB = dequeue_testa"]
+    D -- sì --> E["TCB = dequeue_head"]
     D -- no --> F["pcb = livello successivo<br/>(più basso)"]
     F --> B
     C --> G["current = TCB"]
@@ -480,13 +480,13 @@ Il campo è essenziale per il debugging. **E ha un secondo motivo tecnico**: dat
 un TCB, `TCB.pcb->coda` fornisce la sua coda di *ready*, non la coda in cui si
 trova **adesso**. Se il task è sospeso sta in quella di un semaforo o di un
 mutex, e per sganciarlo con `remove_buffer` (che vuole la testa giusta, vedi
-[`coda.vasm:87-95`](../generic/coda/impl/src/coda.vasm#L87-L95)) bisogna sapere
+[`queue.vasm:87-95`](../generic/queue/impl/src/queue.vasm#L87-L95)) bisogna sapere
 quale delle due. Senza `state` non lo sai. Non è ridondanza: è l'unico modo di
 sapere dove cercare.
 
 Oggi [`tcb.vinc`](../rtos/scheduler/interface/tcb/tcb.vinc) ha tre valori
 (era `types.vinc`, spezzato in tre il 05/09/2026). Con lo
-slot ne serve un quarto: un task in `PCB.preemptato` non è in una coda di ready,
+slot ne serve un quarto: un task in `PCB.preempted` non è in una coda di ready,
 non è sulla CPU e non è bloccato. Marcarlo `READY` farebbe mentire il campo
 proprio nel momento in cui lo si interroga per capire cosa sta succedendo.
 
@@ -560,7 +560,7 @@ Le due strade cambiano **cosa va dichiarato staticamente**:
 | | Ereditarietà vera | Priority ceiling (ICPP) |
 |---|---|---|
 | **Come funziona** | al rilascio si ricalcola la priorità effettiva come massimo fra la nominale e il bloccato più prioritario di ogni mutex ancora posseduto | ogni mutex ha un *ceiling* statico; chi lo acquisisce viene promosso subito a quel livello, indipendentemente da chi si bloccherà poi |
-| **Costo nel TCB** | una `TESTA` per la lista dei mutex posseduti: +12 byte, più il link nel mutex | un contatore di sezioni critiche: +4 byte (vedi sotto) |
+| **Costo nel TCB** | una `HEAD` per la lista dei mutex posseduti: +12 byte, più il link nel mutex | un contatore di sezioni critiche: +4 byte (vedi sotto) |
 | **Costo nel mutex** | link di lista | un campo con la priorità precedente all'acquisizione |
 | **Costo a runtime** | ricalcolo a ogni rilascio | O(1) |
 | **Rischio** | complessità | il ceiling va dichiarato correttamente a mano: se un task più prioritario del ceiling prende il mutex, la garanzia salta **in silenzio** |
@@ -619,7 +619,7 @@ quel momento la coda è ordinata male senza che nessuno se ne accorga.
 Il TCB ha `fwd`/`bwd` a offset 0 e nient'altro: può stare in **una** lista alla
 volta. Oggi regge, perché le posizioni previste dal modello sono mutuamente
 esclusive — coda di ready, coda d'attesa di un semaforo o di un mutex, oppure lo
-slot `PCB.preemptato`, che è un puntatore e non una lista (ed è un pregio dello
+slot `PCB.preempted`, che è un puntatore e non una lista (ed è un pregio dello
 slot, non un dettaglio).
 
 Si romperebbe con le **attese a tempo**: una `receive` con timeout mette il task
@@ -638,12 +638,12 @@ centralizzato in un punto.
 
 Ne discendono tre conseguenze, tutte da tenere in conto:
 
-1. **`coda.vasm` resta intatta**, e con lei il suo contratto forte — «il link sta
+1. **`queue.vasm` resta intatta**, e con lei il suo contratto forte — «il link sta
    a offset 0, quindi il puntatore al link *è* il puntatore al buffer, niente
-   `container_of`» ([`coda.vasm:5-6`](../generic/coda/impl/src/coda.vasm#L5-L6)).
+   `container_of`» ([`queue.vasm:5-6`](../generic/queue/impl/src/queue.vasm#L5-L6)).
    Con una seconda coppia a offset non nullo quel contratto sarebbe rimasto vero
    per le primitive e falso per i chiamanti, costretti a risalire al TCB con un
-   `addi` dopo ogni `dequeue_testa` sulla lista d'evento: una istruzione, gratis
+   `addi` dopo ogni `dequeue_head` sulla lista d'evento: una istruzione, gratis
    a runtime, ma una regola in più da rispettare a ogni singolo uso — e
    dimenticarla produce un puntatore che **sembra** un TCB valido.
 2. **La mailbox è l'unico punto di blocco RAGGIUNGIBILE DA UN TIMEOUT.** Il
@@ -682,8 +682,8 @@ Ne discendono tre conseguenze, tutte da tenere in conto:
 
 §7.5 ha promosso la mailbox a *unico punto di blocco di un task*, ma la sezione
 che la descriveva era rimasta quella di prima: quindici righe sul vincolo di
-layout imposto da `coda.vasm`. Qui c'è il ragionamento intero, e il codice che ne
-è uscito ([`rtos/servizi/mailbox/…/messageHandling.vasm`](../rtos/servizi/mailbox/impl/src/messageHandling.vasm)).
+layout imposto da `queue.vasm`. Qui c'è il ragionamento intero, e il codice che ne
+è uscito ([`rtos/services/mailbox/…/messageHandling.vasm`](../rtos/services/mailbox/impl/src/messageHandling.vasm)).
 
 ### 8.1 Una per task
 
@@ -691,7 +691,7 @@ layout imposto da `coda.vasm`. Qui c'è il ragionamento intero, e il codice che 
 
 > **L'argomento vero, e non è quello che stava scritto qui** (07/09/2026). Fino
 > a quel giorno questa sezione diceva: con più riceventi servirebbe l'inserimento
-> ordinato per priorità, che `coda.vasm` non ha. È un **costo**, non un
+> ordinato per priorità, che `queue.vasm` non ha. È un **costo**, non un
 > impedimento — e infatti quella primitiva ora esiste (§13.6), quindi
 > l'argomento sarebbe caduto da solo. Quello che regge è un altro:
 >
@@ -751,16 +751,16 @@ avrebbe due codifiche. Col complemento a due la vacuità resta `beq count, r0` e
 il tipo è `blt count, r0`, senza maschere.
 
 > L'argomento che decide non è il conteggio di istruzioni: se la `pop` mascherasse
-> un bit di tipo, **`coda.vasm` imparerebbe la codifica della mailbox** — e quel
+> un bit di tipo, **`queue.vasm` imparerebbe la codifica della mailbox** — e quel
 > modulo serve anche alle code di ready, ai mutex e alla free-list del pool. Col
-> complemento a due `dequeue_testa` resta il codice di sempre e la convenzione
+> complemento a due `dequeue_head` resta il codice di sempre e la convenzione
 > vive tutta in `messageHandling.vasm`.
 
-### 8.3 Cosa cambia in `coda.vasm`: lo strato `_nc`
+### 8.3 Cosa cambia in `queue.vasm`: lo strato `_nc`
 
 La contabilità è del chiamante, quindi servono primitive che manipolino i link
-**senza toccare il contatore**: `enqueue_coda_nc`, `enqueue_testa_nc`,
-`dequeue_testa_nc`, `remove_buffer_nc` (quest'ultima la vuole `timeout_cancel`).
+**senza toccare il contatore**: `enqueue_tail_nc`, `enqueue_head_nc`,
+`dequeue_head_nc`, `remove_buffer_nc` (quest'ultima la vuole `timeout_cancel`).
 
 Non sono routine *aggiunte*: sono il **corpo** di quelle contate, che ora
 aggiornano il contatore e **cadono in sequenza** dentro di esse. Nessuna `call`
@@ -778,7 +778,7 @@ e quindi appartiene per forza al chiamante.
 > `count >= 0` = numero di nodi; una gestita con le `_nc` ha la convenzione del
 > suo proprietario. Mescolarle fa derivare il contatore in silenzio.
 
-`coda.vasm` ha poi guadagnato l'**invariante dei link** e un esito di ritorno,
+`queue.vasm` ha poi guadagnato l'**invariante dei link** e un esito di ritorno,
 per una ragione che è nata discutendo il pool: vedi §10.2.
 
 ### 8.4 Il messaggio è opaco
@@ -792,7 +792,7 @@ La prima stesura aveva un header di kernel da 20 byte con `scadenza`, `mailbox` 
 nel tipo generico i campi di **un solo** suo cliente, il gestore dei timeout.
 Quei campi vanno nel payload del servizio che li usa. Prova oggettiva che il
 confine è al posto giusto: `messageHandling.vasm` non referenzia **nessun** campo
-di `MESSAGGIO`.
+di `MESSAGE`.
 
 ### 8.5 I due percorsi, e perché non serve un `owner`
 
@@ -1060,7 +1060,7 @@ Due dettagli che il modello a task porta con sé:
   > la vita bloccato nella propria mailbox in attesa del tick, e allora `count`
   > vale **−1** per la convenzione col segno di §8.2, non 0. Con `count == 0`
   > l'ISR non manda proprio quando c'è un task da svegliare, cioè sempre.
-  > Misurato: `test_gestore` scritto così dà `cntA = 0` — nessuna scadenza
+  > Misurato: `test_tmgr` scritto così dà `cntA = 0` — nessuna scadenza
   > consegnata mai — e l'idle si prende tutta la macchina. Il test giusto,
   > `count > 0` per coalescare, comprende i due casi in cui si manda: mailbox
   > vuota (0) e ricevente in attesa (−1).
@@ -1073,20 +1073,20 @@ Due dettagli che il modello a task porta con sé:
 > Il gestore è un task, quindi chiama `receive` e `send`: non poteva stare in
 > `generic/timeout` accanto ad `arm`/`cancel`, perché un modulo di `generic/`
 > che nomina un simbolo di `rtos/` non è più generic. Ed è il primo **task di
-> sistema** del progetto: non è nemmeno un «servizio» di `rtos/servizi/`, la cui
+> sistema** del progetto: non è nemmeno un «servizio» di `rtos/services/`, la cui
 > firma è «chiama `task_ready` e `task_block»` — il gestore non blocca nessuno,
-> si blocca lui. Da qui una cartella sua, `rtos/gestore_timeout/`.
+> si blocca lui. Da qui una cartella sua, `rtos/timeout_manager/`.
 >
 > | dove | cosa |
 > |---|---|
-> | `generic/timeout` | il vettore e la sua disciplina: `timeout_arm`, `timeout_cancel`, `timeout_scaduto` |
-> | `rtos/gestore_timeout` | il task: `gestore_init`, `gestore_task`, `gestore_tick` |
+> | `generic/timeout` | il vettore e la sua disciplina: `timeout_arm`, `timeout_cancel`, `timeout_expired` |
+> | `rtos/timeout_manager` | il task: `tmgr_init`, `tmgr_task`, `tmgr_tick` |
 >
-> La riga di confine è **`timeout_scaduto`**, che prende una scadenza passata, la
+> La riga di confine è **`timeout_expired`**, che prende una scadenza passata, la
 > formatta nel buffer che le si porta e libera la casella — ma **non manda**. È
 > lì perché la transizione `ARMED → FREE` deve stare nella stessa sezione critica
 > in cui si decide di consegnare (§9.5); formattare non porta dentro niente di
-> `rtos/`, perché il formato del payload è `generic/messaggio` (§8.4).
+> `rtos/`, perché il formato del payload è `generic/message` (§8.4).
 >
 > Il buffer si prende **prima** di chiedere la scadenza, e così il «pool vuoto ⇒
 > il timeout arriva tardi invece di non arrivare» di questa sezione diventa
@@ -1201,7 +1201,7 @@ fallire.
 
 Si è rotto sulla **cancellazione**. Il messaggio può essersi spostato da solo —
 il tick lo sfila dalla lista del gestore e lo mette in mailbox — e le liste di
-[`coda.vasm`](../generic/coda/impl/src/coda.vasm) sono circolari con
+[`queue.vasm`](../generic/queue/impl/src/queue.vasm) sono circolari con
 sentinella, quindi **un nodo non sa a quale testa appartiene**: chi cancella deve
 nominarla. Da qui un campo `dove` con tre valori (`MSG_TIMER`, `MSG_MAILBOX`,
 `MSG_FUORI`) e la sua tabella di transizioni.
@@ -1213,7 +1213,7 @@ non è cosmetico:
 
 > Mailbox di A: `[tmo, m2]`, `count = 2`. A riceve `tmo`; resta `[m2]`,
 > `count = 1`, ma `tmo.fwd` vale ancora `m2` e `tmo.bwd` ancora `&mbox`
-> ([`coda.vasm:110-116`](../generic/coda/impl/src/coda.vasm#L110-L116) non
+> ([`queue.vasm:110-116`](../generic/queue/impl/src/queue.vasm#L110-L116) non
 > azzera i link del nodo che sfila). A riceve anche `m2`: mailbox vuota,
 > `count = 0`. Poi A chiama `timeout_cancel` su un percorso di uscita comune;
 > `dove` dice ancora `MSG_MAILBOX`, quindi `prev = &mbox`, `next = m2` →
@@ -1260,7 +1260,7 @@ non passa.
 **Sei classi, per potenze di due sull'area dati utente**: 16, 32, 64, 128, 256,
 512 byte. I conteggi per classe sono indipendenti e **lo zero è legale**: la
 geometria è interfaccia e non cambia più, il dimensionamento è del singolo
-sistema e costa una `TESTA` vuota per le classi non usate.
+sistema e costa una `HEAD` vuota per le classi non usate.
 
 **Nessun ripiego sulla classe superiore.** Servire una richiesta da 16 con un
 blocco da 32 quando la lista piccola è vuota renderebbe il fallimento
@@ -1280,18 +1280,18 @@ per §8.6 compone comunque tutto il payload.
 ```
    +0   fwd    <---- buf_alloc restituisce QUESTO: la base dell'allocazione
    +4   bwd
-   +8   pool         (= MESSAGGIO.payload + PAYLOAD.pool) taglia dell'area dati
+   +8   pool         (= MESSAGE.payload + PAYLOAD.pool) taglia dell'area dati
   +12   dati utente[0 .. D-1]
 ```
 
-Il buffer consegnato **è già un `MESSAGGIO`**, senza conversioni, e la regola di
-ferro di `coda.vasm` — «il puntatore al link *è* il puntatore al buffer», niente
+Il buffer consegnato **è già un `MESSAGE`**, senza conversioni, e la regola di
+ferro di `queue.vasm` — «il puntatore al link *è* il puntatore al buffer», niente
 `container_of` — vale sia quando il blocco sta in una mailbox sia quando sta
 nella free-list, che lo lincia attraverso quegli stessi due campi. Nessun campo
 prima dei link: un offset negativo significherebbe che il puntatore consegnato
 non è la base dell'allocazione, ed è esattamente ciò che l'idioma esclude.
 
-La parola di provenienza **sta nel payload, non in `MESSAGGIO`**: il pool è un
+La parola di provenienza **sta nel payload, non in `MESSAGE`**: il pool è un
 cliente del messaggio come tutti gli altri, e per §8.4 il kernel non possiede
 niente lì dentro. Ma sta nella testa **comune** (`PAYLOAD`), non solo sui buffer
 del pool, perché una mailbox riceve entrambi i tipi — il messaggio di scadenza
@@ -1316,14 +1316,14 @@ un puntatore estraneo, un **doppio rilascio**, e il rilascio di un buffer
 che è una proprietà permanente del blocco.
 
 Si vedono dai link, ma solo se qualcuno li tiene onesti. Da qui l'invariante
-messa in `coda.vasm`:
+messa in `queue.vasm`:
 
 > **Un nodo che non sta in nessuna lista ha `fwd == bwd == 0`.**
 
 La mantiene chi **rimuove** (azzera i link del nodo che sfila — è il
 `list_del_init` di Linux) e la verifica chi **inserisce** (link non nulli = il
 nodo sta già in una lista). Prima esisteva solo come commento — «`RUNNING` = il
-TCB è fuori da ogni coda» — e nessuno la scriveva: `dequeue_testa` restituiva un
+TCB è fuori da ogni coda» — e nessuno la scriveva: `dequeue_head` restituiva un
 nodo che continuava a dichiarare di stare in una lista, ed è precisamente il
 fatto su cui è caduto il modello dei timeout di §9.6.
 
@@ -1333,8 +1333,8 @@ scritture è un'asimmetria da chiudere, non un meccanismo da aggiungere — l'
 enqueue scrive quattro parole di cui due nel nodo, la dequeue ne scriveva due e
 **nessuna nel nodo**.
 
-**L'esito torna al chiamante** (`r3`: `CODA_OK` / `CODA_LINKED` /
-`CODA_UNLINKED`) e `coda.vasm` non ferma la macchina: è il modulo più basso del
+**L'esito torna al chiamante** (`r3`: `QUEUE_OK` / `QUEUE_LINKED` /
+`QUEUE_UNLINKED`) e `queue.vasm` non ferma la macchina: è il modulo più basso del
 sistema e decidere cosa fare di un errore è dell'applicativo — la stessa regola
 per cui l'`halt` dentro `receive` è in §8.7 come difetto da sanare. Un hook
 fatale sarebbe stato più economico ma toglierebbe all'applicativo la decisione di
@@ -1352,7 +1352,7 @@ sfilato, e un rifiuto lì lascerebbe la mailbox a metà.
 > l'indirizzo 0 non sia un oggetto valido, e il primo test l'ha fatta saltare:
 > `testa` finiva a 0, quindi i link di un nodo accodato valevano 0 ed erano
 > indistinguibili da «non in lista». Non era un difetto nuovo — il codice
-> assumeva già che 0 fosse nullo in tre punti (`dequeue_testa` che restituisce 0
+> assumeva già che 0 fosse nullo in tre punti (`dequeue_head` che restituisce 0
 > per coda vuota, `current == 0` = nessun task, `buf_alloc` che restituirà 0 per
 > «nessun blocco»), semplicemente nessuno l'aveva mai imposto. Ora il segmento
 > dati parte da 4 (`NULL_GUARD`), nel linker e nel percorso a file singolo.
@@ -1377,7 +1377,7 @@ errore permanente.
 
 Nessuna delle due ha bisogno di una sezione critica propria: in `buf_alloc` la
 catena taglia→classe è aritmetica sull'argomento e l'unico atto sullo stato è il
-`dequeue_testa_s`, che si protegge da sé; in `buf_free` la lettura della taglia è
+`dequeue_head_s`, che si protegge da sé; in `buf_free` la lettura della taglia è
 una costante del blocco. Sono due wrapper sottili sopra le primitive già
 esistenti — **zero meccanismo nuovo**, come dice §9.5.1.
 
@@ -1398,8 +1398,8 @@ distribuisce** (§8.4). Fino al 06/09/2026 questa frase diceva «sta in
 ### 10.5 Il dimensionamento
 
 Sei conteggi indipendenti, e lo zero è legale — una classe dichiarata ma senza
-blocchi costa una `TESTA` vuota e serve comunque, perché una richiesta di quella
-taglia trova `POOL_VUOTO` invece di un caso speciale.
+blocchi costa una `HEAD` vuota e serve comunque, perché una richiesta di quella
+taglia trova `POOL_EMPTY` invece di un caso speciale.
 
 | Classe | Blocchi | Perché |
 |---|---|---|
@@ -1421,8 +1421,8 @@ taglia trova `POOL_VUOTO` invece di un caso speciale.
 | Componente | Destino |
 |---|---|
 | [`hal/…/machine.vasm`](../hal/impl/src/machine.vasm) | **intatto** — il confine HAL/kernel sul contesto opaco regge |
-| [`generic/coda/…/coda.vasm`](../generic/coda/impl/src/coda.vasm) | **esteso, non riscritto**: lo strato `_nc`, che è il corpo delle primitive contate (§8.3), e l'**invariante dei link** con l'esito in `r3` (§10.3). Resta il tipo coda usato da PCB, semafori, mutex, mailbox e free-list del pool |
-| [`rtos/servizi/mailbox/…/messageHandling.vasm`](../rtos/servizi/mailbox/impl/src/messageHandling.vasm) | **nuovo, già scritto e testato** (§8): `send`, `send_s`, `receive` |
+| [`generic/queue/…/queue.vasm`](../generic/queue/impl/src/queue.vasm) | **esteso, non riscritto**: lo strato `_nc`, che è il corpo delle primitive contate (§8.3), e l'**invariante dei link** con l'esito in `r3` (§10.3). Resta il tipo coda usato da PCB, semafori, mutex, mailbox e free-list del pool |
+| [`rtos/services/mailbox/…/messageHandling.vasm`](../rtos/services/mailbox/impl/src/messageHandling.vasm) | **nuovo, già scritto e testato** (§8): `send`, `send_s`, `receive` |
 | `current` | **sopravvive** (§7.1) |
 | `ctx_init` | **NON eliminabile** (§8.7): il blocco volontario di `receive` ha bisogno di un frame di trap finto, quindi quella macchineria serve a regime e non solo al boot |
 | `kernel/scheduler.vasm` | **riscritto**: politica, meccanismo e transizioni di stato oggi stanno tutti dentro `scheduler` |
@@ -1430,8 +1430,8 @@ taglia trova `POOL_VUOTO` invece di un caso speciale.
 | `TCB` link | **una coppia sola**, `fwd`/`bwd` a offset 0 (§7.5) |
 | `ready` (coda singola) | **sostituita** dalla tabella dei PCB |
 | gestore dei timeout | **nuovo** (§9). Il **vettore di descrittori** con `timeout_arm`/`timeout_cancel` è **scritto e testato** in [`generic/timeout/…/timeout.vasm`](../generic/timeout/impl/src/timeout.vasm), interfaccia in [`timeout/timeout.vinc`](../generic/timeout/interface/timeout/timeout.vinc): non legge nessun payload, quindi per §8.4 è legittimamente software di base (e vive in `generic/timeout/`, perché non usa lo scheduler). La **scansione delle scadenze e la consegna** non sono scritte — vogliono il pool (§9.5.1), la commutazione volontaria (§8.7) e lo scheduler a priorità (§7.4) — e sono la parte che formatta il payload, quindi per §8.4 **non è kernel**: quando arriva, o il file si sposta o si divide |
-| pool di buffer | **nuovo, scritto e testato** (§10): [`generic/pool/…/pool.vasm`](../generic/pool/impl/src/pool.vasm) + [`pool/pool.vinc`](../generic/pool/interface/pool/pool.vinc). Sei classi per potenze di due sull'area dati (16..512), free-list a taglia fissa cioè una `TESTA` con i blocchi come nodi — `buf_alloc` è `dequeue_testa_s`, `buf_free` è `enqueue_coda_s`. Non legge ciò che distribuisce, quindi per §8.4 è software di base; vive in `generic/pool/`, perché non usa lo scheduler |
-| `MESSAGGIO.dove`, lista delle scadenze | **mai esistiti fuori dalla proposta**: caduti con il modello precedente (§9.6) |
+| pool di buffer | **nuovo, scritto e testato** (§10): [`generic/pool/…/pool.vasm`](../generic/pool/impl/src/pool.vasm) + [`pool/pool.vinc`](../generic/pool/interface/pool/pool.vinc). Sei classi per potenze di due sull'area dati (16..512), free-list a taglia fissa cioè una `HEAD` con i blocchi come nodi — `buf_alloc` è `dequeue_head_s`, `buf_free` è `enqueue_tail_s`. Non legge ciò che distribuisce, quindi per §8.4 è software di base; vive in `generic/pool/`, perché non usa lo scheduler |
+| `MESSAGE.dove`, lista delle scadenze | **mai esistiti fuori dalla proposta**: caduti con il modello precedente (§9.6) |
 
 ---
 
@@ -1511,7 +1511,7 @@ Sono due cose distinte e vanno tenute distinte:
   esecuzione.
 
 §6 lo diceva già («salto, TCB in input»); il codice no. Oggi `scheduler` ha il
-TCB scelto **già in un registro** dopo `dequeue_testa`, lo scrive in `current`, e
+TCB scelto **già in un registro** dopo `dequeue_head`, lo scrive in `current`, e
 due istruzioni dopo `dispatcher` fa `li r2, current` / `lw r2, 0(r2)` per
 rileggerlo. Il TCB passa fra i due algoritmi attraverso una variabile globale
 quando era già in un registro: il confine non è un'interfaccia, è una convenzione.
@@ -1707,9 +1707,9 @@ poi ritirarlo.
 mutex insieme perché la decisione di §7.4 li lega.
 
 > **Scritta il 06/09/2026 come specifica, eseguita il 10/09/2026.** Il codice
-> sta in [`rtos/servizi/semaforo/`](../rtos/servizi/semaforo/impl/src/semaforo.vasm)
-> e [`rtos/servizi/mutex/`](../rtos/servizi/mutex/impl/src/mutex.vasm), accanto
-> alla mailbox, e i due test sono `rtos/test/test_semaforo.vasm` e
+> sta in [`rtos/services/semaforo/`](../rtos/services/semaforo/impl/src/semaphore.vasm)
+> e [`rtos/services/mutex/`](../rtos/services/mutex/impl/src/mutex.vasm), accanto
+> alla mailbox, e i due test sono `rtos/test/test_semaphore.vasm` e
 > `rtos/test/test_mutex.vasm`. Scrivere il codice ha corretto **tre** affermazioni
 > di questa sezione — la dichiarazione statica del semaforo (§13.1), il ciclo di
 > ricontrollo al risveglio (§13.1) e la forma della struttura del mutex (§13.3)
@@ -1718,7 +1718,7 @@ mutex insieme perché la decisione di §7.4 li lega.
 
 ### 13.1 Il semaforo NON è una mailbox, e la differenza sta nel contatore
 
-La tentazione è forte: mailbox e semaforo sono tutti e due una `TESTA` con un
+La tentazione è forte: mailbox e semaforo sono tutti e due una `HEAD` con un
 contatore con segno e dei task accodati sul negativo. Sembrano lo stesso oggetto
 con un parametro diverso. Non lo sono, e la differenza è precisa:
 
@@ -1752,10 +1752,10 @@ Da qui discendono tre conseguenze che non sono cosmetiche:
    progetto la cui dichiarazione naturale non è «zeri».
 
    > **CORREZIONE (10/09/2026), e la forma qui era sbagliata.** Questa riga
-   > diceva `sem: .word 0, 0, 10`. Non è scrivibile: **una `TESTA` vuota non è
+   > diceva `sem: .word 0, 0, 10`. Non è scrivibile: **una `HEAD` vuota non è
    > fatta di zeri**, ha `fwd = bwd = &se stessa`, e un `.word` non accetta
    > etichette. È lo stesso motivo per cui `sched_init` esiste e per cui la
-   > vecchia `ready` passava già da `coda_init` — scritto in §6 di questo
+   > vecchia `ready` passava già da `queue_init` — scritto in §6 di questo
    > documento da prima di §13. Il valore iniziale è quindi un **argomento** di
    > `sem_init(sem, risorse)`, il che toglie l'ultima asimmetria: statico
    > resta statico, e con quante risorse parte un semaforo si legge in un punto
@@ -1833,7 +1833,7 @@ non ha una priorità nello spazio dello scheduler, non si accoda a un mutex e no
 si può far aspettare. Ne discende una regola d'uso:
 
 > **Se il dato lo tocca anche un'ISR: `irq_save`/`irq_restore`, cioè lo strato
-> `_s` di `coda.vasm`. Se lo toccano solo task: mutex.**
+> `_s` di `queue.vasm`. Se lo toccano solo task: mutex.**
 
 E la seconda metà è un'ottimizzazione di **latenza**, non di correttezza: per una
 sezione di tre istruzioni `_s` costa meno di un lock con cambio di priorità. Il
@@ -1843,16 +1843,16 @@ interrupt farebbe male.
 ### 13.3 Le strutture
 
 ```
-SEMAFORO = TESTA        .equ SEMAFORO.risorse  TESTA.count
-                        .equ SEMAFORO.size     TESTA.size
+SEMAPHORE = HEAD        .equ SEMAPHORE.resources  HEAD.count
+                        .equ SEMAPHORE.size     HEAD.size
                         contabile: >0 risorse, <0 attese. Il conteggio iniziale
                         è un argomento di sem_init, non un .word (§13.1)
 
-MUTEX    = .struct      .field coda  TESTA.size   la coda d'attesa, ANNIDATA
+MUTEX    = .struct      .field coda  HEAD.size   la coda d'attesa, ANNIDATA
                         .field owner             il TCB che lo tiene, 0 = libero
                         .field prio_prec         il PCB precedente al lock
                         .field ceiling           il PCB del ceiling
-                        .equ MUTEX.attese  TESTA.count
+                        .equ MUTEX.waiters  HEAD.count
 ```
 
 Ventiquattro byte per il mutex, dodici per il semaforo, e **niente nel TCB**:
@@ -1860,11 +1860,11 @@ nessuna lista di mutex posseduti, che è ciò che l'ereditarietà avrebbe impost
 (+12 byte a task, §7.4).
 
 > **Come sono scritti davvero (10/09/2026), e la differenza non è cosmetica.**
-> Semaforo e mailbox sono una `TESTA` e nient'altro — stessa dimensione, un solo
+> Semaforo e mailbox sono una `HEAD` e nient'altro — stessa dimensione, un solo
 > campo da ribattezzare — quindi sono `.equ` **derivati** e non una `.struct`
 > propria: una seconda dichiarazione dello stesso layout resterebbe indietro in
-> silenzio il giorno che `TESTA` cambiasse (§3.27 dell'handoff). Il mutex ha
-> invece tre campi in più, quindi è una `.struct` vera — ma la `TESTA` la
+> silenzio il giorno che `HEAD` cambiasse (§3.27 dell'handoff). Il mutex ha
+> invece tre campi in più, quindi è una `.struct` vera — ma la `HEAD` la
 > **annida**, come fa `PCB` in `tcb.vinc`, così i link restano dichiarati in un
 > posto solo e `&mutex == &mutex.coda`: il mutex si passa direttamente alle
 > primitive di coda senza nessuna conversione.
@@ -1876,7 +1876,7 @@ nessuna lista di mutex posseduti, che è ciò che l'ereditarietà avrebbe impost
 > — vedi il riquadro sul ceiling qui sotto.
 
 Il `count` del mutex è il numero di nodi, cioè la convenzione **generica** di
-`coda.vasm` e non una propria; il nome `MUTEX.attese` serve a portarsi dietro
+`queue.vasm` e non una propria; il nome `MUTEX.waiters` serve a portarsi dietro
 l'invariante di §13.5 («vale 0 sempre»), non a cambiare significato. La
 disciplina però è `_nc` e il contatore lo muove il mutex, perché l'inserimento
 ordinato esiste solo in quella variante (§13.6): una testa, una sola disciplina.
@@ -1911,7 +1911,7 @@ E il limite, detto per intero: niente di questo lo **verifica**. L'assembler non
 può sapere quale task esegue una data `mutex_lock` — è un fatto sul grafo delle
 chiamate, e un grafo delle chiamate non c'è. Metterlo nel `.vinc` non lo rende
 controllato: lo mette dove lo vedrà chi dovrebbe cambiarlo. Chi vuole sapere se è
-giusto guarda `MUTEX.attese` (§13.5).
+giusto guarda `MUTEX.waiters` (§13.5).
 
 > **Il ponte fra il nome e l'indirizzo, scritto il 10/09/2026.** Il ceiling si
 > dichiara come **numero** di livello, ma a runtime una priorità è l'**indirizzo
@@ -1950,7 +1950,7 @@ del sistema prosegue.
 Non è un caso nuovo — **è questa sezione**, letta da un'angolazione che sorprende:
 chi rilocca si sta bloccando tenendo un mutex. La premessa che cade è la (3) di
 §13.5, e l'osservabile è quello che c'è già, senza una riga di codice in più:
-`MUTEX.attese != 0` con `owner` uguale al TCB sospeso.
+`MUTEX.waiters != 0` con `owner` uguale al TCB sospeso.
 
 Va detto anche che **la dimostrazione di §13.5 non parla di questo caso**. Il suo
 passaggio chiave — «un task eseguibile a priorità maggiore o uguale a quella di
@@ -2138,13 +2138,13 @@ mutex è vuota **sempre**. Quindi:
 > Un TCB accodato a un mutex è un'anomalia osservabile: o il ceiling di quel
 > mutex è dichiarato troppo basso, o qualcuno si è bloccato tenendolo.
 
-È un'asserzione a costo zero — `MUTEX.attese != 0` — ed è lo stesso mestiere di
-`CODA_LINKED` e dell'invariante `fwd == bwd == 0`: una struttura che sorveglia
+È un'asserzione a costo zero — `MUTEX.waiters != 0` — ed è lo stesso mestiere di
+`QUEUE_LINKED` e dell'invariante `fwd == bwd == 0`: una struttura che sorveglia
 una convenzione, invece di sperarci.
 
 > **Il codice non aggiunge niente per ottenerla (10/09/2026).** La frase che
 > stava qui — «vale la pena esporla come contatore diagnostico» — è stata
-> ritirata: il campo c'è comunque, perché la `TESTA` ce l'ha, quindi chi vuole
+> ritirata: il campo c'è comunque, perché la `HEAD` ce l'ha, quindi chi vuole
 > sorvegliare **lo legge** e non costa un'istruzione a nessun altro. Un
 > contatore in più sarebbe stato il kernel che controlla se l'uso che ne fai ha
 > senso, che è la riga di §3.26 dell'handoff. `test_mutex` lo legge sui due
@@ -2157,7 +2157,7 @@ La domanda era: e se il ceiling fosse **sempre** dichiarato sopra la priorità d
 task più prioritario del sistema? Sembra una semplificazione enorme — questa
 sezione perde la ragione di esistere per costruzione (la premessa (2) non può
 cadere), la coda del mutex diventa irraggiungibile, spariscono `count`, la
-`TESTA` e persino `owner`, ventiquattro byte diventano otto.
+`HEAD` e persino `owner`, ventiquattro byte diventano otto.
 
 **È un baco, e sta nella parola «conservativo».** Il valore del ceiling *è*
 l'insieme dei task esclusi: non è un margine, come si dimensiona un buffer un po'
@@ -2195,9 +2195,9 @@ semafori e mutex — non alle code di ready, che sono già una per livello e den
 le quali il FIFO è esattamente giusto (è il round-robin), e non alla mailbox, che
 ha un solo ricevente.
 
-`coda.vasm` non ha l'inserimento ordinato, e **non deve acquisirlo nella forma
+`queue.vasm` non ha l'inserimento ordinato, e **non deve acquisirlo nella forma
 ovvia**. Una `enqueue_prio` che legge la priorità dal nodo dovrebbe sapere che il
-nodo è un TCB: `generic/coda` includerebbe `tcb/tcb.vinc`, cioè
+nodo è un TCB: `generic/queue` includerebbe `tcb/tcb.vinc`, cioè
 `generic/` dipenderebbe da `rtos/`, il grafo tornerebbe ciclico e la cartella
 smetterebbe di essere sollevabile. È il difetto tolto il 06/09/2026 (§3.24
 dell'handoff) che rientrerebbe dalla finestra.
@@ -2205,30 +2205,30 @@ dell'handoff) che rientrerebbe dalla finestra.
 La divisione giusta è la stessa di `sched_dispatch` (meccanismo) contro
 `scheduler` (politica):
 
-- **`coda.vasm` guadagna una primitiva agnostica**: `enqueue_dopo(prec, nodo)`,
+- **`queue.vasm` guadagna una primitiva agnostica**: `enqueue_dopo(prec, nodo)`,
   puro maneggio di link, che non sa e non deve sapere perché la si chiama. Non è
-  nemmeno una terza disciplina: siccome `TESTA` è una **sentinella** dentro una
-  lista circolare, `enqueue_testa` è «dopo la sentinella» ed `enqueue_coda` è
+  nemmeno una terza disciplina: siccome `HEAD` è una **sentinella** dentro una
+  lista circolare, `enqueue_head` è «dopo la sentinella» ed `enqueue_tail` è
   «dopo `testa.bwd`». La primitiva nuova le **contiene**;
 - **la camminata** che cerca il punto di inserimento sta in `rtos/`, dentro
   `sem_wait` o `mutex_lock`, che i TCB li conoscono legittimamente.
 
-##### La seconda metà: `coda_peek` — **DECISA dall'utente** (10/09/2026)
+##### La seconda metà: `queue_peek` — **DECISA dall'utente** (10/09/2026)
 
 Scrivendo `sem_wait` è emerso che la divisione qui sopra è giusta ma incompleta:
-`enqueue_dopo_nc` dice **dove** mettere il nodo, e non c'è niente che permetta di
+`enqueue_after_nc` dice **dove** mettere il nodo, e non c'è niente che permetta di
 **cercare** quel punto. Camminare a mano — `lw` su `LINK.fwd` in un ciclo — vuol
 dire sapere due cose che sono **rappresentazione e non interfaccia**: che la
 lista è circolare, e che la testa è una sentinella. Oggi nessuno fuori da
-`coda.vasm` lo sa: i quattro moduli che leggono `LINK.fwd`/`LINK.bwd` lo fanno su
+`queue.vasm` lo sa: i quattro moduli che leggono `LINK.fwd`/`LINK.bwd` lo fanno su
 un nodo **fuori** da ogni lista, per verificare `fwd == bwd == 0`, e non
 attraversano niente. Il primo che camminasse a mano sarebbe anche il primo a
 dipendere dalla forma della lista.
 
-Quindi `coda.vasm` pubblica anche la scansione:
+Quindi `queue.vasm` pubblica anche la scansione:
 
 ```
-coda_peek(corrente) -> corrente.fwd        guarda e non tocca
+queue_peek(corrente) -> corrente.fwd        guarda e non tocca
 ```
 
 La prima chiamata si fa con `corrente = testa`, ed è lecito per la ragione di
@@ -2246,7 +2246,7 @@ contando diventa *strutturale*, perché un ciclo che gira N volte non scappa
 nemmeno su una lista corrotta, mentre uno che aspetta di rivedere la sentinella
 girerebbe per sempre.
 
-`coda_peek` sta **fuori dai due assi dei suffissi**: non è `_nc`, perché il
+`queue_peek` sta **fuori dai due assi dei suffissi**: non è `_nc`, perché il
 contatore non lo tocca nessuno — legge e basta — e non avrà una `_s`, per la
 regola già scritta.
 
@@ -2264,11 +2264,11 @@ Tre vincoli sulla primitiva:
    un significato proprio, e una versione contata sarebbe per giunta sbagliata
    per il semaforo — incrementerebbe all'inserimento, mentre accodare il primo
    attendente deve portare da 0 a −1;
-2. **niente variante `_s`**, per la regola già scritta in `coda.vasm`: la sezione
+2. **niente variante `_s`**, per la regola già scritta in `queue.vasm`: la sezione
    critica deve comprendere l'aritmetica del contatore, quindi appartiene al
    chiamante. Qui deve comprendere **anche la camminata**;
 3. **l'invariante dei link resta a carico suo**: deve verificare
-   `fwd == bwd == 0` e rispondere `CODA_LINKED`, altrimenti diventa il buco da
+   `fwd == bwd == 0` e rispondere `QUEUE_LINKED`, altrimenti diventa il buco da
    cui il doppio accodamento rientra — ed è già caduto un modello lì sopra
    (§9.6).
 
@@ -2305,7 +2305,7 @@ arma il flag e lascia che sia il percorso di uscita a decidere.
 > chiudere il buco vuol dire scrivere l'analogo che **non** sospende: un
 > `task_yield` che rimette il chiamante nella coda di ready del proprio livello,
 > chiama lo scheduler e cade nel dispatcher. Sono le stesse otto righe di
-> `task_block` con `enqueue_coda` al posto di `SUSPENDED`.
+> `task_block` con `enqueue_tail` al posto di `SUSPENDED`.
 >
 > Non è stato scritto perché è **kernel**, non servizio, e questa sezione
 > prescrive l'altra cosa. Il caso in cui morde è preciso e vale la pena
@@ -2322,7 +2322,7 @@ arma il flag e lascia che sia il percorso di uscita a decidere.
 > **AGGIORNAMENTO 12/09/2026 — `task_yield` ESISTE, e questa sezione è a metà.**
 > La primitiva descritta qui sopra è scritta in `rtos/scheduler/…/scheduler.vasm`
 > nella forma esatta che questo riquadro prescriveva: le righe di `task_block`
-> con `enqueue_coda` al posto di `SUSPENDED`, quindi il chiamante **non lascia
+> con `enqueue_tail` al posto di `SUSPENDED`, quindi il chiamante **non lascia
 > mai il proprio livello**.
 >
 > Non è arrivata dal mutex. Il cliente che l'ha resa dovuta è un lettore in
@@ -2381,7 +2381,7 @@ arma il flag e lascia che sia il percorso di uscita a decidere.
 > **AGGIORNAMENTO, stessa giornata — SI CHIEDE PRIMA DI PAGARE.** L'argomento
 > per armare *incondizionatamente* (il riquadro dell'11/09) era che
 > l'informazione per decidere non c'è più. Vale finché non si **guarda**:
-> `sched_pronto_sopra(r1 = &PCB limite)` è una scansione di **sola lettura** —
+> `sched_ready_above(r1 = &PCB limite)` è una scansione di **sola lettura** —
 > 12 cicli per livello vuoto, ≤96 nel caso peggiore, contro i ~460 di una
 > commutazione — e l'informazione la recupera invece di dedurla. Esiste perché
 > `scheduler` **sfila** il TCB che sceglie, quindi è un comando e non una
@@ -2482,7 +2482,7 @@ quella di §13.2:
   corromperebbe le proprie strutture; non controlla se l'uso che ne fai ha senso.*
 - **Il semaforo davanti al pool** è il caso canonico della regola d'uso, non una
   questione a parte. L'esempio dei dieci buffer *è* la classe 16 del pool: chi la
-  trova vuota oggi riceve `POOL_VUOTO` e ripassa più tardi (§9.2), e un semaforo
+  trova vuota oggi riceve `POOL_EMPTY` e ripassa più tardi (§9.2), e un semaforo
   davanti trasformerebbe la ritentata in un blocco. Con il limite di sempre: **chi
   gira nel percorso del tick non può bloccarsi**, quindi il gestore dei timeout
   resterebbe sul ramo non bloccante e il semaforo servirebbe ai chiamanti in
@@ -2507,11 +2507,11 @@ dopo.
 
 | Dove | Cosa |
 |---|---|
-| `generic/coda` | `coda_peek` (§13.6), e il contratto in `coda_api.vinc`. `test_coda` cresce di due sezioni |
+| `generic/queue` | `queue_peek` (§13.6), e il contratto in `queue_api.vinc`. `test_queue` cresce di due sezioni |
 | `rtos/scheduler` | `prio_pcb(livello) -> &PCB`: l'unico punto in cui una priorità è un numero (§13.3) |
-| `rtos/servizi/semaforo` | `semaforo.vinc` (il tipo, `.equ` derivati) e `sem_init`/`sem_wait`/`sem_post` |
-| `rtos/servizi/mutex` | `mutex.vinc` (la `.struct`, e il riquadro sul ceiling) e `mutex_init`/`mutex_lock`/`mutex_unlock` |
-| `rtos/test` | `test_semaforo` (l'ordinamento) e `test_mutex` (le due storie di §13.5) |
+| `rtos/services/semaforo` | `semaphore.vinc` (il tipo, `.equ` derivati) e `sem_init`/`sem_wait`/`sem_post` |
+| `rtos/services/mutex` | `mutex.vinc` (la `.struct`, e il riquadro sul ceiling) e `mutex_init`/`mutex_lock`/`mutex_unlock` |
+| `rtos/test` | `test_semaphore` (l'ordinamento) e `test_mutex` (le due storie di §13.5) |
 
 Le quattro entry bloccanti o quasi — `sem_wait`, `sem_post`, `mutex_lock`,
 `mutex_unlock` — **si proteggono da sé e non hanno varianti `_s`**, e non è
@@ -2532,7 +2532,7 @@ corollario di §13.8 per il semaforo (senza variante di segnalazione, chi fa
 |---|---|
 | `rtos/scheduler/…/tcb.vinc` | `TCB.crit`, il contatore delle sezioni critiche possedute, e il riquadro sul perché non è deducibile dalla priorità |
 | `rtos/scheduler/…/scheduler.vasm` | `sp_mio_livello` non ruota chi ha `TCB.crit != 0` |
-| `rtos/servizi/mutex` | `mutex_lock` incrementa, `mutex_unlock` decrementa e incrementa su chi riceve la consegna diretta |
+| `rtos/services/mutex` | `mutex_lock` incrementa, `mutex_unlock` decrementa e incrementa su chi riceve la consegna diretta |
 | `rtos/test/test_mutex` | l'ISR arma il `need_resched` a ogni tick: la storia A adesso prova anche che la rotazione non tocca il possessore |
 | §2, §7.4, §13.5 | la terna delle destinazioni, la casella «costo nel TCB: nulla», la quarta premessa |
 

@@ -1,10 +1,10 @@
-; rtos/test/test_gestore.vasm — IL GESTORE DEI TIMEOUT COME TASK: l'ultimo passo
+; rtos/test/test_tmgr.vasm — IL GESTORE DEI TIMEOUT COME TASK: l'ultimo passo
 ; della simulazione di §3.28, e il primo programma che mette insieme TUTTO.
 ;
 ; Era stato tenuto per ultimo apposta: e' l'unico pezzo che tira dentro anche il
 ; pool (§10), quindi se qualcosa non torna tutto il resto e' gia' verificato --
 ; lo scheduler a priorita' (test_scheduler), il blocco volontario (test_block) e
-; la catena di mailbox fra task (test_catena).
+; la catena di mailbox fra task (test_chain).
 ;
 ; --- CHI GIRA ---
 ;   G  livello 0   il GESTORE (rtos/timeout_manager), a PRIO_MAX come vuole §9.2
@@ -173,7 +173,7 @@ main:
   li r1, timer_isr
   call irq_install
   call irq_arm
-  li r1, 4000              ; il giro e' piu' lungo di quello di test_catena: il
+  li r1, 4000              ; il giro e' piu' lungo di quello di test_chain: il
                            ; tick sveglia G, che preempta A, alloca, consegna e
                            ; si riblocca, e solo dopo A riprende. Vedi la
                            ; tabella delle soglie in §3.32 dell'handoff per il

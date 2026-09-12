@@ -188,7 +188,7 @@ task_block:
 ;  questo -- §13.7 lo descrive alla lettera: "le stesse otto righe di task_block
 ;  con enqueue_tail al posto di SUSPENDED".
 ;
-;  Il secondo cliente e' arrivato da un'altra porta (rtos/test/test_mondo.vasm):
+;  Il secondo cliente e' arrivato da un'altra porta (rtos/test/test_events.vasm):
 ;  un lettore in polling che, senza interrupt, e' per costruzione l'idle, e che
 ;  dopo aver consegnato quello che ha letto deve cedere. Due clienti che non si
 ;  conoscono sono la ragione per cui questa e' una primitiva del kernel e non un

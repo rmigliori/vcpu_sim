@@ -53,6 +53,20 @@
 #   cmake --build build >/dev/null 2>&1 \
 #     && (cd build && ctest) \
 #     && tools/fingerprint.sh | diff before.txt -
+#
+# --- AND THE BUILD DIRECTORY REMEMBERS PROGRAMS THAT NO LONGER EXIST ---
+# This lists whatever .vx is on disk, so it also lists ghosts: a program that
+# was RETIRED from the build still has its last .vx sitting there, and nothing
+# ever rebuilds or removes it. The 13/09 baseline carried scheduler_demo.vx,
+# retired on 07/09 -- harmless for a diff (a constant on both sides) but it was
+# counting 15 programs where the build makes 14.
+#
+# A file RENAME is worse: build/ then holds both spellings, the old one frozen,
+# and the diff shows six extra programs that are really the same six.
+#
+# So take the baseline, and any comparison across a rename, from a CLEAN build:
+#
+#   rm -rf build && cmake -S . -B build && cmake --build build
 
 set -eu
 
