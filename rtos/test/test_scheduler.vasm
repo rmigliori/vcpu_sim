@@ -14,7 +14,7 @@
 ; --- COSA VERIFICA QUESTO, E COSA NO ---
 ; E' il PRIMO STRATO del test descritto in §3.28 dell'handoff. Quello completo
 ; -- idle, due task in cima che si mandano messaggi via timeout, uno sotto che
-; li conta -- si regge sul BLOCCO, quindi su task_block, che non esiste ancora
+; li conta -- si regge sul BLOCK, quindi su task_block, che non esiste ancora
 ; (§8.8). Qui non si blocca nessuno: tutti e tre i task sono loop infiniti, e le
 ; sole transizioni sono quelle che il tick provoca.
 ;
@@ -107,7 +107,7 @@ stackD_top:
 ;
 ;  TCB.pcb e' un INDIRIZZO, non un indice (§7.3): si scrive &pcbN e basta.
 ;  E l'accodamento passa &pcbN direttamente a enqueue_tail, senza conversione,
-;  perche' la TESTA e' annidata a offset 0 nel PCB: &pcb == &pcb.coda.
+;  perche' la HEAD e' annidata a offset 0 nel PCB: &pcb == &pcb.coda.
 ; ==========================================================================
 main:
   li r14, stackI_top       ; PRIMA di ogni call: sched_init non e' foglia e senza

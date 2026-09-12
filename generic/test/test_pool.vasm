@@ -3,7 +3,7 @@
 ; Verifica le proprieta' che rendono questo pool ammissibile in un RTOS, non
 ; solo che alloc e free funzionino:
 ;   - l'arrotondamento per eccesso di una richiesta alla classe che la contiene;
-;   - il NON-RIPIEGO: classe 16 esaurita => POOL_VUOTO anche se la 32 e' piena;
+;   - il NON-RIPIEGO: classe 16 esaurita => POOL_EMPTY anche se la 32 e' piena;
 ;   - i due fallimenti distinti (esaurita / oltre la classe piu' grande);
 ;   - i tre rifiuti di buf_free: doppio rilascio, buffer estraneo, e (implicito
 ;     nel primo) buffer ancora accodato.
@@ -57,13 +57,13 @@ main:
 
   ; --- (1) il dimensionamento: 10 / 4 / 0 ---
   li r1, pool_c16
-  lw r5, TESTA.count(r1)
+  lw r5, HEAD.count(r1)
   dumps r5                ; 10
   li r1, pool_c32
-  lw r5, TESTA.count(r1)
+  lw r5, HEAD.count(r1)
   dumps r5                ; 4
   li r1, pool_c64
-  lw r5, TESTA.count(r1)
+  lw r5, HEAD.count(r1)
   dumps r5                ; 0: classe dichiarata ma senza blocchi
 
   ; --- (2) allocazione esatta sulla classe piu' piccola ---
@@ -72,7 +72,7 @@ main:
   dumps r1                ; 0 = POOL_OK
   mov r9, r2              ; il buffer sopravvive: buf_alloc non tocca r9..r13
   li r1, pool_c16
-  lw r5, TESTA.count(r1)
+  lw r5, HEAD.count(r1)
   dumps r5                ; 9
 
   ; --- (3) 20 byte non sono una classe: si arrotonda per eccesso a 32 ---
@@ -80,16 +80,16 @@ main:
   call buf_alloc
   dumps r1                ; 0 = POOL_OK
   mov r10, r2
-  lw r5, BLOCCO.pool(r10)
+  lw r5, BLOCK.pool(r10)
   dumps r5                ; 32 = la capacita' vera del blocco, non i 20 chiesti
   li r1, pool_c32
-  lw r5, TESTA.count(r1)
+  lw r5, HEAD.count(r1)
   dumps r5                ; 3
 
   ; --- (4) oltre la classe piu' grande: errore di costruzione, non "riprova" ---
   li r1, 600
   call buf_alloc
-  dumps r1                ; 2 = POOL_ENORME
+  dumps r1                ; 2 = POOL_HUGE
   dumps r2                ; 0 = nessun buffer
 
   ; --- (5) rilascio: il blocco torna nella sua classe, non in un'altra ---
@@ -97,7 +97,7 @@ main:
   call buf_free
   dumps r1                ; 0 = POOL_OK
   li r1, pool_c32
-  lw r5, TESTA.count(r1)
+  lw r5, HEAD.count(r1)
   dumps r5                ; 4
 
   ; --- (6) doppio rilascio: il blocco e' gia' nella free-list, quindi ha i
@@ -106,37 +106,37 @@ main:
   call buf_free
   dumps r1                ; 4 = POOL_LINKED
   li r1, pool_c32
-  lw r5, TESTA.count(r1)
+  lw r5, HEAD.count(r1)
   dumps r5                ; 4: intatto
 
   ; --- (7) un buffer che non viene dal pool: pool == 0, nessuna classe ---
   li r2, statico
   call buf_free
-  dumps r1                ; 3 = POOL_ESTRANEO
+  dumps r1                ; 3 = POOL_FOREIGN
 
   ; --- (8) esaurimento della classe 16: ne ho gia' uno fuori (r9), ne prendo
   ;         altri nove. r11 = quanti mancano, r12 = somma degli esiti ---
   li r11, 9
   li r12, 0
-svuota:
-  beq r11, r0, svuota_fine
+drain:
+  beq r11, r0, drain_end
   li r1, POOL_D16
   call buf_alloc
   add r12, r12, r1
   addi r11, r11, -1
-  j svuota
-svuota_fine:
+  j drain
+drain_end:
   dumps r12               ; 0 = tutte e nove riuscite
   li r1, pool_c16
-  lw r5, TESTA.count(r1)
+  lw r5, HEAD.count(r1)
   dumps r5                ; 0
 
-  ; --- (9) classe esaurita: POOL_VUOTO, ed e' un "riprova piu' tardi".
+  ; --- (9) classe esaurita: POOL_EMPTY, ed e' un "riprova piu' tardi".
   ;         E NIENTE RIPIEGO: la classe 32 e' piena e non viene toccata ---
   li r1, POOL_D16
   call buf_alloc
-  dumps r1                ; 1 = POOL_VUOTO
+  dumps r1                ; 1 = POOL_EMPTY
   li r1, pool_c32
-  lw r5, TESTA.count(r1)
+  lw r5, HEAD.count(r1)
   dumps r5                ; 4: la classe grande e' rimasta intera
   halt

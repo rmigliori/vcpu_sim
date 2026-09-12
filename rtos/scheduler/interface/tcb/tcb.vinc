@@ -6,7 +6,7 @@
 ; offset 0, cosi' il puntatore al TCB E' il puntatore ai link e queue.vasm non ha
 ; bisogno di nessun container_of. Fino al 07/09/2026 i due link erano
 ; ridichiarati qui a mano, con l'obbligo non verificato di restare allineati a
-; TESTA.
+; HEAD.
 ;
 ; Nato il 05/09/2026 spezzando types.vinc (§12.6, passo 4).
 ;
@@ -66,7 +66,7 @@
 ; --------------------------------------------------------------------------
 ;  PCB — un descrittore per livello di priorita' (§3, §4 della proposta).
 ;
-;  La TESTA e' ANNIDATA, non puntata: §3 lo lasciava "da valutare" e la forma
+;  La HEAD e' ANNIDATA, non puntata: §3 lo lasciava "da valutare" e la forma
 ;  e' quella di LINK in queue.vinc. Costa zero e rende vere due cose:
 ;
 ;    - si risparmia una lw per ogni livello scandito, e la scansione e' il
@@ -80,8 +80,8 @@
 ;  in un sistema statico non ha nessun cliente.
 ; --------------------------------------------------------------------------
 .struct PCB
-  .field coda        TESTA.size ; +0  la coda di ready di QUESTO livello
-  .field preemptato             ; +12 TCB interrotto qui, 0 = nessuno (§2)
+  .field queue        HEAD.size ; +0  la coda di ready di QUESTO livello
+  .field preempted             ; +12 TCB interrotto qui, 0 = nessuno (§2)
 .ends
 
 ; --------------------------------------------------------------------------
@@ -108,4 +108,4 @@
 .equ READY     0
 .equ RUNNING   1
 .equ SUSPENDED 2
-.equ PREEMPTED 3              ; nello slot PCB.preemptato, non in una coda
+.equ PREEMPTED 3              ; nello slot PCB.preempted, non in una coda

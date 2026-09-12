@@ -2,9 +2,9 @@
 ; PROPRIETARIO a separarlo da un semaforo binario (§13.2).
 ;
 ; A differenza di mailbox.vinc e semaphore.vinc qui c'e' una .struct vera e non
-; dei .equ derivati, e la differenza non e' di gusto: quelli sono una TESTA e
+; dei .equ derivati, e la differenza non e' di gusto: quelli sono una HEAD e
 ; nient'altro — stessa dimensione, un solo campo da ribattezzare — mentre il
-; mutex ha tre campi IN PIU'. La TESTA pero' resta ANNIDATA e non
+; mutex ha tre campi IN PIU'. La HEAD pero' resta ANNIDATA e non
 ; ridichiarata, come fa PCB in tcb.vinc: cosi' il layout dei link vive in un
 ; posto solo (§3.27) e &mutex == &mutex.coda, quindi il mutex si passa
 ; DIRETTAMENTE alle primitive di coda senza nessuna conversione.
@@ -20,7 +20,7 @@
 ;
 ;  Non e' un caso a parte: chi rilocca SI STA BLOCCANDO TENENDO UN MUTEX, che e'
 ;  §13.4. La premessa che cade e' la (3) di §13.5 e l'osservabile e' gia' qui —
-;  MUTEX.attese != 0 con owner uguale al TCB sospeso — senza una riga di codice
+;  MUTEX.waiters != 0 con owner uguale al TCB sospeso — senza una riga di codice
 ;  in piu'.
 ;
 ;  Nessun controllo a runtime, per il criterio di §3.26: un rilock non corrompe
@@ -33,10 +33,10 @@
 .include "queue/queue.vinc"
 
 .struct MUTEX
-  .field coda       TESTA.size  ; +0  la coda d'attesa: sentinella + contatore.
+  .field queue       HEAD.size  ; +0  la coda d'attesa: sentinella + contatore.
                                 ;     VUOTA SEMPRE sotto un ceiling corretto
   .field owner                  ; +12 il TCB che lo tiene, 0 = libero
-  .field prio_prec              ; +16 il PCB del possessore PRIMA della
+  .field prio_prev              ; +16 il PCB del possessore PRIMA della
                                 ;     promozione: il valore di ritorno di
                                 ;     irq_save, un livello sopra (§13.2)
   .field ceiling                ; +20 il PCB del ceiling, costante dopo l'init
@@ -67,9 +67,9 @@
 ; Non c'e' nessun contatore diagnostico e nessuna assert (§3.26 dell'handoff: il
 ; kernel controlla cio' che, non controllato, corromperebbe le proprie
 ; strutture, e questo non corrompe niente). Il campo c'e' comunque perche' la
-; TESTA ce l'ha: chi vuole sorvegliare lo legge, e non costa una istruzione a
+; HEAD ce l'ha: chi vuole sorvegliare lo legge, e non costa una istruzione a
 ; nessun altro.
-.equ MUTEX.attese  TESTA.count
+.equ MUTEX.waiters  HEAD.count
 
 ; --------------------------------------------------------------------------
 ;  DOVE SI DICHIARA IL CEILING, E PERCHE' NON QUI
@@ -100,7 +100,7 @@
 ;     esegue una data mutex_lock — e' un fatto sul grafo delle chiamate, e un
 ;     grafo delle chiamate non c'e'. Metterlo nel .vinc non lo rende
 ;     controllato: lo mette dove lo vedra' chi dovrebbe cambiarlo. Chi vuole
-;     sapere se e' giusto guarda MUTEX.attese a macchina ferma.
+;     sapere se e' giusto guarda MUTEX.waiters a macchina ferma.
 ;
 ;  E NON ESISTE UNA DIREZIONE CONSERVATIVA (§3.26). Il valore del ceiling *e'*
 ;  l'insieme dei task esclusi, non un margine come quando si dimensiona un

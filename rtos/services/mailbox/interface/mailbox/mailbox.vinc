@@ -1,8 +1,8 @@
-; mailbox/mailbox.vinc — il TIPO mailbox: una TESTA di cui il proprietario e' la
+; mailbox/mailbox.vinc — il TIPO mailbox: una HEAD di cui il proprietario e' la
 ; mailbox, non le code.
 ;
 ; Nato il 07/09/2026, e la ragione non e' l'ordine dei file. Una mailbox E' una
-; TESTA — stessi link, stesso terzo campo, stessa dimensione — ma il terzo campo
+; HEAD — stessi link, stesso terzo campo, stessa dimensione — ma il terzo campo
 ; NON ha la semantica che queue.vasm gli da':
 ;
 ;   sulle teste CONTATE   count >= 0 e' il numero di nodi. Lo scrive queue.vasm;
@@ -10,7 +10,7 @@
 ;                         lista, -1 un TCB in attesa, 0 vuota. Lo scrive SOLO
 ;                         messageHandling.vasm, che per questo usa lo strato _nc.
 ;
-; Fino a ieri messageHandling.vasm scriveva "TESTA.count", cioe' nominava il
+; Fino a ieri messageHandling.vasm scriveva "HEAD.count", cioe' nominava il
 ; campo col nome della struttura generica mentre lo usava con una convenzione
 ; propria: era l'unico punto in cui la regola "una sola disciplina per testa"
 ; (§8.3) era affermata in un commento e contraddetta dal codice.
@@ -18,13 +18,13 @@
 ; --- PERCHE' UN .equ DERIVATO E NON UNA .struct PROPRIA ---
 ;
 ; Una ".struct MAILBOX { pointers, count }" avrebbe dato lo stesso nome e sarebbe
-; stata una SECONDA dichiarazione dello stesso layout: il giorno che TESTA
-; cambiasse, resterebbe indietro in SILENZIO — verificato, dava 8 dove TESTA
+; stata una SECONDA dichiarazione dello stesso layout: il giorno che HEAD
+; cambiasse, resterebbe indietro in SILENZIO — verificato, dava 8 dove HEAD
 ; diceva 4, senza un errore di assemblaggio. Il .equ non copia, DERIVA: e' quello
-; stesso numero con un secondo nome, quindi segue TESTA per costruzione, e se il
-; campo di TESTA venisse rinominato questa riga non assembla piu' e indica dove
+; stesso numero con un secondo nome, quindi segue HEAD per costruzione, e se il
+; campo di HEAD venisse rinominato questa riga non assembla piu' e indica dove
 ; guardare. La dipendenza dal nome resta — un'interfaccia E' un insieme di nomi,
-; e il kernel dipende gia' da enqueue_tail_nc e da CODA_OK — ma da sparsa su
+; e il kernel dipende gia' da enqueue_tail_nc e da QUEUE_OK — ma da sparsa su
 ; sette istruzioni diventa dichiarata in un punto e verificata dal compilatore.
 ;
 ; E' lo stesso meccanismo delle due .global sullo stesso indirizzo di
@@ -42,8 +42,8 @@
 
 .include "queue/queue.vinc"
 
-.equ MAILBOX.count     TESTA.count   ; il contatore descrittivo con segno (§8.2)
-.equ MAILBOX.size      TESTA.size    ; ".res MAILBOX" alloca una mailbox
+.equ MAILBOX.count     HEAD.count   ; il contatore descrittivo con segno (§8.2)
+.equ MAILBOX.size      HEAD.size    ; ".res MAILBOX" alloca una mailbox
 
 ; I link si leggono con i nomi di LINK, come su ogni nodo (queue.vinc): non c'e'
 ; nessun MAILBOX.fwd, perche' quella non e' una convenzione della mailbox.

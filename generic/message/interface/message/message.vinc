@@ -3,7 +3,7 @@
 ; Interfaccia CONDIVISA fra chi manda e chi riceve, non del kernel:
 ; kernel/messageHandling.vasm sa muovere i messaggi ma non ne legge un byte
 ; (§8.4). Include queue.vinc perche' un messaggio E' un nodo di lista e una
-; mailbox E' una TESTA.
+; mailbox E' una HEAD.
 ;
 ; Nato il 05/09/2026 spezzando types.vinc (§12.6, passo 4).
 
@@ -14,40 +14,40 @@
 ; compito di chi lo manda, interpretarlo di chi lo riceve.
 ;
 ; payload e' un indirizzo, non un campo: l'array parte sempre da payload[0] e la
-; sua lunghezza la decide chi compone il messaggio. Ne segue che MESSAGGIO.size
-; NON e' la dimensione di un messaggio e ".res MESSAGGIO" non va usata: si
+; sua lunghezza la decide chi compone il messaggio. Ne segue che MESSAGE.size
+; NON e' la dimensione di un messaggio e ".res MESSAGE" non va usata: si
 ; riserva lo spazio che serve, oppure si dichiara una .struct propria che
-; comincia con ".field pointers LINK.size" (stesso idioma con cui TCB e TESTA
+; comincia con ".field pointers LINK.size" (stesso idioma con cui TCB e HEAD
 ; annidano i link).
-.struct MESSAGGIO
-  .field pointers  LINK.size   ; +0  i link (idioma list_head, come TESTA e TCB)
+.struct MESSAGE
+  .field pointers  LINK.size   ; +0  i link (idioma list_head, come HEAD e TCB)
   .field payload               ; +8  payload[0]: primo byte del contenuto
 .ends
 
 ; Testa comune del payload: convenzione fra clienti e fornitori di servizi, NON
 ; del kernel — kernel/messageHandling.vasm non ne legge un byte. Si sovrappone a
-; MESSAGGIO.payload, e da +20 in poi ci sono le specifiche della singola
+; MESSAGE.payload, e da +20 in poi ci sono le specifiche della singola
 ; richiesta, che pubblica il fornitore nel proprio .vinc insieme alla .size con
 ; cui il cliente dimensiona il buffer: il MAGGIORE fra specifiche di richiesta e
 ; di risposta, perche' la risposta e' lo stesso buffer girato (il fornitore
 ; capovolge messageType, scrive il codice di esito e lo rispedisce a
 ; replyMailbox, con clientTag gia' al posto giusto). Nessuna allocazione.
 ;
-; Terza sovrapposizione dopo TESTA sul nodo e MESSAGGIO sul buffer: ogni livello
+; Terza sovrapposizione dopo HEAD sul nodo e MESSAGE sul buffer: ogni livello
 ; ha una coda a lunghezza libera che e' il livello sotto, e ognuno e' pubblicato
 ; dove sta la conoscenza che serve a leggerlo.
 .struct PAYLOAD
   .field pool             ; +0  PROVENIENZA del buffer: taglia in byte dell'area
                           ;     dati se viene dal pool, 0 se e' un buffer statico
                           ;     del cliente. La parola NON e' nostra: e'
-                          ;     BLOCCO.pool, che il pool scrive a pool_init sulla
+                          ;     BLOCK.pool, che il pool scrive a pool_init sulla
                           ;     terza parola di ogni blocco senza sapere che
                           ;     esistano i messaggi. Questo formato le da' un
                           ;     nome e comincia il proprio contenuto dopo, a +4
                           ;     del payload — e' il formato che si adatta al
                           ;     pool, mai il contrario, ed e' cosi' che il pool
                           ;     resta sollevabile in un progetto che di messaggi
-                          ;     non ne ha. Sta qui e non in MESSAGGIO perche' il
+                          ;     non ne ha. Sta qui e non in MESSAGE perche' il
                           ;     kernel non deve possedere niente dentro il
                           ;     messaggio (§8.4). E sta nella testa
                           ;     COMUNE, non solo sui buffer del pool, perche' una
@@ -82,7 +82,7 @@
                           ;     E' la sua identita': nessun campo di identita' in
                           ;     piu'. E' anche cio' che rende scrivibile UNA sola
                           ;     volta la routine generica di risposta.
-  .field specifiche       ; +20 specifiche[0]: primo byte, lunghezza dal fornitore
+  .field spec       ; +20 specifiche[0]: primo byte, lunghezza dal fornitore
 .ends
 
 ; Un PAYLOAD senza specifiche occupa 20 byte, di cui i primi 4 sono la parola

@@ -109,7 +109,7 @@ main:
   li r10, 100             ; clientTag di partenza
   li r11, 0               ; somma degli esiti: deve restare 0
 fill:
-  beq r9, r0, fill_fine
+  beq r9, r0, fill_end
   li r1, 5
   mov r2, r10
   li r3, 77
@@ -119,7 +119,7 @@ fill:
   addi r10, r10, 1
   addi r9, r9, -1
   j fill
-fill_fine:
+fill_end:
   dumps r11               ; 0 = tutte e nove armate
 
   li r1, 5

@@ -229,7 +229,7 @@ vasm_check(semaforo MODE DUMPS PROGRAM test_semaforo
 #  riproverebbe, fallirebbe, e W non girerebbe mai. Il test non fallirebbe: non
 #  FINIREBBE, ed e' la forma che il livelock prende qui dentro.
 #
-#  Anche qui le fasi guardano lo stato (MUTEX.owner, MUTEX.attese) e non i tick,
+#  Anche qui le fasi guardano lo stato (MUTEX.owner, MUTEX.waiters) e non i tick,
 #  e le due sezioni critiche non hanno durata: S e W girano su un flag che l'ISR
 #  arma. Nessuno dei cinque numeri dipende dal periodo del timer.
 # ---------------------------------------------------------------------------

@@ -238,13 +238,13 @@ taskA:
   li r1, attesoA
   call cattura             ; il pattern atteso, una volta sola
 
-ta_giro:
+ta_round:
   vsplat v0, f0            ; v0 = [1.0 x 64]: da qui deve sopravvivere
 
   li r6, RITARDO           ; --- il tratto interrompibile ---
-ta_ritardo:
+ta_delay:
   addi r6, r6, -1
-  bne r6, r0, ta_ritardo
+  bne r6, r0, ta_delay
 
   li r1, ossA
   call cattura
@@ -264,10 +264,10 @@ ta_ok:
   addi r2, r2, 1
   sw r2, 0(r1)
   li r3, GIRI
-  beq r2, r3, ta_fine
-  j ta_giro
+  beq r2, r3, ta_end
+  j ta_round
 
-ta_fine:
+ta_end:
   li r1, errA
   lw r5, 0(r1)
   dumps r5                 ; 0 = v0 e' sempre stato mio
@@ -297,13 +297,13 @@ taskB:
   li r1, attesoB
   call cattura
 
-tb_giro:
+tb_round:
   vsplat v0, f0
 
   li r6, RITARDO
-tb_ritardo:
+tb_delay:
   addi r6, r6, -1
-  bne r6, r0, tb_ritardo
+  bne r6, r0, tb_delay
 
   li r1, ossB
   call cattura
@@ -322,7 +322,7 @@ tb_ok:
   lw r2, 0(r1)
   addi r2, r2, 1
   sw r2, 0(r1)
-  j tb_giro
+  j tb_round
 
 ; ==========================================================================
 ;  L'idle. Gira solo prima che A e B partano davvero; qui non misura niente di

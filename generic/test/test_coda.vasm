@@ -3,18 +3,18 @@
 ;   un nodo che non sta in nessuna lista ha fwd == bwd == 0
 ;
 ; La mantiene chi rimuove (azzera i link del nodo che sfila) e la verifica chi
-; inserisce (link non nulli => doppio accodamento => CODA_LINKED). Il test
+; inserisce (link non nulli => doppio accodamento => QUEUE_LINKED). Il test
 ; esercita le due meta' e, soprattutto, controlla che un rifiuto NON lasci il
 ; contatore incoerente: il controllo sta prima dell'aritmetica proprio per
 ; questo, ed e' la parte che si romperebbe in silenzio se qualcuno riordinasse.
 ;
-; I nodi sono NODO, dichiarato qui sotto e da nessun'altra parte. Al modulo
+; I nodi sono NODE, dichiarato qui sotto e da nessun'altra parte. Al modulo
 ; delle code servono solo i primi due campi e il resto del nodo non lo tocca
-; mai: NODO lo dice: due link piu' otto byte opachi. Era .res TCB, e la ragione
+; mai: NODE lo dice: due link piu' otto byte opachi. Era .res TCB, e la ragione
 ; scritta allora ("TCB e' l'unico tipo di nodo che esiste oggi") era vera ma
 ; comprava un difetto — il test della libreria piu' bassa includeva tcb.vinc,
 ; cioe' l'interfaccia dello scheduler, e trascinava il kernel dentro il
-; sottoalbero che deve poter vivere senza. Nessun byte si e' mosso: NODO e' 16
+; sottoalbero che deve poter vivere senza. Nessun byte si e' mosso: NODE e' 16
 ; come TCB, apposta.
 ;
 ; I nodi nascono azzerati dall'immagine dati, cioe' gia' conformi
@@ -42,10 +42,10 @@
 .include "queue/queue_api.vinc"
 
 ; Il nodo di questo test. Le code non sanno cosa sia un nodo oltre ai due link
-; in testa (l'idioma list_head, lo stesso di TESTA, TCB, MESSAGGIO e BLOCCO):
+; in testa (l'idioma list_head, lo stesso di HEAD, TCB, MESSAGE e BLOCK):
 ; gli otto byte opachi stanno qui per esercitare proprio quello, cioe' che
 ; coda.vasm non assume nulla sulla taglia del nodo ne' legge oltre +8.
-.struct NODO
+.struct NODE
   .field fwd              ; +0
   .field bwd              ; +4
   .field opaco  8         ; +8  il modulo delle code non li tocca mai
@@ -53,10 +53,10 @@
 
   .data
 
-testa:  .res TESTA
-n1:     .res NODO
-n2:     .res NODO
-n3:     .res NODO           ; il terzo serve solo a (8): per infilare FRA due
+testa:  .res HEAD
+n1:     .res NODE
+n2:     .res NODE
+n3:     .res NODE           ; il terzo serve solo a (8): per infilare FRA due
                             ; nodi ce ne vogliono due gia' in lista
 stack:  .space 64
 stack_top:
@@ -75,18 +75,18 @@ main:
   li r1, testa
   li r2, n1
   call enqueue_tail
-  dumps r3                ; 0 = CODA_OK
+  dumps r3                ; 0 = QUEUE_OK
   li r1, testa
-  lw r5, TESTA.count(r1)
+  lw r5, HEAD.count(r1)
   dumps r5                ; 1
 
   ; --- (2) stesso nodo di nuovo: rifiutato, e il contatore NON si muove ---
   li r1, testa
   li r2, n1
   call enqueue_tail
-  dumps r3                ; 1 = CODA_LINKED
+  dumps r3                ; 1 = QUEUE_LINKED
   li r1, testa
-  lw r5, TESTA.count(r1)
+  lw r5, HEAD.count(r1)
   dumps r5                ; 1: intatto, perche' il controllo viene prima
 
   ; --- (3) la rimozione fa uscire il nodo E glielo dice ---
@@ -104,25 +104,25 @@ main:
   li r1, testa
   li r2, n1
   call enqueue_tail
-  dumps r3                ; 0 = CODA_OK
+  dumps r3                ; 0 = QUEUE_OK
 
   ; --- (5) remove di un nodo che non sta in nessuna lista: il caso speculare.
   ;         Senza controllo scriverebbe attraverso i link nulli, cioe' su 0(r0) ---
   li r1, n2
   li r2, testa
   call remove_buffer
-  dumps r3                ; 2 = CODA_UNLINKED
+  dumps r3                ; 2 = QUEUE_UNLINKED
   li r1, testa
-  lw r5, TESTA.count(r1)
+  lw r5, HEAD.count(r1)
   dumps r5                ; 1: intatto anche qui
 
   ; --- (6) remove legittima ---
   li r1, n1
   li r2, testa
   call remove_buffer
-  dumps r3                ; 0 = CODA_OK
+  dumps r3                ; 0 = QUEUE_OK
   li r1, testa
-  lw r5, TESTA.count(r1)
+  lw r5, HEAD.count(r1)
   dumps r5                ; 0
   li r1, n1
   lw r5, LINK.fwd(r1)
@@ -145,17 +145,17 @@ main:
   li r1, testa
   li r2, n2
   call enqueue_tail_nc
-  li r1, n1               ; prec e' un NODO, non la sentinella
+  li r1, n1               ; prec e' un NODE, non la sentinella
   li r2, n3
   call enqueue_after_nc
-  dumps r3                ; 0 = CODA_OK
+  dumps r3                ; 0 = QUEUE_OK
 
   ; --- (9) l'invariante dei link vale anche da questa porta: il controllo non
   ;         e' della singola entry, e' del corpo che tutte condividono ---
   li r1, n1
   li r2, n3
   call enqueue_after_nc
-  dumps r3                ; 1 = CODA_LINKED
+  dumps r3                ; 1 = QUEUE_LINKED
 
   ; --- (10) l'ordine e' [n1, n3, n2], e lo si legge svuotando ---
   li r1, testa
@@ -180,7 +180,7 @@ main:
   li r1, testa
   li r2, n1
   call enqueue_after_nc
-  dumps r3                ; 0 = CODA_OK
+  dumps r3                ; 0 = QUEUE_OK
   li r1, testa
   lw r5, LINK.fwd(r1)
   li r6, n1
@@ -202,7 +202,7 @@ main:
   call queue_peek
   li r5, n1
   sub r5, r2, r5
-  dumps r5                ; 0 = col cursore sulla TESTA da' il primo nodo
+  dumps r5                ; 0 = col cursore sulla HEAD da' il primo nodo
   mov r1, r2
   call queue_peek
   li r5, n2

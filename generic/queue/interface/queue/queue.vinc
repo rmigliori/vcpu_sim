@@ -1,19 +1,19 @@
 ; queue/queue.vinc — interfaccia di generic/queue: il tipo lista e gli esiti.
 ;
-; E' il .vinc piu' basso del sistema e il piu' incluso: il TCB, il MESSAGGIO e il
-; BLOCCO del pool sono tutti nodi di lista, quindi tcb.vinc, message.vinc e
+; E' il .vinc piu' basso del sistema e il piu' incluso: il TCB, il MESSAGE e il
+; BLOCK del pool sono tutti nodi di lista, quindi tcb.vinc, message.vinc e
 ; pool.vinc includono questo. FOGLIA: non ha niente da chiedere a nessuno.
 ;
 ; Nato il 05/09/2026 spezzando types.vinc, che teneva insieme code, task e
 ; messaggi: un unico file di interfaccia per tre fornitori diversi faceva
 ; dipendere ogni modulo da tutto (§12.6, passo 4). Il pool si portava dietro TCB
-; e MESSAGGIO senza nominarli mai.
+; e MESSAGE senza nominarli mai.
 
 ; --------------------------------------------------------------------------
 ;  I LINK, IN UN POSTO SOLO
 ;
-;  Ogni nodo di lista di questo progetto — TESTA, TCB, MESSAGGIO, le sette
-;  BLOCCO del pool — comincia con la stessa coppia di puntatori. Fino al
+;  Ogni nodo di lista di questo progetto — HEAD, TCB, MESSAGE, le sette
+;  BLOCK del pool — comincia con la stessa coppia di puntatori. Fino al
 ;  07/09/2026 ognuno se li RIDICHIARAVA: dieci .struct, venti righe copiate che
 ;  dovevano coincidere e che niente verificava. Cambiare l'ordine di fwd/bwd qui
 ;  avrebbe lasciato indietro le altre nove, e il primo sintomo sarebbe stato una
@@ -21,7 +21,7 @@
 ;
 ;  Ora i link esistono UNA VOLTA, e ogni nodo li ANNIDA riservando il blocco:
 ;
-;      .struct MESSAGGIO
+;      .struct MESSAGE
 ;        .field pointers  LINK.size    ; i link, non ridichiarati
 ;        .field payload
 ;      .ends
@@ -48,7 +48,7 @@
 ;     direttamente LINK.fwd/LINK.bwd sull'indirizzo del nodo.
 ;
 ;  Gli offset non sono cambiati di un byte rispetto alla forma ridichiarata
-;  (TESTA.count = 8, TESTA.size = 12, TCB.sp = 8, MESSAGGIO.payload = 8): il
+;  (HEAD.count = 8, HEAD.size = 12, TCB.sp = 8, MESSAGE.payload = 8): il
 ;  passaggio e' stato verificato a .vx identici byte per byte.
 ; --------------------------------------------------------------------------
 .struct LINK
@@ -59,7 +59,7 @@
 ; Testa di coda (sentinella): condivide i link con i nodi (idioma list_head), ed
 ; e' per questo che "dopo la sentinella" e "in testa" sono la stessa operazione
 ; (enqueue_after_nc, §13.6).
-.struct TESTA
+.struct HEAD
   .field pointers  LINK.size   ; +0
   .field count                 ; +8
 .ends
@@ -67,11 +67,11 @@
 ; Esito delle primitive di coda (kernel/queue.vasm), restituito in r3.
 ;
 ; Poggiano su un'invariante che la rimozione mantiene e l'inserimento verifica:
-; UN NODO CHE NON STA IN NESSUNA LISTA HA fwd == bwd == 0. Chi rimuove azzera i
+; UN NODE CHE NON STA IN NESSUNA LISTA HA fwd == bwd == 0. Chi rimuove azzera i
 ; link del nodo che sfila (list_del_init di Linux), chi inserisce controlla che
 ; siano nulli. Cosa fare dell'errore lo decide l'applicativo: queue.vasm segnala
 ; e basta, non ferma la macchina — fermarla e' una politica, e questo e' il
 ; modulo piu' basso del sistema.
-.equ CODA_OK        0
-.equ CODA_LINKED    1   ; enqueue di un nodo che sta GIA' in una lista
-.equ CODA_UNLINKED  2   ; remove di un nodo che non sta in nessuna lista
+.equ QUEUE_OK        0
+.equ QUEUE_LINKED    1   ; enqueue di un nodo che sta GIA' in una lista
+.equ QUEUE_UNLINKED  2   ; remove di un nodo che non sta in nessuna lista

@@ -11,14 +11,14 @@
 ;
 ; --- PERCHE' DUE FILE E NON UNO ---
 ; Un .vinc unico non e' scrivibile, e non per gusto: il fornitore include la
-; propria interfaccia per gli offset di TESTA, e un .extern di un simbolo che lo
+; propria interfaccia per gli offset di HEAD, e un .extern di un simbolo che lo
 ; stesso modulo dichiara .global e' un errore secco dell'assembler
 ; ("'enqueue_tail' is both defined and .extern"). Quindi:
 ;
 ;   queue.vinc      i TIPI            lo include il FORNITORE (queue.vasm) e gli
 ;                                    altri header i cui nodi sono liste —
 ;                                    tcb.vinc, message.vinc, pool.vinc:
-;                                    vogliono TESTA, non le procedure
+;                                    vogliono HEAD, non le procedure
 ;   queue_api.vinc  i TIPI + le ENTRY lo include CHI CHIAMA
 ;
 ; Ne discendono due regole, e la seconda serve a rendere la prima impossibile da

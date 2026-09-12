@@ -1,6 +1,6 @@
 ; rtos/services/semaphore/impl/src/semaphore.vasm — il semaforo contatore: sem_wait, sem_post.
 ;
-; Un SEMAFORO *e'* una testa di coda, come la mailbox, e come per la mailbox
+; Un SEMAPHORE *e'* una testa di coda, come la mailbox, e come per la mailbox
 ; tutto il disegno sta nella convenzione del terzo campo. Qui e' CONTABILE:
 ;
 ;   risorse > 0   ci sono 'risorse' risorse disponibili. NON sono nodi e NON
@@ -19,7 +19,7 @@
 ; muoverebbero un contatore che qui significa un'altra cosa.
 ;
 ; --- PERCHE' NON E' UNA MAILBOX (§13.1) ---
-; Sembrano lo stesso oggetto: una TESTA, un contatore con segno, task accodati
+; Sembrano lo stesso oggetto: una HEAD, un contatore con segno, task accodati
 ; sul negativo. La differenza e' la NATURA del contatore, e si vede in una riga
 ; di codice: sem_wait con risorse > 0 decrementa e RITORNA SENZA TOCCARE LA
 ; LISTA. E' un cammino veloce che la receive non ha e non puo' avere, perche'
@@ -104,7 +104,7 @@
 ; ==========================================================================
   .proc sem_init
   call queue_init            ; fwd = bwd = &sem, e azzera il terzo campo...
-  sw r2, SEMAFORO.risorse(r1)   ; ... che subito dopo prende il suo significato
+  sw r2, SEMAPHORE.resources(r1)   ; ... che subito dopo prende il suo significato
   .endproc sem_init
 
 ; ==========================================================================
@@ -130,15 +130,15 @@ sem_wait:
   addi r14, r14, -4
   sw r5, 0(r14)           ; +0: psw, ripristinata all'uscita
 
-  lw r4, SEMAFORO.risorse(r1)
+  lw r4, SEMAPHORE.resources(r1)
   addi r4, r4, -1
-  sw r4, SEMAFORO.risorse(r1)   ; si paga SEMPRE, poi si guarda il segno
-  blt r4, r0, sem_wait_attendi  ; sotto zero: non c'era niente da prendere
+  sw r4, SEMAPHORE.resources(r1)   ; si paga SEMPRE, poi si guarda il segno
+  blt r4, r0, sem_wait_block  ; sotto zero: non c'era niente da prendere
 
   ; --- cammino veloce: c'era una risorsa, e LA LISTA NON SI TOCCA (§13.1).
   ;     E' la riga in cui il semaforo si separa dalla mailbox: qui non c'e'
   ;     nessun nodo da sfilare, perche' una risorsa disponibile non e' un nodo.
-sem_wait_fine:
+sem_wait_end:
   lw r5, 0(r14)
   addi r14, r14, 8        ; scarta psw e &sem
   call irq_restore        ; psw del chiamante
@@ -170,7 +170,7 @@ sem_wait_fine:
 ;  piu' di N volte nemmeno se la lista fosse corrotta — e la circolarita' resta
 ;  dentro queue.vasm, che e' l'unico posto che ha ragione di conoscerla.
 ; --------------------------------------------------------------------------
-sem_wait_attendi:
+sem_wait_block:
   li r5, current
   lw r9, 0(r5)            ; r9 = il mio TCB
   lw r7, TCB.pcb(r9)      ; la mia priorita': un INDIRIZZO (§7.3)
@@ -202,7 +202,7 @@ sem_wait_ins:
   ; La risorsa E' NOSTRA e l'abbiamo gia' pagata all'ingresso: nessun secondo
   ; decremento e nessun ciclo di ricontrollo. Nessuno ha potuto rubarla, perche'
   ; sem_post consegna invece di rimettere nel mucchio.
-  j sem_wait_fine
+  j sem_wait_end
 
 ; ==========================================================================
 ;  sem_post(r1 = &sem): restituisce una risorsa. Solo da TASK (vedi in testa al
@@ -223,10 +223,10 @@ sem_post:
   addi r14, r14, -4
   sw r5, 0(r14)
 
-  lw r4, SEMAFORO.risorse(r1)
+  lw r4, SEMAPHORE.resources(r1)
   addi r4, r4, 1
-  sw r4, SEMAFORO.risorse(r1)
-  blt r0, r4, sem_post_fine   ; 0 < nuovo => prima era >= 0: nessuno in attesa.
+  sw r4, SEMAPHORE.resources(r1)
+  blt r0, r4, sem_post_end   ; 0 < nuovo => prima era >= 0: nessuno in attesa.
                               ; Il permesso si ACCUMULA, ed e' il semaforo
                               ; contatore classico — quello dei dieci buffer
 
@@ -238,7 +238,7 @@ sem_post:
   mov r1, r2
   call task_ready         ; kernel: eseguibile + valuta la preemption
 
-sem_post_fine:
+sem_post_end:
   lw r5, 0(r14)
   addi r14, r14, 4
   call irq_restore

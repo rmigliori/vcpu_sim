@@ -141,7 +141,7 @@ ctx_save:
   mfpsw r1
   li r2, PSW_VDIRTY
   and r1, r1, r2
-  beq r1, r0, cs_pulito
+  beq r1, r0, cs_clean
 
   ; --- i 16 registri FLOAT. Non erano salvati DA SEMPRE, e nessun commento lo
   ;     dichiarava: il frame nominava solo r1..r13, psw, epc, r15. Non e' un
@@ -222,7 +222,7 @@ ctx_save:
   mov r1, r14
   ret
 
-cs_pulito:
+cs_clean:
   addi r14, r14, -4
   sw r0, 0(r14)           ; flag = 0, e r0 e' gia' zero
   mov r1, r14             ; r1 = puntatore al contesto opaco (per il chiamante)
@@ -237,7 +237,7 @@ ctx_restore:
   mov r14, r1
   lw r1, 0(r14)           ; il flag: c'e' un blocco vettoriale sotto?
   addi r14, r14, 4
-  beq r1, r0, cr_scalare
+  beq r1, r0, cr_scalar
 
   li r3, 0x7fffffff
   setvl r3, r3            ; VL = VLMAX per ricaricare i registri PIENI
@@ -308,7 +308,7 @@ ctx_restore:
   ; quella del frame. Il VDIRTY che conta e' quello, e c'e': lo stato e' stato
   ; salvato proprio perche' era alzato quando il task e' uscito.
 
-cr_scalare:
+cr_scalar:
   lw r1, 0(r14)           ; epc dal frame
   addi r14, r14, 4
   mtepc r1

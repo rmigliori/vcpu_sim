@@ -44,7 +44,7 @@
 ; con cli; non va scritto nemmeno col mutex. Non e' verificato qui, ed e' una
 ; scelta: il kernel controlla cio' che corromperebbe le proprie strutture, non
 ; se l'uso che ne fai ha senso. Il sintomo pero' e' osservabile, ed e' lo stesso
-; del ceiling sbagliato — vedi MUTEX.attese in mutex.vinc.
+; del ceiling sbagliato — vedi MUTEX.waiters in mutex.vinc.
 ;
 ; --- LA PROMOZIONE E' UN MINIMO, NON UN MASSIMO ---
 ; Con la numerazione di §4, 0 e' la priorita' PIU' ALTA e TCB.pcb e' un
@@ -83,7 +83,7 @@
   .extern task_block
   .extern request_preempt
   .extern task_yield       ; §13.7: il percorso di uscita sincrono
-  .extern sched_pronto_sopra ; ... e la domanda che evita di pagarlo a vuoto
+  .extern sched_ready_above ; ... e la domanda che evita di pagarlo a vuoto
   .extern prio_pcb
   .extern current
 
@@ -108,7 +108,7 @@ mutex_init:
   mov r1, r6
   call queue_init          ; la coda d'attesa vuota: fwd = bwd = &mutex, attese = 0
   sw r0, MUTEX.owner(r6)      ; libero
-  sw r0, MUTEX.prio_prec(r6)  ; senza significato finche' owner e' 0
+  sw r0, MUTEX.prio_prev(r6)  ; senza significato finche' owner e' 0
   lw r15, 0(r14)
   addi r14, r14, 4
   ret
@@ -135,7 +135,7 @@ mutex_lock:
   sw r5, 0(r14)           ; +0
 
   lw r4, MUTEX.owner(r1)
-  bne r4, r0, mtx_degrado ; occupato: e' l'anomalia di §13.5, non il caso normale
+  bne r4, r0, mtx_degrade ; occupato: e' l'anomalia di §13.5, non il caso normale
 
   ; --- LIBERO, ed e' l'unico caso che si dia sotto un ceiling corretto ---
   li r4, current
@@ -145,16 +145,16 @@ mutex_lock:
   addi r4, r4, 1          ; la promozione mi mette AL livello degli utenti, e la
   sw r4, TCB.crit(r2)     ; rotazione li' darebbe la CPU a uno di loro (tcb.vinc)
   lw r5, TCB.pcb(r2)
-  sw r5, MUTEX.prio_prec(r1)  ; la priorita' di PRIMA: e' il valore di ritorno
+  sw r5, MUTEX.prio_prev(r1)  ; la priorita' di PRIMA: e' il valore di ritorno
                               ; di irq_save, un livello sopra (§13.2)
   lw r6, MUTEX.ceiling(r1)
-  blt r6, r5, mtx_promuovi    ; il ceiling e' piu' prioritario di me? Indirizzo
+  blt r6, r5, mtx_promote    ; il ceiling e' piu' prioritario di me? Indirizzo
                               ; minore = priorita' piu' alta (§4). Se NON scatta,
                               ; sono gia' sopra il ceiling: e' il primo passo di
                               ; §13.5, e la protezione ha gia' smesso di
                               ; funzionare senza che nessuno se ne accorga
 
-mtx_fine:
+mtx_end:
   lw r5, 0(r14)
   addi r14, r14, 8        ; scarta psw e &mutex
   call irq_restore        ; psw del chiamante
@@ -162,17 +162,17 @@ mtx_fine:
   addi r14, r14, 4
   ret
 
-mtx_promuovi:
+mtx_promote:
   sw r6, TCB.pcb(r2)      ; MINIMO, non massimo. Costa una sw e basta, perche'
                           ; chi acquisisce STA GIRANDO e non e' in nessuna coda
-  j mtx_fine
+  j mtx_end
 
 ; --------------------------------------------------------------------------
 ;  IL DEGRADO (§13.5): il mutex e' occupato, e sotto ICPP non dovrebbe potersi
 ;  dare. Se succede, una di due premesse e' caduta — il ceiling e' dichiarato
 ;  troppo basso, oppure il possessore si e' bloccato tenendolo (§13.4). Le due
 ;  producono lo stesso sintomo, ed e' una fortuna: un solo osservabile
-;  (MUTEX.attese != 0) copre due regole.
+;  (MUTEX.waiters != 0) copre due regole.
 ;
 ;  QUI SI ESCE DAGLI ESEGUIBILI, e non e' un dettaglio di implementazione: e' la
 ;  sola risposta che non rompe. La reazione istintiva — riaccodarsi alla propria
@@ -205,13 +205,13 @@ mtx_promuovi:
 ;  stesso codice per caso. Quella del semaforo e' il percorso NORMALE, questa e'
 ;  il percorso che sotto un ceiling corretto non deve mai eseguire.
 ; --------------------------------------------------------------------------
-mtx_degrado:
+mtx_degrade:
   li r4, current
   lw r9, 0(r4)            ; r9 = il mio TCB
   lw r7, TCB.pcb(r9)      ; la mia priorita': un INDIRIZZO
-  lw r10, MUTEX.attese(r1)    ; quanti sono gia' in coda: il limite del ciclo
+  lw r10, MUTEX.waiters(r1)    ; quanti sono gia' in coda: il limite del ciclo
   addi r5, r10, 1
-  sw r5, MUTEX.attese(r1)     ; qui la contabilita' e' del chiamante, come sul
+  sw r5, MUTEX.waiters(r1)     ; qui la contabilita' e' del chiamante, come sul
                               ; semaforo: si usa lo strato _nc, quindi il
                               ; contatore lo muoviamo noi
   mov r6, r1              ; prec = la sentinella
@@ -237,7 +237,7 @@ mtx_ins:
   ; niente da riprovare, per la stessa ragione del semaforo: la consegna e'
   ; diretta. In particolare crit NON va incrementato qui: sarebbe la seconda
   ; volta, e resteremmo non ruotabili per sempre.
-  j mtx_fine
+  j mtx_end
 
 ; ==========================================================================
 ;  mutex_unlock(r1 = &mutex). Solo da TASK, e solo dal proprietario.
@@ -259,7 +259,7 @@ mutex_unlock:
   ;     l'annidamento di due lock senza nessuna lista di mutex posseduti ---
   li r4, current
   lw r2, 0(r4)
-  lw r5, MUTEX.prio_prec(r1)
+  lw r5, MUTEX.prio_prev(r1)
   sw r5, TCB.pcb(r2)
   lw r4, TCB.crit(r2)     ; scendo di priorita' E torno ruotabile. Un contatore
   addi r4, r4, -1         ; e non un flag: con due lock annidati il primo unlock
@@ -275,19 +275,19 @@ mutex_unlock:
   ;     mentre il TCB e' ancora fuori da ogni coda di ready: e' l'unico punto in
   ;     cui si cambia la priorita' a un task che non gira, e non costa uno
   ;     spostamento fra code proprio perche' lo si fa PRIMA di accodarlo ---
-  lw r5, MUTEX.attese(r1)
+  lw r5, MUTEX.waiters(r1)
   addi r5, r5, -1
-  sw r5, MUTEX.attese(r1)
+  sw r5, MUTEX.waiters(r1)
   sw r2, MUTEX.owner(r1)
   lw r4, TCB.crit(r2)     ; il possessore e' lui da ADESSO, anche se non gira
   addi r4, r4, 1          ; ancora: la consegna e' diretta, e il divieto di
   sw r4, TCB.crit(r2)     ; rotazione viaggia con essa
   lw r5, TCB.pcb(r2)
-  sw r5, MUTEX.prio_prec(r1)  ; la SUA priorita' di prima
+  sw r5, MUTEX.prio_prev(r1)  ; la SUA priorita' di prima
   lw r6, MUTEX.ceiling(r1)
-  blt r6, r5, mtxu_promuovi
+  blt r6, r5, mtxu_promote
   j mtxu_ready
-mtxu_promuovi:
+mtxu_promote:
   sw r6, TCB.pcb(r2)
 mtxu_ready:
   mov r1, r2
@@ -310,7 +310,7 @@ mtxu_ready:
 ;  ALLORA, perche' chi girava stava al ceiling -- e il flag e' a un bit, quindi
 ;  di quel passaggio non resta traccia.
 ;
-;  L'argomento vale finche' non si GUARDA. sched_pronto_sopra guarda: una
+;  L'argomento vale finche' non si GUARDA. sched_ready_above guarda: una
 ;  scansione di sola lettura, 12 cicli per livello vuoto, contro i ~460 di una
 ;  commutazione. E l'informazione si recupera invece di essere dedotta.
 ;
@@ -357,7 +357,7 @@ mtxu_preempt:
   li r4, current
   lw r4, 0(r4)
   lw r1, TCB.pcb(r4)      ; il mio livello, gia' tornato a prio_prec
-  call sched_pronto_sopra ; domanda di SOLA LETTURA: non sfila niente
+  call sched_ready_above ; domanda di SOLA LETTURA: non sfila niente
   beq r1, r0, mtxu_esci   ; nessuno mi batte: niente flag, niente commutazione
 
   call request_preempt

@@ -245,7 +245,7 @@ can_exit:
 ;  invece che un ramo da ricordarsi: senza buffer non si arriva nemmeno a
 ;  guardare il vettore.
 ;
-;  PAYLOAD.pool NON si scrive: quella parola e' BLOCCO.pool, l'ha scritta
+;  PAYLOAD.pool NON si scrive: quella parola e' BLOCK.pool, l'ha scritta
 ;  pool_init e dice la provenienza del buffer (message.vinc). Il formato
 ;  comincia dopo.
 ;
@@ -279,9 +279,9 @@ sca_scan:
                                 ; (differenza <= 0 => e' passata, o e' adesso)
 
   ; --- scaduta: si formatta il messaggio nel buffer del chiamante ---
-  addi r3, r1, MESSAGGIO.payload  ; la testa comune del payload (§8.4). Serve un
+  addi r3, r1, MESSAGE.payload  ; la testa comune del payload (§8.4). Serve un
                                   ; registro perche' .equ non fa espressioni:
-                                  ; MESSAGGIO.payload + PAYLOAD.x non e'
+                                  ; MESSAGE.payload + PAYLOAD.x non e'
                                   ; scrivibile, la somma si fa a runtime
   li r4, MSG_REPLY                ; una scadenza e' una RISPOSTA: il cliente l'ha
                                   ; chiesta con timeout_arm

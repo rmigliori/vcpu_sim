@@ -22,7 +22,7 @@
 ; puo' sbagliare separatamente:
 ;
 ;   in FONDO      D, E, C: ognuno meno prioritario di tutti quelli gia' dentro
-;   in TESTA      H, piu' prioritario del primo -> prec = sentinella, cioe'
+;   in HEAD      H, piu' prioritario del primo -> prec = sentinella, cioe'
 ;                 enqueue_after_nc che ricade su enqueue_head_nc
 ;   IN MEZZO      F, che scavalca D ed E (suoi PARI) e si ferma davanti a C.
 ;                 E' il caso che le due enqueue vecchie non sanno esprimere
@@ -58,7 +58,7 @@
 ;                    CONTROPROVA ESEGUITA: disattivando il confronto della
 ;                    camminata viene 234615, che e' l'ordine di ARRIVO — e le
 ;                    due cifre che si muovono dicono quali casi sono coperti.
-;                    H passa dal 5o posto al 1o (inserimento in TESTA) e F dal
+;                    H passa dal 5o posto al 1o (inserimento in HEAD) e F dal
 ;                    6o al 5o, cioe' scavalca C fermandosi fra E e C
 ;                    (inserimento IN MEZZO). D, E, F restano in quest'ordine
 ;                    fra loro: e' il FIFO fra pari
@@ -88,13 +88,13 @@
 
   .data
 
-sem:     .res SEMAFORO   ; una risorsa sola al boot: vedi sem_init in main
+sem:     .res SEMAPHORE   ; una risorsa sola al boot: vedi sem_init in main
 
-ordine:  .word 0         ; la lista in cifre, letta a sei in attesa
+order:  .word 0         ; la lista in cifre, letta a sei in attesa
 cntW:    .word 0         ; quante sem_wait sono RITORNATE
-sveglia: .word 0         ; id del primo servito dalla post
-apri:    .word 0         ; l'ISR lo arma, l'idle fa la post e lo consuma
-fase:    .word 0         ; a che punto e' il test: 0..3
+wake: .word 0         ; id del primo servito dalla post
+open:    .word 0         ; l'ISR lo arma, l'idle fa la post e lo consuma
+phase:    .word 0         ; a che punto e' il test: 0..3
 ticks:   .word 0
 
 ; I SEI TCB SONO CONTIGUI E IN QUEST'ORDINE, e l'ordine e' l'atteso: l'id di un
@@ -268,9 +268,9 @@ taskbody:
   addi r2, r2, 1
   sw r2, 0(r1)             ; una sem_wait in piu' e' RITORNATA
 
-  li r1, sveglia
+  li r1, wake
   lw r2, 0(r1)
-  bne r2, r0, tb_riparti   ; qualcuno ha gia' firmato: non e' il mio giro
+  bne r2, r0, tb_restart   ; qualcuno ha gia' firmato: non e' il mio giro
   li r3, current
   lw r3, 0(r3)             ; il mio TCB
   li r4, tcbH
@@ -279,7 +279,7 @@ taskbody:
   div r3, r3, r4
   addi r3, r3, 1           ; id 1..6
   sw r3, 0(r1)
-tb_riparti:
+tb_restart:
   j taskbody               ; e si rimette in coda, dove lo ritrova l'ordine
 
 ; ==========================================================================
@@ -288,20 +288,20 @@ tb_riparti:
 ;  gira e' lui. Non si blocca mai, come vuole §4.
 ; ==========================================================================
 taskI:
-  li r1, apri
+  li r1, open
 loopI:
   lw r2, 0(r1)
   beq r2, r0, loopI        ; finche' l'ISR non arma, gira a vuoto
   sw r0, 0(r1)             ; consuma l'armamento: una post sola
   li r1, sem
   call sem_post            ; consegna diretta al primo della lista
-  li r1, apri
+  li r1, open
   j loopI
 
 ; ==========================================================================
 ;  timer_isr(r1 = contesto opaco): il regista del test, e guarda LO STATO.
 ;
-;    fase 0  quattro in attesa (A D E C) -> desta H, che entra IN TESTA
+;    fase 0  quattro in attesa (A D E C) -> desta H, che entra IN HEAD
 ;    fase 1  cinque in attesa            -> desta F, che entra IN MEZZO
 ;    fase 2  sei in attesa               -> legge la lista, azzera 'sveglia' e
 ;                                           arma la post dell'idle
@@ -322,47 +322,47 @@ timer_isr:
   sw r2, 0(r1)             ; tenuto solo per la diagnostica: non decide niente
 
   li r1, sem
-  lw r7, SEMAFORO.risorse(r1)   ; i nodi in lista sono -r7
-  li r1, fase
+  lw r7, SEMAPHORE.resources(r1)   ; i nodi in lista sono -r7
+  li r1, phase
   lw r8, 0(r1)
 
-  beq r8, r0, isr_fase0
+  beq r8, r0, isr_phase0
   li r3, 1
-  beq r8, r3, isr_fase1
+  beq r8, r3, isr_phase1
   li r3, 2
-  beq r8, r3, isr_fase2
-  j isr_fase3
+  beq r8, r3, isr_phase2
+  j isr_phase3
 
-  ; --- fase 0: A, D, E, C sono tutti in attesa. H entra in TESTA ---
-isr_fase0:
+  ; --- fase 0: A, D, E, C sono tutti in attesa. H entra in HEAD ---
+isr_phase0:
   li r3, -4
   bne r7, r3, isr_go
   li r1, tcbH
   call task_ready
-  j isr_avanza
+  j isr_advance
 
   ; --- fase 1: e adesso F, che deve fermarsi FRA E e C ---
-isr_fase1:
+isr_phase1:
   li r3, -5
   bne r7, r3, isr_go
   li r1, tcbF
   call task_ready
-  j isr_avanza
+  j isr_advance
 
   ; --- fase 2: la lista letta con queue_peek. Il ciclo e' LIMITATO DAL
   ;     CONTATORE come nel kernel: i nodi sono -risorse, e la sentinella non si
   ;     cerca. Vale la ragione di §13.6 — un ciclo che gira N volte non scappa
   ;     nemmeno su una lista corrotta, mentre uno che aspetta di rivedere la
   ;     testa girerebbe per sempre ---
-isr_fase2:
+isr_phase2:
   li r3, -6
   bne r7, r3, isr_go
   sub r5, r0, r7           ; quanti nodi
   li r1, sem
-  mov r2, r1               ; il cursore parte dalla TESTA
+  mov r2, r1               ; il cursore parte dalla HEAD
   li r9, 0                 ; l'ordine, cifra dopo cifra
-isr_cammina:
-  beq r5, r0, isr_scrivi
+isr_walk:
+  beq r5, r0, isr_write
   mov r1, r2
   call queue_peek           ; r2 = nodo successivo, senza sfilarlo
   li r3, tcbH
@@ -374,21 +374,21 @@ isr_cammina:
   mul r9, r9, r4
   add r9, r9, r3
   addi r5, r5, -1
-  j isr_cammina
-isr_scrivi:
-  li r1, ordine
+  j isr_walk
+isr_write:
+  li r1, order
   sw r9, 0(r1)
-  li r1, sveglia
+  li r1, wake
   sw r0, 0(r1)             ; A l'aveva firmato tornando dal cammino veloce
-  li r1, apri
+  li r1, open
   li r2, 1
   sw r2, 0(r1)             ; l'idle puo' fare la post
-  j isr_avanza
+  j isr_advance
 
   ; --- fase 3: H ha avuto la risorsa (cntW = 2) ed e' tornato in attesa
   ;     (sei nodi). Le due condizioni insieme tolgono ogni ambiguita': prima
   ;     della post i nodi erano sei ma cntW valeva 1 ---
-isr_fase3:
+isr_phase3:
   li r3, -6
   bne r7, r3, isr_go
   li r1, cntW
@@ -396,22 +396,22 @@ isr_fase3:
   li r4, 2
   bne r3, r4, isr_go
 
-  li r1, ordine
+  li r1, order
   lw r5, 0(r1)
   dumps r5                 ; 123456 = H A D E F C
   li r1, cntW
   lw r5, 0(r1)
   dumps r5                 ; 2 = il cammino veloce di A e il risveglio di H
-  li r1, sveglia
+  li r1, wake
   lw r5, 0(r1)
   dumps r5                 ; 1 = H, il piu' prioritario, non il primo arrivato
   li r1, sem
-  lw r5, SEMAFORO.risorse(r1)
+  lw r5, SEMAPHORE.resources(r1)
   dumps r5                 ; -6 = 1 iniziale meno 7 wait, e 6 nodi in lista
   halt
 
-isr_avanza:
-  li r1, fase
+isr_advance:
+  li r1, phase
   addi r8, r8, 1
   sw r8, 0(r1)
 

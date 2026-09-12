@@ -1,4 +1,4 @@
-; rtos/test/test_block.vasm — il BLOCCO VOLONTARIO: un task che dorme davvero.
+; rtos/test/test_block.vasm — il BLOCK VOLONTARIO: un task che dorme davvero.
 ;
 ; Primo uso vero di task_block/hal_ctx_block (§8.8), che fino al 07/09/2026
 ; erano codice scritto e mai eseguito. E' il passo piu' piccolo che li mette in
@@ -43,7 +43,7 @@ cntW:   .word 0        ; messaggi ricevuti da W
 cntI:   .word 0        ; giri dell'idle: la CPU libera, quella vera
 ticks:  .word 0
 
-mbW:    .res MAILBOX   ; la mailbox di W. Nasce da queue_init: una TESTA vuota
+mbW:    .res MAILBOX   ; la mailbox di W. Nasce da queue_init: una HEAD vuota
                        ; non e' fatta di zeri (fwd = bwd = &se stessa)
 msg:    .space 4       ; un messaggio: due link piu' due parole di payload che
                        ; nessuno legge (§8.4). Si RIUSA a ogni giro, ed e' lecito
@@ -157,7 +157,7 @@ timer_isr:
   sw r2, 0(r1)
 
   li r3, 8
-  blt r2, r3, isr_manda
+  blt r2, r3, isr_send
   li r1, cntW
   lw r5, 0(r1)
   dumps r5                 ; DERIVABILE: i tick pari prima dell'8 -> 2, 4, 6 = 3
@@ -166,7 +166,7 @@ timer_isr:
   dumps r5                 ; > 0: la CPU libera mentre W dorme
   halt
 
-isr_manda:
+isr_send:
   li r3, 2
   rem r4, r2, r3
   bne r4, r0, isr_go       ; solo sui tick pari

@@ -14,7 +14,7 @@
 ; si passa dal pool solo per i messaggi che nessuno puo' prestare.
 ;
 ; --- Zero meccanismo nuovo ---
-; Una free-list di blocchi a taglia fissa E' una TESTA con i blocchi come nodi:
+; Una free-list di blocchi a taglia fissa E' una HEAD con i blocchi come nodi:
 ;   buf_alloc  = catena taglia->classe, poi dequeue_head_s
 ;   buf_free   = controlli, poi enqueue_tail_s
 ;   pool_init  = N x enqueue_tail (raw: al boot IE e' gia' 0)
@@ -42,7 +42,7 @@
 ; Convenzione registri: r1 argomento ed esito, r2 buffer, r3..r6 scratch.
 
 ; Due .vinc, e sono i soli due: pool.vinc e' la nostra interfaccia, queue.vinc
-; serve per TESTA (le sei free-list). Si nominano entrambi anche se pool.vinc
+; serve per HEAD (le sei free-list). Si nominano entrambi anche se pool.vinc
 ; include gia' queue.vinc, perche' la regola e' includere cio' che si NOMINA e
 ; non fidarsi di cosa si porta dietro un altro header; l'inclusione doppia e' un
 ; no-op da quando .include e' idempotente (§3.16), che e' anche cio' che ha reso
@@ -62,12 +62,12 @@
 ; Le sei teste, contigue e in ordine di taglia crescente: se un giorno servisse
 ; confrontare due classi, il confronto fra indirizzi E' il confronto fra taglie
 ; (stessa disciplina di §7.3). Le classi vuote pagano solo la testa.
-pool_c16:   .res TESTA
-pool_c32:   .res TESTA
-pool_c64:   .res TESTA
-pool_c128:  .res TESTA
-pool_c256:  .res TESTA
-pool_c512:  .res TESTA
+pool_c16:   .res HEAD
+pool_c32:   .res HEAD
+pool_c64:   .res HEAD
+pool_c128:  .res HEAD
+pool_c256:  .res HEAD
+pool_c512:  .res HEAD
 
 ; DIMENSIONAMENTO. Quante righe .res ci sono, tanti blocchi: per cambiarlo si
 ; aggiunge o si toglie una riga e l'etichetta di fine segue da sola, senza
@@ -83,23 +83,23 @@ pool_c512:  .res TESTA
 ;              cosi' la geometria e' fissa e il dimensionamento resta libero.
 ;
 ; Totale: 10*28 + 4*44 = 456 byte di blocchi, piu' 72 di teste.
-pool_b16:   .res BLOCCO16
-            .res BLOCCO16
-            .res BLOCCO16
-            .res BLOCCO16
-            .res BLOCCO16
-            .res BLOCCO16
-            .res BLOCCO16
-            .res BLOCCO16
-            .res BLOCCO16
-            .res BLOCCO16
-pool_b16_fine:
+pool_b16:   .res BLOCK16
+            .res BLOCK16
+            .res BLOCK16
+            .res BLOCK16
+            .res BLOCK16
+            .res BLOCK16
+            .res BLOCK16
+            .res BLOCK16
+            .res BLOCK16
+            .res BLOCK16
+pool_b16_end:
 
-pool_b32:   .res BLOCCO32
-            .res BLOCCO32
-            .res BLOCCO32
-            .res BLOCCO32
-pool_b32_fine:
+pool_b32:   .res BLOCK32
+            .res BLOCK32
+            .res BLOCK32
+            .res BLOCK32
+pool_b32_end:
 
   .text
 
@@ -125,19 +125,19 @@ pool_init:
   li r1, pool_c16
   call queue_init          ; queue_init non tocca r1
   li r2, pool_b16
-  li r3, pool_b16_fine
+  li r3, pool_b16_end
   li r4, POOL_D16
-  call pool_riempi
+  call pool_fill
 
   li r1, pool_c32
   call queue_init
   li r2, pool_b32
-  li r3, pool_b32_fine
+  li r3, pool_b32_end
   li r4, POOL_D32
-  call pool_riempi
+  call pool_fill
 
   li r1, pool_c64         ; classi senza blocchi: la testa esiste ed e' vuota,
-  call queue_init          ; cosi' una richiesta trova POOL_VUOTO e non un caso
+  call queue_init          ; cosi' una richiesta trova POOL_EMPTY e non un caso
   li r1, pool_c128        ; speciale
   call queue_init
   li r1, pool_c256
@@ -150,10 +150,10 @@ pool_init:
   ret
 
 ; ==========================================================================
-;  pool_riempi(r1=&testa, r2=base, r3=fine, r4=taglia) -- interna.
+;  pool_fill(r1=&testa, r2=base, r3=fine, r4=taglia) -- interna.
 ;
 ;  Scrive in ogni blocco la taglia della sua area dati e lo accoda alla testa
-;  della classe. Lo stride e' BLOCCO.dati + taglia, cioe' i dodici byte di testa
+;  della classe. Lo stride e' BLOCK.data + taglia, cioe' i dodici byte di testa
 ;  piu' l'area: nessun numero magico.
 ;
 ;  Gli argomenti si spostano in r10..r13 perche' enqueue_tail usa r3 per l'esito
@@ -161,7 +161,7 @@ pool_init:
 ;  quattro registri vengono salvati: pool_init resta chiamabile da qualunque
 ;  punto senza sorprese.
 ; ==========================================================================
-pool_riempi:
+pool_fill:
   addi r14, r14, -4
   sw r15, 0(r14)
   addi r14, r14, -16
@@ -175,18 +175,18 @@ pool_riempi:
   mov r11, r3             ; fine
   mov r12, r4             ; taglia dell'area dati
 
-riempi_loop:
-  beq r10, r11, riempi_fine
-  sw r12, BLOCCO.pool(r10)   ; provenienza e capacita', scritte una volta sola
+fill_loop:
+  beq r10, r11, fill_end
+  sw r12, BLOCK.pool(r10)   ; provenienza e capacita', scritte una volta sola
   mov r1, r13
   mov r2, r10
   call enqueue_tail          ; raw: al boot IE e' gia' 0. I link del blocco sono
                              ; nulli (.data azzerato), quindi il controllo passa
-  addi r10, r10, BLOCCO.dati ; stride = 12 + taglia
+  addi r10, r10, BLOCK.data ; stride = 12 + taglia
   add r10, r10, r12
-  j riempi_loop
+  j fill_loop
 
-riempi_fine:
+fill_end:
   lw r10, 0(r14)
   lw r11, 4(r14)
   lw r12, 8(r14)
@@ -209,22 +209,22 @@ buf_alloc:
   addi r14, r14, -4
   sw r15, 0(r14)
 
-  call pool_classe_su     ; r2 = testa della classe (0 se oltre la piu' grande)
-  beq r2, r0, alloc_enorme
+  call pool_class_up     ; r2 = testa della classe (0 se oltre la piu' grande)
+  beq r2, r0, alloc_huge
   mov r1, r2
   call dequeue_head_s    ; r2 = blocco, oppure 0 se la classe e' esaurita
-  beq r2, r0, alloc_vuoto
+  beq r2, r0, alloc_empty
   li r1, POOL_OK
-  j alloc_uscita
+  j alloc_exit
 
-alloc_enorme:
-  li r1, POOL_ENORME
+alloc_huge:
+  li r1, POOL_HUGE
   li r2, 0
-  j alloc_uscita
-alloc_vuoto:
-  li r1, POOL_VUOTO       ; r2 e' gia' 0, lo ha messo la dequeue
+  j alloc_exit
+alloc_empty:
+  li r1, POOL_EMPTY       ; r2 e' gia' 0, lo ha messo la dequeue
 
-alloc_uscita:
+alloc_exit:
   lw r15, 0(r14)
   addi r14, r14, 4
   ret
@@ -263,25 +263,25 @@ buf_free:
 
   addi r14, r14, -4
   sw r2, 0(r14)           ; il buffer deve sopravvivere alla call
-  lw r1, BLOCCO.pool(r2)
-  call pool_classe_esatta ; r2 = testa (0 = non e' una taglia del pool)
+  lw r1, BLOCK.pool(r2)
+  call pool_class_exact ; r2 = testa (0 = non e' una taglia del pool)
   mov r1, r2
   lw r2, 0(r14)
   addi r14, r14, 4        ; r2 = buffer
-  beq r1, r0, free_estraneo
+  beq r1, r0, free_foreign
 
   call enqueue_tail_s     ; (r1 = testa, r2 = nodo). Non puo' fallire: i link
                           ; erano nulli, controllati due istruzioni fa
   li r1, POOL_OK
-  j free_uscita
+  j free_exit
 
 free_linked:
   li r1, POOL_LINKED
-  j free_uscita
-free_estraneo:
-  li r1, POOL_ESTRANEO
+  j free_exit
+free_foreign:
+  li r1, POOL_FOREIGN
 
-free_uscita:
+free_exit:
   lw r15, 0(r14)
   addi r14, r14, 4
   ret
@@ -291,13 +291,13 @@ free_uscita:
 ;  domande diverse: la prima arrotonda per eccesso una richiesta, la seconda
 ;  pretende una corrispondenza esatta. Entrambe FOGLIA.
 ;
-;  pool_classe_su(r1 = byte)    -> r2 = &testa (0 = oltre la classe piu' grande)
-;  pool_classe_esatta(r1 = tag) -> r2 = &testa (0 = non e' una taglia di classe)
+;  pool_class_up(r1 = byte)    -> r2 = &testa (0 = oltre la classe piu' grande)
+;  pool_class_exact(r1 = tag) -> r2 = &testa (0 = non e' una taglia di classe)
 ;
 ;  "r1 <= D" si scrive "blt D, r1 -> prova la classe dopo": non c'e' un blt con
 ;  immediato, quindi la taglia va comunque in un registro.
 ; ==========================================================================
-pool_classe_su:
+pool_class_up:
   li r4, POOL_D16
   blt r4, r1, su_32
   li r2, pool_c16
@@ -331,7 +331,7 @@ su_oltre:
   li r2, 0
   ret
 
-pool_classe_esatta:
+pool_class_exact:
   li r4, POOL_D16
   beq r1, r4, es_16
   li r4, POOL_D32

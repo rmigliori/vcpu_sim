@@ -62,7 +62,7 @@
 ;                test non finirebbe
 ;
 ; --- LE FASI SONO LEGATE ALLO STATO, NON AI TICK ---
-; L'ISR non conta il tempo: guarda MUTEX.owner e MUTEX.attese e agisce solo
+; L'ISR non conta il tempo: guarda MUTEX.owner e MUTEX.waiters e agisce solo
 ; quando il sistema ha la forma che serve. E' la lezione presa scrivendo
 ; test_semaforo, dove le fasi a tick facevano arrivare un task troppo presto e
 ; il caso interessante non veniva mai eseguito. Qui in piu' e' l'unico modo di
@@ -111,7 +111,7 @@ cntT:    .word 0         ; T ha preso mtxOK
 cntU:    .word 0         ; U ha preso mtxKO dopo essersi bloccato
 flagA:   .word 0         ; l'ISR: "T e' eseguibile, S puo' guardare la coda"
 flagB:   .word 0         ; l'ISR: "U si e' bloccato, W puo' guardare la coda"
-fase:    .word 0
+phase:    .word 0
 ticks:   .word 0
 
 tcbT:    .res TCB
@@ -271,22 +271,22 @@ taskS:
   li r2, current
   lw r2, 0(r2)
   lw r3, TCB.pcb(r2)
-  beq r3, r1, ts_promosso
+  beq r3, r1, ts_promoted
   call err_piu
-ts_promosso:
+ts_promoted:
 
   ; --- aspetto che l'ISR renda eseguibile T. Che io sia ancora qui a girare
   ;     mentre T e' READY E' la proprieta': T sta al ceiling, quindi non mi
   ;     preempta ---
   li r1, flagA
-ts_attesa:
+ts_wait:
   lw r2, 0(r1)
-  beq r2, r0, ts_attesa
+  beq r2, r0, ts_wait
 
   ; --- e la coda del mutex e' VUOTA: T e' eseguibile e non si e' accodato qui,
   ;     perche' non e' mai arrivato a chiedere il mutex ---
   li r1, mtxOK
-  lw r2, MUTEX.attese(r1)
+  lw r2, MUTEX.waiters(r1)
   li r3, attOK
   sw r2, 0(r3)
 
@@ -303,7 +303,7 @@ ts_attesa:
   beq r3, r1, ts_ripristinato
   call err_piu
 ts_ripristinato:
-  j parcheggio_S
+  j park_S
 
 ; ==========================================================================
 ;  T (livello 1), STORIA A: l'utente piu' prioritario di mtxOK. Diventa
@@ -329,7 +329,7 @@ tt_ok:
   sw r2, 0(r1)
   li r1, mtxOK
   call mutex_unlock
-  j parcheggio_T
+  j park_T
 
 ; ==========================================================================
 ;  W (livello 4), STORIA B: tiene mtxKO, che ha il ceiling dichiarato troppo
@@ -347,24 +347,24 @@ taskW:
   li r2, current
   lw r2, 0(r2)
   lw r3, TCB.pcb(r2)
-  beq r3, r1, tw_non_promosso
+  beq r3, r1, tw_not_promoted
   call err_piu
-tw_non_promosso:
+tw_not_promoted:
 
   ; --- aspetto che l'ISR mi dica che U si e' bloccato sulla mia coda ---
   li r1, flagB
-tw_attesa:
+tw_wait:
   lw r2, 0(r1)
-  beq r2, r0, tw_attesa
+  beq r2, r0, tw_wait
 
   li r1, mtxKO
-  lw r2, MUTEX.attese(r1)
+  lw r2, MUTEX.waiters(r1)
   li r3, attKO
   sw r2, 0(r3)             ; 1: il degrado, osservato dove §13.5 dice di guardare
 
   li r1, mtxKO
   call mutex_unlock        ; consegna diretta a U, che e' l'unico in coda
-  j parcheggio_W
+  j park_W
 
 ; ==========================================================================
 ;  U (livello 2), STORIA B: piu' prioritario del ceiling dichiarato, quindi
@@ -390,7 +390,7 @@ tu_ok:
   sw r2, 0(r1)
   li r1, mtxKO
   call mutex_unlock
-  j parcheggio_U
+  j park_U
 
 ; ==========================================================================
 ;  I quattro parcheggi: una receive su una mailbox in cui non arrivera' mai
@@ -398,22 +398,22 @@ tu_ok:
 ;  livello del task e affamerebbe tutti quelli sotto, che e' proprio cio' che
 ;  questi test devono poter distinguere.
 ; ==========================================================================
-parcheggio_S:
+park_S:
   li r1, mbS
   call receive
-  j parcheggio_S
-parcheggio_T:
+  j park_S
+park_T:
   li r1, mbT
   call receive
-  j parcheggio_T
-parcheggio_U:
+  j park_T
+park_U:
   li r1, mbU
   call receive
-  j parcheggio_U
-parcheggio_W:
+  j park_U
+park_W:
   li r1, mbW
   call receive
-  j parcheggio_W
+  j park_W
 
 taskI:
   j taskI
@@ -437,7 +437,7 @@ timer_isr:
   addi r2, r2, 1
   sw r2, 0(r1)             ; diagnostica: non decide niente
 
-  li r1, fase
+  li r1, phase
   lw r8, 0(r1)
   beq r8, r0, isr_f0
   li r3, 1
@@ -461,7 +461,7 @@ isr_f0:
   li r1, flagA
   li r2, 1
   sw r2, 0(r1)
-  j isr_avanza
+  j isr_advance
 
 isr_f1:
   li r1, cntT
@@ -469,7 +469,7 @@ isr_f1:
   beq r2, r0, isr_go
   li r1, tcbW
   call task_ready
-  j isr_avanza
+  j isr_advance
 
   ; --- stessa mossa della fase 0, ma qui il ceiling e' dichiarato troppo
   ;     basso: U (2) e' piu' prioritario di W (4) e lo preempta davvero ---
@@ -480,7 +480,7 @@ isr_f2:
   bne r2, r3, isr_go
   li r1, tcbU
   call task_ready
-  j isr_avanza
+  j isr_advance
 
   ; --- U ha trovato il mutex occupato e SI E' BLOCCATO. Se avesse riprovato
   ;     invece di bloccarsi, W non sarebbe mai ripartito e questa fase non
@@ -488,12 +488,12 @@ isr_f2:
   ;     prende qui dentro ---
 isr_f3:
   li r1, mtxKO
-  lw r2, MUTEX.attese(r1)
+  lw r2, MUTEX.waiters(r1)
   beq r2, r0, isr_go
   li r1, flagB
   li r2, 1
   sw r2, 0(r1)
-  j isr_avanza
+  j isr_advance
 
 isr_f4:
   li r1, cntU
@@ -517,8 +517,8 @@ isr_f4:
   dumps r5                 ; 1 = U ha avuto mtxKO dopo essersi bloccato
   halt
 
-isr_avanza:
-  li r1, fase
+isr_advance:
+  li r1, phase
   addi r8, r8, 1
   sw r8, 0(r1)
 

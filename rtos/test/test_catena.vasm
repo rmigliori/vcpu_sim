@@ -49,7 +49,7 @@
 ; prima dell'8 sono 2, 4 e 6, quindi tre messaggi entrano nella catena e tre
 ; devono uscirne. Tenerli separati invece di contare solo l'ultimo non e' zelo:
 ; se un salto perdesse un messaggio -- una send rifiutata perche' il buffer e'
-; ancora in lista (CODA_LINKED) -- i tre numeri direbbero DOVE si e' fermato,
+; ancora in lista (QUEUE_LINKED) -- i tre numeri direbbero DOVE si e' fermato,
 ; mentre un contatore solo direbbe soltanto che qualcosa non torna.
 ;
 ; cntI dipende dai cicli, e cio' che conta e' che sia > 0: la CPU libera mentre
@@ -299,7 +299,7 @@ timer_isr:
   sw r2, 0(r1)
 
   li r3, 8
-  blt r2, r3, isr_manda
+  blt r2, r3, isr_send
   li r1, cntA
   lw r5, 0(r1)
   dumps r5                 ; DERIVABILE: i tick pari prima dell'8 -> 2, 4, 6 = 3
@@ -314,7 +314,7 @@ timer_isr:
   dumps r5                 ; > 0: la CPU libera mentre tutti e tre dormono
   halt
 
-isr_manda:
+isr_send:
   li r3, 2
   rem r4, r2, r3
   bne r4, r0, isr_go       ; solo sui tick pari

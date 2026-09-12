@@ -71,7 +71,7 @@ msg_tick:     .space 2
 ;
 ;  Sta qui e non come prima istruzione del task perche' il primo tick puo'
 ;  arrivare prima che il task sia mai girato: tmgr_tick manderebbe su una
-;  TESTA fatta di zeri, che non e' una lista vuota (fwd = bwd = &se stessa).
+;  HEAD fatta di zeri, che non e' una lista vuota (fwd = bwd = &se stessa).
 ;
 ;  Non-foglia, corpo lineare, un solo ret, API pubblica -> .proc/.endproc.
 ; ==========================================================================
@@ -111,8 +111,8 @@ tmgr_drain:
                            ; un commento invece di essere verificata
   call buf_alloc           ; r1 = esito, r2 = buffer
   bne r1, r0, tmgr_task ; niente buffer: tutto resta armato, si riprova al
-                           ; tick prossimo (§9.2). Vale sia per POOL_VUOTO sia
-                           ; per POOL_ENORME -- il secondo non succedera' mai,
+                           ; tick prossimo (§9.2). Vale sia per POOL_EMPTY sia
+                           ; per POOL_HUGE -- il secondo non succedera' mai,
                            ; ma trattarlo come "riprova" non costa una riga
 
   addi r14, r14, -4
@@ -126,7 +126,7 @@ tmgr_drain:
   bne r2, r0, tmgr_none    ; TMO_OK == 0
 
   ; --- una scadenza: si consegna al cliente ---
-  addi r4, r3, MESSAGGIO.payload
+  addi r4, r3, MESSAGE.payload
   lw r1, PAYLOAD.replyMailbox(r4)  ; dove mandarlo sta nel messaggio stesso: la
                                    ; mailbox E' l'identita' del cliente (§8.6)
   mov r2, r3
@@ -163,7 +163,7 @@ tmgr_tick:
 
   li r1, mbox_tmgr
   lw r2, MAILBOX.count(r1)
-  blt r0, r2, tick_fine    ; count > 0: un tick e' gia' in lista, si coalesce.
+  blt r0, r2, tick_end    ; count > 0: un tick e' gia' in lista, si coalesce.
                            ; Il test NON e' "count == 0" (§9.2): il caso normale
                            ; e' il gestore bloccato, cioe' count == -1, e li' si
                            ; deve mandare
@@ -172,7 +172,7 @@ tmgr_tick:
                            ; diretta sveglia il gestore e chiede la preemption,
                            ; perche' il livello 0 batte chiunque
 
-tick_fine:
+tick_end:
   lw r15, 0(r14)
   addi r14, r14, 4
   ret

@@ -6,7 +6,7 @@
 ; compaiono ne' irq_install ne' timer_init ne' irq_enable, e IE resta a zero per
 ; tutta la vita del programma.
 ;
-; Il testimone e' UN SOLO MESSAGGIO che gira: A lo riceve, lo passa a B, B a C,
+; Il testimone e' UN SOLO MESSAGE che gira: A lo riceve, lo passa a B, B a C,
 ; C ad A. Ogni task, finito il suo giro, torna a bloccarsi sulla propria
 ; mailbox. La CPU cambia mano SOLO per blocco volontario.
 ;
@@ -80,7 +80,7 @@
 
   .data
 
-testimone: .res MESSAGGIO      ; UNO SOLO, e gira: e' il punto del test
+witness: .res MESSAGE      ; UNO SOLO, e gira: e' il punto del test
 
 mbA:     .res MAILBOX
 mbB:     .res MAILBOX
@@ -95,7 +95,7 @@ cntI:    .word 0
 ; scrive ZERO -- .word accetta solo numeri (manual.md §4.2), e un identificatore
 ; non lo rifiuta, lo azzera. Costato un err=1 al primo giro, cioe' l'unico
 ; controllo che guarda il valore iniziale.
-ultimo:  .word 0
+last:  .word 0
 
 tcbA:    .res TCB
 tcbB:    .res TCB
@@ -196,14 +196,14 @@ main:
 
   ; --- chi "ha girato per ultimo" prima che cominci il giro: C, perche' il
   ;     primo a girare e' A e il cerchio non ha un inizio, solo un taglio ---
-  li r1, ultimo
+  li r1, last
   li r2, ID_C
   sw r2, 0(r1)
 
   ; --- il testimone nella mailbox di A. La mailbox e' vuota e nessuno la sta
   ;     aspettando, quindi la send accoda e basta: niente task_ready ---
   li r1, mbA
-  li r2, testimone
+  li r2, witness
   call send_s
 
   li r5, taskA
@@ -224,17 +224,17 @@ main:
 ;  controlla(r1 = chi mi aspetto prima di me, r2 = il messaggio ricevuto):
 ;  verifica l'ordine del giro e l'identita' del testimone. Non-foglia.
 ; ==========================================================================
-controlla:
+check:
   addi r14, r14, -4
   sw r15, 0(r14)
 
-  li r3, ultimo
+  li r3, last
   lw r4, 0(r3)
-  beq r4, r1, co_ordine_ok
+  beq r4, r1, co_order_ok
   call err_piu
-co_ordine_ok:
+co_order_ok:
 
-  li r4, testimone
+  li r4, witness
   beq r2, r4, co_msg_ok    ; e' sempre lo STESSO oggetto che gira
   call err_piu
 co_msg_ok:
@@ -251,9 +251,9 @@ taskA:
   call receive             ; r2 = il testimone. Qui NON si blocca al primo giro:
                            ; il boot ce l'ha gia' messo
   li r1, ID_C              ; prima di me deve aver girato C
-  call controlla
+  call check
 
-  li r1, ultimo
+  li r1, last
   li r2, ID_A
   sw r2, 0(r1)
   li r1, cntA
@@ -262,7 +262,7 @@ taskA:
   sw r2, 0(r1)
 
   li r1, mbB
-  li r2, testimone
+  li r2, witness
   call send_s              ; B e' bloccato li': la send consegna DIRETTAMENTE e
                            ; lo rende eseguibile. Ma non commuta: a dargli la
                            ; CPU sara' la mia receive qui sotto
@@ -277,9 +277,9 @@ taskB:
   li r1, mbB
   call receive
   li r1, ID_A
-  call controlla
+  call check
 
-  li r1, ultimo
+  li r1, last
   li r2, ID_B
   sw r2, 0(r1)
   li r1, cntB
@@ -288,7 +288,7 @@ taskB:
   sw r2, 0(r1)
 
   li r1, mbC
-  li r2, testimone
+  li r2, witness
   call send_s
   j taskB
 
@@ -300,9 +300,9 @@ taskC:
   li r1, mbC
   call receive
   li r1, ID_B
-  call controlla
+  call check
 
-  li r1, ultimo
+  li r1, last
   li r2, ID_C
   sw r2, 0(r1)
   li r1, cntC
@@ -311,14 +311,14 @@ taskC:
   sw r2, 0(r1)
 
   li r3, GIRI
-  beq r2, r3, tc_fine
+  beq r2, r3, tc_end
 
   li r1, mbA
-  li r2, testimone
+  li r2, witness
   call send_s
   j taskC
 
-tc_fine:
+tc_end:
   li r1, err
   lw r5, 0(r1)
   dumps r5                 ; 0 = ordine e identita' del testimone tornano

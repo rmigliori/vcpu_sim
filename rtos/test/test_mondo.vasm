@@ -35,7 +35,7 @@
 ;
 ; E' il punto che tiene in piedi tutto il resto, e la prima stesura di questo
 ; file lo aveva sbagliato: faceva cedere l'idle con una receive su una mailbox
-; di ack. Funzionava e non andava bene, perche' un BLOCCO toglie il TCB dalle
+; di ack. Funzionava e non andava bene, perche' un BLOCK toglie il TCB dalle
 ; code di ready — e §4 non dice "l'idle non aspetta", dice che l'ULTIMO LIVELLO
 ; NON E' MAI VUOTO. E' su quello che poggia la terminazione della scansione, che
 ; non ha il caso "nessuno eseguibile" (sched_scan_done lo dichiara un errore di
@@ -52,7 +52,7 @@
 ; dall'ordine, e si puo' verificare: quando l'idle riprende, E ha per forza gia'
 ; consumato, perche' la scansione scende al livello 7 solo dopo che E si e'
 ; bloccato sulla propria mailbox vuota. Se non fosse vero, la send troverebbe il
-; testimone ancora linkato e risponderebbe CODA_LINKED — ed e' esattamente cio'
+; testimone ancora linkato e risponderebbe QUEUE_LINKED — ed e' esattamente cio'
 ; che il controllo sull'esito qui sotto asserisce.
 ;
 ; --- COSA GIRA, IN ORDINE ---
@@ -145,28 +145,28 @@
 
 .equ GIRI    5                 ; quanti caratteri porta la traccia
 
-; Il testimone. E' un MESSAGGIO con un payload di una parola sola, dichiarato
+; Il testimone. E' un MESSAGE con un payload di una parola sola, dichiarato
 ; nella forma che message.vinc prescrive a chi ha un formato proprio: una
-; .struct che comincia con i link, non una ".res MESSAGGIO" — li' payload e' un
+; .struct che comincia con i link, non una ".res MESSAGE" — li' payload e' un
 ; INDIRIZZO e non un campo, e la lunghezza la decide chi compone il messaggio.
 ; Il kernel di questi otto byte in piu' non sa niente e non deve saperne.
-.struct CARATTERE
+.struct CHAR
   .field pointers  LINK.size   ; +0  i link, l'idioma list_head
   .field ch                    ; +8  il carattere letto dalla tastiera
 .ends
 
   .data
 
-testimone: .res CARATTERE      ; UNO SOLO, e gira: come in test_coop
+witness: .res CHAR      ; UNO SOLO, e gira: come in test_coop
 
 mbE:     .res MAILBOX          ; l'UNICA mailbox: l'idle non aspetta niente
 
 err:     .word 0
 cntE:    .word 0               ; caratteri elaborati
-somma:   .word 0               ; la somma dei caratteri, fatta da E
+sum:   .word 0               ; la somma dei caratteri, fatta da E
 attese:  .word 0               ; caratteri per cui l'idle ha davvero aspettato
 cntP:    .word 0               ; giri di polling a vuoto
-inviato: .word 0               ; l'ultimo carattere che I ha messo nel payload:
+sent: .word 0               ; l'ultimo carattere che I ha messo nel payload:
                                ; serve a E per verificare che sia arrivato quello
 
 ; .global sui TCB e basta: non servono a nessun altro modulo, servono a chi
@@ -268,7 +268,7 @@ main:
 ;  task_yield (che non lascia il livello 7).
 ; ==========================================================================
 taskI:
-ti_giro:
+ti_round:
   li r6, 0                 ; "ho fatto almeno un giro a vuoto per questo
                            ; carattere". Vive dentro il ciclo, dove non ci sono
                            ; call: nessun registro da preservare
@@ -281,7 +281,7 @@ ti_giro:
 ti_poll:
   li r1, KBD_STATUS
   lw r2, 0(r1)             ; lo STATO
-  beq r2, r0, ti_vuoto
+  beq r2, r0, ti_empty
 
   ; --- IL DATO SUBITO DOPO LO STATO, e l'ordine non e' negoziabile ---
   ; Fra le due lw c'e' una finestra, e ogni istruzione che ci si mette dentro la
@@ -297,10 +297,10 @@ ti_poll:
   li r1, KBD_DATA
   lw r3, 0(r1)             ; il carattere, e il flag si abbassa QUI: e' il
                            ; protocollo, e non c'e' nessun handshake da scrivere
-  li r1, inviato
+  li r1, sent
   sw r3, 0(r1)
-  li r1, testimone
-  sw r3, CARATTERE.ch(r1)  ; il payload: il kernel non lo leggera' mai
+  li r1, witness
+  sw r3, CHAR.ch(r1)  ; il payload: il kernel non lo leggera' mai
 
   ; --- da qui in poi non c'e' piu' fretta: il device e' stato servito ---
   li r1, MARCA_ATTESA
@@ -310,12 +310,12 @@ ti_poll:
   li r2, M_RISPOSTA_CONSEGNA
   sw r2, 0(r1)
 
-  beq r6, r0, ti_subito    ; il carattere c'era gia': non ho aspettato niente
+  beq r6, r0, ti_now    ; il carattere c'era gia': non ho aspettato niente
   li r1, attese
   lw r3, 0(r1)
   addi r3, r3, 1
   sw r3, 0(r1)
-ti_subito:
+ti_now:
 
   li r3, KBD_OVERRUN
   and r4, r2, r3
@@ -325,23 +325,23 @@ ti_subito:
 ti_no_ovr:
 
   li r1, mbE
-  li r2, testimone
+  li r2, witness
   call send_s              ; E torna eseguibile e piu' prioritario di me, quindi
                            ; task_ready arma g_resched. NON COMMUTA: a dargli la
                            ; CPU sara' il task_yield qui sotto
-  li r4, CODA_OK
+  li r4, QUEUE_OK
   beq r3, r4, ti_send_ok   ; il testimone era LIBERO, cioe' E aveva gia'
                            ; consumato il precedente. E' l'asserzione che
                            ; sostituisce la mailbox di ack: se l'ordine fosse
-                           ; sbagliato l'esito sarebbe CODA_LINKED
+                           ; sbagliato l'esito sarebbe QUEUE_LINKED
   call err_piu
 ti_send_ok:
 
   call task_yield          ; CEDO, e resto al livello 7: qui il sistema cambia
                            ; mano, e la scansione mi ritrovera' nella mia coda
-  j ti_giro
+  j ti_round
 
-ti_vuoto:
+ti_empty:
   li r1, cntP
   lw r3, 0(r1)
   addi r3, r3, 1
@@ -362,22 +362,22 @@ taskE:
   li r1, mbE
   call receive             ; r2 = il testimone. Al primo giro si blocca qui e ci
                            ; resta finche' non arriva il primo tasto
-  li r4, testimone
+  li r4, witness
   beq r2, r4, te_msg_ok
   call err_piu
 te_msg_ok:
 
-  li r1, testimone
-  lw r2, CARATTERE.ch(r1)
-  li r3, inviato
+  li r1, witness
+  lw r2, CHAR.ch(r1)
+  li r3, sent
   lw r4, 0(r3)
   beq r2, r4, te_ch_ok     ; il payload e' arrivato intatto
   call err_piu
-  li r1, testimone         ; err_piu sporca r1 e r2: il carattere va riletto
-  lw r2, CARATTERE.ch(r1)
+  li r1, witness         ; err_piu sporca r1 e r2: il carattere va riletto
+  lw r2, CHAR.ch(r1)
 te_ch_ok:
 
-  li r1, somma
+  li r1, sum
   lw r3, 0(r1)
   add r3, r3, r2
   sw r3, 0(r1)
@@ -393,18 +393,18 @@ te_ch_ok:
   addi r2, r2, 1
   sw r2, 0(r1)
   li r3, GIRI
-  beq r2, r3, te_fine
+  beq r2, r3, te_end
   j taskE                  ; e la receive in cima trovera' la mailbox vuota:
                            ; e' li' che l'idle riprende
 
-te_fine:
+te_end:
   li r1, err
   lw r5, 0(r1)
   dumps r5                 ; 0 = niente perso, niente scambiato, ordine giusto
   li r1, cntE
   lw r5, 0(r1)
   dumps r5                 ; 5 = i caratteri della traccia
-  li r1, somma
+  li r1, sum
   lw r5, 0(r1)
   dumps r5                 ; 495 = 'a'+'b'+'c'+'d'+'e'
   li r1, attese

@@ -10,7 +10,7 @@
 ; Vuota: fwd==bwd==&testa, count==0.
 ;
 ; --- L'INVARIANTE DEI LINK ---
-;   UN NODO CHE NON STA IN NESSUNA LISTA HA fwd == bwd == 0.
+;   UN NODE CHE NON STA IN NESSUNA LISTA HA fwd == bwd == 0.
 ; La mantiene chi RIMUOVE (azzera i link del nodo che sfila, come list_del_init
 ; di Linux) e la verifica chi INSERISCE (link non nulli => il nodo sta gia' in
 ; una lista, cioe' doppio accodamento). Prima esisteva solo come commento —
@@ -19,8 +19,8 @@
 ; un bug finche' nessuno ci credeva; il modello dei timeout che ci ha creduto e'
 ; caduto proprio li' (§9.6 della proposta).
 ;
-; L'inserimento e la rimozione RESTITUISCONO UN ESITO in r3 (CODA_OK /
-; CODA_LINKED / CODA_UNLINKED, in include/types.vinc) e non fermano la macchina:
+; L'inserimento e la rimozione RESTITUISCONO UN ESITO in r3 (QUEUE_OK /
+; QUEUE_LINKED / QUEUE_UNLINKED, in include/types.vinc) e non fermano la macchina:
 ; questo e' il modulo piu' basso del sistema, e decidere cosa fare di un errore
 ; e' dell'applicativo. Il chiamante ha comunque tutto il contesto per una
 ; diagnostica — testa e nodo li ha passati lui.
@@ -48,7 +48,7 @@
 ;
 ; --- LA TERZA FORMA DELL'INSERIMENTO ---
 ; enqueue_after_nc(prec, nodo) mette il nodo DOPO un predecessore qualsiasi. Non
-; e' una disciplina in piu': siccome la TESTA e' una SENTINELLA dentro una lista
+; e' una disciplina in piu': siccome la HEAD e' una SENTINELLA dentro una lista
 ; circolare, "in testa" e' "dopo la sentinella" e "in coda" e' "dopo testa.bwd".
 ; Questa forma CONTIENE le altre due, e infatti condivide con enqueue_head_nc
 ; la stessa identica riga di codice: cambia solo come il chiamante legge r1.
@@ -99,8 +99,8 @@
 ; girerebbe per sempre. Il chiamante non incontra mai la sentinella e non ha
 ; nessuna ragione di sapere che la lista e' circolare.
 ;
-; La prima chiamata si fa con corrente = TESTA, ed e' lecito per la ragione di
-; sempre: testa e nodo condividono i link (LINK annidato in TESTA, queue.vinc),
+; La prima chiamata si fa con corrente = HEAD, ed e' lecito per la ragione di
+; sempre: testa e nodo condividono i link (LINK annidato in HEAD, queue.vinc),
 ; quindi "il successore della testa" e "il primo nodo" sono la stessa lettura.
 ; E' lo stesso fatto su cui poggiano le due .global sullo stesso indirizzo qui
 ; sotto.
@@ -116,7 +116,7 @@
 ; contatore in silenzio.
 
 ; Layout come struttura: offset simbolici (LINK.fwd/bwd/count) invece di 0/4/8.
-; La struct descrive la TESTA (sentinella); il nodo condivide i primi due campi
+; La struct descrive la HEAD (sentinella); il nodo condivide i primi due campi
 ; (fwd,bwd) -> stesso codice di insert/remove. Da qui arrivano anche i CODA_*.
 .include "queue/queue.vinc"
 
@@ -145,7 +145,7 @@
 queue_init:                ; queue_init(r1=&head)
   sw r1, LINK.fwd(r1)    ; fwd = &testa
   sw r1, LINK.bwd(r1)    ; bwd = &testa
-  sw r0, TESTA.count(r1)  ; count = 0
+  sw r0, HEAD.count(r1)  ; count = 0
   ret
 
 ; Ogni primitiva contata verifica l'invariante, aggiorna il contatore e salta
@@ -160,9 +160,9 @@ enqueue_tail:             ; enqueue_tail(r1=&head, r2=&node) -- in fondo (FIFO)
   lw r4, LINK.bwd(r2)
   or r3, r3, r4
   bne r3, r0, enq_linked  ; link non nulli: il nodo sta gia' in una lista
-  lw r5, TESTA.count(r1)
+  lw r5, HEAD.count(r1)
   addi r5, r5, 1
-  sw r5, TESTA.count(r1)  ; count++
+  sw r5, HEAD.count(r1)  ; count++
   j enq_tail_splice
 enqueue_tail_nc:          ; enqueue_tail_nc(r1=&head, r2=&node) -- senza contatore
   lw r3, LINK.fwd(r2)
@@ -175,7 +175,7 @@ enq_tail_splice:
   sw r4, LINK.bwd(r2)    ; nodo.bwd = prev
   sw r2, LINK.fwd(r4)    ; prev.fwd = nodo
   sw r2, LINK.bwd(r1)    ; testa.bwd = nodo
-  li r3, CODA_OK
+  li r3, QUEUE_OK
   ret
 
 enqueue_head:            ; enqueue_head(r1=&head, r2=&node) -- in testa (LIFO)
@@ -183,9 +183,9 @@ enqueue_head:            ; enqueue_head(r1=&head, r2=&node) -- in testa (LIFO)
   lw r4, LINK.bwd(r2)
   or r3, r3, r4
   bne r3, r0, enq_linked
-  lw r5, TESTA.count(r1)
+  lw r5, HEAD.count(r1)
   addi r5, r5, 1
-  sw r5, TESTA.count(r1)  ; count++
+  sw r5, HEAD.count(r1)  ; count++
   j enq_head_splice
 ; Le due etichette stanno sullo STESSO indirizzo, e non e' un espediente: sono
 ; la stessa operazione chiamata con due contratti diversi su r1. "Dopo la
@@ -205,13 +205,13 @@ enq_head_splice:
   sw r1, LINK.bwd(r2)    ; nodo.bwd = prec
   sw r2, LINK.bwd(r4)    ; next.bwd = nodo
   sw r2, LINK.fwd(r1)    ; prec.fwd = nodo
-  li r3, CODA_OK
+  li r3, QUEUE_OK
   ret
 
 ; Uscita d'errore condivisa dalle quattro enqueue: non si e' toccato niente,
 ; ne' i link ne' il contatore.
 enq_linked:
-  li r3, CODA_LINKED
+  li r3, QUEUE_LINKED
   ret
 
 ; La contata interroga il CONTATORE per la vacuita' (count == 0), com'e' sempre
@@ -222,10 +222,10 @@ enq_linked:
 ; La coda vuota non e' un errore ma un esito normale (r2 = 0), quindi qui non
 ; c'e' nessun CODA_*: il valore di ritorno e' il nodo.
 dequeue_head:            ; dequeue_head(r1=&head) -> r2 = nodo (0 se vuota)
-  lw r5, TESTA.count(r1)
+  lw r5, HEAD.count(r1)
   beq r5, r0, deq_empty
   addi r5, r5, -1
-  sw r5, TESTA.count(r1) ; count--, poi cade nel corpo
+  sw r5, HEAD.count(r1) ; count--, poi cade nel corpo
 dequeue_head_nc:         ; dequeue_head_nc(r1=&head) -> r2 = nodo (0 se vuota)
   lw r2, LINK.fwd(r1)   ; nodo = testa.fwd
   beq r2, r1, deq_empty  ; fwd == &testa -> lista vuota (uscita condivisa)
@@ -254,9 +254,9 @@ remove_buffer:            ; remove_buffer(r1=&node, r2=&head) -- unlink O(1)
   lw r4, LINK.bwd(r1)
   or r3, r3, r4
   beq r3, r0, rem_unlinked
-  lw r6, TESTA.count(r2)
+  lw r6, HEAD.count(r2)
   addi r6, r6, -1
-  sw r6, TESTA.count(r2) ; count-- (la testa la conosce il chiamante)
+  sw r6, HEAD.count(r2) ; count-- (la testa la conosce il chiamante)
   j rem_splice
 remove_buffer_nc:         ; remove_buffer_nc(r1=&node) -- senza contatore
   lw r3, LINK.fwd(r1)
@@ -270,10 +270,10 @@ rem_splice:
   sw r4, LINK.bwd(r5)   ; next.bwd = prev
   sw r0, LINK.fwd(r1)   ; il nodo e' uscito
   sw r0, LINK.bwd(r1)
-  li r3, CODA_OK
+  li r3, QUEUE_OK
   ret
 rem_unlinked:
-  li r3, CODA_UNLINKED
+  li r3, QUEUE_UNLINKED
   ret
 
 ; --------------------------------------------------------------------------

@@ -28,7 +28,7 @@
 ;  tmgr_init()
 ;
 ;  Inizializza la mailbox del gestore. Va chiamata al boot, PRIMA di irq_enable:
-;  tmgr_tick manda su quella mailbox al primo tick, e una TESTA vuota non e'
+;  tmgr_tick manda su quella mailbox al primo tick, e una HEAD vuota non e'
 ;  fatta di zeri (fwd = bwd = &se stessa), quindi il .data non puo' produrla.
 ;  Non e' il task a farlo da se' come prima istruzione, e la ragione e' proprio
 ;  quella: il primo tick puo' arrivare prima che il task sia mai girato.

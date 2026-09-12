@@ -196,37 +196,37 @@ taskA:
   li r3, COD_EXPIRY
   li r4, mbA               ; dove consegnare: la mia mailbox
   call timeout_arm         ; r2 = TMO_OK | TMO_FULL | TMO_DUP
-  beq r2, r0, a_armato     ; TMO_OK == 0
+  beq r2, r0, a_armed     ; TMO_OK == 0
   li r1, cntErr
   lw r2, 0(r1)
   addi r2, r2, 1
   sw r2, 0(r1)
 
-a_armato:
+a_armed:
   li r1, mbA
   call receive             ; r2 = il buffer di scadenza, che viene dal POOL
 
   ; --- e' la MIA attesa? Il tag lo dice, e nient'altro potrebbe (§9.4) ---
-  addi r3, r2, MESSAGGIO.payload
+  addi r3, r2, MESSAGE.payload
   lw r4, PAYLOAD.clientTag(r3)
   li r5, tagA
   lw r5, 0(r5)
-  beq r4, r5, a_giusto
+  beq r4, r5, a_right
   li r1, cntErr
   lw r3, 0(r1)
   addi r3, r3, 1
   sw r3, 0(r1)
 
-a_giusto:
+a_right:
   ; --- il buffer e' una risorsa di sistema IN PRESTITO: si rende subito ---
   call buf_free            ; r2 = buffer (resta intatto), r1 = esito
-  beq r1, r0, a_liberato   ; POOL_OK == 0
+  beq r1, r0, a_freed   ; POOL_OK == 0
   li r1, cntErr
   lw r2, 0(r1)
   addi r2, r2, 1
   sw r2, 0(r1)
 
-a_liberato:
+a_freed:
   li r1, cntA
   lw r2, 0(r1)
   addi r2, r2, 1

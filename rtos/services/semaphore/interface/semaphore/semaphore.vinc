@@ -1,16 +1,16 @@
-; semaphore/semaphore.vinc — il TIPO semaforo: una TESTA il cui terzo campo conta
+; semaphore/semaphore.vinc — il TIPO semaforo: una HEAD il cui terzo campo conta
 ; RISORSE, non nodi.
 ;
 ; Stessa forma di mailbox.vinc e per la stessa ragione (§3.27 dell'handoff): il
-; layout e' quello di TESTA, ma il terzo campo ha una convenzione che non e'
-; quella di queue.vasm, e finche' il codice scrive "TESTA.count" quella
+; layout e' quello di HEAD, ma il terzo campo ha una convenzione che non e'
+; quella di queue.vasm, e finche' il codice scrive "HEAD.count" quella
 ; convenzione sta in un commento invece che nel codice.
 ;
 ; --- LE TRE CONVENZIONI DEL TERZO CAMPO, IN UN COLPO D'OCCHIO ---
 ;
 ;   teste CONTATE     count >= 0 = numero di nodi         lo scrive queue.vasm
 ;   MAILBOX.count     DESCRITTIVO col segno (§8.2)        lo scrive la mailbox
-;   SEMAFORO.risorse  CONTABILE: disponibili meno in      lo scrive il semaforo
+;   SEMAPHORE.resources  CONTABILE: disponibili meno in      lo scrive il semaforo
 ;                     attesa (§13.1)
 ;
 ; La differenza fra le ultime due non e' di sfumatura, ed e' la ragione per cui
@@ -34,21 +34,21 @@
 ; chiudono prima che giri.
 ;
 ; --- PERCHE' UN .equ DERIVATO E NON UNA .struct PROPRIA ---
-; Identico all'argomento di mailbox.vinc: una ".struct SEMAFORO { pointers,
+; Identico all'argomento di mailbox.vinc: una ".struct SEMAPHORE { pointers,
 ; risorse }" sarebbe una SECONDA dichiarazione dello stesso layout, che il
-; giorno che TESTA cambiasse resterebbe indietro in silenzio. Il .equ non copia,
-; DERIVA — se il campo di TESTA venisse rinominato questa riga non assembla piu'
+; giorno che HEAD cambiasse resterebbe indietro in silenzio. Il .equ non copia,
+; DERIVA — se il campo di HEAD venisse rinominato questa riga non assembla piu'
 ; invece di produrre un offset sbagliato.
 ;
 ; .equ risolve al momento della definizione, quindi queue.vinc va incluso PRIMA.
 
 .include "queue/queue.vinc"
 
-.equ SEMAFORO.risorse  TESTA.count   ; il contatore CONTABILE (§13.1)
-.equ SEMAFORO.size     TESTA.size    ; ".res SEMAFORO" alloca un semaforo
+.equ SEMAPHORE.resources  HEAD.count   ; il contatore CONTABILE (§13.1)
+.equ SEMAPHORE.size     HEAD.size    ; ".res SEMAPHORE" alloca un semaforo
 
 ; --------------------------------------------------------------------------
-;  UN SEMAFORO NON NASCE DAL .data AZZERATO — E NEMMENO DA UN .word
+;  UN SEMAPHORE NON NASCE DAL .data AZZERATO — E NEMMENO DA UN .word
 ;
 ;  §13.1 della proposta scriveva la dichiarazione statica cosi':
 ;
@@ -56,7 +56,7 @@
 ;
 ;  e ci appoggiava un'osservazione giusta: il semaforo e' il primo oggetto del
 ;  progetto la cui dichiarazione naturale non e' "tutti zeri". L'osservazione
-;  resta, la forma no. Una TESTA VUOTA NON E' FATTA DI ZERI — ha fwd = bwd = &se
+;  resta, la forma no. Una HEAD VUOTA NON E' FATTA DI ZERI — ha fwd = bwd = &se
 ;  stessa — e un .word non puo' scriverla perche' non accetta etichette. E' lo
 ;  stesso motivo per cui sched_init esiste, ed e' scritto in scheduler.vasm da
 ;  prima di questa sezione.

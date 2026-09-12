@@ -38,7 +38,7 @@
 ; --- TCB (16 byte):  +0 fwd  +4 bwd  +8 sp_salvato  +12 stato ---
 ;   sp_salvato = il puntatore-a-contesto opaco fornito dall'HAL.
 
-; Tipi comuni (TESTA, TCB, stati) condivisi con l'app: single source of truth.
+; Tipi comuni (HEAD, TCB, stati) condivisi con l'app: single source of truth.
 .include "tcb/tcb.vinc"
 .include "queue/queue_api.vinc"
 
@@ -68,7 +68,7 @@
 ;  senza che niente lo segnali: e' il difetto che si manifesta come inversione di
 ;  priorita' sporadica sei mesi dopo (§7.3).
 ;
-;  Nessuno di questi nasce inizializzato: una TESTA vuota ha fwd = bwd = &se
+;  Nessuno di questi nasce inizializzato: una HEAD vuota ha fwd = bwd = &se
 ;  stessa, che un .word non puo' scrivere perche' non accetta etichette. Ci
 ;  pensa sched_init, ed e' il motivo per cui §6 ("strutture gia' inizializzate
 ;  staticamente al link") non e' mai stata del tutto vera -- gia' oggi la vecchia
@@ -95,14 +95,14 @@ g_resched: .word 0        ; need_resched: !=0 => switch a uscita IRQ
   .global task_yield
   .global task_ready
   .global prio_pcb
-  .global sched_pronto_sopra
+  .global sched_ready_above
   .extern ctx_restore
   .extern hal_ctx_block
 
 ; ==========================================================================
 ;  sched_init(): svuota le otto code di ready e i loro slot.
 ;
-;  Esiste perche' una TESTA vuota non e' fatta di zeri (fwd = bwd = &se stessa),
+;  Esiste perche' una HEAD vuota non e' fatta di zeri (fwd = bwd = &se stessa),
 ;  quindi il .data non puo' produrla. Lo slot invece nasce corretto a zero, ma
 ;  azzerarlo esplicitamente costa un'istruzione e rende il codice leggibile
 ;  senza sapere com'e' fatto il segmento dati.
@@ -121,7 +121,7 @@ sched_init:
 sched_init_loop:
   mov r1, r5
   call queue_init         ; &pcb == &pcb.coda: nessuna conversione (§7.5)
-  sw r0, PCB.preemptato(r5)
+  sw r0, PCB.preempted(r5)
   beq r5, r6, sched_init_done
   addi r5, r5, PCB.size
   j sched_init_loop
@@ -137,7 +137,7 @@ sched_init_done:
 ;
 ;  PRECONDIZIONE, e non e' verificabile da qui: il chiamante si e' GIA' accodato
 ;  dove verra' ritrovato (la propria mailbox, la coda di un semaforo). Per questo
-;  qui non si accoda niente e non si tocca PCB.preemptato: il TCB e' gia' in una
+;  qui non si accoda niente e non si tocca PCB.preempted: il TCB e' gia' in una
 ;  lista, e metterlo anche nello slot lo renderebbe eseguibile pur essendo in
 ;  attesa -- due posizioni per una coppia di link sola (§7.5).
 ;
@@ -174,7 +174,7 @@ task_block:
 ;  fa poggiare la terminazione della scansione su "l'ultimo livello non e' mai
 ;  vuoto" (vedi sched_scan_done, che dichiara il caso contrario un errore di
 ;  costruzione del sistema e non un ramo da scrivere): un idle che si BLOCCA lo
-;  svuota, un idle che CEDE no -- il suo TCB e' in PCB.coda, che e' esattamente
+;  svuota, un idle che CEDE no -- il suo TCB e' in PCB.queue, che e' esattamente
 ;  dove la scansione lo cerchera'.
 ;
 ;  --- PERCHE' ESISTE: §13.7, E DUE CLIENTI INDIPENDENTI ---
@@ -271,7 +271,7 @@ task_ready_preempt:
   ret
 
 ; ==========================================================================
-;  sched_pronto_sopra(r1 = &PCB limite) -> r1 = 1 se esiste un task ESEGUIBILE
+;  sched_ready_above(r1 = &PCB limite) -> r1 = 1 se esiste un task ESEGUIBILE
 ;  a un livello strettamente piu' prioritario del limite, 0 altrimenti.
 ;
 ;  --- E' LA PRIMA DOMANDA CHE SI PUO' FARE ALLO SCHEDULER SENZA MUOVERLO ---
@@ -325,20 +325,20 @@ task_ready_preempt:
 ;
 ;  FOGLIA e NON DISTRUTTIVA: non tocca una sola struttura. Clobber: r1, r2, r3.
 ; ==========================================================================
-sched_pronto_sopra:
+sched_ready_above:
   li r2, pcb0
 sps_scan:
-  beq r2, r1, sps_nessuno      ; arrivato al limite senza trovare niente
-  lw r3, PCB.preemptato(r2)
-  bne r3, r0, sps_ce_ne_uno
-  lw r3, TESTA.count(r2)       ; &pcb == &pcb.coda (§7.5)
-  bne r3, r0, sps_ce_ne_uno
+  beq r2, r1, sps_none      ; arrivato al limite senza trovare niente
+  lw r3, PCB.preempted(r2)
+  bne r3, r0, sps_found
+  lw r3, HEAD.count(r2)       ; &pcb == &pcb.coda (§7.5)
+  bne r3, r0, sps_found
   addi r2, r2, PCB.size
   j sps_scan
-sps_nessuno:
+sps_none:
   li r1, 0
   ret
-sps_ce_ne_uno:
+sps_found:
   li r1, 1
   ret
 
@@ -441,11 +441,11 @@ sched_isr_exit_done:
 ;  lo toglie dalla CPU, non chi sceglie il prossimo". Le tre destinazioni sono
 ;  incompatibili fra loro e le conosce solo chi provoca l'uscita:
 ;
-;    preemptato da un tick  -> PCB.preemptato,  lo mette sched_isr_exit
+;    preemptato da un tick  -> PCB.preempted,  lo mette sched_isr_exit
 ;    si e' bloccato          -> gia' accodato altrove (mailbox, semaforo): NESSUNO
 ;                               deve toccarlo, ed e' per questo che questa
 ;                               routine non puo' avere una regola sua
-;    turno finito            -> in fondo a PCB.coda (rotazione, non implementata)
+;    turno finito            -> in fondo a PCB.queue (rotazione, non implementata)
 ;
 ;  Se lo scheduler mettesse l'uscente nello slot "per default", un task che si
 ;  blocca tornerebbe eseguibile subito dopo essersi messo in attesa: sarebbe
@@ -496,11 +496,11 @@ sched_preempt:
   li r7, pcb0
 sp_scan:
   beq r7, r8, sp_mio_livello   ; arrivato al mio livello senza trovare nessuno
-  lw r1, PCB.preemptato(r7)
-  beq r1, r0, sp_coda
-  sw r0, PCB.preemptato(r7)
+  lw r1, PCB.preempted(r7)
+  beq r1, r0, sp_tail
+  sw r0, PCB.preempted(r7)
   j sp_preempted
-sp_coda:
+sp_tail:
   mov r1, r7
   call dequeue_head
   mov r1, r2
@@ -511,7 +511,7 @@ sp_coda:
   ; --- trovato uno PIU' PRIORITARIO: l'uscente e' stato preemptato (§2) ---
 sp_preempted:
   lw r2, 0(r14)          ; l'uscente
-  sw r2, PCB.preemptato(r8)
+  sw r2, PCB.preempted(r8)
   li r3, PREEMPTED
   sw r3, TCB.state(r2)
   j sp_done
@@ -531,7 +531,7 @@ sp_mio_livello:
   ; Lo scheduler non sa cosa sia un mutex: legge un contatore (vedi tcb.vinc).
   lw r3, TCB.crit(r2)
   bne r3, r0, sp_solo
-  lw r3, TESTA.count(r8)       ; ci sono PARI in attesa a questo livello?
+  lw r3, HEAD.count(r8)       ; ci sono PARI in attesa a questo livello?
   beq r3, r0, sp_solo          ; no: ruotare con nessuno e' due call sprecate
   sw r0, TCB.state(r2)         ; READY
   mov r1, r8                   ; &pcb == &pcb.coda
@@ -571,11 +571,11 @@ scheduler:
   ; c'e' un preemptato in cima.
   li r7, pcb0            ; si parte da 0, che e' la priorita' PIU' ALTA
 sched_scan:
-  lw r1, PCB.preemptato(r7)
-  beq r1, r0, sched_scan_coda
-  sw r0, PCB.preemptato(r7)  ; lo slot si svuota: quel task torna a girare
+  lw r1, PCB.preempted(r7)
+  beq r1, r0, sched_scan_queue
+  sw r0, PCB.preempted(r7)  ; lo slot si svuota: quel task torna a girare
   j sched_scan_done
-sched_scan_coda:
+sched_scan_queue:
   mov r1, r7             ; &pcb == &pcb.coda (§7.5 un livello sopra)
   call dequeue_head     ; r2 = TCB, 0 se il livello e' vuoto
   mov r1, r2

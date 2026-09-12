@@ -35,12 +35,12 @@
 
   .data
 
-mbox:      .res TESTA     ; la mailbox E' una testa di coda
-svegliato: .word 0        ; ultimo TCB passato a task_ready
+mbox:      .res HEAD     ; la mailbox E' una testa di coda
+woken: .word 0        ; ultimo TCB passato a task_ready
 current:   .word 0        ; stub della variabile del kernel: vedi sopra
 tcb0:      .res TCB       ; unico task del test
 msg1:      .space 3       ; fwd, bwd, payload[0..3]: la taglia la decide chi lo
-msg2:      .space 3       ; compone, non MESSAGGIO.size (payload e' un indirizzo)
+msg2:      .space 3       ; compone, non MESSAGE.size (payload e' un indirizzo)
 msg3:      .space 3
 stack:     .space 64
 stack_top:
@@ -69,17 +69,17 @@ main:
 
   li r1, msg1             ; payload distinti per riconoscere i messaggi
   li r2, 11
-  sw r2, MESSAGGIO.payload(r1)
+  sw r2, MESSAGE.payload(r1)
   li r1, msg2
   li r2, 22
-  sw r2, MESSAGGIO.payload(r1)
+  sw r2, MESSAGE.payload(r1)
   li r1, msg3
   li r2, 33
-  sw r2, MESSAGGIO.payload(r1)
+  sw r2, MESSAGE.payload(r1)
 
   ; --- (1) mailbox vuota: contatore a 0 ---
   li r1, mbox
-  lw r5, TESTA.count(r1)
+  lw r5, HEAD.count(r1)
   dumps r5                ; 0
 
   ; --- (2) due send senza riceventi: il contatore sale, segno positivo ---
@@ -87,42 +87,42 @@ main:
   li r2, msg1
   call send
   li r1, mbox
-  lw r5, TESTA.count(r1)
+  lw r5, HEAD.count(r1)
   dumps r5                ; 1
 
   li r1, mbox
   li r2, msg2
   call send
   li r1, mbox
-  lw r5, TESTA.count(r1)
+  lw r5, HEAD.count(r1)
   dumps r5                ; 2
 
   ; --- (3) receive con messaggi disponibili: ordine FIFO ---
   li r1, mbox
   call receive
-  lw r5, MESSAGGIO.payload(r2)
+  lw r5, MESSAGE.payload(r2)
   dumps r5                ; 11 (il primo arrivato)
 
   li r1, mbox
   call receive
-  lw r5, MESSAGGIO.payload(r2)
+  lw r5, MESSAGE.payload(r2)
   dumps r5                ; 22
 
   li r1, mbox
-  lw r5, TESTA.count(r1)
+  lw r5, HEAD.count(r1)
   dumps r5                ; 0: lista di nuovo vuota
 
   ; --- (4) receive su mailbox vuota: accoda il TCB (count = -1), cede la CPU;
   ;         lo stub consegna msg3 per consegna diretta e la receive lo preleva ---
   li r1, mbox
   call receive
-  lw r5, MESSAGGIO.payload(r2)
+  lw r5, MESSAGE.payload(r2)
   dumps r5                ; 33
   li r1, mbox
-  lw r5, TESTA.count(r1)
+  lw r5, HEAD.count(r1)
   dumps r5                ; 0: il TCB e' uscito, il messaggio e' stato prelevato
 
-  li r1, svegliato        ; task_ready ha ricevuto proprio il TCB in attesa?
+  li r1, woken        ; task_ready ha ricevuto proprio il TCB in attesa?
   lw r5, 0(r1)
   li r6, tcb0
   sub r5, r5, r6
@@ -134,7 +134,7 @@ main:
 ;  kernel/messageHandling.vasm per il contratto).
 ; ==========================================================================
 task_ready:               ; task_ready(r1 = &TCB): qui basta registrarlo
-  li r2, svegliato
+  li r2, woken
   sw r1, 0(r2)
   li r2, READY
   sw r2, TCB.state(r1)
