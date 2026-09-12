@@ -785,8 +785,11 @@ push senza prompt).
 > **non** è stato cancellato né in locale né su `origin`: lo si cancella quando
 > il push del merge è fatto e verificato, non prima.
 >
-> **`italiano-pre-rename`** è il **primo tag del progetto**, e sta sul commit di
-> merge — cioè sull'ultimo albero con i nomi in italiano. È ciò che sostituisce
+> **`italiano-pre-rename`** è il **primo tag del progetto**, e sta sull'**ultimo
+> albero con i nomi in italiano** — cioè sul commit subito precedente al primo
+> rename, non su quello di merge: fra i due sono entrati la rete e l'elenco, che
+> non rinominano niente. Se altro dovesse entrare prima che il rename cominci, il
+> tag si sposta ancora; il criterio è quello, non l'hash. È ciò che sostituisce
 > l'idea (scartata, §3.42) di tenere in vita due versioni in parallelo: la
 > versione italiana esiste, è raggiungibile con un `git checkout`, e non può
 > andare alla deriva perché nessuno ci scrive dentro.
