@@ -172,10 +172,10 @@ vasm_check(catena MODE DUMPS PROGRAM test_catena
 # ---------------------------------------------------------------------------
 vasm_object(t_gestore SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_gestore.vasm
                       INTERFACES vinc_queue vinc_tcb vinc_mailbox vinc_message
-                                 vinc_timeout vinc_gestore_timeout)
+                                 vinc_timeout vinc_timeout_manager)
 
 vasm_program(test_gestore OBJECTS t_gestore
-             LINK lib_gestore_timeout lib_messaggi lib_kernel lib_pool
+             LINK lib_timeout_manager lib_messaggi lib_kernel lib_pool
                   lib_timeout)
 
 vasm_check(gestore MODE DUMPS PROGRAM test_gestore

@@ -41,7 +41,7 @@
 ; il chiamante gli porta e libera la casella. Non manda niente: send e receive
 ; stanno in rtos/, e un modulo di generic/ che li nominasse smetterebbe di essere
 ; generic (la regola sta in generic/CMakeLists.txt). Il ciclo del task-gestore
-; sta quindi in rtos/gestore_timeout/, e questo file resta con i soli irq_save/
+; sta quindi in rtos/timeout_manager/, e questo file resta con i soli irq_save/
 ; irq_restore, la stessa firma esatta di queue.vasm.
 ;
 ; Quello che NON si poteva spezzare e' il motivo per cui la primitiva formatta
@@ -235,7 +235,7 @@ can_uscita:
 ;
 ;  Formattare non porta qui dentro niente di rtos: il formato del payload e'
 ;  generic/message (§8.4), e il messaggio non viene MANDATO da qui -- ci pensa
-;  il task di rtos/gestore_timeout, che legge dal payload appena scritto anche
+;  il task di rtos/timeout_manager, che legge dal payload appena scritto anche
 ;  dove mandarlo.
 ;
 ;  --- IL BUFFER ARRIVA GIA' PRESO, E NON E' UN DETTAGLIO ---

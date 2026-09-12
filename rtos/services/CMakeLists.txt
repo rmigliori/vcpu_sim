@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-#  servizi — i clienti del kernel: chi blocca e risveglia i task.
+#  services — i clienti del kernel: chi blocca e risveglia i task.
 #
 #  Un servizio si riconosce da una firma sola: chiama task_ready e task_block.
 #  Non e' parte del kernel (§3.22) e non e' generic (usa lo scheduler), quindi

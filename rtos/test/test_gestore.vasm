@@ -7,7 +7,7 @@
 ; la catena di mailbox fra task (test_catena).
 ;
 ; --- CHI GIRA ---
-;   G  livello 0   il GESTORE (rtos/gestore_timeout), a PRIO_MAX come vuole §9.2
+;   G  livello 0   il GESTORE (rtos/timeout_manager), a PRIO_MAX come vuole §9.2
 ;   A  livello 1   il cliente: arma un timeout, si blocca, riceve la scadenza,
 ;                  verifica che sia la SUA, restituisce il buffer al pool e
 ;                  riarma con il tag successivo
@@ -17,7 +17,7 @@
 ;   A          timeout_arm(fra 2 tick, tag) -> una casella del vettore
 ;   A          receive sulla propria mailbox: si blocca, come si bloccherebbe
 ;              comunque aspettando un evento vero
-;   ISR tick   gestore_tick: incrementa tmo_now e sveglia G (coalescando il
+;   ISR tick   tmgr_tick: incrementa tmo_now e sveglia G (coalescando il
 ;              messaggio di tick, che e' uno statico)
 ;   G          buf_alloc dal pool, timeout_scaduto (formatta e libera la
 ;              casella), send_s alla mailbox di A
@@ -65,7 +65,7 @@
 .include "mailbox/mailbox.vinc"
 .include "message/message.vinc"
 .include "timeout/timeout.vinc"
-.include "gestore_timeout/gestore_timeout.vinc"
+.include "timeout_manager/timeout_manager.vinc"
 
 .equ COD_SCADENZA  77     ; il messageCode che A si fa recapitare. Opaco per
                           ; tutti tranne che per A: il gestore lo ricopia dal
@@ -118,7 +118,7 @@ stackI_top:
 ;  BOOT. Tre inizializzazioni prima di qualunque task, e nessuna e' rinviabile:
 ;
 ;    pool_init      i blocchi vanno incatenati nelle sei free-list
-;    gestore_init   la mailbox del gestore, che gestore_tick usa al PRIMO tick
+;    tmgr_init   la mailbox del gestore, che tmgr_tick usa al PRIMO tick
 ;    queue_init(mbA) la mailbox di A
 ;
 ;  Il vettore dei timeout invece NON si inizializza: nasce tutto TMO_FREE perche'
@@ -130,14 +130,14 @@ main:
                            ; a freddo, che e' A
   call sched_init
   call pool_init
-  call gestore_init
+  call tmgr_init
 
   li r1, mbA
   call queue_init
 
   ; --- G (il gestore, livello 0): READY, in coda ---
   li r1, stackG_top
-  li r2, gestore_task
+  li r2, tmgr_task
   call ctx_init
   li r3, tcbG
   sw r1, TCB.sp(r3)
@@ -246,20 +246,20 @@ loopI:
   j loopI
 
 ; ==========================================================================
-;  timer_isr(r1 = contesto opaco): chiama gestore_tick e basta.
+;  timer_isr(r1 = contesto opaco): chiama tmgr_tick e basta.
 ;
 ;  E' l'ISR di §9.2 alla lettera -- "l'ISR fa una cosa sola" -- e la brevita' e'
 ;  il punto: la scansione delle caselle non e' qui dentro, quindi la latenza di
 ;  interrupt non dipende da quanti timeout sono armati.
 ;
-;  La condizione di arresto legge tmo_now, cioe' il contatore che gestore_tick
+;  La condizione di arresto legge tmo_now, cioe' il contatore che tmgr_tick
 ;  ha appena incrementato, invece di tenerne uno suo: e' lo stesso orologio su
 ;  cui A misura le proprie scadenze, quindi "fermarsi al 12o tick" e "A ha armato
 ;  a +2" si leggono sulla stessa scala.
 ; ==========================================================================
 timer_isr:
-  mov r6, r1               ; il contesto: gestore_tick sporca r1..r5 e r7
-  call gestore_tick        ; incrementa tmo_now e sveglia il gestore
+  mov r6, r1               ; il contesto: tmgr_tick sporca r1..r5 e r7
+  call tmgr_tick        ; incrementa tmo_now e sveglia il gestore
 
   li r1, tmo_now
   lw r2, 0(r1)

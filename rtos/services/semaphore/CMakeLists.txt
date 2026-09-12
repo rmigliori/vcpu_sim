@@ -2,7 +2,7 @@
 #  lib_semaphore — il semaforo contatore: prendere e restituire risorse, e
 #  bloccare chi arriva quando non ce ne sono.
 #
-#  Stessa forma della mailbox, che e' quella che servizi/ dichiara: un
+#  Stessa forma della mailbox, che e' quella che services/ dichiara: un
 #  interface/ col TIPO e un impl/ col codice. Il tipo e' un .equ derivato da
 #  TESTA, non una .struct propria (§3.27), e il .vinc dice perche'.
 #

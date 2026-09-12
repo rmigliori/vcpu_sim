@@ -5,7 +5,7 @@
 # scadenza nel buffer che le si porta, e il formato e' generic (§8.4). E' una
 # dipendenza di sole costanti, e non intacca il criterio della cartella -- gli
 # unici simboli che questo modulo externa restano irq_save e irq_restore. La
-# CONSEGNA (send) sta in rtos/gestore_timeout, che e' dove nomina il kernel.
+# CONSEGNA (send) sta in rtos/timeout_manager, che e' dove nomina il kernel.
 vasm_library(lib_timeout
   SOURCES    ${CMAKE_CURRENT_SOURCE_DIR}/timeout.vasm
   INTERFACES vinc_timeout vinc_message

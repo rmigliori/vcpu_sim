@@ -38,10 +38,10 @@ Valgono invece i nomi che i programmi di questo progetto usano gia':
     main            il boot
     timer_isr       l'ISR del tick
     task<X>         il task X   (taskI e' l'idle per convenzione)
-    <nome>_task     il task di sistema <nome> (gestore_task -> "gestore")
+    <nome>_task     il task di sistema <nome> (tmgr_task -> "gestore")
 
 Un corpo si estende dalla sua etichetta a quella del corpo successivo dentro lo
-STESSO modulo: cosi' le etichette interne (loopI, gestore_drena, isr_manda) non
+STESSO modulo: cosi' le etichette interne (loopI, tmgr_drain, isr_manda) non
 vanno elencate e non vengono scambiate per kernel.
 
 --- PERCHE' SERVONO I LABEL LOCALI, E NON BASTA `nm` ---
@@ -189,9 +189,9 @@ def raccogli(vx, tmp):
     # --- DOVE FINISCE UN CORPO ---
     # Al primo simbolo PUBBLICATO che lo segue, o al corpo successivo, o a fine
     # modulo. Il criterio del .global non e' un espediente: le etichette interne
-    # di un corpo sono locali (loopI, gestore_drena, isr_manda) e devono restarci
+    # di un corpo sono locali (loopI, tmgr_drain, isr_manda) e devono restarci
     # dentro, mentre cio' che il modulo pubblica e' un'altra routine -- il caso
-    # che conta e' gestore_tick, che sta nello stesso modulo del gestore ma gira
+    # che conta e' tmgr_tick, che sta nello stesso modulo del gestore ma gira
     # dentro l'ISR, ed e' del chiamante e non suo.
     pubb = sorted(G.values())
     corpi = []

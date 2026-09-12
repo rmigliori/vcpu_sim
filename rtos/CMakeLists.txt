@@ -14,11 +14,11 @@
 #  stabilito che i messaggi sono un CLIENTE del kernel e non parte sua, e la
 #  vecchia cartella contraddiceva il grafo.
 #
-#  L'ordine: scheduler prima di servizi, che lo linka, e gestore_timeout dopo
+#  L'ordine: scheduler prima di services, che lo linka, e timeout_manager dopo
 #  di entrambi -- e' un task, quindi sta in cima al DAG di rtos/.
 # ---------------------------------------------------------------------------
 add_subdirectory(scheduler)
 add_subdirectory(services)
-add_subdirectory(gestore_timeout)
+add_subdirectory(timeout_manager)
 add_subdirectory(demo)
 add_subdirectory(test)
