@@ -15,7 +15,7 @@
 # Finche' il LINK era cablato qui, le due cose non potevano coesistere: il
 # linker vedeva due definizioni di task_block e si fermava.
 #
-# INTERFACES non nomina vinc_messaggio: messageHandling.vasm muove i messaggi
+# INTERFACES non nomina vinc_message: messageHandling.vasm muove i messaggi
 # ma non ne legge un byte (§8.4), quindi del formato non gli serve niente. Chi
 # lo dichiara e' il test, che il payload lo compone davvero.
 vasm_library(lib_messaggi

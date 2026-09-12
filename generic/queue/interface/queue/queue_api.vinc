@@ -17,7 +17,7 @@
 ;
 ;   queue.vinc      i TIPI            lo include il FORNITORE (queue.vasm) e gli
 ;                                    altri header i cui nodi sono liste —
-;                                    tcb.vinc, messaggio.vinc, pool.vinc:
+;                                    tcb.vinc, message.vinc, pool.vinc:
 ;                                    vogliono TESTA, non le procedure
 ;   queue_api.vinc  i TIPI + le ENTRY lo include CHI CHIAMA
 ;

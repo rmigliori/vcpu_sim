@@ -84,7 +84,7 @@
 
 .include "tcb/tcb.vinc"
 .include "queue/queue_api.vinc"
-.include "semaforo/semaforo.vinc"
+.include "semaphore/semaphore.vinc"
 
   .data
 

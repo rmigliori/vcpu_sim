@@ -9,7 +9,7 @@
 #  commento invece che nel codice. Ora mailbox.vinc la nomina.
 #
 #  Resta vero il resto: il FORMATO di un messaggio e' costanti senza codice
-#  (generic/messaggio/, sola interfaccia), il SERVIZIO che li muove e' codice, e
+#  (generic/message/, sola interfaccia), il SERVIZIO che li muove e' codice, e
 #  le sue entry sono due simboli che viaggiano nel .va. Il giorno che nascesse
 #  anche un mailbox_api.vinc, sarebbe per pubblicare il contratto di chiamata di
 #  send e receive, non per gli .extern in se' (§3.26 dell'handoff).

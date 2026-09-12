@@ -3,7 +3,7 @@
 ;
 ; Non pubblica nessun tipo, e non e' una dimenticanza: qui non c'e' niente da
 ; dichiarare. Il DESCRITTORE e i TMO_* sono di generic/timeout (timeout.vinc),
-; il formato del messaggio di scadenza e' di generic/messaggio, e la mailbox del
+; il formato del messaggio di scadenza e' di generic/message, e la mailbox del
 ; gestore e' PRIVATA -- ci scrive solo gestore_tick, che sta dentro il modulo.
 ; Un cliente non ne ha bisogno: chiede un timeout con timeout_arm e lo riceve
 ; nella PROPRIA mailbox, che e' tutto il rapporto che ha con questo task.
@@ -13,7 +13,7 @@
 ; stare in generic/timeout accanto a arm/cancel: chiama receive e send, che sono
 ; simboli di rtos/, e la regola di generic/CMakeLists.txt e' letterale -- un
 ; modulo che nomina un simbolo di rtos/ non e' generic. E non e' un "servizio"
-; nel senso di rtos/servizi/, la cui firma e' "chiama task_ready e task_block":
+; nel senso di rtos/services/, la cui firma e' "chiama task_ready e task_block":
 ; il gestore non blocca nessuno, si blocca lui sulla propria mailbox come un
 ; task qualunque. Da qui una cartella sua al primo livello di rtos/.
 ;

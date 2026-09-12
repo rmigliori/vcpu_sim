@@ -20,5 +20,5 @@
 #              dichiarato male                        -> §13.5
 # ---------------------------------------------------------------------------
 add_subdirectory(mailbox)
-add_subdirectory(semaforo)
+add_subdirectory(semaphore)
 add_subdirectory(mutex)

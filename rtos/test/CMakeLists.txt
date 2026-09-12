@@ -12,7 +12,7 @@
 #  lib_messaggi comincera' a chiudersi da sola.
 # ---------------------------------------------------------------------------
 vasm_object(t_mailbox SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_mailbox.vasm
-                      INTERFACES vinc_queue vinc_tcb vinc_messaggio)
+                      INTERFACES vinc_queue vinc_tcb vinc_message)
 
 vasm_program(test_mailbox OBJECTS t_mailbox LINK lib_messaggi)
 
@@ -171,7 +171,7 @@ vasm_check(catena MODE DUMPS PROGRAM test_catena
 #  esistere. cntA resta 5 e cntErr resta 0, cioe' i due numeri che non dipendono dai cicli.
 # ---------------------------------------------------------------------------
 vasm_object(t_gestore SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_gestore.vasm
-                      INTERFACES vinc_queue vinc_tcb vinc_mailbox vinc_messaggio
+                      INTERFACES vinc_queue vinc_tcb vinc_mailbox vinc_message
                                  vinc_timeout vinc_gestore_timeout)
 
 vasm_program(test_gestore OBJECTS t_gestore
@@ -201,9 +201,9 @@ vasm_check(gestore MODE DUMPS PROGRAM test_gestore
 #  entra in nessuno di loro: sposta solo QUANDO le cose accadono, non quali.
 # ---------------------------------------------------------------------------
 vasm_object(t_semaforo SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_semaforo.vasm
-                       INTERFACES vinc_queue vinc_tcb vinc_semaforo)
+                       INTERFACES vinc_queue vinc_tcb vinc_semaphore)
 
-vasm_program(test_semaforo OBJECTS t_semaforo LINK lib_semaforo lib_kernel)
+vasm_program(test_semaforo OBJECTS t_semaforo LINK lib_semaphore lib_kernel)
 
 vasm_check(semaforo MODE DUMPS PROGRAM test_semaforo
            EXPECT "123456 2 1 -6")
@@ -277,7 +277,7 @@ vasm_check(mutex MODE DUMPS PROGRAM test_mutex
 #  tempo.
 # ---------------------------------------------------------------------------
 vasm_object(t_coop SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_coop.vasm
-                   INTERFACES vinc_queue vinc_tcb vinc_mailbox vinc_messaggio)
+                   INTERFACES vinc_queue vinc_tcb vinc_mailbox vinc_message)
 
 vasm_program(test_coop OBJECTS t_coop LINK lib_messaggi lib_kernel)
 
@@ -333,7 +333,7 @@ vasm_check(coop MODE DUMPS PROGRAM test_coop
 #  esistere. Quattro numeri su cinque immobili: si muove solo cntP.
 # ---------------------------------------------------------------------------
 vasm_object(t_mondo SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_mondo.vasm
-                    INTERFACES vinc_queue vinc_tcb vinc_mailbox vinc_messaggio
+                    INTERFACES vinc_queue vinc_tcb vinc_mailbox vinc_message
                                vinc_hal vinc_marche)
 
 vasm_program(test_mondo OBJECTS t_mondo LINK lib_messaggi lib_kernel)

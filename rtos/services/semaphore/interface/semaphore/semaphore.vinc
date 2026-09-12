@@ -1,4 +1,4 @@
-; semaforo/semaforo.vinc — il TIPO semaforo: una TESTA il cui terzo campo conta
+; semaphore/semaphore.vinc — il TIPO semaforo: una TESTA il cui terzo campo conta
 ; RISORSE, non nodi.
 ;
 ; Stessa forma di mailbox.vinc e per la stessa ragione (§3.27 dell'handoff): il
@@ -26,7 +26,7 @@
 ;   nessun controllo puo' accorgersi di una deriva.
 ;
 ; Ne discende la disciplina, che e' l'unica rete che quel campo ha: UN SOLO
-; SCRITTORE (semaforo.vasm) e l'invariante dichiarata accanto a lui. "Sotto non
+; SCRITTORE (semaphore.vasm) e l'invariante dichiarata accanto a lui. "Sotto non
 ; c'e' rete" non e' una richiesta di rete (§3.26 dell'handoff): il kernel
 ; controlla cio' che, non controllato, corromperebbe le proprie strutture, e un
 ; conteggio di risorse sbagliato non corrompe niente — e' un errore di

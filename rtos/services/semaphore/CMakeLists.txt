@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-#  lib_semaforo — il semaforo contatore: prendere e restituire risorse, e
+#  lib_semaphore — il semaforo contatore: prendere e restituire risorse, e
 #  bloccare chi arriva quando non ce ne sono.
 #
 #  Stessa forma della mailbox, che e' quella che servizi/ dichiara: un

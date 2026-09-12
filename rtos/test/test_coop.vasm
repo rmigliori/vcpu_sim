@@ -61,7 +61,7 @@
 .include "tcb/tcb.vinc"
 .include "queue/queue_api.vinc"
 .include "mailbox/mailbox.vinc"
-.include "messaggio/messaggio.vinc"
+.include "message/message.vinc"
 
 ; Il giro e' A -> B -> C; le priorita' NO, ed e' voluto (punto 2 qui sopra).
 .equ PRIO_B  1

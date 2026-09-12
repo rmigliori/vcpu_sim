@@ -4,7 +4,7 @@
 #  Il criterio e' dell'utente ed e' letterale: un modulo sta qui se nomina un
 #  simbolo del kernel. Applicato ai simboli veri, e non alle intenzioni, da'
 #  una partizione senza residui -- machine.vasm, queue.vasm, pool.vasm,
-#  timeout.vasm e messaggio.vinc non ne nominano nessuno e stanno fuori;
+#  timeout.vasm e message.vinc non ne nominano nessuno e stanno fuori;
 #  scheduler.vasm e' il kernel, messageHandling.vasm chiama task_ready,
 #  task_block e current.
 #
@@ -18,7 +18,7 @@
 #  di entrambi -- e' un task, quindi sta in cima al DAG di rtos/.
 # ---------------------------------------------------------------------------
 add_subdirectory(scheduler)
-add_subdirectory(servizi)
+add_subdirectory(services)
 add_subdirectory(gestore_timeout)
 add_subdirectory(demo)
 add_subdirectory(test)

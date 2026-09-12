@@ -1,4 +1,4 @@
-; rtos/servizi/semaforo/semaforo.vasm — il semaforo contatore: sem_wait, sem_post.
+; rtos/services/semaphore/impl/src/semaphore.vasm — il semaforo contatore: sem_wait, sem_post.
 ;
 ; Un SEMAFORO *e'* una testa di coda, come la mailbox, e come per la mailbox
 ; tutto il disegno sta nella convenzione del terzo campo. Qui e' CONTABILE:
@@ -75,7 +75,7 @@
 ; nell'analisi, non nel runtime. E' lo stesso principio di §13.5 sul ceiling.
 
 .include "queue/queue_api.vinc"
-.include "semaforo/semaforo.vinc"
+.include "semaphore/semaphore.vinc"
 .include "tcb/tcb.vinc"
 
   .text
@@ -95,7 +95,7 @@
 ;
 ;  Esiste perche' un semaforo non e' scrivibile nel .data: la lista vuota vuole
 ;  fwd = bwd = &se stessa e un .word non accetta etichette (vedi il riquadro in
-;  semaforo.vinc). Il conteggio iniziale e' un argomento, non un .word
+;  semaphore.vinc). Il conteggio iniziale e' un argomento, non un .word
 ;  posizionale.
 ;
 ;  Non-foglia (chiama queue_init), corpo lineare, un solo ret, API pubblica ->

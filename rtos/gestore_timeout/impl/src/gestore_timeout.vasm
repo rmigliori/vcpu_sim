@@ -35,7 +35,7 @@
 
 .include "queue/queue_api.vinc"
 .include "mailbox/mailbox.vinc"
-.include "messaggio/messaggio.vinc"
+.include "message/message.vinc"
 .include "pool/pool.vinc"
 .include "timeout/timeout.vinc"
 
@@ -104,7 +104,7 @@ gestore_task:
 
 gestore_drena:
   li r1, POOL_D16          ; la taglia del PAYLOAD senza specifiche, che
-                           ; messaggio.vinc osserva essere esattamente la classe
+                           ; message.vinc osserva essere esattamente la classe
                            ; piu' piccola. E' scritta come costante e non come
                            ; differenza perche' .equ prende un intero o una
                            ; costante, non un'espressione: la derivazione resta

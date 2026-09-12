@@ -1,4 +1,4 @@
-; rtos/servizi/mutex/mutex.vasm — il mutex a priority ceiling (ICPP):
+; rtos/services/mutex/mutex.vasm — il mutex a priority ceiling (ICPP):
 ; mutex_init, mutex_lock, mutex_unlock.
 ;
 ; --- IL MUTEX E' LA SEZIONE CRITICA (§13.2) ---

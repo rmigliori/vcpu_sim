@@ -23,6 +23,6 @@
 # scadenza (timeout_scaduto).
 add_subdirectory(queue)
 add_subdirectory(pool)
-add_subdirectory(messaggio)
+add_subdirectory(message)
 add_subdirectory(timeout)
 add_subdirectory(test)

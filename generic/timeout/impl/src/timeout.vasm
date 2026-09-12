@@ -49,14 +49,14 @@
 ; stare NELLA STESSA sezione critica in cui si decide di consegnare. Leggere i
 ; campi, uscire, mandare e solo dopo liberare riaprirebbe qui dentro esattamente
 ; il bug del riciclo dell'handle. Il formato del payload e' generic (§8.4,
-; generic/messaggio), quindi formattare non porta dentro niente di rtos.
+; generic/message), quindi formattare non porta dentro niente di rtos.
 ;
 ; Convenzione registri: r1..r4 argomenti, r2 esito, r5..r8 scratch. NON tocca
 ; r9..r13, cosi' un chiamante che scandisce o accumula puo' tenerci il proprio
 ; stato attraverso la call.
 
 .include "timeout/timeout.vinc"
-.include "messaggio/messaggio.vinc"   ; il formato che timeout_scaduto compone
+.include "message/message.vinc"   ; il formato che timeout_scaduto compone
 
   .data
 
@@ -234,7 +234,7 @@ can_uscita:
 ;  E' il bug del riciclo dell'handle (§9.5) rientrato dalla finestra.
 ;
 ;  Formattare non porta qui dentro niente di rtos: il formato del payload e'
-;  generic/messaggio (§8.4), e il messaggio non viene MANDATO da qui -- ci pensa
+;  generic/message (§8.4), e il messaggio non viene MANDATO da qui -- ci pensa
 ;  il task di rtos/gestore_timeout, che legge dal payload appena scritto anche
 ;  dove mandarlo.
 ;
@@ -246,7 +246,7 @@ can_uscita:
 ;  guardare il vettore.
 ;
 ;  PAYLOAD.pool NON si scrive: quella parola e' BLOCCO.pool, l'ha scritta
-;  pool_init e dice la provenienza del buffer (messaggio.vinc). Il formato
+;  pool_init e dice la provenienza del buffer (message.vinc). Il formato
 ;  comincia dopo.
 ;
 ;  Non-foglia, con salti -> prologo/epilogo a mano.

@@ -1,7 +1,7 @@
 ; queue/queue.vinc — interfaccia di generic/queue: il tipo lista e gli esiti.
 ;
 ; E' il .vinc piu' basso del sistema e il piu' incluso: il TCB, il MESSAGGIO e il
-; BLOCCO del pool sono tutti nodi di lista, quindi tcb.vinc, messaggio.vinc e
+; BLOCCO del pool sono tutti nodi di lista, quindi tcb.vinc, message.vinc e
 ; pool.vinc includono questo. FOGLIA: non ha niente da chiedere a nessuno.
 ;
 ; Nato il 05/09/2026 spezzando types.vinc, che teneva insieme code, task e

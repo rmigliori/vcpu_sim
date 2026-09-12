@@ -1,7 +1,7 @@
 ; mutex/mutex.vinc — il TIPO mutex: una coda d'attesa piu' tre campi, ed e' il
 ; PROPRIETARIO a separarlo da un semaforo binario (§13.2).
 ;
-; A differenza di mailbox.vinc e semaforo.vinc qui c'e' una .struct vera e non
+; A differenza di mailbox.vinc e semaphore.vinc qui c'e' una .struct vera e non
 ; dei .equ derivati, e la differenza non e' di gusto: quelli sono una TESTA e
 ; nient'altro — stessa dimensione, un solo campo da ribattezzare — mentre il
 ; mutex ha tre campi IN PIU'. La TESTA pero' resta ANNIDATA e non

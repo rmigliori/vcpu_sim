@@ -119,7 +119,7 @@
 .include "tcb/tcb.vinc"
 .include "queue/queue_api.vinc"
 .include "mailbox/mailbox.vinc"
-.include "messaggio/messaggio.vinc"
+.include "message/message.vinc"
 .include "hal/kbd.vinc"
 .include "marche/marche.vinc"  ; GENERATO da marche.conf: i canali e i marker
 
@@ -146,7 +146,7 @@
 .equ GIRI    5                 ; quanti caratteri porta la traccia
 
 ; Il testimone. E' un MESSAGGIO con un payload di una parola sola, dichiarato
-; nella forma che messaggio.vinc prescrive a chi ha un formato proprio: una
+; nella forma che message.vinc prescrive a chi ha un formato proprio: una
 ; .struct che comincia con i link, non una ".res MESSAGGIO" — li' payload e' un
 ; INDIRIZZO e non un campo, e la lunghezza la decide chi compone il messaggio.
 ; Il kernel di questi otto byte in piu' non sa niente e non deve saperne.

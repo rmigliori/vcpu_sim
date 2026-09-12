@@ -62,7 +62,7 @@
 ;  queue.vinc, condiviso da ogni nodo di lista), la terza e' del POOL, e il
 ;  formato dispone di cio' che comincia a +12. Il pool non conosce nessun
 ;  formato e non va toccato per aggiungerne uno; e' il formato che si adatta.
-;  messaggio.vinc lo fa dal suo lato, dando un nome proprio (PAYLOAD.pool) alla
+;  message.vinc lo fa dal suo lato, dando un nome proprio (PAYLOAD.pool) alla
 ;  parola che scriviamo noi, ed e' li' che sta scritto perche' a un ricevente
 ;  serva leggerla.
 ;
