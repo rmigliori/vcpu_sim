@@ -120,6 +120,52 @@
 >   timeline nel terminale invece di scrivere l'HTML, che è quello che serve
 >   quando si vuole solo controllare l'ordine dei turni. Una ventina di righe.
 >
+> ### ▶▶ I QUATTRO DOCUMENTI SULLO SCHEDULER — deciso il 12/09/2026
+>
+> L'utente li ha chiesti e ne ha fissato due parametri. **Due testi**, non uno
+> lungo e uno corto: sono ordinati diversamente.
+>
+> | | ordinato per | destinatario | sorgente | derivato |
+> |---|---|---|---|---|
+> | **didattico** | concetti | chi impara | **italiano** | inglese |
+> | **per il collega** | decisioni | chi è competente e non ha visto il progetto | **inglese** | italiano |
+>
+> - la lingua di lavoro a **ND Satcom è l'inglese**, quindi è quella la sorgente
+>   del secondo;
+> - il didattico **non parte da zero**: dà per noti context switch, priorità e
+>   preemption, e va dritto a rate/deadline monotonic, inversione di priorità e
+>   ceiling.
+>
+> **Tre regole di costruzione**, e sono le stesse del codice:
+>
+> 1. **un nucleo fattuale solo.** I numeri stanno in un posto — con scritto
+>    *come* sono stati ottenuti — e i quattro testi lo citano invece di
+>    ripeterlo. Dove si può, quel posto si **genera** dalla build invece di
+>    scriverlo a mano: è la mossa di `marche.conf` applicata alla prosa. Quattro
+>    testi che ripetono gli stessi numeri sono quattro verità, e la prosa non ha
+>    un compilatore;
+> 2. **il didattico è la sorgente, quello per il collega è una compressione.**
+>    I suoi fatti sono un sottoinsieme: due documenti scritti indipendentemente
+>    divergono, uno derivato no. Stesso per le lingue — l'altra versione si
+>    **rigenera**, non si edita a mano;
+> 3. **ogni numero o è misurato, e si dice come, o è dedotto, e si dice da cosa.**
+>    Il 12/09 è successo due volte di riportare come misura un'inferenza (i «37
+>    cicli di latenza», `errB` che sembrava un'asserzione ed era una fase). In un
+>    testo lungo il rischio cresce, perché la prosa è più facile da rendere
+>    convincente del codice.
+>
+> **Lo scopo è LO SCHEDULER, non il progetto.** §13 è chiusa dal 12/09, quindi
+> c'è un oggetto concluso da descrivere. Sincronizzatore, linker e `vc` non lo
+> sono e non lo saranno per il 1° ottobre.
+>
+> > **UNA COSA DA DECIDERE, e non è mia.** Tutto il ragionamento di questo
+> > progetto vive nei **commenti in italiano** del codice e in questi documenti.
+> > Se ciò che ci si porta a ND Satcom è il ragionamento e lì si lavora in
+> > inglese, un documento inglese che cita commenti italiani è zoppo. Le uscite
+> > sono tre — lasciare il codice com'è e tradurre solo i documenti; commentare
+> > in inglese da adesso in avanti; convertire l'esistente — e costano molto
+> > diversamente. Vale la pena deciderlo ora e non a ottobre.
+>
 > ### ▶▶ DOVE SI STAVA ANDANDO
 >
 > L'utente vuole **vedere il sistema funzionante** prima di nuove
