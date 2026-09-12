@@ -2343,11 +2343,39 @@ arma il flag e lascia che sia il percorso di uscita a decidere.
 > - **nessun ramo «solo al mio livello»**: cedere quando non c'è nessun altro
 >   eseguibile costa comunque uno switch, e il prezzo è dichiarato.
 >
-> **Quello che resta di §13.7 è farla chiamare da `mutex_unlock`.** Oggi
-> `mutex_unlock` arma il flag e ritorna, come il corpo di questa sezione
-> prescrive; sostituire «arma e lascia decidere al percorso di uscita» con «arma
-> e *poi cedi*» è una riga, ma cambia il comportamento di un percorso verificato
-> da `test_mutex` e va deciso esplicitamente.
+> **AGGIORNAMENTO 12/09/2026, seconda parte — §13.7 È CHIUSA.** `mutex_unlock`
+> arma il flag *e poi cede*: `request_preempt` seguito da `task_yield`. La
+> latenza dell'unlock smette di essere il periodo del timer e diventa la
+> lunghezza della sezione critica, che è ciò che il corpo di questa sezione
+> chiedeva.
+>
+> **L'ordine non è negoziabile: si cede a `IE = 0`.** `task_yield` passa da
+> `hal_ctx_block`, che scrive `epc` ed `epsw` fuori da una trap, e l'HAL dichiara
+> che è sicuro solo perché chi chiama gira a interrupt chiusi. Con `IE = 1`, fra
+> la scrittura dei due CSR e la `reti` che li consuma un tick potrebbe
+> sovrascriverli, e l'indirizzo di ripresa sarebbe perso. Quindi la cessione sta
+> **prima** di `irq_restore`, ed è una `call` — si riprende lì, e il regime del
+> chiamante va ancora ristabilito (stessa forma di `receive` dopo `task_block`).
+>
+> **Il prezzo, misurato e non stimato.** Su `test_mutex`: +641 istruzioni e
+> +1379 cicli, cioè il 22%. Non sono commutazioni in più — il marcatore ne conta
+> **sette prima e sette dopo** — sono cessioni che non trovano nessuno sopra e
+> rientrano su se stesse, pagando comunque un salvataggio intero. `task_yield`
+> salva il contesto *prima* di scandire, e una domanda non distruttiva allo
+> scheduler («c'è qualcuno sopra di me?») oggi non esiste: `scheduler` sfila il
+> TCB che sceglie, quindi non è interrogabile.
+>
+> Su quel test il guadagno di latenza misurato è **37 cicli** su una
+> commutazione, contro un periodo del timer di 500. È un cattivo affare *lì*, e
+> va detto: `test_mutex` esercita le transizioni di stato del ceiling, non il
+> caso in cui un task più prioritario resta fermo per un tick intero. La
+> giustificazione non è il throughput medio, è che la latenza diventa
+> **deterministica** — il costo si paga sempre e si conosce, l'attesa evitata era
+> variabile e limitata solo dal tick. È lo scambio che un kernel realtime fa
+> per definizione.
+>
+> L'ottimizzazione — cedere solo se serve davvero — resta aperta e richiede
+> quella query non distruttiva.
 
 > **Una cosa di questa sezione è stata confermata l'11/09/2026**, e non era
 > ovvia: `mutex_unlock` arma il flag **incondizionatamente**, anche quando nulla
@@ -2467,8 +2495,9 @@ corollario di §13.8 per il semaforo (senza variante di segnalazione, chi fa
 `post` è sempre chi aveva fatto `wait`). Non c'è il caso che ha reso *raw* la
 `send`.
 
-**Resta aperto un punto solo, ed è §13.7**: il punto di preemption di
-`mutex_unlock` è armato ma non consumato fino al tick.
+~~**Resta aperto un punto solo, ed è §13.7**~~ — **CHIUSO** il 12/09/2026:
+`mutex_unlock` arma il flag e poi cede con `task_yield`. Vedi il riquadro in
+§13.7 per l'ordine (si cede a `IE = 0`) e per il prezzo misurato.
 
 #### L'aggiunta dell'11/09/2026: la premessa che mancava a §13.5
 

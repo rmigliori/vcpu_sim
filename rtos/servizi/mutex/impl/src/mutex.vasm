@@ -82,6 +82,7 @@
   .extern task_ready
   .extern task_block
   .extern request_preempt
+  .extern task_yield       ; §13.7: il percorso di uscita sincrono
   .extern prio_pcb
   .extern current
 
@@ -300,23 +301,44 @@ mtxu_ready:
 ;  arma il flag se il risvegliato non batte chi gira, e chi girava stava al
 ;  ceiling).
 ;
-;  Si arma il flag e basta, come vuole §13.7: non commuta lui, decide il
-;  percorso di uscita. INCONDIZIONATAMENTE, perche' distinguere i casi in cui
-;  nulla e' cambiato costerebbe un campo in piu' per risparmiare una scansione
-;  che avviene comunque al tick.
+;  Si arma il flag INCONDIZIONATAMENTE, perche' distinguere i casi in cui nulla
+;  e' cambiato costerebbe un campo in piu': durante la sezione critica
+;  task_ready ha confrontato, ha risposto "non batte chi gira" e non ha armato
+;  niente -- quella risposta era corretta ALLORA, e il flag e' a un bit.
 ;
-;  IL LIMITE, E VA DETTO PERCHE' §13.7 LO DICE DI SE STESSA: da contesto di task
-;  un "percorso di uscita" non c'e'. Il flag resta armato fino al TICK
-;  successivo, quindi la latenza e' il periodo del timer invece della lunghezza
-;  della sezione critica — che e' precisamente cio' che §13.7 voleva evitare.
-;  Quando §13.7 e' stata scritta (06/09) l'unico rientro nel kernel era l'ISR;
-;  da §3.30 esiste task_block, cioe' un rientro SINCRONO, e chiudere il buco
-;  vorrebbe dire un task_yield che rimette il chiamante nella propria coda di
-;  ready invece di sospenderlo. Non e' scritto, ed e' l'unica cosa che §13
-;  lascia davvero aperta.
+;  ... E POI SI CEDE, dal 12/09/2026, ed e' la chiusura di §13.7.
+;
+;  Fino a oggi qui c'era solo il request_preempt, e la sezione lo dichiarava
+;  come proprio limite: da contesto di task un "percorso di uscita" non
+;  esisteva, quindi il flag aspettava il TICK e la latenza diventava il periodo
+;  del timer invece della lunghezza della sezione critica -- precisamente cio'
+;  che §13.7 voleva evitare. task_yield e' quel percorso, ed e' arrivato da un
+;  cliente che col mutex non c'entra niente (§3.39).
+;
+;  --- L'ORDINE NON E' NEGOZIABILE: SI CEDE A IE = 0 ---
+;  task_yield passa da hal_ctx_block, che scrive epc ed epsw FUORI da una trap.
+;  machine.vasm dichiara che e' sicuro solo perche' chi chiama gira a interrupt
+;  chiusi: con IE = 1, fra la scrittura dei due CSR e la reti che li consuma un
+;  tick potrebbe arrivare e sovrascriverli -- e l'indirizzo di ripresa sarebbe
+;  perso. Quindi si cede PRIMA di irq_restore, non dopo.
+;
+;  E' una call e non un salto: si riprende QUI, e il regime del chiamante va
+;  ancora ristabilito. La irq_save subito dopo e' la stessa mossa che fa receive
+;  al ritorno da task_block -- si riprende con IE = 1 (la epsw che hal_ctx_block
+;  costruisce), e la psw d'ingresso e' ancora sullo stack.
+;
+;  IL PREZZO, dichiarato: ogni unlock paga una commutazione completa, anche
+;  quando non c'era nessuno da far partire -- task_yield salva il contesto PRIMA
+;  di scandire, quindi la scansione che riporta il chiamante costa comunque uno
+;  switch. Evitarlo vuole una domanda non distruttiva allo scheduler ("c'e'
+;  qualcuno sopra di me?"), che oggi non esiste: `scheduler` sfila il TCB che
+;  sceglie, quindi non e' interrogabile. E' un'ottimizzazione, non un difetto:
+;  si scambia un costo COSTANTE e piccolo con una latenza VARIABILE e grande.
 ; --------------------------------------------------------------------------
 mtxu_preempt:
   call request_preempt
+  call task_yield         ; IE e' ancora 0, ed e' obbligatorio: vedi sopra
+  call irq_save           ; ristabilisce IE = 0 dopo la ripresa, come receive
   lw r5, 0(r14)
   addi r14, r14, 4
   call irq_restore

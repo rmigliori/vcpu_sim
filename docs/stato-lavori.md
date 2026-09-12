@@ -1,7 +1,7 @@
 # Stato dei lavori — `vcpu_sim`
 
 > Ultimo aggiornamento: **12 settembre 2026** (§3.39 `task_yield`; §3.40 il
-> marcatore e il contesto vettoriale)
+> marcatore e il contesto vettoriale; §3.41 **§13 chiusa**)
 > Scopo: fotografia dello stato per riprendere il lavoro a distanza di giorni
 > senza dover ricostruire il contesto.
 
@@ -84,9 +84,10 @@
 >
 > Il resto in fila, dal più vicino:
 >
-> - **§13.7 è a metà, e la seconda metà è una riga**: `mutex_unlock` arma ancora
->   `request_preempt` e basta. Adesso che `task_yield` esiste, farglielo chiamare
->   chiude la sezione — ma tocca un percorso verificato da `test_mutex`;
+> - ~~**§13.7**~~ — **CHIUSA** (§3.41): `mutex_unlock` arma e CEDE. Resta
+>   l'ottimizzazione, cedere solo quando serve, che vuole una domanda non
+>   distruttiva allo scheduler («c'è qualcuno sopra di me?») — oggi `scheduler`
+>   sfila il TCB che sceglie, quindi non è interrogabile;
 > - **il salvataggio PIGRO**: oggi un task vettoriale che esce e rientra senza
 >   che nessun altro usi i vettori paga salvataggio e ripristino per niente.
 >   Evitarlo vuol dire disabilitare l'unità alla commutazione e trappare alla
@@ -186,13 +187,17 @@
 > dall'11/09 è dichiarata: chi ha `TCB.crit != 0` non viene ruotato fra pari.
 > Chi tocca `sp_mio_livello` sta toccando l'invariante di §13.5 (§3.36).
 >
-> Quello che resta aperto è **uno**, ed è **§13.7** — ma dal 12/09 è **a metà**.
-> `mutex_unlock` arma `request_preempt` come la sezione prescrive, e da contesto
-> di task il «percorso di uscita» adesso **esiste**: `task_yield` è scritta
-> (§3.39), arrivata da un cliente che con il mutex non c'entra niente. Quello che
-> manca è farla **chiamare** da `mutex_unlock`, cioè una riga — che però tocca un
-> percorso verificato da `test_mutex` e va decisa. Finché non c'è, il flag aspetta
-> il **tick**: è una latenza, non una scorrettezza.
+> **§13 È CHIUSA PER INTERO** dal 12/09/2026. L'ultimo punto era §13.7:
+> `mutex_unlock` armava `request_preempt` e basta, quindi da contesto di task il
+> flag aspettava il **tick**. Adesso arma *e cede* — `task_yield`, arrivata da un
+> cliente che con il mutex non c'entra niente (§3.39) — e la latenza dell'unlock
+> è la lunghezza della sezione critica invece del periodo del timer.
+>
+> Due cose da sapere leggendola: **si cede a `IE = 0`**, prima di `irq_restore`,
+> perché `hal_ctx_block` scrive `epc`/`epsw` fuori da una trap e un tick in mezzo
+> li sovrascriverebbe; e il prezzo è **misurato**, +22% di cicli su `test_mutex`,
+> fatto di cessioni che non trovano nessuno sopra e rientrano su se stesse
+> (§3.41).
 >
 > Due cose da sapere leggendo il codice nuovo:
 >
@@ -246,9 +251,8 @@
 > Il kernel non ha più un fronte obbligato: §13 è chiusa e §3.28 pure. Le tre
 > strade, in ordine di quanto valgono:
 >
-> 1. ~~**`task_yield` e §13.7**~~ — la primitiva è **SCRITTA** il 12/09 (§3.39).
->    Resta la seconda metà: farla chiamare da `mutex_unlock`, che è una riga e
->    tocca un percorso verificato;
+> 1. ~~**`task_yield` e §13.7**~~ — **CHIUSA** il 12/09: la primitiva (§3.39) e
+>    la chiamata da `mutex_unlock` (§3.41). §13 non ha più punti aperti;
 > 2. **il semaforo davanti al pool** (§13.8, terzo corollario): oggi chi trova
 >    vuota una classe riceve `POOL_VUOTO` e ripassa più tardi (§9.2). È il primo
 >    cliente vero che il semaforo avrebbe, e il limite è dichiarato — chi gira
@@ -555,7 +559,7 @@ livello.
 | CLI `asm/ld/run/nm/ar` | completo | [`src/main.c`](../src/main.c) |
 | HAL | completo (§3.21) | [`hal/`](../hal/) |
 | Code, pool, timeout, formato messaggi | completo, indipendente dallo scheduler (§3.24) | [`generic/`](../generic/) |
-| Kernel + scheduler a priorità + mailbox + gestore timeout + semaforo e mutex | completo: PCB, slot, rotazione fra pari (tranne per chi è in sezione critica, §3.36), blocco volontario **e cessione volontaria** (`task_yield`, §3.39), task di sistema (§3.28–§3.33), §13 scritta (§3.35). Di §13.7 resta la chiamata da `mutex_unlock` | [`rtos/`](../rtos/) |
+| Kernel + scheduler a priorità + mailbox + gestore timeout + semaforo e mutex | completo: PCB, slot, rotazione fra pari (tranne per chi è in sezione critica, §3.36), blocco volontario **e cessione volontaria** (`task_yield`, §3.39), task di sistema (§3.28–§3.33), §13 scritta (§3.35). **§13 CHIUSA per intero** (§3.41) | [`rtos/`](../rtos/) |
 | Device in MMIO (tastiera, polling) | primo pezzo: registri sopra la RAM, alimentati da una traccia a cicli (§3.37); usato dall'RTOS in `test_mondo` (§3.39) | [`hal/kbd.vinc`](../hal/interface/hal/kbd.vinc), [`src/vcpu.c`](../src/vcpu.c) |
 | Sincronizzatore fra più VM e modelli di hardware | **da fare** — solo progettato (11/09/2026) | [`docs/proposta-sincronizzazione.md`](proposta-sincronizzazione.md) |
 | Linguaggio alto livello `vc` | **da fare** — solo progettato | [`docs/proposta-linguaggio-alto-livello.md`](proposta-linguaggio-alto-livello.md) |
@@ -2683,6 +2687,64 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `TESTA` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.41 §13 SI CHIUDE: `mutex_unlock` arma e CEDE (12/09/2026, terza parte)
+
+`ctest` **32/32**, e **nessun numero atteso si è mosso**. L'ultimo punto aperto
+di §13 era §13.7, e si chiude con una riga: dopo `request_preempt`,
+`mutex_unlock` chiama `task_yield`. La latenza dell'unlock smette di essere il
+**periodo del timer** e diventa la **lunghezza della sezione critica**.
+
+#### L'ordine non è negoziabile, e non è un dettaglio
+
+Si cede **prima** di `irq_restore`, cioè a `IE = 0`. `task_yield` passa da
+`hal_ctx_block`, che scrive `epc` ed `epsw` *fuori da una trap*, e
+`machine.vasm` dichiara da sempre che è sicuro solo perché chi lo chiama gira a
+interrupt chiusi: con `IE = 1`, fra la scrittura dei due CSR e la `reti` che li
+consuma un tick potrebbe arrivare e sovrascriverli — e l'indirizzo di ripresa
+sarebbe perso, cioè il task non tornerebbe mai.
+
+Ed è una `call`, non un salto: si riprende lì, e il regime del chiamante va
+ancora ristabilito. La `irq_save` subito dopo è la stessa mossa che `receive` fa
+al ritorno da `task_block` — si riprende con `IE = 1` (la epsw che
+`hal_ctx_block` costruisce) e la psw d'ingresso è ancora sullo stack.
+
+#### Il prezzo, misurato — e il marcatore dice una cosa inattesa
+
+Su `test_mutex`: **+641 istruzioni, +1379 cicli, il 22%**. Ma il marcatore conta
+**sette commutazioni prima e sette dopo**.
+
+La spiegazione è la parte interessante: il canale 0 registra i **cambi** di
+proprietario, e una cessione che non trova nessuno sopra di sé **rientra su se
+stessa** — `current` non cambia, quindi non compare — dopo aver pagato
+`ctx_save`, la scansione e `ctx_restore` per intero. Quelle sono le 641
+istruzioni. È il prezzo che avevo dichiarato scrivendo `task_yield` («non c'è un
+ramo *sp_solo*, perché averlo vorrebbe dire scandire prima di salvare»), qui
+misurato invece che previsto. Ed è anche una proprietà dello strumento da
+ricordare: **una cessione a vuoto è invisibile sul canale 0**, correttamente.
+
+> **Su quel test l'affare è cattivo, e va detto.** Il guadagno di latenza
+> misurato è **37 cicli** su una commutazione, contro un periodo del timer di
+> 500. Ma `test_mutex` esercita le *transizioni di stato* del ceiling, non il
+> caso in cui un task più prioritario resta fermo per un tick intero — e con un
+> tick di 500 cicli e una commutazione da ~460 quel sistema è già vicino alla
+> saturazione.
+>
+> La giustificazione non è il throughput medio: è che la latenza diventa
+> **deterministica**. Il costo si paga sempre e si conosce; l'attesa evitata era
+> variabile e limitata solo dal tick. È lo scambio che un kernel realtime fa per
+> definizione, ed è esattamente ciò che §13.7 argomenta.
+
+#### Cosa resta, e non è §13
+
+L'ottimizzazione: cedere **solo se serve**. Richiede una domanda non distruttiva
+allo scheduler — *c'è qualcuno sopra di me?* — che oggi non esiste, perché
+`scheduler` **sfila** il TCB che sceglie e quindi non è interrogabile.
+Costerebbe una scansione (≤96 cicli, il caso peggiore dichiarato in `tcb.vinc`)
+al posto di una commutazione (~460). È un'aggiunta al kernel, e va decisa a
+parte.
 
 ---
 
