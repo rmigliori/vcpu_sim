@@ -3,6 +3,13 @@
 
     python3 tools/traccia.py out/vasm/test_gestore.vx        # -> out/traccia.html
 
+Un programma guidato da un DEVICE non e' autosufficiente: senza il suo
+alimentatore resta a pollare un flag che nessuno alzera' e non termina mai. Le
+opzioni della macchina si passano dopo un --, e sono le stesse che vasm_check
+mette in ARGS (§3.37):
+
+    python3 tools/traccia.py out/vasm/test_mondo.vx -- --kbd "2000:a,6000:b"
+
 Nasce il 07/09/2026 per chiudere un debito che l'handoff portava da §3.29: senza
 uno strumento che dica chi gira e in quale intervallo, ogni numero prodotto dai
 test resta un'osservazione invece che una misura. I contatori di un test dicono
@@ -56,10 +63,11 @@ tools/traccia.template.html: si modifica quello per cambiare il disegno, e quest
 file non si tocca.
 """
 
-import argparse, bisect, collections, glob, json, os, re, subprocess, sys
+import argparse, bisect, collections, datetime, glob, json, os, re, subprocess, sys
 
 RADICE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 QUI    = os.path.dirname(os.path.abspath(__file__))
+TIMEOUT = 60      # secondi: un programma di questo progetto ne impiega meno di uno
 
 
 def sim():
@@ -198,7 +206,7 @@ def raccogli(vx, tmp):
     return fini, corpi, sorted((a, n) for n, a in G.items())
 
 
-def analizza(vx, tmp):
+def analizza(vx, tmp, argomenti=()):
     fini, corpi, glob_ = raccogli(vx, tmp)
     af, ac, ag = [a for a, _ in fini], [a for a, _, _ in corpi], [a for a, _ in glob_]
 
@@ -210,7 +218,17 @@ def analizza(vx, tmp):
         k = bisect.bisect_right(ag, pc) - 1
         return own, (fini[j][1] if j >= 0 else "?"), (glob_[k][1] if k >= 0 else "?")
 
-    trace = subprocess.run([sim(), "run", vx, "--trace"], capture_output=True, text=True).stdout
+    # Le opzioni della MACCHINA (--kbd, oggi) vanno passate qui dentro: un
+    # programma guidato da un device non e' autosufficiente, e senza il suo
+    # alimentatore non termina -- resta a pollare un flag che nessuno alzera'.
+    # Da cui il timeout, che trasforma una sospensione muta in una diagnosi.
+    try:
+        trace = subprocess.run([sim(), "run", vx, "--trace", *argomenti],
+                               capture_output=True, text=True, timeout=TIMEOUT).stdout
+    except subprocess.TimeoutExpired:
+        sys.exit(f"il programma non e' terminato in {TIMEOUT}s. Se dipende da un "
+                 f"device, il suo alimentatore va passato dopo un --:\n"
+                 f"    python3 tools/traccia.py {vx} -- --kbd \"2000:a,6000:b\"")
     ev, tick, cur = [], [], "boot"
     for line in trace.splitlines():
         if "timer trap" in line:
@@ -268,6 +286,11 @@ def main():
     ap.add_argument("programma", help="il .vx da tracciare (es. out/vasm/test_gestore.vx)")
     ap.add_argument("-o", "--out", help="la pagina da scrivere (default: out/traccia.html)")
     ap.add_argument("--json", help="scrive anche i dati grezzi qui")
+    ap.add_argument("argomenti", nargs="*", metavar="-- OPZIONI",
+                    help="dopo un --: opzioni per la MACCHINA, non per questo "
+                         "strumento (es. -- --kbd \"2000:a,6000:b\"). Servono ai "
+                         "programmi guidati da un device, che senza alimentatore "
+                         "non terminano")
     a = ap.parse_args()
 
     vx = a.programma
@@ -275,19 +298,28 @@ def main():
     tmp = os.path.dirname(os.path.abspath(uscita)) or "."
     os.makedirs(tmp, exist_ok=True)
 
-    dati = analizza(vx, tmp)
+    dati = analizza(vx, tmp, a.argomenti)
     if a.json:
         json.dump(dati, open(a.json, "w"))
 
+    # Lo stamp serve a distinguere la pagina appena scritta da quella che il
+    # browser tiene in cache su file://, e per quello va CONFRONTATO: stampato
+    # qui e scritto nell'occhiello della pagina. Leggerlo dal file (un grep) non
+    # prova niente -- dice cosa c'e' sul disco, che e' proprio la meta' che non
+    # era in dubbio. La prova e' che i due coincidano a schermo.
+    stamp = datetime.datetime.now().strftime("%d/%m %H:%M:%S")
     modello = open(os.path.join(QUI, "traccia.template.html")).read()
     pagina = (modello
               .replace("/*__DATI__*/{}", json.dumps(dati))
-              .replace("__PROGRAMMA__", os.path.basename(vx)))
+              .replace("__PROGRAMMA__", os.path.basename(vx))
+              .replace("__GENERATA__", stamp))
     open(uscita, "w").write(pagina)
 
     gran = sum(c for _, _, c in dati["own"])
     print(f"{uscita}: {len(dati['fasce'])} fasce, {len(dati['tick'])} tick, "
           f"{dati['fine']} cicli")
+    print(f"  la pagina deve dire «generata {stamp}»: se ne dice un'altra, "
+          f"il browser mostra una copia in cache (ctrl-shift-R)")
     per = collections.Counter()
     for o, l, c in dati["own"]:
         per[o] += c

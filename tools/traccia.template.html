@@ -223,7 +223,13 @@
 <div class="wrap">
 
   <header>
-    <div class="eyebrow">vcpu_sim · __PROGRAMMA__ · <span id="ntick"></span> tick</div>
+    <!-- La data di generazione non e' decorazione: questa pagina si apre da
+         file://, dove il browser puo' servire una copia in cache dopo che lo
+         strumento l'ha riscritta. Senza uno stamp visibile, "l'ho corretta" e
+         "la vedo corretta" non sono distinguibili a occhio -- ed e' costata una
+         diagnosi sbagliata il 12/09/2026. -->
+    <div class="eyebrow">vcpu_sim · __PROGRAMMA__ · <span id="ntick"></span> tick ·
+      generata __GENERATA__</div>
     <h1>Chi gira, e da quando a quando</h1>
     <div class="head-rule"></div>
     <p class="lede">La traccia ciclo per ciclo della simulazione completa: il gestore dei
@@ -283,7 +289,7 @@
           </tr></thead>
           <tbody></tbody>
         </table>
-        <p style="font-size:13px;color:var(--ink-2);margin-top:14px">
+        <p id="p-gest" hidden style="font-size:13px;color:var(--ink-2);margin-top:14px">
           Il gestore spende il <b id="q-gest"></b> del proprio tempo <em>fuori</em> dal
           corpo del task: il suo ciclo è quattro chiamate — <code>receive</code>,
           <code>buf_alloc</code>, <code>timeout_scaduto</code>, <code>send_s</code> — e il
@@ -328,19 +334,46 @@
 <script>
 const D = /*__DATI__*/{};
 
-const ORDINE = [
-  {k:"ISR",     n:"ISR",     p:"trap"},
-  {k:"gestore", n:"gestore", p:"prio 0"},
-  {k:"A",       n:"A",       p:"prio 1"},
-  {k:"idle",    n:"idle",    p:"prio 7"},
-  {k:"boot",    n:"boot",    p:"pre-tick"}
-];
 const N = new Intl.NumberFormat("it-IT");
 
-/* ---------- masthead ---------- */
 const own = {};
 for (const [o, l, c] of D.own) { (own[o] ||= {task:0, kernel:0})[l] += c; }
 const gran = D.own.reduce((s, r) => s + r[2], 0);
+const tot = o => own[o].task + own[o].kernel;
+
+/* ---------- I PROPRIETARI, DERIVATI DAI DATI (12/09/2026) ----------
+   Fino a oggi questo era un elenco SCRITTO A MANO -- ISR, gestore, A, idle,
+   boot -- e non filtrava solo la tabella del bilancio: costruiva anche le
+   CORSIE del diagramma e la legenda. Un task il cui nome non fosse li' dentro
+   spariva dalla pagina, mentre la riga `totale` continuava a contarlo: E in
+   test_mondo, B e C in test_coop. Un elenco scritto a mano e' una seconda
+   verita' da tenere allineata ai programmi, ed e' esattamente cio' che
+   traccia.py evita altrove riconoscendo i corpi per CONVENZIONE.
+
+   Adesso i proprietari li dicono i dati. I nomi noti tengono il loro colore e
+   il loro posto in scaletta (sono quelli per cui il foglio di stile ha una
+   variabile); gli altri arrivano in coda, per tempo decrescente, con un colore
+   di riserva -- letterale e non tematizzato, perche' un colore per nome
+   arbitrario non puo' stare nel CSS.                                        */
+const NOTI = ["ISR", "gestore", "A", "idle", "boot"];
+const RISERVA = ["88,155,140", "146,112,186", "196,112,140",
+                 "140,150,90", "110,130,160", "186,140,80"];
+
+let iRis = 0;
+const ORDINE = [
+  ...NOTI.filter(k => own[k]),
+  ...Object.keys(own).filter(k => !NOTI.includes(k))
+                     .sort((a, b) => tot(b) - tot(a))
+].map(k => ({
+  k, n: k,
+  c: NOTI.includes(k) ? `var(--c-${k})` : RISERVA[iRis++ % RISERVA.length],
+  // La priorita' NON e' nei dati (traccia.py deduce il proprietario dal pc, non
+  // legge i TCB), e scriverla a mano voleva dire il falso su ogni programma che
+  // non fosse test_gestore. Al suo posto una quota, che e' misurata.
+  p: (100 * tot(k) / gran).toFixed(1) + "%"
+}));
+
+/* ---------- masthead ---------- */
 const rtMap = Object.fromEntries(D.rt);
 const ctx = D.ctx.ctx_save + D.ctx.ctx_restore;
 const nsw = Math.round((rtMap["ctx_restore"] || 0) / 84);
@@ -388,7 +421,7 @@ document.getElementById("stats").innerHTML = [
 
 /* ---------- legenda ---------- */
 document.getElementById("legend").innerHTML =
-  ORDINE.map(o => `<span class="item" style="--c:var(--c-${o.k})">
+  ORDINE.map(o => `<span class="item" style="--c:${o.c}">
       <span class="swatch task"></span><span>${o.n}</span></span>`).join("") +
   `<span class="item" style="--c:var(--c-idle);margin-left:auto">
       <span class="swatch kernel"></span><span>tratteggio = kernel e librerie per conto suo</span></span>`;
@@ -416,7 +449,7 @@ function disegna(axisEl, lanesEl, b0, b1, tickLabel) {
         data-o="${o.n}" data-l="${f[3]}" data-b="${f[0]}" data-e="${f[1]}"
         data-r="${dett.replace(/"/g, "&quot;")}"></span>`;
     }).join("");
-    return `<div class="lane" style="--c:var(--c-${o.k})">
+    return `<div class="lane" style="--c:${o.c}">
         <div class="lane-key"><span class="n">${o.n}</span><span class="p">${o.p}</span></div>
         <div class="track">${rules}${bb}</div>
       </div>`;
@@ -462,12 +495,11 @@ document.getElementById("zseq").innerHTML =
 
 /* ---------- bilancio ---------- */
 const tb = document.querySelector("#tab-own tbody");
-tb.innerHTML = ORDINE
-  .filter(o => own[o.k])
-  .sort((a, b) => (own[b.k].task + own[b.k].kernel) - (own[a.k].task + own[a.k].kernel))
+tb.innerHTML = [...ORDINE]
+  .sort((a, b) => tot(b.k) - tot(a.k))
   .map(o => {
     const t = own[o.k].task, k = own[o.k].kernel, s = t + k;
-    return `<tr style="--c:var(--c-${o.k})">
+    return `<tr style="--c:${o.c}">
       <td class="name"><span class="dot"></span>${o.n}</td>
       <td class="num">${N.format(t)}</td>
       <td class="num">${N.format(k)}</td>
@@ -479,19 +511,33 @@ tb.innerHTML = ORDINE
     <td class="num">${N.format(D.own.filter(r => r[1] === "kernel").reduce((s, r) => s + r[2], 0))}</td>
     <td class="num">${N.format(gran)}</td><td class="num">100%</td></tr>`;
 
-document.getElementById("q-gest").textContent =
-  Math.round(100 * own.gestore.kernel / (own.gestore.task + own.gestore.kernel)) + "%";
+// Il paragrafo parla del GESTORE dei timeout: su un programma che non ce l'ha
+// non c'e' niente da dire, e fino al 12/09 questa riga lanciava una TypeError.
+// Stando DOPO il disegno uccideva in silenzio tutta la meta' inferiore della
+// pagina -- il grafico per routine, i context switch, le percentuali finali --
+// e il diagramma continuava a vedersi, che e' il modo in cui e' passata
+// inosservata su test_coop.
+if (own.gestore) {
+  document.getElementById("q-gest").textContent =
+    Math.round(100 * own.gestore.kernel / tot("gestore")) + "%";
+  document.getElementById("p-gest").hidden = false;
+}
 
+// loopI e' il ciclo dell'idle di test_gestore, tolto dalla classifica perche'
+// la dominerebbe e rimesso in fondo come riga a se'. Dove quell'etichetta non
+// esiste -- l'idle di test_mondo polla in ti_poll -- non c'e' nessuna riga da
+// aggiungere, e il filtro qui sopra non toglie niente.
 const rtVis = D.rt.filter(([n]) => n !== "loopI").slice(0, 11);
-const rtMax = rtVis[0][1];
+const rtMax = rtVis.length ? rtVis[0][1] : 1;
 document.getElementById("rt").innerHTML = rtVis.map(([n, c]) =>
   `<div class="rt-row"><span class="rn" title="${n}">${n}</span>
      <span class="rt-bar"><i style="width:${100 * c / rtMax}%"></i></span>
      <span class="rv">${N.format(c)}</span></div>`).join("") +
+  (rtMap["loopI"] === undefined ? "" :
   `<div class="rt-row" style="margin-top:6px;color:var(--ink-3)">
      <span class="rn">loopI (idle)</span>
      <span class="rt-bar"><i style="width:100%;opacity:.28"></i></span>
-     <span class="rv">${N.format(rtMap["loopI"])}</span></div>`;
+     <span class="rv">${N.format(rtMap["loopI"])}</span></div>`);
 
 document.getElementById("n-ctx").textContent = N.format(ctx);
 document.getElementById("n-tot").textContent = N.format(D.fine);
