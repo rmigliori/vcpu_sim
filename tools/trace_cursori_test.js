@@ -90,6 +90,29 @@ ok(PRE.every(e => ORDINE.some(o => o.k === e.corsia)),
 ok(new Set(PRE_CAT.map(c => PRE_COL[c])).size === PRE_CAT.length,
    "e due categorie non hanno lo stesso colore");
 
+print("--- una traccia per MARKER, non per categoria ---");
+// Oggi ogni categoria ha un marker solo, quindi sui dati veri non si
+// distinguerebbe. La regola si prova su dati sintetici, che e' l'unico modo di
+// vedere il caso che conta: PIU' marker sullo stesso canale devono dare PIU'
+// righe, o le relazioni fra punti diversi non si leggono in verticale.
+{
+  const finti = [
+    { corsia: "A", ch: 6, canale: "recv", marker: "uno",  c: 1 },
+    { corsia: "A", ch: 6, canale: "recv", marker: "due",  c: 2 },
+    { corsia: "A", ch: 6, canale: "recv", marker: "uno",  c: 3 },
+    { corsia: "B", ch: 6, canale: "recv", marker: "uno",  c: 4 },
+    { corsia: "A", ch: 5, canale: "pre",  marker: "tre",  c: 5 },
+  ];
+  const t = tracceDa(finti);
+  ok(t.length === 4, "due marker sullo stesso canale danno DUE righe (" + t.length + " in tutto)");
+  ok(t.find(x => x.corsia === "A" && x.marker === "uno").n === 2, "e ognuna conta le sue");
+  ok(t.filter(x => x.corsia === "A").length === 3, "le righe di una corsia sono le sue");
+  ok(t[0].ch <= t[t.length-1].ch, "ordinate per canale, quindi stabili fra due corse");
+  ok(JSON.stringify(tracceDa(finti)) === JSON.stringify(t), "e rifarlo da' lo stesso");
+}
+ok(TRACCE.every(t => ORDINE.some(o => o.k === t.corsia)),
+   "ogni traccia vera sta su una corsia che esiste (" + TRACCE.length + " tracce)");
+
 print("--- la finestra dello zoom ---");
 const dentro = ([a,z]) => a >= 0 && z <= D.fine && z > a;
 ok(dentro(limitaFinestra(0, D.fine)), "tutta la corsa e' una finestra valida");

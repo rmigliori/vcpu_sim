@@ -3033,26 +3033,47 @@ idle  ▓▓▓▓▓▓▓▓▓▓▓▓
 
 **Il colore dice che cosa, la corsia dice a chi.**
 
-#### E la corsia ha DUE RIGHE, che è la terza correzione dell'utente
+#### E ogni MARKER è una traccia: la terza correzione, e la più importante
 
-*«La cosa migliore è avere più righe per canale: riga dove dai le misure di
-durata, riga dove visualizzi i marker di evento.»* Ha ragione: un triangolo
-appoggiato **sopra** una fascia colorata si legge peggio di un triangolo su una
-striscia sua, e le due cose sono di **specie diversa** — una ha una durata,
-l'altra è un istante. Sovrapporle le rende entrambe meno leggibili.
+*«Più righe per canale: la riga della durata così com'è, e una riga per ogni
+marker di evento che appartiene a quel canale. Se su un canale ho 10 marker di
+evento avrò 10 righe. In questo modo è possibile stabilire le relazioni.»*
+
+È il modello dell'analizzatore di stati logici applicato fino in fondo, ed è
+giusto per una ragione che il caso di oggi non mostra: **le relazioni fra punti
+diversi si leggono in verticale fra le tracce**. Ammucchiati su una riga sola,
+dieci marker non lascerebbero distinguere né quale sia quale né in che ordine
+scattano — che è precisamente ciò che si sta guardando.
 
 ```
-ISR   ▓▓▓▓   ▓▓▓   ▓▓▓      <- le DURATE
-       ▼      ▼     ▼       <- gli ISTANTI
-A     ░░░░░   ░░░░
+ISR   ▓▓▓▓   ▓▓▓   ▓▓▓        <- le DURATE, invariate (le procedure sono in
+       ▼      ▼     ▼            sequenza per forza di cose)
+A     ░░░░░   ░░░░            <- una traccia per marker, sotto la sua corsia
         ▼       ▼
-idle  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓        <- una riga sola: non produce istanti
+idle  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓          <- nessun marker: nessuna traccia
 ```
 
-**La riga degli istanti c'è se quella corsia ne produce in tutta la corsa**, non
-solo in vista — altrimenti zoomando in una zona senza eventi la riga sparirebbe
-e il diagramma salterebbe sotto il puntatore. È il genere di dettaglio che si
-paga guardando, non leggendo.
+Le tracce si costruiscono da **ciò che la corsa ha prodotto davvero**, non da un
+elenco — un elenco scritto a mano è la seconda verità che questa pagina ha già
+pagato una volta — e sono ordinate per canale, così due corse dello stesso
+programma danno le stesse righe nello stesso ordine.
+
+**Ci sono se quel marker compare in tutta la corsa**, non solo in vista:
+altrimenti zoomando in una zona senza quell'evento la riga sparirebbe e il
+diagramma salterebbe sotto il puntatore.
+
+#### Provato con dieci marker, che oggi non esistono
+
+Ogni categoria ne ha **uno solo**, quindi sui dati veri la differenza fra «una
+riga per categoria» e «una per marker» non si vedrebbe: il caso che conta
+arriverà quando qualcuno ne dichiarerà il secondo, e allora sarà tardi per
+accorgersi che la regola era sbagliata.
+
+La regola è quindi estratta in `tracceDa()` e provata su **dati sintetici**: due
+marker sullo stesso canale danno due righe, ognuna conta le proprie, le righe di
+una corsia sono le sue, e l'ordine è stabile fra due esecuzioni. È la stessa
+divisione fra calcolo e colla di §3.49 — il calcolo si prova, la colla no — e
+qui serve a provare un caso che i dati di oggi non contengono.
 
 #### Chi lo produce si prende dalle FASCE, non da `current`
 

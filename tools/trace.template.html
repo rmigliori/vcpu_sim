@@ -168,10 +168,18 @@
      no -- e sovrapporle le rende entrambe meno leggibili. */
   .tracks { flex: 1; display: flex; flex-direction: column; }
   .track { position: relative; flex: 1; min-height: 34px; background: var(--sunk); }
-  .track.istanti {
-    min-height: 15px; flex: none;
-    background: var(--surface);
-    border-top: 1px solid var(--rule);
+  .track.istanti { min-height: 17px; background: var(--surface); }
+  /* Una riga di marker e' SOTTO la sua corsia e le appartiene: niente riga di
+     separazione sopra, e la chiave rientrata e piu' piccola, cosi' si legge
+     come una sotto-traccia invece che come un'altra corsia. */
+  .lane.sub { border-bottom: 0; }
+  .lane.sub + .lane { border-top: 1px solid var(--rule); }
+  .lane.sub .lane-key { padding-top: 2px; padding-bottom: 2px; }
+  .lane.sub .sub-n {
+    font-family: "IBM Plex Mono", monospace; font-size: 9.5px;
+    color: var(--ink-3); max-width: 64px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    border-left: 3px solid rgb(var(--ec)); padding-left: 4px;
   }
   .track .tickline { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--rule-2); }
 
@@ -607,6 +615,28 @@ const MARK_ETICHETTA = D.tick.length >= 2 ? "tick @ " : "turno @ ";
    pagina TACE invece di dire "0 eventi": ce ne sono, non sono misurati. */
 const PRE = (D.marche && D.marche.eventi) ? D.marche.eventi : [];
 const PRE_CAT = [...new Set(PRE.map(e => e.canale))];
+
+/* LE TRACCE: una per (corsia, canale, marker). Un marker e' una traccia, come
+   su un analizzatore di stati logici -- e' quello che permette di leggere le
+   RELAZIONI fra punti diversi guardando in verticale. Si costruiscono da cio'
+   che la corsa ha prodotto DAVVERO, non da un elenco: un elenco scritto a mano
+   e' la seconda verita' che questa pagina ha gia' pagato una volta. */
+function tracceDa(eventi) {
+  const visti = new Map();
+  for (const e of eventi) {
+    const k = e.corsia + "\u0000" + e.ch + "\u0000" + e.marker;
+    if (!visti.has(k))
+      visti.set(k, { corsia: e.corsia, ch: e.ch, canale: e.canale,
+                     marker: e.marker, n: 0 });
+    visti.get(k).n += 1;
+  }
+  // Ordinate per canale e poi per nome: due corse dello stesso programma devono
+  // dare le stesse righe nello stesso ordine, o il diagramma cambierebbe sotto
+  // le mani senza che sia cambiato niente.
+  return [...visti.values()].sort((a, b) =>
+    a.ch - b.ch || a.marker.localeCompare(b.marker));
+}
+const TRACCE = tracceDa(PRE);
 // I colori sono terne "r,g,b" perche' le corsie li usano come rgb(var(--ec)).
 const PRE_COL = Object.fromEntries(PRE_CAT.map((c, i) =>
   [c, ["28,100,112", "146,112,186", "196,112,140", "140,150,90"][i % 4]]));
@@ -670,7 +700,8 @@ function disegna(axisEl, lanesEl, b0, b1, tickLabel) {
   // ricezione sulla riga del task che riceve, la preemption su quella del
   // kernel che gira nell'ISR. La corsia la sceglie tools/trace.py -- qui non si
   // deduce niente, si posiziona.
-  const evDi = (k, a, z) => PRE.filter(e => e.corsia === k && e.c >= a && e.c <= z)
+  const evDi = (k, mk, a, z) =>
+    PRE.filter(e => e.corsia === k && e.marker === mk && e.c >= a && e.c <= z)
     .map(e => `<span class="ev" tabindex="0"
         style="left:${pc(e.c)}%;--ec:${PRE_COL[e.canale]}"
         data-c="${e.c}" data-chi="${e.chi}" data-succ="${e.succ}"
@@ -691,24 +722,28 @@ function disegna(axisEl, lanesEl, b0, b1, tickLabel) {
         data-o="${o.n}" data-l="${f[3]}" data-b="${f[0]}" data-e="${f[1]}"
         data-r="${dett.replace(/"/g, "&quot;")}"></span>`;
     }).join("");
-    // DUE RIGHE PER CORSIA, e non una: le DURATE sopra, gli ISTANTI sotto.
-    // Un triangolo appoggiato su una fascia colorata si legge peggio di un
-    // triangolo su una striscia sua, e le due cose sono di specie diversa --
-    // una ha una durata, l'altra no.
+    // UNA RIGA DI DURATE, E UNA RIGA PER OGNI MARKER che questa corsia produce.
     //
-    // La riga degli istanti c'e' se quella corsia ne produce IN TUTTA LA CORSA,
-    // non solo in vista: altrimenti zoomando in una zona senza eventi la riga
-    // sparirebbe e il diagramma salterebbe sotto il puntatore.
-    const haEventi = PRE.some(e => e.corsia === o.k);
-    const rigaEv = haEventi
-      ? `<div class="track istanti">${rules}${evDi(o.k, b0, b1)}</div>` : "";
+    // Non una riga per gli eventi tutti insieme: un marker e' una TRACCIA, come
+    // su un analizzatore di stati logici, e le relazioni fra due punti diversi
+    // si leggono IN VERTICALE fra le tracce. Ammucchiati su una riga sola, con
+    // dieci marker non si distinguerebbe piu' quale sia quale ne' in che ordine
+    // scattano -- che e' precisamente cio' che si sta guardando.
+    //
+    // Le righe ci sono se quella corsia produce quel marker IN TUTTA LA CORSA,
+    // non solo in vista: altrimenti zoomando in una zona senza quell'evento la
+    // riga sparirebbe e il diagramma salterebbe sotto il puntatore.
+    const righe = TRACCE.filter(t => t.corsia === o.k).map(t =>
+      `<div class="lane sub">
+         <div class="lane-key" title="${t.canale} · ${t.marker}">
+           <span class="sub-n" style="--ec:${PRE_COL[t.canale]}">${t.marker}</span>
+         </div>
+         <div class="track istanti">${rules}${evDi(o.k, t.marker, b0, b1)}</div>
+       </div>`).join("");
     return `<div class="lane" style="--c:${o.c}">
         <div class="lane-key"><span class="n">${o.n}</span><span class="p">${o.p}</span></div>
-        <div class="tracks">
-          <div class="track">${rules}${bb}</div>
-          ${rigaEv}
-        </div>
-      </div>`;
+        <div class="track">${rules}${bb}</div>
+      </div>${righe}`;
   });
 
   lanesEl.innerHTML = corsie.join("");
