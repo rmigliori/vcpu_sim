@@ -3110,6 +3110,31 @@ per assorbire (una libreria che non fa parte del programma). Le librerie
 restano silenziose, l'applicazione no — e un programma che non ha un sorgente
 d'applicazione, come `multi`, non pretende niente.
 
+#### E un terzo difetto, che l'utente ha visto con una domanda
+
+*«Ma hai aggiunto un marker di evento?»* — sì, e proprio per questo la pagina
+aveva cominciato a mentire.
+
+Il disegno degli eventi era stato scritto quando la preemption era **l'unico**
+evento possibile, e lo dava per scontato: il readout diceva `PREEMPTION` cablato
+nel codice, il riquadro contava «preemption» sommando tutto, la legenda diceva
+che la linea verticale *è* una preemption. Aggiunta `RECV`, una **ricezione di
+messaggio veniva disegnata ed etichettata come una preemption** — un'etichetta
+plausibile su un dato vero, cioè il difetto di famiglia di questo strumento, la
+sesta volta oggi.
+
+Generalizzato invece che rattoppato: **niente di cablato**. Categoria, marker e
+dato vengono dalla marca; il colore si assegna per categoria; il riquadro ha una
+casella **per categoria** invece di una somma che mescolerebbe cose diverse; la
+legenda le elenca con il loro colore.
+
+E quattro asserzioni nuove che lo tengono chiuso: che ogni evento porti la
+propria categoria e il proprio marker, che le categorie siano quelle che
+compaiono davvero, e che **due categorie non abbiano lo stesso colore**.
+
+Il rinominamento di `preemption` in `eventi` dentro `fraICursori` l'ha pescato
+il test dei cursori, che è esattamente quello che deve fare.
+
 #### Il prezzo, che finisce in un `EXPECT`
 
 `test_tmgr` strumentato: **2566 → 2548 → 2539 → 2532**, una volta per categoria

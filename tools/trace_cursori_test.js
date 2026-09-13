@@ -33,7 +33,7 @@ ok(NOTEVOLI.every(Number.isInteger), "sono tutti INTERI: un ciclo non e' frazion
 ok(NOTEVOLI.every((v,i,a) => i===0 || a[i-1] < v), "ordinati e senza doppioni");
 ok(NOTEVOLI[0] === 0 && NOTEVOLI[NOTEVOLI.length-1] === D.fine, "vanno da 0 a fine");
 ok(MARK.every(t => NOTEVOLI.includes(t)), "ogni tick e' un notevole");
-ok(PRE.every(e => NOTEVOLI.includes(e.c)), "ogni preemption e' un notevole");
+ok(PRE.every(e => NOTEVOLI.includes(e.c)), "ogni istante letto e' un notevole");
 ok(D.fasce.every(f => NOTEVOLI.includes(f[0])), "ogni bordo di fascia e' un notevole");
 
 print("--- l'aggancio ---");
@@ -55,7 +55,7 @@ const tutto = fraICursori(0, D.fine);
 ok(tutto.durata === D.fine, "da 0 a fine la durata e' tutta la corsa");
 const somma = tutto.proprietari.reduce((s,[,c]) => s+c, 0);
 ok(somma === D.fine, "i proprietari sommano ESATTAMENTE alla durata (" + somma + ")");
-ok(tutto.preemption === PRE.length, "conta tutte le preemption (" + PRE.length + ")");
+ok(tutto.eventi === PRE.length, "conta tutti gli istanti letti (" + PRE.length + ")");
 ok(fraICursori(D.fine, 0).durata === D.fine, "i cursori invertiti danno lo stesso");
 ok(fraICursori(100, 100).durata === 0, "due cursori sullo stesso punto: zero");
 // additivita': spezzare l'intervallo non crea ne' perde cicli
@@ -64,6 +64,17 @@ ok(fraICursori(0,m).durata + fraICursori(m,D.fine).durata === D.fine, "spezzando
 const s1 = fraICursori(0,m).proprietari.reduce((s,[,c])=>s+c,0);
 const s2 = fraICursori(m,D.fine).proprietari.reduce((s,[,c])=>s+c,0);
 ok(s1 + s2 === D.fine, "e tornano anche sommando i proprietari dei due pezzi");
+
+print("--- gli eventi non si confondono fra loro ---");
+// Fino al 13/09 il readout diceva "PREEMPTION" su qualunque evento: appena il
+// marcatore ne ha avuto un secondo, una ricezione veniva etichettata come una
+// preemption. Nome e colore devono venire dai DATI, uno per categoria.
+ok(PRE.every(e => e.canale && e.marker), "ogni evento porta la sua categoria e il suo marker");
+ok(PRE_CAT.length === new Set(PRE.map(e => e.canale)).size,
+   "le categorie di evento sono quelle che compaiono (" + PRE_CAT.join(", ") + ")");
+ok(PRE_CAT.every(c => PRE_COL[c]), "ognuna ha un colore");
+ok(new Set(PRE_CAT.map(c => PRE_COL[c])).size === PRE_CAT.length,
+   "e due categorie non hanno lo stesso colore");
 
 print("--- la finestra dello zoom ---");
 const dentro = ([a,z]) => a >= 0 && z <= D.fine && z > a;
