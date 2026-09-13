@@ -1,6 +1,6 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **13 settembre 2026** (§3.42 il primo ramo si fonde e la
+> Ultimo aggiornamento: **13 settembre 2026, sera** (§3.42 il primo ramo si fonde e la
 > **lingua è decisa**; §3.43 **il rename è FATTO**, provato byte per byte;
 > §3.44 **l'assemblaggio condizionale**, `.ifdef` e `-D`; §3.45 **il nucleo
 > fattuale è cominciato**, e ha trovato due errori; §3.46 **il marcatore si
@@ -39,10 +39,88 @@
 > | §3.54 | **i nomi si registrano**: `A` e `idle` invece di `? (56)` |
 > | §3.55 | **tre cursori**, un gesto per ciascuno, e le due metà più il totale |
 >
+> **DOMANI SI RIPARTE DAL CLOCK**, cioè dal leggere i cicli anche come tempo:
+> il riquadro qui sotto ha il ragionamento per intero e la sola cosa che manca
+> è confermare il numero (proposto: 100 MHz).
+>
 > Il risultato in una riga: esistono due numeri realtime che ieri non c'erano —
 > **18 scansioni dello scheduler** (min 51, max 177, **jitter 126**) e **11
 > preemption** con il tempo fuori CPU (909 e 2093 alternati) — e la catena che
 > li produce è provata da capo a fondo.
+>
+>
+> ### ▶▶ DA DOVE SI RIPARTE: IL CLOCK, cioè i cicli letti anche come TEMPO
+>
+> Discusso il 13/09 a fine giornata e **non ancora fatto**. Qui c'è tutto quello
+> che serve per non rifare il ragionamento.
+>
+> **L'idea è dell'utente**: mostrare i cicli anche come tempo. La sua prima
+> proposta era mettere la frequenza in `marks.conf`, e l'ho contestata con un
+> conto:
+>
+> | | |
+> |---|---|
+> | legge `marks.conf` | `marks.py`, e `trace.py` solo se il programma ha tag |
+> | **mostra dei cicli** | `trace.py`, `trace.template.html`, `marks.py`, **`scheduler_facts.py`**, e il nucleo fattuale generato |
+>
+> Nel catalogo, il **nucleo fattuale comincerebbe a dipendere dal catalogo del
+> marcatore** per un numero che col marcatore non c'entra. E oggi un programma
+> senza tag quel file non lo apre affatto.
+>
+> **Dove va invece: nella MACCHINA.** La frequenza è la metà mancante del modello
+> di timing, che sta in `include/vcpu.h` accanto a `CYC_SCALAR_ALU` e
+> `VEC_LANES`. Dichiarata lì, **viaggia nella registrazione** come già fanno i
+> canali riservati:
+>
+> ```
+> # riservato 0 esecuzione
+> # frequenza 100000000
+> ```
+>
+> È il modello usato già da tre posti: chi produce dichiara, chi legge legge, e
+> nessuno tiene una seconda copia. Più un `--mhz` sugli strumenti per rileggere
+> la **stessa** registrazione a un'altra frequenza — domanda vera per dicembre.
+>
+> **QUALE FREQUENZA: 100 MHz**, proposta e non ancora confermata dall'utente.
+> Il modello di timing dice che macchina è: `VEC_LANES 1` con startup 6, cioè un
+> `vadd` su 64 elementi costa 70 cicli — **non una SIMD larga, una pipeline
+> vettoriale alla Cray**, un elemento per ciclo. Con 1 MiB on-chip e nessuna
+> cache: core embedded single-issue in-order con coprocessore vettoriale, del
+> tipo che sta in FPGA o in un ASIC rad-hard.
+>
+> | | |
+> |---|---|
+> | LEON3 rad-hard (il cavallo da lavoro ESA) | 50–100 MHz |
+> | **GR712RC** (LEON3-FT doppio, molto volato) | **100 MHz** |
+> | GR740 (LEON4-FT quad, NGMP) | 250 MHz |
+> | soft core / coprocessore in fabric | 50–200 MHz |
+>
+> 100 MHz perché è **letteralmente il GR712RC**, cioè il numero più
+> rappresentativo della famiglia — quindi il tempo letto è l'ordine di grandezza
+> di un sistema vero e non una comodità. E perché **un ciclo è 10 ns**, quindi
+> cicli → µs è una divisione per cento, leggibile a colpo d'occhio.
+>
+> > **L'AVVERTIMENTO, CHE CONTA PIÙ DELLA COLLOCAZIONE.** I cicli di questo
+> > progetto **non sono una misura, sono l'uscita di un modello**: li decide
+> > `vcpu.c`, e non c'è un sistema di memoria — niente cache miss, niente
+> > contesa DMA, niente conflitti di banco. Moltiplicarli per una frequenza dà
+> > un tempo che **sembra più reale dei cicli da cui viene**: «118 cicli» si
+> > legge come un numero di modello, «1,18 µs» si legge come una misura.
+> >
+> > Da cui due vincoli nel disegno: **mai il tempo da solo** — sempre accanto ai
+> > cicli, che restano la cosa misurata (`Δ 13.430 cicli · 134,3 µs`) — e **la
+> > frequenza sempre visibile** accanto alla conversione (`@ 100 MHz`), così si
+> > legge come un'ipotesi e non come un fatto.
+>
+> **E una cosa che salta fuori appena il tempo è a schermo**, da scrivere in
+> `scheduler-facts.md`: a 100 MHz il periodo del tick nei test è **40 µs**
+> (4000 cicli), cioè 25–250 volte più veloce di un tick realtime vero (1–10 ms).
+> È una compressione **deliberata** — i test devono finire in fretta — ma finché
+> i numeri erano cicli nessuno ci faceva caso, e col tempo a schermo qualcuno
+> leggerà «il nostro tick è 40 µs».
+>
+> A 100 MHz i numeri di oggi diventano: scansione dello scheduler **0,5–1,8 µs**,
+> fuori CPU dopo una preemption **9–21 µs**, `test_tmgr` intero **497 µs**.
 >
 > **Da guardare**, se si vuole vedere il sistema invece che leggerlo:
 > `out/trace-tmgr-marks.html` (il marcatore del kernel e le preemption) e
@@ -6800,7 +6878,38 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 > ottenuto è il caso limite del difetto qui sopra. Al suo posto c'è la formula
 > per strumentare il kernel, che è ciò che quel passo serviva ad abilitare.
 
-**IL PROSSIMO PASSO — scrivere il primo dei quattro documenti (il didattico,
+**IL PROSSIMO PASSO — il clock: i cicli letti anche come TEMPO:**
+```
+Leggi docs/stato-lavori.md, il riquadro «DA DOVE SI RIPARTE: IL CLOCK».
+C'e' tutto il ragionamento del 13/09, e non va rifatto.
+
+DECISO: la frequenza sta nella MACCHINA (include/vcpu.h, accanto a
+CYC_SCALAR_ALU e VEC_LANES), non in marks.conf -- li' il nucleo fattuale
+comincerebbe a dipendere dal catalogo del marcatore per un numero che col
+marcatore non c'entra. Viaggia nella registrazione come i canali
+riservati ("# frequenza 100000000"), piu' un --mhz sugli strumenti per
+rileggere la STESSA registrazione a un'altra frequenza.
+
+DA CONFERMARE CON L'UTENTE: il numero. Proposto 100 MHz, che e' il
+GR712RC -- il modello di timing dice che questa e' una pipeline
+vettoriale a UNA corsia, non una SIMD larga, quindi la famiglia e' quella
+dei core embedded rad-hard o in FPGA (50-250 MHz). A 100 MHz un ciclo e'
+10 ns e la lettura e' immediata.
+
+DUE VINCOLI NEL DISEGNO, e sono il punto: MAI IL TEMPO DA SOLO (sempre
+accanto ai cicli, che restano la cosa misurata) e LA FREQUENZA SEMPRE
+VISIBILE accanto alla conversione. I cicli qui sono l'uscita di un
+modello, non una misura -- non c'e' sistema di memoria -- e un tempo
+sembra piu' reale dei cicli da cui viene.
+
+E in docs/scheduler-facts.md va scritto che il tick dei test e' COMPRESSO
+apposta: a 100 MHz sono 40 us, contro gli 1-10 ms di un tick vero.
+
+Alla fine ctest 39/39 e le impronte invariate: e' tutto lettura, non
+tocca il bersaglio.
+```
+
+**Poi: scrivere il primo dei quattro documenti (il didattico,
 che e' la sorgente degli altri tre):**
 ```
 Leggi docs/stato-lavori.md, il riquadro «I QUATTRO DOCUMENTI SULLO
@@ -6846,11 +6955,11 @@ canale viene sporcato -- in `scheduler` succede, e si ricarica in r7.
 Guarda quali registri sono vivi PRIMA di scegliere, o si corrompe un
 valore di ritorno.
 
-OGNI TAG SI PAGA IN UN EXPECT DICHIARATO. Il primo e' costato 18
-istruzioni su test_tmgr e ha spostato tmgr_marks da 2566 a 2548. Il numero
-nuovo va misurato e scritto nel vasm_check, non stimato.
+OGNI TAG SI PAGA IN UN EXPECT DICHIARATO. tmgr_marks si e' gia' mosso
+quattro volte -- 2566 pulito, poi 2548, 2539, 2532, 2519 a ogni aggiunta.
+Il numero nuovo va MISURATO e scritto nel vasm_check, non stimato.
 
-Alla fine: ctest 35/35 (o piu'), e tools/fingerprint.sh con le impronte dei
+Alla fine: ctest 39/39 (o piu'), e tools/fingerprint.sh con le impronte dei
 programmi PULITI INVARIATE -- e' quella la prova che .ifdef si compila via.
 I programmi strumentati si muovono, ed e' il punto. Si controlla l'EXIT
 CODE del build, non il suo log (§3.43).
