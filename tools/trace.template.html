@@ -163,7 +163,16 @@
     letter-spacing: .06em; color: var(--ink-3); text-transform: uppercase;
   }
 
+  /* Una corsia puo' avere PIU' RIGHE: le durate e, sotto, gli istanti che
+     quella corsia produce. Sono di specie diversa -- una ha una durata, l'altra
+     no -- e sovrapporle le rende entrambe meno leggibili. */
+  .tracks { flex: 1; display: flex; flex-direction: column; }
   .track { position: relative; flex: 1; min-height: 34px; background: var(--sunk); }
+  .track.istanti {
+    min-height: 15px; flex: none;
+    background: var(--surface);
+    border-top: 1px solid var(--rule);
+  }
   .track .tickline { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--rule-2); }
 
   /* UN EVENTO STA SULLA CORSIA DI CHI LO PRODUCE, e li' soltanto.
@@ -682,9 +691,23 @@ function disegna(axisEl, lanesEl, b0, b1, tickLabel) {
         data-o="${o.n}" data-l="${f[3]}" data-b="${f[0]}" data-e="${f[1]}"
         data-r="${dett.replace(/"/g, "&quot;")}"></span>`;
     }).join("");
+    // DUE RIGHE PER CORSIA, e non una: le DURATE sopra, gli ISTANTI sotto.
+    // Un triangolo appoggiato su una fascia colorata si legge peggio di un
+    // triangolo su una striscia sua, e le due cose sono di specie diversa --
+    // una ha una durata, l'altra no.
+    //
+    // La riga degli istanti c'e' se quella corsia ne produce IN TUTTA LA CORSA,
+    // non solo in vista: altrimenti zoomando in una zona senza eventi la riga
+    // sparirebbe e il diagramma salterebbe sotto il puntatore.
+    const haEventi = PRE.some(e => e.corsia === o.k);
+    const rigaEv = haEventi
+      ? `<div class="track istanti">${rules}${evDi(o.k, b0, b1)}</div>` : "";
     return `<div class="lane" style="--c:${o.c}">
         <div class="lane-key"><span class="n">${o.n}</span><span class="p">${o.p}</span></div>
-        <div class="track">${rules}${bb}${evDi(o.k, b0, b1)}</div>
+        <div class="tracks">
+          <div class="track">${rules}${bb}</div>
+          ${rigaEv}
+        </div>
       </div>`;
   });
 

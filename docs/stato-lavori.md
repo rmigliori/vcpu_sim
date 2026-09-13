@@ -3033,6 +3033,27 @@ idle  ▓▓▓▓▓▓▓▓▓▓▓▓
 
 **Il colore dice che cosa, la corsia dice a chi.**
 
+#### E la corsia ha DUE RIGHE, che è la terza correzione dell'utente
+
+*«La cosa migliore è avere più righe per canale: riga dove dai le misure di
+durata, riga dove visualizzi i marker di evento.»* Ha ragione: un triangolo
+appoggiato **sopra** una fascia colorata si legge peggio di un triangolo su una
+striscia sua, e le due cose sono di **specie diversa** — una ha una durata,
+l'altra è un istante. Sovrapporle le rende entrambe meno leggibili.
+
+```
+ISR   ▓▓▓▓   ▓▓▓   ▓▓▓      <- le DURATE
+       ▼      ▼     ▼       <- gli ISTANTI
+A     ░░░░░   ░░░░
+        ▼       ▼
+idle  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓        <- una riga sola: non produce istanti
+```
+
+**La riga degli istanti c'è se quella corsia ne produce in tutta la corsa**, non
+solo in vista — altrimenti zoomando in una zona senza eventi la riga sparirebbe
+e il diagramma salterebbe sotto il puntatore. È il genere di dettaglio che si
+paga guardando, non leggendo.
+
 #### Chi lo produce si prende dalle FASCE, non da `current`
 
 Sembrerebbe naturale usare `current`, che la marca porta già. Non va: `current`

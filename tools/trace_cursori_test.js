@@ -79,6 +79,14 @@ ok(PRE.every(e => e.frase && e.frase.length), "ogni evento porta la frase del su
 ok(PRE.every(e => e.corsia), "ogni evento sa su quale corsia sta");
 ok(PRE.every(e => ORDINE.some(o => o.k === e.corsia)),
    "e quella corsia esiste davvero fra quelle disegnate");
+// La riga degli istanti c'e' se la corsia ne produce in TUTTA la corsa, non
+// solo in vista: altrimenti zoomando il diagramma salterebbe sotto il puntatore.
+{
+  const conEventi = [...new Set(PRE.map(e => e.corsia))];
+  ok(conEventi.every(k => ORDINE.some(o => o.k === k)),
+     "le corsie che avranno una riga di istanti sono " +
+     (conEventi.length ? conEventi.join(", ") : "(nessuna)"));
+}
 ok(new Set(PRE_CAT.map(c => PRE_COL[c])).size === PRE_CAT.length,
    "e due categorie non hanno lo stesso colore");
 
