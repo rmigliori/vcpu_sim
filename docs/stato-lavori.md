@@ -21,7 +21,7 @@
 > `ctest` **39/39** (erano 32). Il **13/09** ha chiuso al mattino le tre cose
 > rimaste aperte apposta — ha **fuso** il primo ramo del progetto, ha **deciso
 > la lingua** (§3.42), ha **fatto il rename** (§3.43), otto commit
-> `5b72bd1`→`24dca22` — e poi, in fila, i **nove pezzi** che portano il
+> `5b72bd1`→`24dca22` — e poi, in fila, i **dieci pezzi** che portano il
 > marcatore dall'idea al numero, e la pagina da documento a strumento:
 >
 > | | |
@@ -35,6 +35,7 @@
 > | §3.50 | **lo zoom**: rotella, trascinamento, e la finestra è uno stato solo |
 > | §3.51 | **il porto dati**: una marca che si porta dietro un valore del programma |
 > | §3.52 | **`owner`**: il rapporto fra la marca e `current` lo dichiara il canale |
+> | §3.53 | **un evento sta sulla riga del suo canale**, e non attraversa più tutto |
 >
 > Il risultato in una riga: esistono due numeri realtime che ieri non c'erano —
 > **18 scansioni dello scheduler** (min 51, max 177, **jitter 126**) e **11
@@ -2997,6 +2998,44 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.53 UN EVENTO STA SULLA RIGA DEL SUO CANALE (13/09/2026, undicesima parte)
+
+L'utente: *«il marker di evento deve essere visibile solo nella riga del canale
+che lo ha prodotto»*. Ha ragione, e la mia scelta di prima era giusta **finché
+gli eventi erano uno**.
+
+Avevo dato alla preemption una linea verticale che attraversa tutte le corsie,
+con l'argomento che è un istante del *sistema* e non di una corsia. Regge con
+una categoria. Con tre — preemption, ricezione, e l'ISR che arriverà — il
+diagramma diventa un pettine di linee colorate in cui **non si distingue più
+quale sia quale** senza passarci sopra una per una. Sedici linee × cinque
+corsie facevano ottanta tratti dipinti sopra i dati.
+
+Adesso **il canale è la riga**, come su un analizzatore di stati logici: sotto
+le corsie dei proprietari ce n'è una per categoria di evento, e ogni marca sta
+solo sulla propria. Si legge per riga invece che per indovinello, e la chiave
+dice quante ne sono visibili su quante — `11/11` — così zoomando sai se ne stai
+perdendo fuori campo.
+
+#### Restano nel diagramma principale, e non è indifferente
+
+Erano due i posti possibili: la sezione **Il marcatore**, dove già vivono le
+corsie delle finestre, oppure qui sotto le corsie dei proprietari.
+
+Qui, per due ragioni concrete. La **correlazione** che la linea verticale
+serviva a dare si fa lo stesso — stesso asse, stessa ascissa, basta guardare
+sopra — senza dipingere niente sopra i dati. E soprattutto stando in questo
+diagramma **zoomano e si misurano con i cursori** come tutto il resto: nella
+sezione del marcatore sarebbero disegnate una volta a tutto raggio, e avrebbero
+perso lo strumento costruito in §3.49 e §3.50.
+
+Una corsia di evento è anche **più bassa** delle altre: un istante non ha
+bisogno dell'altezza che serve a mostrare una durata.
+
+`ctest` **39/39**, impronte invariate — è tutto disegno, non tocca il bersaglio.
 
 ---
 

@@ -166,26 +166,21 @@
   .track { position: relative; flex: 1; min-height: 34px; background: var(--sunk); }
   .track .tickline { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--rule-2); }
 
-  /* La PREEMPTION. Attraversa tutte le corsie perche' e' un istante del
-     SISTEMA, non di una corsia: leggendola in verticale si vede in un colpo
-     chi e' stato tagliato, che l'ISR ha preso la macchina, e chi ha avuto la
-     CPU dopo -- che e' la correlazione per cui il segno esiste.
-
-     Non un colore e non un tratteggio: quelli dicono gia' altro (pieno = codice
-     del task, tratteggio = kernel per suo conto). Questo non e' una fascia, e'
-     un BORDO, e va marcato come tale. */
-  .track .preline {
-    position: absolute; top: 0; bottom: 0; width: 0;
-    border-left: 1.5px solid var(--accent); opacity: .85;
+  /* UN EVENTO STA SULLA RIGA DEL SUO CANALE, e solo li'.
+     Non e' una fascia -- non ha durata -- quindi un tratto con la sua punta, non
+     una barra. La corsia e' piu' bassa delle altre: un istante non ha bisogno
+     dell'altezza che serve a mostrare una durata. */
+  .lane-ev .track { min-height: 20px; background: transparent; }
+  .track .ev {
+    position: absolute; top: 3px; bottom: 3px; width: 0;
+    border-left: 1.5px solid rgb(var(--ec));
   }
-  .track .preline:hover { opacity: 1; border-left-width: 3px; }
-  /* Il triangolo sta sull'asse, una volta sola: ripeterlo su ogni corsia
-     farebbe una colonna di frecce invece di una linea. */
-  .axis .pre {
-    position: absolute; top: 2px; width: 9px; height: 9px;
-    margin-left: -4.5px; background: var(--accent);
+  .track .ev::after {
+    content: ""; position: absolute; left: -3.5px; top: 0;
+    width: 9px; height: 7px; background: rgb(var(--ec));
     clip-path: polygon(50% 100%, 0 0, 100% 0);
   }
+  .track .ev:hover, .track .ev:focus-visible { border-left-width: 3px; }
 
   .band { position: absolute; top: 6px; bottom: 6px; border-radius: 1px; min-width: 1px; }
   .band.task   { background: rgb(var(--c)); }
@@ -603,9 +598,9 @@ const MARK_ETICHETTA = D.tick.length >= 2 ? "tick @ " : "turno @ ";
    pagina TACE invece di dire "0 eventi": ce ne sono, non sono misurati. */
 const PRE = (D.marche && D.marche.eventi) ? D.marche.eventi : [];
 const PRE_CAT = [...new Set(PRE.map(e => e.canale))];
+// I colori sono terne "r,g,b" perche' le corsie li usano come rgb(var(--ec)).
 const PRE_COL = Object.fromEntries(PRE_CAT.map((c, i) =>
-  [c, i === 0 ? "var(--accent)" : ["146,112,186", "196,112,140", "140,150,90"][(i - 1) % 3]
-        .replace(/^(.*)$/, "rgb($1)")]));
+  [c, ["28,100,112", "146,112,186", "196,112,140", "140,150,90"][i % 4]]));
 
 // Senza tick la pagina racconta un'altra storia, e i titoli scritti per un
 // sistema preemptivo direbbero il falso.
@@ -637,10 +632,11 @@ document.getElementById("legend").innerHTML =
   `<span class="item" style="--c:var(--c-idle);margin-left:auto">
       <span class="swatch kernel"></span><span>tratteggio = kernel e librerie per conto suo</span></span>` +
   (PRE.length ? `<span class="item" style="width:100%;margin-top:2px">
-      <span>linee verticali = <b>istanti letti</b>, non dedotti. Si leggono in
-      verticale: sopra chi girava, sotto chi ha la CPU dopo.</span>` +
+      <span>le corsie in fondo sono gli <b>istanti letti</b>, non dedotti: una per
+      canale, e ogni evento sta solo sulla sua. Guarda sopra, alla stessa
+      ascissa, per vedere chi girava e chi ha preso la CPU.</span>` +
       PRE_CAT.map(c => `<span class="item" style="margin-left:14px">
-         <span class="swatch" style="background:${PRE_COL[c]};width:3px"></span>
+         <span class="swatch" style="background:rgb(${PRE_COL[c]});width:3px"></span>
          <span>${c}</span></span>`).join("") + `</span>` : "");
 
 /* ---------- diagramma ---------- */
@@ -655,24 +651,15 @@ function disegna(axisEl, lanesEl, b0, b1, tickLabel) {
     .map((t, i) => [t, i])
     .filter(([t]) => t >= b0 && t <= b1)
     .map(([t, i]) => `<span class="t" style="left:${pc(t)}%">${tickLabel(t, i)}</span>`)
-    .join("")
-    + PRE.filter(e => e.c >= b0 && e.c <= b1)
-         .map(e => `<span class="pre" style="left:${pc(e.c)}%;background:${PRE_COL[e.canale]}"
-              title="${e.canale} @${e.c}"></span>`).join("");
+    .join("");
 
-  const prerules = PRE.filter(e => e.c > b0 && e.c < b1).map(e =>
-    `<span class="preline" style="left:${pc(e.c)}%;border-color:${PRE_COL[e.canale]}"
-       data-c="${e.c}" data-chi="${e.chi}" data-succ="${e.succ}"
-       data-cat="${e.canale}" data-mk="${e.marker}"
-       data-fr="${(e.frase || "").replace(/"/g, "&quot;")}"
-       data-fuori="${e.fuori === null ? "" : e.fuori}"
-       data-dato="${e.dato || ""}"></span>`).join("");
+  const rules = MARK.filter(t => t > b0 && t < b1)
+    .map(t => `<span class="tickline" style="left:${pc(t)}%"></span>`).join("");
 
-  lanesEl.innerHTML = ORDINE.map(o => {
+  // --- le corsie dei PROPRIETARI: chi possedeva la CPU ---
+  const corsie = ORDINE.map(o => {
     const bande = D.fasce.filter(f => f[2] === o.k && f[1] > b0 && f[0] < b1);
     if (!bande.length) return "";
-    const rules = MARK.filter(t => t > b0 && t < b1)
-      .map(t => `<span class="tickline" style="left:${pc(t)}%"></span>`).join("") + prerules;
     const bb = bande.map(f => {
       const a = Math.max(f[0], b0), z = Math.min(f[1], b1);
       const dett = f[4].map(([r, c]) => `${r} ${c}`).join(" · ");
@@ -685,7 +672,38 @@ function disegna(axisEl, lanesEl, b0, b1, tickLabel) {
         <div class="lane-key"><span class="n">${o.n}</span><span class="p">${o.p}</span></div>
         <div class="track">${rules}${bb}</div>
       </div>`;
-  }).join("");
+  });
+
+  /* --- le corsie degli EVENTI: UNA PER CANALE, e l'evento sta solo sulla sua.
+     Fino al 13/09/2026 ogni evento era una linea verticale che attraversava
+     TUTTE le corsie. Si difendeva finche' l'unico evento era la preemption --
+     un istante del sistema -- ma con tre categorie il diagramma diventa un
+     pettine di colori in cui non si distingue piu' quale linea e' quale senza
+     passarci sopra. Il canale E' la riga, come su un analizzatore di stati
+     logici, e cosi' la si legge per riga invece che per indovinello.
+
+     Restano SOTTO le corsie dei proprietari e sullo stesso asse, quindi la
+     lettura in verticale -- chi ha perso la CPU, chi l'ha presa -- si fa lo
+     stesso, a occhio, senza dipingere niente sopra i dati. E stando in questo
+     diagramma zoomano e si misurano con i cursori come tutto il resto. */
+  const corsieEv = PRE_CAT.map(cat => {
+    const ee = PRE.filter(e => e.canale === cat && e.c >= b0 && e.c <= b1);
+    const mm = ee.map(e => `<span class="ev" tabindex="0"
+        style="left:${pc(e.c)}%;--ec:${PRE_COL[cat]}"
+        data-c="${e.c}" data-chi="${e.chi}" data-succ="${e.succ}"
+        data-cat="${e.canale}" data-mk="${e.marker}"
+        data-fr="${(e.frase || "").replace(/"/g, "&quot;")}"
+        data-fuori="${e.fuori === null ? "" : e.fuori}"
+        data-dato="${e.dato || ""}"></span>`).join("");
+    const tot = PRE.filter(e => e.canale === cat).length;
+    return `<div class="lane lane-ev">
+        <div class="lane-key" title="${cat}"><span class="n">${cat.split(" ")[0]}</span>
+          <span class="p">${ee.length}/${tot}</span></div>
+        <div class="track">${rules}${mm}</div>
+      </div>`;
+  });
+
+  lanesEl.innerHTML = corsie.join("") + corsieEv.join("");
 }
 
 disegna(document.getElementById("axis"), document.getElementById("lanes"),
@@ -813,7 +831,7 @@ function mostra(el) {
 function mostraPre(el) {
   const d = el.dataset;
   readout.innerHTML =
-    `<span style="color:${PRE_COL[d.cat] || "var(--accent)"}">` +
+    `<span style="color:rgb(${PRE_COL[d.cat] || "28,100,112"})">` +
       `<b>${(d.cat || "").toUpperCase()}</b> @${N.format(d.c)}</span>` +
     (d.mk ? `<span>${d.mk}</span>` : "") +
     // La frase la sceglie il CANALE, non questa riga: per un `owner task`
@@ -826,10 +844,11 @@ function mostraPre(el) {
     (d.dato ? `<span><b>${d.dato}</b></span>` : "");
 }
 document.addEventListener("mouseover", e => {
-  const p = e.target.closest(".preline"); if (p) { mostraPre(p); return; }
+  const p = e.target.closest(".ev"); if (p) { mostraPre(p); return; }
   const b = e.target.closest(".band"); if (b) mostra(b);
 });
 document.addEventListener("focusin", e => {
+  const p = e.target.closest(".ev"); if (p) { mostraPre(p); return; }
   const b = e.target.closest(".band"); if (b) mostra(b);
 });
 
