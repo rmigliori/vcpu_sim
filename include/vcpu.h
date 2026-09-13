@@ -143,6 +143,48 @@ typedef struct
 // ---------------------------------------------------------------------------
 #define MARKD_BASE    (MARK_BASE + MARK_CHANNELS * 4)
 
+// ---------------------------------------------------------------------------
+//  IL PORTO DEI NOMI: dare un nome ai VALORI di un canale, a runtime.
+//
+//  Il canale 0 porta indirizzi di TCB, e un indirizzo non ha un nome finche'
+//  qualcuno non glielo da'. Le due strade scartate, e perche':
+//
+//    .global sui TCB   il nome lo darebbe la tabella dei simboli, che esiste
+//                      solo se la toolchain la pubblica e il tuo strumento sa
+//                      leggerla. Su un bersaglio vero con una toolchain
+//                      incompleta puo' non esserci.
+//    un campo nel TCB  dentro .ifdef, TCB.size varrebbe 24 in una
+//                      configurazione e 28 nell'altra, e un oggetto assemblato
+//                      in una e linkato con l'altra leggerebbe i campi agli
+//                      offset sbagliati SENZA CHE IL LINKER SE NE ACCORGA.
+//                      Fuori da .ifdef, ogni programma con task paga i byte
+//                      anche quando non si strumenta.
+//
+//  Qui invece il nome si REGISTRA, come fa SystemView: una scrittura, una volta
+//  sola, dentro .ifdef MARKS. Nella build pulita non esiste, quindi non costa
+//  un byte e non muove un'impronta.
+//
+//      li  r1, MARKN_EXEC
+//      li  r2, N_EXEC_A        ; l'id, dal catalogo
+//      sw  r2, 0(r1)           ; "chiunque io sia adesso, mi chiamo A"
+//
+//  QUALE valore si sta nominando, e sono due regole sole:
+//    canale 0   il valore e' `current`, che la macchina ha gia'
+//    gli altri  il valore dev'essere ARMATO sul porto dati, e se non lo e' si
+//               dice: nominare un valore che non si e' detto quale sia e'
+//               un errore, non un caso da indovinare.
+// ---------------------------------------------------------------------------
+#define MARKN_BASE    (MARKD_BASE + MARK_CHANNELS * 4)
+#define MARK_NAMES_MAX 64
+
+// Una registrazione: "sul canale C, il valore V si chiama <id>".
+typedef struct
+{
+  int      canale;
+  int32_t  valore;
+  int32_t  id;
+} MarcaNome;
+
 // Un evento: "al ciclo N il canale C prende il valore V, mentre girava T".
 //
 // UN SOLO FORMATO per tutto, ed e' il motivo per cui non ci sono due tipi di
@@ -425,6 +467,12 @@ typedef struct
   // dov'e', il catalogo lo dichiara, e questo lo controlla. Non e' la stessa
   // cosa di PSW_IE: IE = 0 vale anche in una sezione critica di task.
   int32_t  trap_depth;
+
+  // I nomi registrati dal programma (vedi MARKN_BASE). Oltre il tetto non si
+  // registra piu' e si CONTA quanto si e' perso, come per le marche.
+  MarcaNome mark_names[MARK_NAMES_MAX];
+  int       mark_names_len;
+  int       mark_names_lost;
 
   // statistics
   uint64_t instr_count;    // total executed instructions

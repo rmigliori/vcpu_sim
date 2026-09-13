@@ -38,6 +38,9 @@
 .include "message/message.vinc"
 .include "pool/pool.vinc"
 .include "timeout/timeout.vinc"
+.ifdef MARKS
+.include "marks/marks.vinc"
+.endif
 
   .data
 
@@ -98,6 +101,13 @@ msg_tick:     .space 2
 ;  dice TMO_NONE: e' la condizione di uscita, non un errore.
 ; ==========================================================================
 tmgr_task:
+  ; Si presenta, come i task del test: tre istruzioni una volta sola, e da qui
+  ; lo strumento lo chiama "gestore" invece che con l'indirizzo del suo TCB.
+.ifdef MARKS
+  li r1, MARKN_EXEC
+  li r2, N_EXEC_TMGR
+  sw r2, 0(r1)
+.endif
   li r1, mbox_tmgr
   call receive             ; r2 = il messaggio di tick. Non si legge e non si
                            ; libera: e' lo statico qui sopra, non un buffer

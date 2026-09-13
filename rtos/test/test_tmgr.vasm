@@ -193,6 +193,15 @@ main:
 ;  risveglio e' una scadenza.
 ; ==========================================================================
 taskA:
+  ; Il task si PRESENTA: tre istruzioni, una volta sola, e da qui in poi lo
+  ; strumento lo chiama "A" invece che con l'indirizzo del suo TCB. Il nome
+  ; vero sta in marks.conf, che e' l'unico posto in cui vivono i nomi da
+  ; mostrare; qui viaggia solo l'id.
+.ifdef MARKS
+  li r1, MARKN_EXEC
+  li r2, N_EXEC_A
+  sw r2, 0(r1)
+.endif
   li r5, tagA
   lw r2, 0(r5)             ; r2 = clientTag: l'attesa corrente
   li r1, 2                 ; fra due tick
@@ -254,6 +263,11 @@ a_freed:
   j taskA
 
 taskI:
+.ifdef MARKS
+  li r1, MARKN_EXEC
+  li r2, N_EXEC_IDLE
+  sw r2, 0(r1)
+.endif
   li r1, cntI
 loopI:
   lw r2, 0(r1)

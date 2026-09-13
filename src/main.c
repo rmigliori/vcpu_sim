@@ -129,6 +129,14 @@ static void marks_dump(const VCpu* cpu)
   // aveva armato, e se lo aveva armato davvero. La seconda non e' ridondante --
   // zero e' un valore legittimo, quindi senza di essa "il dato era 0" e
   // "nessuno ha armato" sarebbero la stessa riga.
+  // I NOMI REGISTRATI dal programma, prima delle marche: il lettore li vuole
+  // avere in mano quando comincia a leggerle.
+  for (int i = 0; i < cpu->mark_names_len; ++i)
+    fprintf(f, "# nome %d %d %d\n", cpu->mark_names[i].canale,
+            cpu->mark_names[i].valore, cpu->mark_names[i].id);
+  if (cpu->mark_names_lost)
+    fprintf(stderr, "marche: %d nomi PERSI (oltre il tetto di %d)\n",
+            cpu->mark_names_lost, MARK_NAMES_MAX);
   fprintf(f, "# ciclo canale valore current dato ha_dato in_trap\n");
   fprintf(f, "# riservato %d esecuzione\n", MARK_EXEC);
   fprintf(f, "# riservato %d tasto\n", MARK_KEY);

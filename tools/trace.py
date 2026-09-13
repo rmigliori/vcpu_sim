@@ -491,9 +491,9 @@ def marche(rec, vx):
         return None
     sys.path.insert(0, QUI)
     import marks
-    catalogue, by_channel = marks.read_catalogue(cat)
+    catalogue, by_channel, nomi = marks.read_catalogue(cat)
     try:
-        return marks.analizza(catalogue, by_channel, rec, vx)
+        return marks.analizza(catalogue, by_channel, rec, vx, nomi)
     except SystemExit:
         return None      # «nessuna marca»: un programma che non ne emette
 

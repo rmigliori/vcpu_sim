@@ -88,6 +88,37 @@ static int is_marca_dato(int64_t addr)
   return addr >= MARKD_BASE && addr < MARKD_BASE + MARK_CHANNELS * 4;
 }
 
+static int is_marca_nome(int64_t addr)
+{
+  return addr >= MARKN_BASE && addr < MARKN_BASE + MARK_CHANNELS * 4;
+}
+
+// "Sul canale C, il valore che stiamo guardando si chiama <id>."
+static void vcpu_nome(VCpu* cpu, int canale, int32_t id)
+{
+  int32_t valore;
+  if (canale == MARK_EXEC)
+    valore = cpu->mark_current;      // "chiunque io sia adesso"
+  else if (cpu->mark_armed[canale])
+    valore = cpu->mark_pend[canale];  // armato sul porto dati: e' quello
+  else
+  {
+    // Nominare un valore senza aver detto QUALE e' un errore, non un caso da
+    // indovinare: senza il porto armato si nominerebbe uno zero qualunque.
+    fprintf(stderr, "runtime error: nome sul canale %d senza un valore armato "
+                    "sul porto dati\n", canale);
+    return;
+  }
+  if (cpu->mark_names_len >= MARK_NAMES_MAX) { cpu->mark_names_lost += 1; return; }
+  // Un valore gia' nominato si RI-nomina: l'ultima vince, ed e' l'unica regola
+  // che non richieda di ricordarsi se l'avevi gia' fatto.
+  for (int i = 0; i < cpu->mark_names_len; ++i)
+    if (cpu->mark_names[i].canale == canale && cpu->mark_names[i].valore == valore)
+    { cpu->mark_names[i].id = id; return; }
+  MarcaNome* n = &cpu->mark_names[cpu->mark_names_len++];
+  n->canale = canale; n->valore = valore; n->id = id;
+}
+
 // L'unico registro scrivibile e' il marcatore. L'abilitazione dell'interrupt
 // della tastiera continua a non esistere finche' non esiste l'interrupt: il
 // messaggio dice la verita' invece di lasciar passare la scrittura in silenzio.
@@ -103,6 +134,11 @@ static void mmio_store(VCpu* cpu, int64_t addr, int32_t value)
               canale);
     else
       vcpu_marca(cpu, canale, value);
+    return;
+  }
+  if (is_marca_nome(addr))
+  {
+    vcpu_nome(cpu, (int) ((addr - MARKN_BASE) / 4), value);
     return;
   }
   if (is_marca_dato(addr))

@@ -11,4 +11,5 @@ vasm_library(lib_timeout_manager
   SOURCES    ${CMAKE_CURRENT_SOURCE_DIR}/timeout_manager.vasm
   INTERFACES vinc_queue vinc_mailbox vinc_message vinc_pool vinc_timeout
              vinc_timeout_manager
-  LINK       lib_messaggi lib_pool lib_timeout)
+  LINK       lib_messaggi lib_pool lib_timeout
+  CONFIGS    marks)

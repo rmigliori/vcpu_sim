@@ -21,7 +21,7 @@
 > `ctest` **39/39** (erano 32). Il **13/09** ha chiuso al mattino le tre cose
 > rimaste aperte apposta — ha **fuso** il primo ramo del progetto, ha **deciso
 > la lingua** (§3.42), ha **fatto il rename** (§3.43), otto commit
-> `5b72bd1`→`24dca22` — e poi, in fila, i **dieci pezzi** che portano il
+> `5b72bd1`→`24dca22` — e poi, in fila, gli **undici pezzi** che portano il
 > marcatore dall'idea al numero, e la pagina da documento a strumento:
 >
 > | | |
@@ -35,7 +35,8 @@
 > | §3.50 | **lo zoom**: rotella, trascinamento, e la finestra è uno stato solo |
 > | §3.51 | **il porto dati**: una marca che si porta dietro un valore del programma |
 > | §3.52 | **`owner`**: il rapporto fra la marca e `current` lo dichiara il canale |
-> | §3.53 | **un evento sta sulla riga del suo canale**, e non attraversa più tutto |
+> | §3.53 | **un evento sta sulla corsia di chi lo produce**, e ogni marker è una traccia |
+> | §3.54 | **i nomi si registrano**: `A` e `idle` invece di `? (56)` |
 >
 > Il risultato in una riga: esistono due numeri realtime che ieri non c'erano —
 > **18 scansioni dello scheduler** (min 51, max 177, **jitter 126**) e **11
@@ -2998,6 +2999,87 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.54 I NOMI SI REGISTRANO, NON SI DEDUCONO (13/09/2026, dodicesima parte)
+
+Il readout diceva `girava ? (56)`. Adesso dice **`prodotta da A, poi idle`**, e la
+strada per arrivarci è la terza proposta — dell'utente, dopo che aveva scartato
+anche la propria:
+
+> *«Anche quello che ho detto io non mi convince, "avere una stringa ascii
+> globale": se invece assegnassimo il nome al canale con una procedura?»*
+
+Il canale 0 porta **indirizzi di TCB**, e un indirizzo non ha un nome finché
+qualcuno non glielo dà. Il programma adesso lo **registra**, tre istruzioni una
+volta sola, dentro `.ifdef MARKS`:
+
+```asm
+taskA:
+.ifdef MARKS
+  li r1, MARKN_EXEC
+  li r2, N_EXEC_A
+  sw r2, 0(r1)          ; "chiunque io sia adesso, mi chiamo A"
+.endif
+```
+
+È come fa **SystemView**: i nomi si mandano una volta a inizio corsa e mai più.
+
+#### Le due strade scartate, e la seconda per un pelo
+
+**`.global` sui TCB** — il nome verrebbe dalla tabella dei simboli, che esiste
+solo se la toolchain la pubblica *e* lo strumento sa leggerla. Su un bersaglio
+con una toolchain incompleta può non esserci, ed è il caso per cui questo
+progetto esiste.
+
+**Un campo dentro il TCB** (la prima idea dell'utente, e la mia preferita fino a
+un'ora fa) ha un difetto che si vede solo scrivendolo: dentro `.ifdef`,
+**`TCB.size` varrebbe 24 in una configurazione e 28 nell'altra**. Un oggetto
+assemblato in una e linkato con una libreria dell'altra leggerebbe i campi agli
+offset sbagliati — e **il linker non se ne accorgerebbe**: stessi simboli,
+stesse dimensioni di sezione, nessun conflitto. Fuori da `.ifdef`, invece, ogni
+programma con task paga i byte anche senza strumentazione.
+
+E la stringa ASCII aveva un prerequisito nascosto: l'assembler conosce ventuno
+direttive e **nessuna emette testo**. `.ascii` andrebbe scritta prima — cosa
+utile, ma per altre ragioni e non come dipendenza di questa.
+
+#### La prova, e sono le impronte
+
+`ctest` **39/39**, e le **quattordici impronte pulite invariate** — anche se
+`test_tmgr.vasm` e `timeout_manager.vasm` adesso contengono blocchi `.ifdef`.
+Nella build pulita la registrazione **non esiste**, quindi non costa un byte.
+Il campo nel TCB avrebbe mosso `TEXT+DATA` su ogni programma con task.
+
+#### Dove vive un nome, e perché lì
+
+L'id viaggia nel programma, il **nome visualizzato** sta in `marks.conf`. È la
+regola della casa: quel file è l'unico posto in cui vivono i nomi da mostrare, e
+metterne uno nel programma sarebbe un secondo posto — la forma di difetto che
+il catalogo esiste per togliere.
+
+Il lettore ha tre strade in ordine di forza, e la prima è quella nuova: il nome
+**registrato**; poi la tabella dei simboli, se quel TCB è `.global`; poi il
+numero nudo, che almeno non finge.
+
+Due errori dichiarati: nominare un valore su un canale diverso da 0 **senza
+averlo armato** sul porto dati (si nominerebbe uno zero qualunque), e un id
+registrato che il catalogo non dichiara — che il lettore mostra come `id N?`
+invece di tacere.
+
+#### E il prezzo, che adesso ha una storia intera
+
+```
+2566  pulito
+2548  + la finestra SCHED
+2539  + l'evento PREEMPT
+2532  + l'evento RECV, col codice sul porto dati
+2519  + i tre task che registrano il proprio nome
+```
+
+Cinque misure, una per aggiunta, tutte in un `EXPECT` dichiarato. È il punto per
+cui l'assemblaggio condizionale è stato il primo pezzo della giornata.
 
 ---
 

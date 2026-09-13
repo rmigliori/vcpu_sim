@@ -31,7 +31,10 @@ RADICE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 MARK_BASE   = 0x100100          # deve coincidere con include/vcpu.h
 MARK_CHANNELS = 32
-RISERVATI    = 2                 # i canali 0 e 1 li scrive la macchina
+MARKD_BASE  = MARK_BASE + MARK_CHANNELS * 4
+MARKN_BASE  = MARKD_BASE + MARK_CHANNELS * 4
+RISERVATI    = 2
+MARK_EXEC_CH = 0                 # il canale dell'esecuzione, come in vcpu.h                 # i canali 0 e 1 li scrive la macchina
 
 
 class Categoria:
@@ -71,6 +74,20 @@ class Categoria:
         self.marker = {}          # valore -> (simbolo, nome)
 
 
+class Nomi:
+    """Uno spazio di nomi per i VALORI di un canale.
+
+    Il canale 0 porta indirizzi di TCB, e un indirizzo non ha un nome finche'
+    qualcuno non glielo da'. Il programma lo REGISTRA a runtime scrivendo un id
+    sul porto dei nomi (vedi MARKN_BASE in include/vcpu.h); l'id -> nome
+    visualizzato sta qui, perche' questo file e' l'unico posto in cui vivono i
+    nomi da mostrare -- se stesse nel programma sarebbe un secondo posto.
+    """
+    def __init__(self, simbolo, canale, nome):
+        self.simbolo, self.canale, self.nome = simbolo, canale, nome
+        self.id = {}              # id -> (simbolo, nome visualizzato)
+
+
 def read_catalogue(path):
     """Il catalogue, con i controlli che il formato rende possibili.
 
@@ -79,7 +96,8 @@ def read_catalogue(path):
     dell'una chiudono quelle dell'altra.
     """
     cat, by_channel, corrente = {}, {}, None
-    riga_re = re.compile(r'^\s*(category|event|marker)\s+(\w+)\s+(\d+)\s+"([^"]*)"'
+    nomi, nomi_corrente = {}, None
+    riga_re = re.compile(r'^\s*(category|event|marker|names|name)\s+(\w+)\s+(\d+)\s+"([^"]*)"'
                          r'(?:\s+owner\s+(task|kernel|isr))?'
                          r'(?:\s+data\s+"([^"]*)")?\s*$')
 
@@ -98,6 +116,27 @@ def read_catalogue(path):
             sys.exit(f"{path}:{n}: `data` si dichiara sulla CATEGORIA, non su un "
                      f"marker: e' una proprieta' del canale, e tutti i marker "
                      f"che ci passano sopra portano lo stesso genere di valore")
+
+        if tipo == "names":
+            # Uno spazio di nomi PUO' stare sul canale 0: non dichiara un canale
+            # di marche -- quello e' della macchina -- ma come si chiamano i
+            # valori che ci passano sopra.
+            if numero >= MARK_CHANNELS:
+                sys.exit(f"{path}:{n}: il canale {numero} non esiste")
+            if numero in nomi:
+                sys.exit(f"{path}:{n}: i nomi del canale {numero} sono gia' "
+                         f"dichiarati da '{nomi[numero].simbolo}'")
+            nomi_corrente = Nomi(simbolo, numero, nome)
+            nomi[numero] = nomi_corrente
+            continue
+        if tipo == "name":
+            if nomi_corrente is None:
+                sys.exit(f"{path}:{n}: un `name` prima di qualunque `names`")
+            if numero in nomi_corrente.id:
+                sys.exit(f"{path}:{n}: l'id {numero} e' gia' di "
+                         f"'{nomi_corrente.id[numero][0]}' in {nomi_corrente.simbolo}")
+            nomi_corrente.id[numero] = (simbolo, nome)
+            continue
 
         if tipo in ("category", "event"):
             if numero < RISERVATI:
@@ -128,11 +167,11 @@ def read_catalogue(path):
 
     if not cat:
         sys.exit(f"{path}: nessuna categoria dichiarata")
-    return cat, by_channel
+    return cat, by_channel, nomi
 
 
 # --- generate: il .vinc per l'assembler ---------------------------------------
-def generate(path, cat, out_path):
+def generate(path, cat, out_path, nomi=None):
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w") as f:
         f.write(f"; GENERATO da {os.path.basename(path)} — NON MODIFICARE.\n"
@@ -152,6 +191,13 @@ def generate(path, cat, out_path):
                         f"  ; il porto dati: {c.dato}\n")
             for v, (sim, nome) in sorted(c.marker.items()):
                 f.write(f".equ M_{c.simbolo}_{sim:<12} {v:<6}; {nome}\n")
+            f.write("\n")
+        for nm in sorted((nomi or {}).values(), key=lambda x: x.canale):
+            f.write(f"; --- nomi dei valori di {nm.nome} (canale {nm.canale}) ---\n")
+            f.write(f".equ MARKN_{nm.simbolo:<11} "
+                    f"0x{MARKN_BASE + nm.canale*4:x}  ; il porto dei nomi\n")
+            for i, (sim, nome) in sorted(nm.id.items()):
+                f.write(f".equ N_{nm.simbolo}_{sim:<12} {i:<6}; {nome}\n")
             f.write("\n")
     print(f"{out_path}: {len(cat)} categorie, "
           f"{sum(len(c.marker) for c in cat.values())} marker")
@@ -176,7 +222,7 @@ def simboli_dati(vx):
             for m in (re.match(r"\s*(\d+)\s+D\s+(\S+)", l) for l in out.splitlines()) if m}
 
 
-def analizza(cat, by_channel, recording, vx):
+def analizza(cat, by_channel, recording, vx, nomi=None):
     """La registrazione, letta e decomposta. Ritorna DATI, non testo.
 
     E' separata dalla stampa perche' ha due consumatori: `read` qui sotto, che
@@ -185,7 +231,7 @@ def analizza(cat, by_channel, recording, vx):
     analisi della stessa registrazione divergerebbero in silenzio, e il disegno
     direbbe un numero diverso dal testo sugli stessi dati.
     """
-    riservati, ev = {}, []
+    riservati, registrati, ev = {}, {}, []
     for linea in open(recording):
         if linea.startswith("#"):
             # I canali della macchina li dichiara LA REGISTRAZIONE, non questo
@@ -193,6 +239,11 @@ def analizza(cat, by_channel, recording, vx):
             m = re.match(r"#\s*riservato\s+(\d+)\s+(\S+)", linea)
             if m:
                 riservati[int(m.group(1))] = m.group(2)
+            # I nomi che il PROGRAMMA ha registrato a runtime: "sul canale C il
+            # valore V si chiama <id>", e l'id lo traduce il catalogo.
+            m = re.match(r"#\s*nome\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)", linea)
+            if m:
+                registrati[(int(m.group(1)), int(m.group(2)))] = int(m.group(3))
             continue
         campi = [int(x) for x in linea.split()]
         # Le due colonne del porto dati sono in fondo. Una registrazione
@@ -206,9 +257,24 @@ def analizza(cat, by_channel, recording, vx):
     if not ev:
         sys.exit(f"{recording}: nessuna marca")
 
-    nomi = simboli_dati(vx)
+    simboli = simboli_dati(vx)
+    sp_nomi = (nomi or {}).get(MARK_EXEC_CH)
+
     def chi(a):
-        return nomi.get(a, "?" if a else "—") + (f" ({a})" if a and a not in nomi else "")
+        """Il nome di un proprietario, e le tre strade in ordine di forza.
+
+        1. quello che il PROGRAMMA ha registrato (MARKN_*): non dipende dalla
+           tabella dei simboli, quindi c'e' anche dove la toolchain non ne
+           pubblica una -- che e' il caso per cui la registrazione esiste;
+        2. la tabella dei simboli, se quel TCB e' .global;
+        3. il numero nudo, che almeno non finge.
+        """
+        idn = registrati.get((MARK_EXEC_CH, a))
+        if idn is not None and sp_nomi and idn in sp_nomi.id:
+            return sp_nomi.id[idn][1]
+        if idn is not None:
+            return f"id {idn}?"      # registrato ma non dichiarato nel catalogo
+        return simboli.get(a, "?" if a else "—") + (f" ({a})" if a and a not in simboli else "")
 
     def nome_canale(ch):
         if ch in riservati:  return riservati[ch] + " [macchina]"
@@ -460,11 +526,11 @@ def main():
     l.add_argument("--json", help="scrive l'analisi qui invece di stamparla")
     a = ap.parse_args()
 
-    cat, by_channel = read_catalogue(a.catalogue)
+    cat, by_channel, nomi = read_catalogue(a.catalogue)
     if a.mode == "generate":
-        generate(a.catalogue, cat, a.out)
+        generate(a.catalogue, cat, a.out, nomi)
         return
-    dati = analizza(cat, by_channel, a.recording, a.vx)
+    dati = analizza(cat, by_channel, a.recording, a.vx, nomi)
     if a.json:
         import json
         json.dump(dati, open(a.json, "w"))

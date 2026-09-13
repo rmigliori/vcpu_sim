@@ -196,7 +196,7 @@ vasm_check(tmgr MODE DUMPS PROGRAM test_tmgr
 #  altre non hanno tag, quindi restano quelle di sempre e sono le STESSE.
 #
 #  PERCHE' QUESTO TEST ESISTE, e non e' un doppione: il terzo numero dei due e'
-#  DIVERSO -- 2566 pulito, 2532 strumentato -- ed e' cntI, i giri dell'idle.
+#  DIVERSO -- 2566 pulito, 2519 strumentato -- ed e' cntI, i giri dell'idle.
 #  Cioe' la strumentazione COSTA, e il costo si vede in un valore dichiarato
 #  invece che in un commento. Se un giorno i due numeri coincidessero vorrebbe
 #  dire che i tag non sono piu' nel kernel, e uno dei due test lo direbbe.
@@ -216,13 +216,20 @@ vasm_program(test_tmgr_marks OBJECTS t_tmgr
 #  l'evento PREEMPT sul ramo sp_preempted (11 volte), e RECV nell'APPLICAZIONE,
 #  che si porta dietro il codice del messaggio sul porto dati.
 #
-#  Il numero atteso si e' mosso TRE volte -- 2566 pulito, 2548 con la sola
-#  SCHED, 2539 aggiungendo PREEMPT, 2532 aggiungendo RECV -- ed e' la misura che
-#  dice perche' l'interruttore DEVE essere a compile-time: con --marks spento
-#  quelle istruzioni si eseguirebbero lo stesso. Ogni tag si paga, e il prezzo
-#  finisce qui invece che in un commento.
+#  Il numero atteso si e' mosso a ogni aggiunta, ed e' l'intero punto:
+#
+#    2566  pulito
+#    2548  + la finestra SCHED
+#    2539  + l'evento PREEMPT
+#    2532  + l'evento RECV, col codice sul porto dati
+#    2519  + i tre task che REGISTRANO IL PROPRIO NOME (3 istruzioni ognuno,
+#          una volta sola, ma il boot le paga e l'idle gira di meno)
+#
+#  E' la misura che dice perche' l'interruttore DEVE essere a compile-time: con
+#  --marks spento quelle istruzioni si eseguirebbero lo stesso. Ogni tag si
+#  paga, e il prezzo finisce qui invece che in un commento.
 vasm_check(tmgr_marks MODE DUMPS PROGRAM test_tmgr_marks
-           EXPECT "5 0 2532")
+           EXPECT "5 0 2519")
 
 # ---------------------------------------------------------------------------
 #  test_semaphore — il semaforo contatore, e l'INSERIMENTO ORDINATO di §13.6.
