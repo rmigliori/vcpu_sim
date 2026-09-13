@@ -18,10 +18,11 @@
 
 > ### ▶ RIPRENDI DA QUI (14/09/2026 o dopo)
 >
-> `ctest` **35/35** (erano 32). Il **13/09** ha chiuso sei cose: ha **fuso** il
-> primo ramo del progetto, ha **deciso la lingua** (§3.42), ha **fatto il
-> rename** (§3.43) — otto commit, `5b72bd1`→`24dca22` — e poi, in fila, i
-> quattro pezzi che portano il marcatore dall'idea al numero:
+> `ctest` **39/39** (erano 32). Il **13/09** ha chiuso al mattino le tre cose
+> rimaste aperte apposta — ha **fuso** il primo ramo del progetto, ha **deciso
+> la lingua** (§3.42), ha **fatto il rename** (§3.43), otto commit
+> `5b72bd1`→`24dca22` — e poi, in fila, i **sei pezzi** che portano il marcatore
+> dall'idea al numero e la pagina dentro `ctest`:
 >
 > | | |
 > |---|---|
@@ -30,6 +31,7 @@
 > | §3.46 | **il disegno** delle finestre: l'analisi grafica |
 > | §3.47 | **la configurazione strumentata**, e il primo tag dentro il kernel |
 > | §3.48 | **la preemption si vede**, ed è letta dal kernel invece che dedotta |
+> | §3.49 | **i cursori** con l'aggancio, e la pagina smette di essere una ricetta |
 >
 > Il risultato in una riga: esistono due numeri realtime che ieri non c'erano —
 > **18 scansioni dello scheduler** (min 51, max 177, **jitter 126**) e **11
@@ -2994,6 +2996,93 @@ il contratto scritto.
 
 ---
 
+### 3.49 I CURSORI, E LA PAGINA ENTRA IN `ctest` (13/09/2026, settima parte)
+
+Due cursori e la loro distanza — quello che un oscilloscopio fa da sempre e che
+qui mancava: il diagramma mostrava le **proporzioni**, e per sapere *quanto*
+durava un tratto bisognava tornare ai contatori.
+
+`ctest` **39/39**: i quattro nuovi sono i test della **pagina**.
+
+#### L'aggancio non è una comodità, è la differenza fra misurare e stimare
+
+Un cursore si ferma **solo su un istante vero**: un bordo di fascia, un tick,
+una preemption, l'apertura o la chiusura di una finestra. Sono 298 punti su
+`test_tmgr_marks`, tutti interi, tutti nei dati.
+
+Il conto che lo rende necessario: a tutto raggio quel programma è ~49.700 cicli
+su ~900 pixel, cioè **~55 cicli per pixel** — su misure il cui interesse sta in
+grandezze da **909 cicli**. Un cursore a mano libera porterebbe addosso un 6%
+di rumore, cioè sarebbe un righello che mente di poco. Che è peggio di nessun
+righello.
+
+Fra i due cursori si legge Δ in cicli, quanti tick e quante preemption ci sono
+dentro, e **chi ha avuto la CPU e per quanto** — con la quota. Quei proprietari
+vengono dalle **fasce**, cioè dalla deduzione sul `pc` e non dal canale 0, e la
+pagina lo dice invece di lasciarlo capire.
+
+#### La divisione fra ciò che si prova e ciò che no
+
+I cursori sono due parti, e la linea fra loro è tracciata apposta:
+
+| | cosa | provabile? |
+|---|---|---|
+| **il calcolo** | gli istanti notevoli, l'aggancio, cosa c'è fra due cursori | **sì** |
+| **la colla** | leggere un `clientX`, scrivere nel DOM | no — il DOM finto non ha layout né eventi |
+
+Il criterio non è «quanto è difficile»: è **come sbaglia**. Se la colla sbaglia,
+sbaglia in modo **visibile** — un cursore nel posto sbagliato, e chi guarda se
+ne accorge. Se sbagliasse il calcolo, sbaglierebbe un **numero**, e nessuno se
+ne accorgerebbe. È la stessa divisione di `analizza()`/`report()` in `marks.py`,
+applicata a un motivo diverso.
+
+La colla è venti righe e non contiene un solo conto.
+
+#### E la pagina smette di essere una ricetta
+
+Dal 12/09 c'era il **modo** di eseguire la pagina fuori dal browser (`gjs` più
+il DOM finto), e ha funzionato: quattro difetti stanati. Ma era una **ricetta in
+testa a un file**, cioè una verifica che si esegue a mano — e una verifica che
+si esegue a mano è una che qualcuno prima o poi non esegue. È testualmente ciò
+che §4 dice delle invarianti prima che diventassero `ctest`: *«un commento e la
+disciplina di chi lo esegue»*.
+
+Adesso è `tools/trace_check.sh`, e sono quattro test. I programmi sono scelti
+per **forma**, non per copertura, perché i difetti di questa pagina sono tutti
+della specie «funziona su quello per cui è stata scritta»:
+
+| | |
+|---|---|
+| `tmgr_marks` | strumentato: marcatore, finestre e preemption |
+| `coop` | nessun interrupt, `IE = 0` per tutta la vita: niente tick |
+| `vectors` | il più lungo, e con due task vettoriali |
+| `multi` | **nessun kernel**: niente task, niente ISR, solo il boot |
+
+`gjs` è **opzionale** (`find_program`): dove non c'è, quei test non esistono e
+`ctest` resta verde. Meglio un test che manca di un test che fallisce per
+l'ambiente.
+
+**E i test sono stati provati a rovescio**, perché un test che non può fallire è
+un commento: rompendo l'aggancio — `Math.round` al posto della ricerca — sono
+caduti **esattamente quei quattro**, e nessun altro.
+
+#### Le diciannove asserzioni, e due che valgono più delle altre
+
+Le ovvie ci sono (i notevoli sono interi, ordinati, senza doppioni; un notevole
+aggancia sé stesso; fuori scala si cade sul primo o sull'ultimo). Due invece
+sono di quelle che trovano i difetti veri:
+
+- **la ricerca binaria contro la forza bruta** su 997 punti: che `aggancia`
+  restituisca davvero il più vicino, non uno vicino. Un off-by-one in una
+  ricerca binaria non si vede a occhio e non si vede nemmeno guardando la
+  pagina;
+- **i proprietari sommano esattamente alla durata**, e continuano a sommarci
+  spezzando l'intervallo in due. È l'invariante che dice che la decomposizione
+  non crea né perde cicli — la stessa proprietà che in `marks.py` è garantita
+  facendo derivare i totali dai tratti.
+
+---
+
 ### 3.48 LA PREEMPTION SI VEDE, ED È LETTA (13/09/2026, sesta parte)
 
 L'osservazione è dell'utente: *«quando un task è preemptato si deduce ma non si
@@ -5702,12 +5791,13 @@ servono i numeri della macchina.
 > cmake -B out -S . && cmake --build out -j && ctest --test-dir out
 > ```
 >
-> 35 test: le tre invarianti storiche, i test mirati (`queue`, `pool`,
+> 39 test: le tre invarianti storiche, i test mirati (`queue`, `pool`,
 > `timeout`, `mailbox`, `scheduler`, `block`, `chain`, `tmgr`, `tmgr_marks`,
 > `semaphore`, `mutex`, `coop`, `events`, `vectors`, più
 > `proc`/`include`/`epsw`/`kbd`/`ifdef_off`/`ifdef_on` sulla toolchain e
-> sulla macchina), e i 13 programmi di `standalone/`
-> che devono continuare a girare da soli. I numeri
+> sulla macchina), i **quattro `trace_*`** che ESEGUONO la pagina di traccia
+> sotto `gjs` (§3.49 — opzionali: senza `gjs` non esistono), e i 13 programmi di
+> `standalone/` che devono continuare a girare da soli. I numeri
 > attesi stanno **ognuno accanto al programma che lo produce** — nel
 > `CMakeLists.txt` di `generic/test/`, di `rtos/test/`, o in quello di primo
 > livello per ciò che resta suo — e comunque in **un posto solo**: è `ctest` a
@@ -5732,7 +5822,7 @@ servono i numeri della macchina.
 >
 > ```bash
 > ctest --test-dir out -R queue --output-on-failure  # un test solo, con l'output
-> ctest --test-dir out -N                            # elenca i 35 senza eseguirli
+> ctest --test-dir out -N                            # elenca i 39 senza eseguirli
 > cmake --build out -j --verbose                     # i comandi asm/ld esatti
 > ```
 >
@@ -6265,12 +6355,30 @@ nel terminale, senza pagina:
 python3 tools/marks.py read marks.conf <registrazione> --vx <prog.vx>
 ```
 
-**La pagina si VERIFICA, non si legge** (§3.39, §3.46). Non c'è `node` e Firefox
-headless non parte, ma `gjs` c'è, e con il DOM finto di `tools/trace_dom.js`
-esegue lo script della pagina e le eccezioni si vedono. La ricetta è in testa a
-quel file. Va fatto su **più programmi**: i difetti di questa pagina sono tutti
-della forma «funziona su quello per cui è stata scritta», e sono già passati
-così quattro volte.
+**Sul diagramma si MISURA** (§3.49): un click pianta il cursore **A**, il
+secondo **B**, e fra i due si legge Δ in cicli, quanti tick e quante preemption
+ci sono dentro, e chi ha avuto la CPU con la sua quota. I cursori si
+**agganciano all'istante vero più vicino** — un bordo di fascia, un tick, una
+preemption — quindi il numero è esatto invece che a occhio: a tutto raggio un
+pixel vale ~55 cicli, su misure che valgono 909. `Esc` li toglie.
+
+**E LA PAGINA È IN `ctest`** (§3.49). Era una ricetta da eseguire a mano; adesso
+sono quattro test, `trace_*`:
+```
+tools/trace_check.sh <build> <prog.vx> [-- opzioni della macchina]
+```
+Genera la pagina, ne estrae lo script, e lo esegue sotto `gjs` con il DOM finto
+di `tools/trace_dom.js` più le asserzioni di `tools/trace_cursori_test.js`.
+`gjs` è **opzionale**: dove non c'è, quei test non esistono e `ctest` resta
+verde.
+
+Copre la **logica sui dati** — che lo script non esploda su un programma di
+forma diversa da quello per cui è stato scritto, e che il calcolo dei cursori
+sia giusto. **Non** copre pixel ed eventi (il DOM finto non ha layout), e non
+copre come la pagina *appare*: per quello si apre nel browser. Va fatto su più
+programmi, e i quattro sono scelti per forma: i difetti di questa pagina sono
+tutti della specie «funziona su quello per cui è stata scritta», e sono già
+passati così quattro volte.
 
 **Per andare sul linguaggio ad alto livello:**
 ```

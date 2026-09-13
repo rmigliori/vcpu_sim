@@ -250,6 +250,48 @@
     white-space: nowrap;
   }
 
+  /* ---------- i cursori di misura ----------
+     Il colore e' quello del TESTO, non uno della tavolozza dei dati: un cursore
+     e' uno strumento sopra il disegno, non un'altra grandezza disegnata. Con un
+     colore saturo competerebbe con i proprietari; cosi' si legge come un
+     righello appoggiato sopra. */
+  .lanes-wrap { position: relative; }
+  .cursori {
+    position: absolute; left: 74px; right: 0; top: 0; bottom: 0;
+    pointer-events: none;            /* i click passano alle fasce sotto */
+  }
+  .cursori .cur {
+    position: absolute; top: 0; bottom: 0; width: 0;
+    border-left: 1px dashed var(--ink);
+  }
+  .cursori .cur .tag {
+    position: absolute; top: -1px; left: 0; transform: translateX(-50%);
+    background: var(--ink); color: var(--ground);
+    font-family: "IBM Plex Mono", monospace; font-size: 9.5px; font-weight: 600;
+    padding: 1px 4px; border-radius: 2px; white-space: nowrap;
+  }
+  /* La campitura fra i due: dice "questo e' l'intervallo che stai misurando"
+     senza nascondere le fasce sotto. */
+  .cursori .banda {
+    position: absolute; top: 0; bottom: 0;
+    background: var(--ink); opacity: .07;
+  }
+
+  .misura {
+    margin-top: 10px; font-size: 12.5px; color: var(--ink-2);
+    display: flex; flex-wrap: wrap; gap: 4px 18px; align-items: baseline;
+  }
+  .misura .hint { color: var(--ink-3); font-size: 12px; }
+  .misura b { color: var(--ink); }
+  .misura .delta {
+    font-family: "IBM Plex Mono", monospace; font-size: 15px;
+    font-weight: 600; color: var(--ink);
+  }
+  .misura kbd {
+    font-family: "IBM Plex Mono", monospace; font-size: 10.5px;
+    border: 1px solid var(--rule-2); border-radius: 3px; padding: 0 4px;
+  }
+
   .readout {
     font-family: "IBM Plex Mono", monospace; font-size: 12px;
     background: var(--surface); border: 1px solid var(--rule);
@@ -317,10 +359,22 @@
     <div class="scope">
       <div class="scope-in">
         <div class="axis" id="axis"></div>
-        <div class="lanes" id="lanes"></div>
+        <!-- I cursori stanno SOPRA le corsie, in uno strato loro: ridisegnarli
+             non tocca il diagramma, e il diagramma non li cancella. -->
+        <div class="lanes-wrap">
+          <div class="lanes" id="lanes"></div>
+          <div class="cursori" id="cursori"></div>
+        </div>
       </div>
     </div>
     <div class="readout" id="readout"><span>Passa sopra una fascia per vedere le routine che ci girano dentro.</span></div>
+    <div class="misura" id="misura">
+      <span class="hint">Clicca sul diagramma per piantare il cursore <b>A</b>, poi
+      di nuovo per <b>B</b>: fra i due leggi la durata e chi ha avuto la CPU. I
+      cursori si <b>agganciano all'istante vero</b> più vicino — un bordo di fascia,
+      un tick, una preemption — quindi il numero è esatto e non a occhio.
+      <kbd>Esc</kbd> per togliere.</span>
+    </div>
   </section>
 
   <section>
@@ -595,6 +649,71 @@ function disegna(axisEl, lanesEl, b0, b1, tickLabel) {
 disegna(document.getElementById("axis"), document.getElementById("lanes"),
         0, D.fine, (t, i) => "t" + (i + 1));
 
+/* ---------- I CURSORI DI MISURA ----------
+   Due cursori e la loro distanza, che e' la cosa che un oscilloscopio fa da
+   sempre e che qui mancava: il diagramma mostrava le proporzioni, e per sapere
+   QUANTO durava un tratto bisognava tornare ai contatori.
+
+   La parte qui sotto e' PURA: niente pixel, niente eventi, niente DOM. E' una
+   divisione voluta -- tools/trace_dom.js stubba addEventListener come no-op e
+   non ha layout, quindi la colla che legge un pixel non e' verificabile, mentre
+   questa lo e' esattamente come il resto della pagina. E' la stessa mossa di
+   analizza()/report() in marks.py: due consumatori, un calcolo.
+   ---------------------------------------------------------------------------- */
+
+/* Gli ISTANTI NOTEVOLI: gli unici punti su cui un cursore ha diritto di
+   fermarsi. Sono tutti interi e tutti veri -- bordi di fascia, tick, istanti di
+   preemption, aperture e chiusure di finestra.
+
+   Senza aggancio un cursore porterebbe addosso il rumore del pixel: a tutto
+   raggio test_tmgr_marks e' ~49.700 cicli su ~900 pixel, cioe' ~55 cicli per
+   pixel, su misure il cui interesse sta in grandezze da 909 cicli. Sarebbe un
+   righello che mente di poco, che e' peggio di nessun righello. */
+const NOTEVOLI = (() => {
+  const s = new Set([0, D.fine]);
+  for (const f of D.fasce) { s.add(f[0]); s.add(f[1]); }
+  for (const t of MARK) s.add(t);
+  for (const e of PRE) s.add(e.c);
+  if (D.marche) {
+    for (const f of D.marche.finestre) { s.add(f.a); s.add(f.z); }
+    for (const p of D.marche.puntuali) s.add(p.c);
+  }
+  return [...s].sort((a, b) => a - b);
+})();
+
+/* Il notevole piu' vicino a x. Ricerca binaria: l'array e' ordinato e puo'
+   avere qualche migliaio di voci, e questo gira a ogni click. */
+function aggancia(x) {
+  if (!NOTEVOLI.length) return Math.round(x);
+  let lo = 0, hi = NOTEVOLI.length - 1;
+  while (lo < hi) {
+    const m = (lo + hi) >> 1;
+    if (NOTEVOLI[m] < x) lo = m + 1; else hi = m;
+  }
+  const dopo = NOTEVOLI[lo], prima = NOTEVOLI[lo > 0 ? lo - 1 : 0];
+  return (Math.abs(dopo - x) < Math.abs(x - prima)) ? dopo : prima;
+}
+
+/* Cosa c'e' fra due istanti. I proprietari vengono dalle FASCE, cioe' dalla
+   deduzione sul pc -- non dal canale 0, che esiste solo se il programma e'
+   strumentato. Va saputo leggendo il numero, ed e' detto nel riquadro. */
+function fraICursori(a, b) {
+  if (b < a) { const t = a; a = b; b = t; }
+  const per = {};
+  for (const f of D.fasce) {
+    const lo = Math.max(f[0], a), hi = Math.min(f[1], b);
+    if (hi > lo) per[f[2]] = (per[f[2]] || 0) + (hi - lo);
+  }
+  return {
+    a, b,
+    durata: b - a,
+    proprietari: Object.entries(per).sort((x, y) => y[1] - x[1]),
+    tick: MARK.filter(t => t > a && t <= b).length,
+    preemption: PRE.filter(e => e.c > a && e.c <= b).length,
+    finestre: D.marche ? D.marche.finestre.filter(f => f.z > a && f.a < b).length : 0
+  };
+}
+
 /* ---------- readout ---------- */
 const readout = document.getElementById("readout");
 function mostra(el) {
@@ -686,6 +805,78 @@ document.getElementById("rt").innerHTML = rtVis.map(([n, c]) =>
      <span class="rn">loopI (idle)</span>
      <span class="rt-bar"><i style="width:100%;opacity:.28"></i></span>
      <span class="rv">${N.format(rtMap["loopI"])}</span></div>`);
+
+/* ---------- i cursori: la colla ----------
+   Da qui in giu' si leggono pixel e si ricevono eventi, cioe' le due cose che
+   il DOM finto non ha. E' tenuta SOTTILE apposta: nessun conto sta qui, solo la
+   conversione pixel -> ciclo e la scrittura nel DOM. Se un giorno questa parte
+   sbaglia, sbaglia in modo visibile (un cursore nel posto sbagliato); se
+   sbagliasse la parte pura, sbaglierebbe un numero -- ed e' per questo che la
+   divisione passa di qui. */
+(function cursori() {
+  const strato = document.getElementById("cursori");
+  const misura = document.getElementById("misura");
+  const hint   = misura.innerHTML;
+  let A = null, B = null;
+
+  function ridisegna() {
+    const pc = x => (x / D.fine) * 100;
+    let h = "";
+    if (A !== null && B !== null) {
+      const lo = Math.min(A, B), hi = Math.max(A, B);
+      h += `<span class="banda" style="left:${pc(lo)}%;width:${pc(hi - lo)}%"></span>`;
+    }
+    for (const [n, v] of [["A", A], ["B", B]]) {
+      if (v === null) continue;
+      h += `<span class="cur" style="left:${pc(v)}%">
+              <span class="tag">${n} ${N.format(v)}</span></span>`;
+    }
+    strato.innerHTML = h;
+
+    if (A === null) { misura.innerHTML = hint; return; }
+    if (B === null) {
+      misura.innerHTML = `<span>cursore <b>A</b> a <b>${N.format(A)}</b>`
+        + `</span><span class="hint">clicca di nuovo per piantare B</span>`;
+      return;
+    }
+    const r = fraICursori(A, B);
+    const chi = r.proprietari
+      .map(([o, c]) => `${o} ${N.format(c)} (${Math.round(100 * c / r.durata)}%)`)
+      .join(" · ");
+    misura.innerHTML =
+      `<span class="delta">Δ ${N.format(r.durata)} cicli</span>` +
+      `<span>${N.format(r.a)} → ${N.format(r.b)}</span>` +
+      (r.tick ? `<span>${r.tick} tick</span>` : "") +
+      (r.preemption ? `<span style="color:var(--accent)">${r.preemption} preemption</span>` : "") +
+      (r.finestre ? `<span>${r.finestre} finestre</span>` : "") +
+      `<span style="width:100%">${chi}</span>` +
+      `<span class="hint" style="width:100%">I proprietari qui sono DEDOTTI dal
+       <span class="mono">pc</span>, come le fasce. <kbd>Esc</kbd> per togliere i cursori.</span>`;
+  }
+
+  // Il pixel -> ciclo, e subito l'aggancio: un cursore non si ferma mai fra due
+  // istanti veri, quindi il Δ e' esatto invece che approssimato dalla scala.
+  function ciclo(ev) {
+    const r = strato.getBoundingClientRect();
+    if (r.width <= 0) return null;
+    const q = (ev.clientX - r.left) / r.width;
+    return aggancia(Math.max(0, Math.min(1, q)) * D.fine);
+  }
+
+  // Sul DOCUMENTO, come tutti gli altri gestori della pagina: il DOM finto di
+  // tools/trace_dom.js stubba addEventListener li' e non sugli elementi.
+  // Il .track filtra: si misura cliccando sul diagramma, non sulla legenda.
+  document.addEventListener("click", ev => {
+    if (!ev.target.closest || !ev.target.closest(".track")) return;
+    const c = ciclo(ev);
+    if (c === null) return;
+    if (A === null || B !== null) { A = c; B = null; } else { B = c; }
+    ridisegna();
+  });
+  document.addEventListener("keydown", ev => {
+    if (ev.key === "Escape") { A = B = null; ridisegna(); }
+  });
+})();
 
 document.getElementById("n-ctx").textContent = N.format(ctx);
 document.getElementById("n-tot").textContent = N.format(D.fine);

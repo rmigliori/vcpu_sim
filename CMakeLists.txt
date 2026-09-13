@@ -208,6 +208,41 @@ foreach(src ${STANDALONE})
   add_test(NAME standalone_${nm} COMMAND vcpu_sim ${src})
 endforeach()
 
+# ---------------------------------------------------------------------------
+#  La PAGINA di tools/trace.py, eseguita (13/09/2026, §3.49).
+#
+#  Era l'unico pezzo del progetto che si spediva LETTO invece che provato, e
+#  gli e' costato quattro difetti -- fra cui uno che faceva sparire un task
+#  intero dal disegno. Dal 12/09 c'e' il modo di eseguirla (gjs piu' il DOM
+#  finto di tools/trace_dom.js), ma era una RICETTA in testa a un file, cioe'
+#  una verifica che si esegue a mano -- e una verifica che si esegue a mano e'
+#  una che qualcuno prima o poi non esegue. §4 dice esattamente questo delle
+#  invarianti prima che diventassero ctest.
+#
+#  SU PIU' PROGRAMMI, e non e' zelo: i difetti di quella pagina sono tutti
+#  della forma "funziona su quello per cui e' stata scritta". I quattro qui
+#  sotto sono scelti per FORMA, non per copertura:
+#     tmgr_marks  strumentato: marcatore, finestre e preemption
+#     coop        nessun interrupt, IE = 0 per tutta la vita: niente tick
+#     vectors     il piu' lungo, e con due task vettoriali
+#     multi       nessun kernel: niente task, niente ISR, solo il boot
+#
+#  OPZIONALE: senza gjs questi test non esistono, e ctest resta verde. Meglio
+#  un test che manca di un test che fallisce per l'ambiente.
+# ---------------------------------------------------------------------------
+find_program(GJS_EXE gjs)
+if(GJS_EXE)
+  set(_tc ${CMAKE_SOURCE_DIR}/tools/trace_check.sh)
+  foreach(p tmgr_marks coop vectors)
+    add_test(NAME trace_${p}
+             COMMAND ${_tc} ${CMAKE_BINARY_DIR} ${VASM_BINARY_DIR}/test_${p}.vx)
+  endforeach()
+  add_test(NAME trace_multi
+           COMMAND ${_tc} ${CMAKE_BINARY_DIR} ${VASM_BINARY_DIR}/multi.vx)
+else()
+  message(STATUS "gjs non trovato: i test della pagina di traccia non ci sono")
+endif()
+
 # Il manifesto delle configurazioni, per chi sta fuori dal build: quale
 # programma e' strumentato e quale no. Lo legge tools/scheduler_facts.py, che
 # per regola raccoglie i numeri SOLO dai programmi puliti -- e lo chiede qui
