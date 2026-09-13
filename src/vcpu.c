@@ -73,6 +73,7 @@ void vcpu_marca(VCpu* cpu, int canale, int32_t valore)
   // quelle dopo.
   m->dato    = cpu->mark_pend[canale];
   m->ha_dato = cpu->mark_armed[canale];
+  m->in_trap = cpu->trap_depth;
   cpu->mark_pend[canale]  = 0;
   cpu->mark_armed[canale] = 0;
 }
@@ -443,7 +444,10 @@ static void execute(VCpu* cpu, const Instr* in)
       }
       case OP_STI:  cpu->psw |=  PSW_IE; break;
       case OP_CLI:  cpu->psw &= ~PSW_IE; break;
-      case OP_RETI: cpu->pc = cpu->epc; cpu->psw = cpu->epsw; break;
+      case OP_RETI:
+        cpu->pc = cpu->epc; cpu->psw = cpu->epsw;
+        if (cpu->trap_depth > 0) cpu->trap_depth -= 1;
+        break;
       case OP_SETHANDLER: cpu->handler = in->target; break;
       case OP_SETTIMER:
       {
@@ -1019,6 +1023,7 @@ void vcpu_run_from(VCpu* cpu, const Instr* prog, int prog_len, RunMode mode, int
       cpu->epc  = cpu->pc;
       cpu->epsw = cpu->psw;
       cpu->psw &= ~PSW_IE;
+      cpu->trap_depth += 1;
       cpu->timer_next = cpu->cycles + (uint64_t) cpu->timer_period;
       if (mode == RUN_TRACE)
         printf("[pc=%3lld cyc=%6llu] -- timer trap -> handler %lld\n",

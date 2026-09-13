@@ -664,6 +664,7 @@ function disegna(axisEl, lanesEl, b0, b1, tickLabel) {
     `<span class="preline" style="left:${pc(e.c)}%;border-color:${PRE_COL[e.canale]}"
        data-c="${e.c}" data-chi="${e.chi}" data-succ="${e.succ}"
        data-cat="${e.canale}" data-mk="${e.marker}"
+       data-fr="${(e.frase || "").replace(/"/g, "&quot;")}"
        data-fuori="${e.fuori === null ? "" : e.fuori}"
        data-dato="${e.dato || ""}"></span>`).join("");
 
@@ -815,7 +816,11 @@ function mostraPre(el) {
     `<span style="color:${PRE_COL[d.cat] || "var(--accent)"}">` +
       `<b>${(d.cat || "").toUpperCase()}</b> @${N.format(d.c)}</span>` +
     (d.mk ? `<span>${d.mk}</span>` : "") +
-    `<span>girava <b>${d.chi}</b>, poi <b>${d.succ}</b></span>` +
+    // La frase la sceglie il CANALE, non questa riga: per un `owner task`
+    // current e' chi l'ha prodotta, per un `owner kernel` chi per conto del
+    // quale, per un `owner isr` chi e' stato interrotto. Una frase buona per
+    // tutti direbbe il possesso della CPU invece della paternita'.
+    `<span>${d.fr || ("girava " + d.chi)}</span>` +
     (d.fuori ? `<span>riprende dopo <b>${N.format(d.fuori)}</b> cicli</span>`
              : `<span>non riprende piu'</span>`) +
     (d.dato ? `<span><b>${d.dato}</b></span>` : "");

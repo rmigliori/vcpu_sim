@@ -21,7 +21,7 @@
 > `ctest` **39/39** (erano 32). Il **13/09** ha chiuso al mattino le tre cose
 > rimaste aperte apposta — ha **fuso** il primo ramo del progetto, ha **deciso
 > la lingua** (§3.42), ha **fatto il rename** (§3.43), otto commit
-> `5b72bd1`→`24dca22` — e poi, in fila, gli **otto pezzi** che portano il
+> `5b72bd1`→`24dca22` — e poi, in fila, i **nove pezzi** che portano il
 > marcatore dall'idea al numero, e la pagina da documento a strumento:
 >
 > | | |
@@ -34,6 +34,7 @@
 > | §3.49 | **i cursori** con l'aggancio, e la pagina smette di essere una ricetta |
 > | §3.50 | **lo zoom**: rotella, trascinamento, e la finestra è uno stato solo |
 > | §3.51 | **il porto dati**: una marca che si porta dietro un valore del programma |
+> | §3.52 | **`owner`**: il rapporto fra la marca e `current` lo dichiara il canale |
 >
 > Il risultato in una riga: esistono due numeri realtime che ieri non c'erano —
 > **18 scansioni dello scheduler** (min 51, max 177, **jitter 126**) e **11
@@ -2996,6 +2997,78 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.52 `owner`: il proprietario di una marca dipende dal CANALE (13/09/2026, decima parte)
+
+L'osservazione è dell'utente, ed è più precisa di quella che avevo fatto io.
+Avevo detto «stesso campo, due significati»; il punto è che quei significati
+sono una **proprietà del canale**, non un'ambiguità da sciogliere caso per caso.
+
+| canale | chi esegue la `sw` | cosa significa `current` |
+|---|---|---|
+| `SCHED` | il kernel | **per conto di** chi |
+| `PREEMPT` | il kernel | chi l'ha **subita** |
+| `RECV` | il task | chi l'ha **prodotta** |
+| `ISR` *(da fare)* | l'ISR | chi è stato **interrotto** |
+
+Quattro rapporti diversi fra la marca e `current`, e chi scrive il tag li
+conosce tutti. Quindi si dichiarano — `owner task|kernel|isr` — e il lettore
+smette di usare una frase buona per tutti, che descriveva il **possesso della
+CPU** invece della **paternità**.
+
+`ctest` **39/39**, e le impronte **tutte** invariate, `test_tmgr_marks`
+compreso: `owner` non costa un'istruzione nel bersaglio. È l'unico dei pezzi di
+oggi che sia gratis.
+
+#### Si dichiara, e la macchina VERIFICA
+
+La macchina conta la profondità di trap — la sa esatta, perché è lei a prendere
+la trap e lei a eseguire `reti` — e ogni marca se la porta dietro. Quindi un
+canale `owner isr` che marca in contesto di task, o un `owner task` che marca
+dentro una trap, è **un tag nel posto sbagliato**, e si dice.
+
+È **lo stesso schema di `data`/`ha_dato`**, due volte di fila: il catalogo
+dichiara, la macchina registra un bit che sa per costruzione, il lettore
+confronta. Che sia venuto uguale due volte è un indizio che è la forma giusta e
+non un espediente.
+
+#### E la prima stesura del controllo era sbagliata, subito
+
+Pretendevo che `owner kernel` stesse fuori dalle trap, e ha dato un errore su
+**ogni preemption**. Giusto così: `scheduler` è chiamato da `sched_isr_exit`
+(dentro il tick) *e* da `task_block` (da task), che è precisamente il disegno di
+questo kernel. Solo `isr` e `task` sono stretti; **`kernel` sta in entrambi i
+contesti perché è quello che fa un kernel**.
+
+Ed è diventata un'informazione invece di un vincolo: per un `owner kernel` il
+lettore dice *in quale* dei due contesti stesse girando, e su `test_tmgr_marks`
+dice che tutte e undici le preemption sono arrivate **dall'ISR** — cioè dal
+tick, non da un blocco volontario. Un fatto che prima non si poteva leggere.
+
+```
+preemption  la CPU e' stata tolta  dal kernel (nell'ISR) per conto di ?(80), poi ?(32)
+RECV        consegnato dalla mailbox  prodotta da ?(56), poi ?(80)  [codice=77]
+```
+
+Provato a rovescio come il porto dati: falsificando il contesto su due marche
+`owner task`, il lettore le ha nominate entrambe.
+
+#### Cosa resta, e i `?` che si vedono qui sopra
+
+I proprietari sono ancora numeri, e la correzione è decisa ma non fatta: **una
+stringa ASCII nel TCB**, proposta dall'utente e migliore del `.global` che avevo
+suggerito io. La ragione che decide non è l'estetica — è che **funziona senza
+tabella dei simboli**: un nome che vive nei dati viaggia col programma, lo trovi
+in un dump di memoria con un tracer che non sa niente del formato
+dell'eseguibile. Che è il problema di dicembre. È anche quello che fa FreeRTOS
+(`pcTaskName` dentro il TCB).
+
+Costo, che è più grosso di quello di oggi: `TCB.size` cresce, quindi si muove
+l'`EXPECT` di `test_include` e soprattutto la metà `TEXT+DATA` dell'impronta su
+**tutti** i programmi con task. È una modifica alla struttura dati centrale del
+kernel, ed è il prossimo pezzo.
 
 ---
 

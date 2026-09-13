@@ -51,10 +51,23 @@ class Categoria:
     riporterebbe come "0 cicli", cioe' rumore) o finestre mai chiuse (che il
     lettore dichiara come misure MANCANTI, cioe' un errore falso).
     """
-    def __init__(self, simbolo, canale, nome, puntuale=False, dato=None):
+    def __init__(self, simbolo, canale, nome, puntuale=False, dato=None,
+                 owner="task"):
         self.simbolo, self.canale, self.nome = simbolo, canale, nome
         self.puntuale = puntuale
         self.dato = dato          # il nome del valore sul porto dati, o None
+        # CHI PRODUCE le marche di questo canale, e quindi che relazione ha la
+        # marca con `current`. Non e' la stessa per tutti, ed e' una proprieta'
+        # del CANALE: chi scrive il tag sa dov'e' messo.
+        #
+        #   task    la sw la esegue il task: current l'ha PRODOTTA
+        #   kernel  la esegue il kernel per conto di qualcuno: current e' il
+        #           task PER CONTO DEL QUALE (o, per una preemption, la vittima)
+        #   isr     la esegue l'ISR: current e' chi e' stato INTERROTTO
+        #
+        # Senza, il lettore sarebbe costretto a una frase buona per tutti --
+        # "girava X" -- che descrive il possesso della CPU e non la paternita'.
+        self.owner = owner
         self.marker = {}          # valore -> (simbolo, nome)
 
 
@@ -67,6 +80,7 @@ def read_catalogue(path):
     """
     cat, by_channel, corrente = {}, {}, None
     riga_re = re.compile(r'^\s*(category|event|marker)\s+(\w+)\s+(\d+)\s+"([^"]*)"'
+                         r'(?:\s+owner\s+(task|kernel|isr))?'
                          r'(?:\s+data\s+"([^"]*)")?\s*$')
 
     for n, linea in enumerate(open(path), 1):
@@ -76,7 +90,10 @@ def read_catalogue(path):
         if not m:
             sys.exit(f"{path}:{n}: riga non riconosciuta: {linea.rstrip()}")
         tipo, simbolo, numero, nome = m.group(1), m.group(2), int(m.group(3)), m.group(4)
-        dato = m.group(5)
+        owner, dato = m.group(5), m.group(6)
+        if owner is not None and tipo == "marker":
+            sys.exit(f"{path}:{n}: `owner` si dichiara sulla CATEGORIA, non su un "
+                     f"marker: chi esegue la sw e' una proprieta' del canale")
         if dato is not None and tipo == "marker":
             sys.exit(f"{path}:{n}: `data` si dichiara sulla CATEGORIA, non su un "
                      f"marker: e' una proprieta' del canale, e tutti i marker "
@@ -95,7 +112,8 @@ def read_catalogue(path):
             if simbolo in cat:
                 sys.exit(f"{path}:{n}: la categoria '{simbolo}' e' gia' dichiarata")
             corrente = Categoria(simbolo, numero, nome,
-                                 puntuale=(tipo == "event"), dato=dato)
+                                 puntuale=(tipo == "event"), dato=dato,
+                                 owner=(owner or "task"))
             cat[simbolo] = by_channel[numero] = corrente
         else:
             if corrente is None:
@@ -183,7 +201,8 @@ def analizza(cat, by_channel, recording, vx):
         c, ch, v, cur = campi[0], campi[1], campi[2], campi[3]
         dato    = campi[4] if len(campi) > 4 else 0
         ha_dato = campi[5] if len(campi) > 5 else 0
-        ev.append((c, ch, v, cur, dato, ha_dato))
+        in_trap = campi[6] if len(campi) > 6 else 0
+        ev.append((c, ch, v, cur, dato, ha_dato, in_trap))
     if not ev:
         sys.exit(f"{recording}: nessuna marca")
 
@@ -195,6 +214,26 @@ def analizza(cat, by_channel, recording, vx):
         if ch in riservati:  return riservati[ch] + " [macchina]"
         if ch in by_channel: return by_channel[ch].nome
         return f"canale {ch} NON DICHIARATO"
+
+    def frase_owner(ch, cur, succ, in_trap=0):
+        """Come si dice, per QUESTO canale, il rapporto fra la marca e current.
+
+        Una frase sola per tutti -- "girava X" -- descriverebbe il possesso
+        della CPU e non la paternita', che per meta' dei canali e' un'altra
+        cosa. Il canale lo dichiara, e qui si traduce.
+        """
+        c = by_channel.get(ch)
+        o = c.owner if c else "task"
+        if o == "isr":
+            return f"prodotta dall'ISR, mentre girava {chi(cur)}"
+        if o == "kernel":
+            # In quale dei due contesti il kernel stesse girando lo sa la
+            # macchina, e vale la pena dirlo: distingue una preemption arrivata
+            # dal TICK da una arrivata da un blocco volontario.
+            dove = "nell'ISR" if in_trap else "da task"
+            return (f"dal kernel ({dove}) per conto di {chi(cur)}"
+                    + (f", poi {succ}" if succ else ""))
+        return f"prodotta da {chi(cur)}" + (f", poi {succ}" if succ else "")
 
     def etichetta_dato(ch, d, hd):
         """'codice=17', o None se quel canale non porta dati."""
@@ -209,7 +248,7 @@ def analizza(cat, by_channel, recording, vx):
 
     # Il canale 0 e' una PARTIZIONE del tempo: in ogni istante la CPU ha un
     # proprietario e uno solo, quindi da qui si decompone qualunque finestra.
-    esec = [(c, v) for c, ch, v, _, _, _ in ev if ch == 0]
+    esec = [(c, v) for c, ch, v, _, _, _, _ in ev if ch == 0]
     fine = ev[-1][0]
     def segmenti(a, b):
         """I tratti di [a,b), uno per possessore, IN ORDINE DI TEMPO."""
@@ -248,7 +287,7 @@ def analizza(cat, by_channel, recording, vx):
         return None
 
     aperte, finestre, puntuali, eventi, errori = {}, [], [], [], []
-    for c, ch, v, cur, dato, ha_dato in ev:
+    for c, ch, v, cur, dato, ha_dato, in_trap in ev:
         # Il porto dati e la sua dichiarazione devono essere d'accordo, e le due
         # discordanze sono difetti diversi: una marca senza il dato che la sua
         # categoria promette e' una misura che manca; un dato armato su un
@@ -259,6 +298,26 @@ def analizza(cat, by_channel, recording, vx):
             errori.append(f"ciclo {c}: {nome_canale(ch)} dichiara il dato "
                           f"'{decl.dato}' e questa marca non ce l'ha: non e' 0, "
                           f"e' MANCANTE (nessuno ha armato il porto)")
+        # L'owner DICHIARATO contro il contesto che la macchina ha VISTO. La
+        # macchina la profondita' di trap la sa esatta (e' lei che prende la
+        # trap e che esegue reti), quindi non e' una stima: e' il controllo che
+        # rende la dichiarazione una promessa invece di un commento. Stesso
+        # schema di `data`/`ha_dato`: si dichiara, la macchina registra, il
+        # lettore confronta.
+        # Solo `isr` e `task` sono STRETTI. `kernel` sta in entrambi i contesti
+        # ed e' corretto che ci stia: `scheduler` e' chiamato da sched_isr_exit
+        # (dentro il tick) e da task_block (da task), che e' precisamente il
+        # disegno di questo kernel. Pretendere un contesto solo darebbe un
+        # errore su ogni preemption -- l'ha dato, la prima volta.
+        if decl is not None:
+            if decl.owner == "isr" and not in_trap:
+                errori.append(f"ciclo {c}: {nome_canale(ch)} dichiara `owner isr` "
+                              f"ma questa marca e' stata prodotta in contesto di "
+                              f"TASK: il tag non e' dentro l'ISR")
+            if decl.owner == "task" and in_trap:
+                errori.append(f"ciclo {c}: {nome_canale(ch)} dichiara `owner task` "
+                              f"ma questa marca e' stata prodotta DENTRO una trap: "
+                              f"il tag non e' dove la dichiarazione dice")
         if decl is not None and not decl.dato and ha_dato:
             errori.append(f"ciclo {c}: armato un dato sul canale {ch} "
                           f"({nome_canale(ch)}), che non ne dichiara: nessuno "
@@ -273,20 +332,20 @@ def analizza(cat, by_channel, recording, vx):
                 errori.append(f"ciclo {c}: il canale {ch} ({nome_canale(ch)}) e' un "
                               f"EVENT e non si chiude: lo 0 scritto qui non vuol dire niente")
                 continue
-            eventi.append((c, ch, v, cur, dato, ha_dato))
+            eventi.append((c, ch, v, cur, dato, ha_dato, in_trap))
             continue
         if v:
             if ch in aperte:
                 errori.append(f"ciclo {c}: canale {ch} ({nome_canale(ch)}) riaperto "
                               f"mentre era ancora aperto dal ciclo {aperte[ch][0]}")
-            aperte[ch] = (c, v, cur, dato, ha_dato)
+            aperte[ch] = (c, v, cur, dato, ha_dato, in_trap)
         elif ch in aperte:
-            a, av, acur, ad, ahd = aperte.pop(ch)
+            a, av, acur, ad, ahd, _ = aperte.pop(ch)
             finestre.append((ch, av, a, c, acur, cur, ad, ahd))
         else:
             errori.append(f"ciclo {c}: canale {ch} ({nome_canale(ch)}) chiuso "
                           f"senza essere stato aperto")
-    for ch, (a, v, _, _, _) in aperte.items():
+    for ch, (a, v, _, _, _, _) in aperte.items():
         errori.append(f"canale {ch} ({nome_canale(ch)}) aperto al ciclo {a} e "
                       f"MAI CHIUSO: quella misura non c'e'")
 
@@ -314,11 +373,13 @@ def analizza(cat, by_channel, recording, vx):
     # e quando il preemptato l'ha ripresa. Il secondo e' il tempo in cui e'
     # stato fuori INVOLONTARIAMENTE, che e' il numero realtime della cosa.
     evs = []
-    for c, ch, v, cur, dato, ha_dato in eventi:
+    for c, ch, v, cur, dato, ha_dato, in_trap in eventi:
         a = chi(cur)
         r = rientro(c, cur)
         evs.append({"c": c, "ch": ch, "canale": nome_canale(ch),
                     "dato": etichetta_dato(ch, dato, ha_dato),
+                    "owner": (by_channel[ch].owner if ch in by_channel else "task"),
+                    "frase": frase_owner(ch, cur, succ(c), in_trap),
                     "marker": nome_marker(ch, v), "chi": a,
                     "succ": succ(c), "rientro": r,
                     "fuori": (r - c) if r is not None else None})
@@ -369,8 +430,8 @@ def report(a):
             fuori = ("riprende dopo %d" % e["fuori"]) if e["fuori"] is not None \
                     else "non riprende piu'"
             d = ("  [" + e["dato"] + "]") if e.get("dato") else ""
-            print(f"  ciclo {e['c']:>7}  {e['canale']:<14} {e['marker']:<24} "
-                  f"{e['chi']:<8} -> {str(e['succ']):<8} {fuori}{d}")
+            print(f"  ciclo {e['c']:>7}  {e['canale']:<20} {e['marker']:<26} "
+                  f"{e['frase']:<44} {fuori}{d}")
 
     print("\n--- finestra per finestra, e dove sono finiti i cicli ---")
     for f in a["finestre"]:

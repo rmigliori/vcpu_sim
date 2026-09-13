@@ -73,6 +73,7 @@ ok(PRE.every(e => e.canale && e.marker), "ogni evento porta la sua categoria e i
 ok(PRE_CAT.length === new Set(PRE.map(e => e.canale)).size,
    "le categorie di evento sono quelle che compaiono (" + PRE_CAT.join(", ") + ")");
 ok(PRE_CAT.every(c => PRE_COL[c]), "ognuna ha un colore");
+ok(PRE.every(e => e.frase && e.frase.length), "ogni evento porta la frase del suo OWNER");
 ok(new Set(PRE_CAT.map(c => PRE_COL[c])).size === PRE_CAT.length,
    "e due categorie non hanno lo stesso colore");
 

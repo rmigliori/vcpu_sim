@@ -129,14 +129,14 @@ static void marks_dump(const VCpu* cpu)
   // aveva armato, e se lo aveva armato davvero. La seconda non e' ridondante --
   // zero e' un valore legittimo, quindi senza di essa "il dato era 0" e
   // "nessuno ha armato" sarebbero la stessa riga.
-  fprintf(f, "# ciclo canale valore current dato ha_dato\n");
+  fprintf(f, "# ciclo canale valore current dato ha_dato in_trap\n");
   fprintf(f, "# riservato %d esecuzione\n", MARK_EXEC);
   fprintf(f, "# riservato %d tasto\n", MARK_KEY);
   for (int i = 0; i < cpu->marks_len; ++i)
   {
     const Marca* m = &cpu->marche[i];
-    fprintf(f, "%llu %d %d %d %d %d\n", (unsigned long long) m->cycle,
-            m->canale, m->valore, m->current, m->dato, m->ha_dato);
+    fprintf(f, "%llu %d %d %d %d %d %d\n", (unsigned long long) m->cycle,
+            m->canale, m->valore, m->current, m->dato, m->ha_dato, m->in_trap);
   }
   fclose(f);
   printf("marche: %d in %s", cpu->marks_len, g_marche_out);

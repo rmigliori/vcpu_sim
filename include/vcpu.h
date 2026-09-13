@@ -160,6 +160,7 @@ typedef struct
   int32_t  current;    // chi girava: lo timbra la macchina, non il programma
   int32_t  dato;       // il valore armato sul porto dati, 0 se non armato
   int32_t  ha_dato;    // ...e se lo era: 0 non e' distinguibile da "nessuno"
+  int32_t  in_trap;    // 0 = contesto di TASK, >0 = dentro una trap
 } Marca;
 
 #define MARCHE_MAX 8192
@@ -416,6 +417,14 @@ typedef struct
   int32_t  mark_current;      // ultimo valore visto: e' il timbro di ogni marca
   int32_t  mark_pend[MARK_CHANNELS];   // il porto dati, per canale
   int32_t  mark_armed[MARK_CHANNELS];  // ...e se e' stato scritto
+
+  // Profondita' di trap: la macchina la sa esattamente, perche' e' lei che
+  // prende la trap e lei che esegue reti. Serve a VERIFICARE l'`owner`
+  // dichiarato nel catalogo -- un canale che dice "isr" e marca in contesto di
+  // task e' un tag nel posto sbagliato -- e non a dedurlo: chi scrive il tag sa
+  // dov'e', il catalogo lo dichiara, e questo lo controlla. Non e' la stessa
+  // cosa di PSW_IE: IE = 0 vale anche in una sezione critica di task.
+  int32_t  trap_depth;
 
   // statistics
   uint64_t instr_count;    // total executed instructions
