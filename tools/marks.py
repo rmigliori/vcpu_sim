@@ -51,9 +51,10 @@ class Categoria:
     riporterebbe come "0 cicli", cioe' rumore) o finestre mai chiuse (che il
     lettore dichiara come misure MANCANTI, cioe' un errore falso).
     """
-    def __init__(self, simbolo, canale, nome, puntuale=False):
+    def __init__(self, simbolo, canale, nome, puntuale=False, dato=None):
         self.simbolo, self.canale, self.nome = simbolo, canale, nome
         self.puntuale = puntuale
+        self.dato = dato          # il nome del valore sul porto dati, o None
         self.marker = {}          # valore -> (simbolo, nome)
 
 
@@ -65,7 +66,8 @@ def read_catalogue(path):
     dell'una chiudono quelle dell'altra.
     """
     cat, by_channel, corrente = {}, {}, None
-    riga_re = re.compile(r'^\s*(category|event|marker)\s+(\w+)\s+(\d+)\s+"([^"]*)"\s*$')
+    riga_re = re.compile(r'^\s*(category|event|marker)\s+(\w+)\s+(\d+)\s+"([^"]*)"'
+                         r'(?:\s+data\s+"([^"]*)")?\s*$')
 
     for n, linea in enumerate(open(path), 1):
         if not linea.strip() or linea.lstrip().startswith("#"):
@@ -74,6 +76,11 @@ def read_catalogue(path):
         if not m:
             sys.exit(f"{path}:{n}: riga non riconosciuta: {linea.rstrip()}")
         tipo, simbolo, numero, nome = m.group(1), m.group(2), int(m.group(3)), m.group(4)
+        dato = m.group(5)
+        if dato is not None and tipo == "marker":
+            sys.exit(f"{path}:{n}: `data` si dichiara sulla CATEGORIA, non su un "
+                     f"marker: e' una proprieta' del canale, e tutti i marker "
+                     f"che ci passano sopra portano lo stesso genere di valore")
 
         if tipo in ("category", "event"):
             if numero < RISERVATI:
@@ -87,7 +94,8 @@ def read_catalogue(path):
                          f"'{by_channel[numero].simbolo}'")
             if simbolo in cat:
                 sys.exit(f"{path}:{n}: la categoria '{simbolo}' e' gia' dichiarata")
-            corrente = Categoria(simbolo, numero, nome, puntuale=(tipo == "event"))
+            corrente = Categoria(simbolo, numero, nome,
+                                 puntuale=(tipo == "event"), dato=dato)
             cat[simbolo] = by_channel[numero] = corrente
         else:
             if corrente is None:
@@ -120,6 +128,10 @@ def generate(path, cat, out_path):
         for c in sorted(cat.values(), key=lambda c: c.canale):
             f.write(f"; --- {c.nome} (canale {c.canale}) ---\n")
             f.write(f".equ MARK_{c.simbolo:<12} 0x{MARK_BASE + c.canale*4:x}\n")
+            if c.dato:
+                f.write(f".equ MARKD_{c.simbolo:<11} "
+                        f"0x{MARK_BASE + MARK_CHANNELS*4 + c.canale*4:x}"
+                        f"  ; il porto dati: {c.dato}\n")
             for v, (sim, nome) in sorted(c.marker.items()):
                 f.write(f".equ M_{c.simbolo}_{sim:<12} {v:<6}; {nome}\n")
             f.write("\n")
@@ -164,8 +176,14 @@ def analizza(cat, by_channel, recording, vx):
             if m:
                 riservati[int(m.group(1))] = m.group(2)
             continue
-        c, ch, v, cur = (int(x) for x in linea.split())
-        ev.append((c, ch, v, cur))
+        campi = [int(x) for x in linea.split()]
+        # Le due colonne del porto dati sono in fondo. Una registrazione
+        # prodotta prima che esistessero non le ha, e va letta lo stesso:
+        # significa "nessun dato", che e' la verita'.
+        c, ch, v, cur = campi[0], campi[1], campi[2], campi[3]
+        dato    = campi[4] if len(campi) > 4 else 0
+        ha_dato = campi[5] if len(campi) > 5 else 0
+        ev.append((c, ch, v, cur, dato, ha_dato))
     if not ev:
         sys.exit(f"{recording}: nessuna marca")
 
@@ -178,6 +196,12 @@ def analizza(cat, by_channel, recording, vx):
         if ch in by_channel: return by_channel[ch].nome
         return f"canale {ch} NON DICHIARATO"
 
+    def etichetta_dato(ch, d, hd):
+        """'codice=17', o None se quel canale non porta dati."""
+        c = by_channel.get(ch)
+        if not c or not c.dato or not hd: return None
+        return f"{c.dato}={d}"
+
     def nome_marker(ch, v):
         c = by_channel.get(ch)
         if c and v in c.marker: return c.marker[v][1]
@@ -185,7 +209,7 @@ def analizza(cat, by_channel, recording, vx):
 
     # Il canale 0 e' una PARTIZIONE del tempo: in ogni istante la CPU ha un
     # proprietario e uno solo, quindi da qui si decompone qualunque finestra.
-    esec = [(c, v) for c, ch, v, _ in ev if ch == 0]
+    esec = [(c, v) for c, ch, v, _, _, _ in ev if ch == 0]
     fine = ev[-1][0]
     def segmenti(a, b):
         """I tratti di [a,b), uno per possessore, IN ORDINE DI TEMPO."""
@@ -224,7 +248,21 @@ def analizza(cat, by_channel, recording, vx):
         return None
 
     aperte, finestre, puntuali, eventi, errori = {}, [], [], [], []
-    for c, ch, v, cur in ev:
+    for c, ch, v, cur, dato, ha_dato in ev:
+        # Il porto dati e la sua dichiarazione devono essere d'accordo, e le due
+        # discordanze sono difetti diversi: una marca senza il dato che la sua
+        # categoria promette e' una misura che manca; un dato armato su un
+        # canale che non lo dichiara e' un armamento che nessuno leggera' --
+        # quasi sempre il canale sbagliato.
+        decl = by_channel.get(ch)
+        if decl is not None and decl.dato and not ha_dato:
+            errori.append(f"ciclo {c}: {nome_canale(ch)} dichiara il dato "
+                          f"'{decl.dato}' e questa marca non ce l'ha: non e' 0, "
+                          f"e' MANCANTE (nessuno ha armato il porto)")
+        if decl is not None and not decl.dato and ha_dato:
+            errori.append(f"ciclo {c}: armato un dato sul canale {ch} "
+                          f"({nome_canale(ch)}), che non ne dichiara: nessuno "
+                          f"lo leggera'")
         if ch in riservati:
             if ch != 0: puntuali.append((c, ch, v, cur))
             continue
@@ -235,20 +273,20 @@ def analizza(cat, by_channel, recording, vx):
                 errori.append(f"ciclo {c}: il canale {ch} ({nome_canale(ch)}) e' un "
                               f"EVENT e non si chiude: lo 0 scritto qui non vuol dire niente")
                 continue
-            eventi.append((c, ch, v, cur))
+            eventi.append((c, ch, v, cur, dato, ha_dato))
             continue
         if v:
             if ch in aperte:
                 errori.append(f"ciclo {c}: canale {ch} ({nome_canale(ch)}) riaperto "
                               f"mentre era ancora aperto dal ciclo {aperte[ch][0]}")
-            aperte[ch] = (c, v, cur)
+            aperte[ch] = (c, v, cur, dato, ha_dato)
         elif ch in aperte:
-            a, av, acur = aperte.pop(ch)
-            finestre.append((ch, av, a, c, acur, cur))
+            a, av, acur, ad, ahd = aperte.pop(ch)
+            finestre.append((ch, av, a, c, acur, cur, ad, ahd))
         else:
             errori.append(f"ciclo {c}: canale {ch} ({nome_canale(ch)}) chiuso "
                           f"senza essere stato aperto")
-    for ch, (a, v, _) in aperte.items():
+    for ch, (a, v, _, _, _) in aperte.items():
         errori.append(f"canale {ch} ({nome_canale(ch)}) aperto al ciclo {a} e "
                       f"MAI CHIUSO: quella misura non c'e'")
 
@@ -260,8 +298,9 @@ def analizza(cat, by_channel, recording, vx):
                           "jitter": max(d) - min(d), "totale": sum(d)})
 
     fin = []
-    for ch, v, a, z, acur, zcur in finestre:
-        fin.append({"ch": ch, "canale": nome_canale(ch), "marker": nome_marker(ch, v),
+    for ch, v, a, z, acur, zcur, ad, ahd in finestre:
+        fin.append({"dato": etichetta_dato(ch, ad, ahd),
+                    "ch": ch, "canale": nome_canale(ch), "marker": nome_marker(ch, v),
                     "a": a, "z": z, "d": z - a, "cross": acur != zcur,
                     "poss": [[chi(o), n] for o, n in possesso(a, z).most_common()],
                     # I tratti per il disegno: stessa decomposizione di 'poss',
@@ -275,10 +314,11 @@ def analizza(cat, by_channel, recording, vx):
     # e quando il preemptato l'ha ripresa. Il secondo e' il tempo in cui e'
     # stato fuori INVOLONTARIAMENTE, che e' il numero realtime della cosa.
     evs = []
-    for c, ch, v, cur in eventi:
+    for c, ch, v, cur, dato, ha_dato in eventi:
         a = chi(cur)
         r = rientro(c, cur)
         evs.append({"c": c, "ch": ch, "canale": nome_canale(ch),
+                    "dato": etichetta_dato(ch, dato, ha_dato),
                     "marker": nome_marker(ch, v), "chi": a,
                     "succ": succ(c), "rientro": r,
                     "fuori": (r - c) if r is not None else None})
@@ -321,17 +361,24 @@ def report(a):
     if a["eventi"]:
         print("\n--- eventi (il programma) ---")
         for e in a["eventi"]:
-            fuori = ("%d cicli fuori" % e["fuori"]) if e["fuori"] is not None \
-                    else "non rientra piu'"
+            # "riprende dopo" e non "cicli fuori": la seconda e' vera solo per
+            # una preemption, dove la CPU e' stata TOLTA. Per un evento
+            # qualunque -- una ricezione -- chi girava non e' stato messo fuori
+            # da nessuno, e chiamarlo cosi' direbbe una cosa falsa su un numero
+            # vero.
+            fuori = ("riprende dopo %d" % e["fuori"]) if e["fuori"] is not None \
+                    else "non riprende piu'"
+            d = ("  [" + e["dato"] + "]") if e.get("dato") else ""
             print(f"  ciclo {e['c']:>7}  {e['canale']:<14} {e['marker']:<24} "
-                  f"{e['chi']:<8} -> {str(e['succ']):<8} {fuori}")
+                  f"{e['chi']:<8} -> {str(e['succ']):<8} {fuori}{d}")
 
     print("\n--- finestra per finestra, e dove sono finiti i cicli ---")
     for f in a["finestre"]:
         dett = "  ".join(f"{o} {n}" for o, n in f["poss"])
         cross = " ATTRAVERSA" if f["cross"] else ""
+        dd = ("  " + f["dato"]) if f.get("dato") else ""
         print(f"  {f['canale']:<20} {f['marker']:<30} "
-              f"@{f['a']:<7} {f['d']:>6} cicli{cross}   [{dett}]")
+              f"@{f['a']:<7} {f['d']:>6} cicli{cross}{dd}   [{dett}]")
 
     if a["errori"]:
         print("\n--- ERRORI ---")

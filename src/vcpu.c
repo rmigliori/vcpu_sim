@@ -68,11 +68,23 @@ void vcpu_marca(VCpu* cpu, int canale, int32_t valore)
   m->canale  = canale;
   m->valore  = valore;
   m->current = cpu->mark_current;
+  // Il dato armato sul porto: la marca se lo porta via e il canale torna
+  // disarmato, cosi' un armamento serve UNA marca e non resta appiccicato a
+  // quelle dopo.
+  m->dato    = cpu->mark_pend[canale];
+  m->ha_dato = cpu->mark_armed[canale];
+  cpu->mark_pend[canale]  = 0;
+  cpu->mark_armed[canale] = 0;
 }
 
 static int is_marca(int64_t addr)
 {
   return addr >= MARK_BASE && addr < MARK_BASE + MARK_CHANNELS * 4;
+}
+
+static int is_marca_dato(int64_t addr)
+{
+  return addr >= MARKD_BASE && addr < MARKD_BASE + MARK_CHANNELS * 4;
 }
 
 // L'unico registro scrivibile e' il marcatore. L'abilitazione dell'interrupt
@@ -90,6 +102,23 @@ static void mmio_store(VCpu* cpu, int64_t addr, int32_t value)
               canale);
     else
       vcpu_marca(cpu, canale, value);
+    return;
+  }
+  if (is_marca_dato(addr))
+  {
+    // ARMA il porto dati del canale: la prossima marca su QUEL canale se lo
+    // porta via. Non emette niente da solo -- se nessuna marca segue, il dato
+    // resta li' e il lettore lo dice (un armamento che nessuno consuma e' un
+    // tag scritto a meta').
+    int canale = (int) ((addr - MARKD_BASE) / 4);
+    if (canale == MARK_EXEC || canale == MARK_KEY)
+      fprintf(stderr, "runtime error: il canale %d e' riservato alla macchina\n",
+              canale);
+    else
+    {
+      cpu->mark_pend[canale]  = value;
+      cpu->mark_armed[canale] = 1;
+    }
     return;
   }
   fprintf(stderr, "runtime error: MMIO store to read-only register 0x%llx\n",

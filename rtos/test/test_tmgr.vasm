@@ -66,6 +66,9 @@
 .include "message/message.vinc"
 .include "timeout/timeout.vinc"
 .include "timeout_manager/timeout_manager.vinc"
+.ifdef MARKS
+.include "marks/marks.vinc"
+.endif
 
 .equ COD_EXPIRY  77     ; il messageCode che A si fa recapitare. Opaco per
                           ; tutti tranne che per A: il gestore lo ricopia dal
@@ -208,6 +211,19 @@ a_armed:
 
   ; --- e' la MIA attesa? Il tag lo dice, e nient'altro potrebbe (§9.4) ---
   addi r3, r2, MESSAGE.payload
+
+  ; La marca si porta dietro il CODICE del messaggio. Due istruzioni per armare
+  ; il porto dati, tre per la marca. r6 e r7 sono liberi in questo corpo (r3
+  ; serve subito sotto, r4 e r5 pure).
+.ifdef MARKS
+  lw r6, PAYLOAD.messageCode(r3)
+  li r7, MARKD_RECV
+  sw r6, 0(r7)             ; ARMA: il prossimo tag su questo canale se lo porta
+  li r7, MARK_RECV
+  li r6, M_RECV_GOT
+  sw r6, 0(r7)
+.endif
+
   lw r4, PAYLOAD.clientTag(r3)
   li r5, tagA
   lw r5, 0(r5)

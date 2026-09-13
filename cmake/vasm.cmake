@@ -189,9 +189,29 @@ endfunction()
 # riassemblaggio quando cambia un file di interfaccia. E' una dipendenza
 # DICHIARATA, non scoperta: se un .vasm include un .vinc senza che INTERFACES lo
 # dica, CMake non lo sapra' mai. La versione scoperta e' --emit-deps (punto 3).
+#  CONFIGS: come su vasm_library, ma per un oggetto che non e' una libreria --
+#  l'applicazione di un test. `CONFIGS marks` produce t_tmgr E t_tmgr_marks, e
+#  vasm_program(... CONFIG marks) prende il secondo. Serve appena un tag sta
+#  nell'APPLICAZIONE invece che nel kernel, che e' il caso normale per un dato
+#  che appartiene alla convenzione dell'applicazione e non a quella del kernel.
 function(vasm_object name)
-  cmake_parse_arguments(A "" "SOURCE" "INTERFACES;DEFINES" ${ARGN})
+  cmake_parse_arguments(A "" "SOURCE" "INTERFACES;DEFINES;CONFIGS" ${ARGN})
   _vasm_require_kind("vasm_object(${name})" INTERFACES interface ${A_INTERFACES})
+  _vasm_require_kind("vasm_object(${name})" CONFIGS config ${A_CONFIGS})
+  foreach(cfg ${A_CONFIGS})
+    get_target_property(_ci ${cfg} VASM_CFG_INTERFACES)
+    get_target_property(_cd ${cfg} VASM_CFG_DEFINES)
+    if(NOT _ci)
+      set(_ci "")
+    endif()
+    if(NOT _cd)
+      set(_cd "")
+    endif()
+    _vasm_cfg_name(_n ${name} ${cfg})
+    vasm_object(${_n} SOURCE ${A_SOURCE}
+                INTERFACES ${A_INTERFACES} ${_ci}
+                DEFINES    ${A_DEFINES} ${_cd})
+  endforeach()
   _vasm_closure(dirs headers ${A_INTERFACES})
 
   set(iflags "")
@@ -359,7 +379,24 @@ function(vasm_program name)
   endif()
   # Gli oggetti espliciti (sempre linkati) per primi, poi le librerie della
   # chiusura, da cui il linker pesca solo cio' che serve.
+  #
+  # Anche gli OGGETTI si rimappano, con la stessa regola delle librerie: se
+  # esiste la controparte in questa configurazione si prende quella, se no
+  # resta l'oggetto unico. Cosi' `OBJECTS t_tmgr` significa "l'applicazione",
+  # e quale delle sue lo decide CONFIG -- invece di doverlo scrivere due volte.
   set(all ${A_OBJECTS})
+  if(A_CONFIG)
+    set(mo "")
+    foreach(o ${A_OBJECTS})
+      _vasm_cfg_name(cand ${o} ${A_CONFIG})
+      if(TARGET ${cand})
+        list(APPEND mo ${cand})
+      else()
+        list(APPEND mo ${o})
+      endif()
+    endforeach()
+    set(all ${mo})
+  endif()
   if(A_LINK)
     _vasm_link_closure(libs ${A_LINK})
     if(A_CONFIG)

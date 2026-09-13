@@ -118,6 +118,31 @@ typedef struct
 #define MARK_EXEC     0        // riservato: lo scrive la macchina (current)
 #define MARK_KEY    1        // riservato: lo scrive il device
 
+// ---------------------------------------------------------------------------
+//  IL PORTO DATI: una marca puo' portarsi dietro un VALORE DEL PROGRAMMA.
+//
+//  Una sw porta UNA parola, e quella e' gia' il marker (quale punto). Il
+//  secondo valore -- il codice del messaggio appena ricevuto, la profondita' di
+//  una coda -- vuole quindi un secondo porto:
+//
+//      sw  rDato, 0(rPortoDati)    ARMA il canale
+//      sw  rMarker, 0(rCanale)     la marca, e se lo porta via
+//
+//  UNO PER CANALE, e non uno globale: con un porto solo, un tick fra
+//  l'armamento e la marca -- e l'ISR che ne emette una sua -- mangerebbe il
+//  dato. Sarebbe un guasto raro, non riproducibile e silenzioso. Per canale,
+//  l'ISR marca sui propri e non puo' toccare il tuo.
+//
+//  E si ricorda SE era armato, non solo cosa c'era: zero e' un valore
+//  legittimo (un codice di messaggio puo' valere 0), quindi senza quel bit
+//  "il dato era 0" e "mi sono dimenticato di armare" avrebbero lo stesso
+//  aspetto -- un numero plausibile al posto di un errore. Col bit, una marca
+//  che doveva portare un dato e non ce l'ha si DICHIARA.
+//
+//  Ogni armamento serve UNA marca: dopo, il canale torna disarmato.
+// ---------------------------------------------------------------------------
+#define MARKD_BASE    (MARK_BASE + MARK_CHANNELS * 4)
+
 // Un evento: "al ciclo N il canale C prende il valore V, mentre girava T".
 //
 // UN SOLO FORMATO per tutto, ed e' il motivo per cui non ci sono due tipi di
@@ -133,6 +158,8 @@ typedef struct
   int      canale;
   int32_t  valore;
   int32_t  current;    // chi girava: lo timbra la macchina, non il programma
+  int32_t  dato;       // il valore armato sul porto dati, 0 se non armato
+  int32_t  ha_dato;    // ...e se lo era: 0 non e' distinguibile da "nessuno"
 } Marca;
 
 #define MARCHE_MAX 8192
@@ -387,6 +414,8 @@ typedef struct
   int      mark_on;           // 1 = annota (--marks)
   int64_t  mark_current_addr; // indirizzo di `current`, 0 = non noto al loader
   int32_t  mark_current;      // ultimo valore visto: e' il timbro di ogni marca
+  int32_t  mark_pend[MARK_CHANNELS];   // il porto dati, per canale
+  int32_t  mark_armed[MARK_CHANNELS];  // ...e se e' stato scritto
 
   // statistics
   uint64_t instr_count;    // total executed instructions

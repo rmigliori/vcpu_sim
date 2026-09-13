@@ -170,9 +170,14 @@ vasm_check(chain MODE DUMPS PROGRAM test_chain
 #  cioe' il prezzo che i task scalari pagano perche' quelli vettoriali possano
 #  esistere. cntA resta 5 e cntErr resta 0, cioe' i due numeri che non dipendono dai cicli.
 # ---------------------------------------------------------------------------
+# CONFIGS marks: l'applicazione ha un tag suo -- il CODICE del messaggio che A
+# riceve, sul porto dati (§3.51). Sta qui e non in `receive` perche' il kernel
+# per scelta dichiarata non guarda dentro il payload (message.vinc), e chi i
+# codici li conosce e' chi li ha chiesti.
 vasm_object(t_tmgr SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_tmgr.vasm
                       INTERFACES vinc_queue vinc_tcb vinc_mailbox vinc_message
-                                 vinc_timeout vinc_timeout_manager)
+                                 vinc_timeout vinc_timeout_manager
+                      CONFIGS marks)
 
 vasm_program(test_tmgr OBJECTS t_tmgr
              LINK lib_timeout_manager lib_messaggi lib_kernel lib_pool
@@ -191,7 +196,7 @@ vasm_check(tmgr MODE DUMPS PROGRAM test_tmgr
 #  altre non hanno tag, quindi restano quelle di sempre e sono le STESSE.
 #
 #  PERCHE' QUESTO TEST ESISTE, e non e' un doppione: il terzo numero dei due e'
-#  DIVERSO -- 2566 pulito, 2539 strumentato -- ed e' cntI, i giri dell'idle.
+#  DIVERSO -- 2566 pulito, 2532 strumentato -- ed e' cntI, i giri dell'idle.
 #  Cioe' la strumentazione COSTA, e il costo si vede in un valore dichiarato
 #  invece che in un commento. Se un giorno i due numeri coincidessero vorrebbe
 #  dire che i tag non sono piu' nel kernel, e uno dei due test lo direbbe.
@@ -207,14 +212,17 @@ vasm_program(test_tmgr_marks OBJECTS t_tmgr
                   lib_timeout
              CONFIG marks)
 
-#  DUE categorie dentro, e il costo e' +18 istruzioni sull'intero programma
-#  (21925 -> 21943): la finestra SCHED su ogni chiamata di `scheduler`, e
-#  l'evento puntuale PREEMPT sul ramo sp_preempted, che scatta 11 volte. Il
-#  numero atteso si e' mosso due volte -- 2566, poi 2548 con la sola SCHED, poi
-#  2539 -- ed e' la misura che dice perche' l'interruttore DEVE essere a
-#  compile-time: con --marks spento quelle istruzioni si eseguirebbero lo stesso.
+#  TRE categorie dentro: la finestra SCHED su ogni chiamata di `scheduler`,
+#  l'evento PREEMPT sul ramo sp_preempted (11 volte), e RECV nell'APPLICAZIONE,
+#  che si porta dietro il codice del messaggio sul porto dati.
+#
+#  Il numero atteso si e' mosso TRE volte -- 2566 pulito, 2548 con la sola
+#  SCHED, 2539 aggiungendo PREEMPT, 2532 aggiungendo RECV -- ed e' la misura che
+#  dice perche' l'interruttore DEVE essere a compile-time: con --marks spento
+#  quelle istruzioni si eseguirebbero lo stesso. Ogni tag si paga, e il prezzo
+#  finisce qui invece che in un commento.
 vasm_check(tmgr_marks MODE DUMPS PROGRAM test_tmgr_marks
-           EXPECT "5 0 2539")
+           EXPECT "5 0 2532")
 
 # ---------------------------------------------------------------------------
 #  test_semaphore — il semaforo contatore, e l'INSERIMENTO ORDINATO di §13.6.

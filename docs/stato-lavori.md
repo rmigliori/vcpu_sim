@@ -21,7 +21,7 @@
 > `ctest` **39/39** (erano 32). Il **13/09** ha chiuso al mattino le tre cose
 > rimaste aperte apposta — ha **fuso** il primo ramo del progetto, ha **deciso
 > la lingua** (§3.42), ha **fatto il rename** (§3.43), otto commit
-> `5b72bd1`→`24dca22` — e poi, in fila, i **sette pezzi** che portano il
+> `5b72bd1`→`24dca22` — e poi, in fila, gli **otto pezzi** che portano il
 > marcatore dall'idea al numero, e la pagina da documento a strumento:
 >
 > | | |
@@ -33,6 +33,7 @@
 > | §3.48 | **la preemption si vede**, ed è letta dal kernel invece che dedotta |
 > | §3.49 | **i cursori** con l'aggancio, e la pagina smette di essere una ricetta |
 > | §3.50 | **lo zoom**: rotella, trascinamento, e la finestra è uno stato solo |
+> | §3.51 | **il porto dati**: una marca che si porta dietro un valore del programma |
 >
 > Il risultato in una riga: esistono due numeri realtime che ieri non c'erano —
 > **18 scansioni dello scheduler** (min 51, max 177, **jitter 126**) e **11
@@ -2995,6 +2996,89 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.51 IL PORTO DATI: una marca che si porta dietro un valore (13/09/2026, nona parte)
+
+L'ha chiesto l'utente: *«serve un quarto parametro che possa contenere il valore
+di qualcosa che mi serve nel debugging: se ho ricevuto un messaggio potrebbe
+contenere il suo codice»*. Ed è la mossa giusta — scioglie la tensione invece di
+aggirarla.
+
+Gli avevo proposto tre uscite, tutte peggiori: un canale dedicato alla
+grandezza (ma perdi l'identità del punto), impacchettare id e valore in una
+parola (tetto a 16 bit, e se sfora **bava nell'id** dando un marker diverso e
+plausibile), o due marche unite per ciclo dal lettore (fragile: un trap fra le
+due scritture e i cicli non coincidono più). **Allargare la marca** le batte
+tutte.
+
+`ctest` **39/39**, quattordici impronte pulite invariate.
+
+#### Come ci arriva il secondo valore
+
+Una `sw` porta una parola, e quella è già il marker. Il secondo valore vuole un
+**porto dati**, che si arma e la marca se lo porta via:
+
+```asm
+li  r7, MARKD_RECV
+sw  r6, 0(r7)          ; ARMA col codice del messaggio
+li  r7, MARK_RECV
+li  r6, M_RECV_GOT
+sw  r6, 0(r7)          ; la marca, e se lo porta via
+```
+
+**Uno per canale, non uno globale**, ed è la ragione che decide: con un porto
+solo, un tick fra l'armamento e la marca — e l'ISR che ne emette una sua —
+mangerebbe il dato. Guasto raro, non riproducibile, silenzioso. Per canale
+l'ISR marca sui propri e non può toccarlo.
+
+#### Il bit «armato», che è la metà meno ovvia
+
+La macchina registra **se** il porto era stato scritto, non solo cosa c'era.
+Perché **zero è un valore legittimo** — un codice di messaggio può valere 0 —
+quindi senza quel bit «il dato era 0» e «mi sono dimenticato di armare»
+avrebbero lo stesso aspetto: un numero plausibile al posto di un errore.
+
+Col bit, il catalogo può **dichiarare** che un canale porta un dato
+(`data "codice"`), e il lettore dice tre cose invece di una: stampa
+`[codice=77]`; oppure *«dichiara il dato e questa marca non ce l'ha: non è 0, è
+MANCANTE»*; oppure *«armato un dato su un canale che non ne dichiara: nessuno
+lo leggerà»* — che è quasi sempre il canale sbagliato.
+
+**Verificato falsificando una registrazione**: azzerando il bit su tre marche, il
+lettore le ha nominate tutte e tre.
+
+#### Il primo cliente, e una scelta di strato
+
+Il codice del messaggio che A riceve in `test_tmgr`: `[codice=77]`, cioè
+`COD_EXPIRY` del sorgente.
+
+Il tag sta nell'**applicazione** e non in `receive`, e non è pigrizia:
+`message.vinc` dichiara che la testa del payload è convenzione fra clienti e
+fornitori e che **il kernel non ne legge un byte**. Un tag dentro `receive` che
+leggesse `PAYLOAD.messageCode` farebbe cominciare la mailbox a dipendere da
+quella convenzione — nella sola configurazione strumentata, ma comunque. Chi i
+codici li conosce è chi li ha chiesti.
+
+Da cui una parola chiave in più nel build: **`CONFIGS` anche su `vasm_object`**,
+e `CONFIG` di `vasm_program` che rimappa anche gli **oggetti** con la stessa
+regola con cui già rimappava le librerie. Così `OBJECTS t_tmgr` continua a
+significare «l'applicazione», e quale delle sue lo decide la configurazione.
+
+#### E un difetto che ho introdotto generalizzando
+
+`succ` e `fuori` erano nati per la preemption, dove significano «chi ha preso la
+CPU» e «quanto sei stato fuori». Applicati a un evento qualunque, la seconda
+diventa falsa: chi riceve un messaggio non è stato messo fuori da nessuno. La
+riga diceva *«7828 cicli fuori»* su una ricezione — un numero vero sotto
+un'etichetta che mente. Adesso è «riprende dopo», che è vera per tutti; che per
+una preemption sia anche il tempo fuori CPU lo dicono i documenti.
+
+#### Il prezzo, che finisce in un `EXPECT`
+
+`test_tmgr` strumentato: **2566 → 2548 → 2539 → 2532**, una volta per categoria
+aggiunta. Ogni tag si paga, e il conto è dichiarato invece che stimato.
 
 ---
 

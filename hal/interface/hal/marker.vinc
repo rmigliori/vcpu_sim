@@ -74,6 +74,30 @@
 ;
 ; File FOGLIA: non include niente.
 
+; --- IL PORTO DATI: una marca che si porta dietro un VALORE ---
+;
+; La sw della marca porta UNA parola, e quella e' gia' il marker (quale punto).
+; Il secondo valore -- il codice del messaggio appena ricevuto, la profondita'
+; di una coda -- vuole un secondo porto, uno per canale, a MARKD_*:
+;
+;     li  r7, MARKD_CH6
+;     sw  r4, 0(r7)          ; ARMA: il dato che la prossima marca portera'
+;     li  r7, MARK_CH6
+;     li  r3, M_RECV_GOT
+;     sw  r3, 0(r7)          ; la marca, e se lo porta via
+;
+; Due istruzioni in piu'. UNO PER CANALE e non uno globale: con un porto solo,
+; un tick fra l'armamento e la marca -- e l'ISR che ne emette una sua --
+; mangerebbe il dato, e sarebbe un guasto raro e silenzioso.
+;
+; La macchina si ricorda anche SE era armato, non solo cosa c'era: zero e' un
+; valore legittimo, quindi senza quel bit "il dato era 0" e "mi sono
+; dimenticato di armare" avrebbero lo stesso aspetto. Una categoria che
+; dichiara `data` in marks.conf e riceve una marca senza dato e' un errore
+; DETTO, non uno zero plausibile.
+;
+; Ogni armamento serve UNA marca: dopo, il canale torna disarmato.
+
 .equ MARK_EXEC    0x100100      ; canale 0 — RISERVATO alla macchina
 .equ MARK_KEY   0x100104      ; canale 1 — RISERVATO al device
 
@@ -85,3 +109,12 @@
 .equ MARK_CH5     0x100114
 .equ MARK_CH6     0x100118
 .equ MARK_CH7     0x10011C
+
+; I porti dati, uno per canale: MARKD_CHn arma il canale n.
+; Stanno a MARK_BASE + 32*4, cioe' subito sopra i canali (include/vcpu.h).
+.equ MARKD_CH2    0x100188
+.equ MARKD_CH3    0x10018C
+.equ MARKD_CH4    0x100190
+.equ MARKD_CH5    0x100194
+.equ MARKD_CH6    0x100198
+.equ MARKD_CH7    0x10019C

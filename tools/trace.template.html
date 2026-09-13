@@ -651,7 +651,8 @@ function disegna(axisEl, lanesEl, b0, b1, tickLabel) {
   const prerules = PRE.filter(e => e.c > b0 && e.c < b1).map(e =>
     `<span class="preline" style="left:${pc(e.c)}%" data-pre="1"
        data-c="${e.c}" data-chi="${e.chi}" data-succ="${e.succ}"
-       data-fuori="${e.fuori === null ? "" : e.fuori}"></span>`).join("");
+       data-fuori="${e.fuori === null ? "" : e.fuori}"
+       data-dato="${e.dato || ""}"></span>`).join("");
 
   lanesEl.innerHTML = ORDINE.map(o => {
     const bande = D.fasce.filter(f => f[2] === o.k && f[1] > b0 && f[0] < b1);
@@ -1096,6 +1097,7 @@ if (M && (M.finestre.length || M.puntuali.length)) {
         style="left:${pc(f.a)}%;width:${Math.max(pc(f.d), 0.15)}%"
         data-c="${f.canale}" data-m="${f.marker}" data-a="${f.a}" data-z="${f.z}"
         data-d="${f.d}" data-x="${f.cross ? 1 : 0}"
+        data-dato="${f.dato || ""}"
         data-p="${f.poss.map(p => p[0] + " " + p[1]).join(" · ").replace(/"/g, "&quot;")}"
         >${f.tratti.map(t => segIn(f, t)).join("")}</span>`).join("");
     // La chiave e' larga 74px: ci sta la prima parola. Il nome intero sta nel
@@ -1128,6 +1130,7 @@ if (M && (M.finestre.length || M.puntuali.length)) {
       `<span><b>${d.c}</b> · ${d.m}</span>` +
       `<span>cicli <b>${N.format(d.a)} → ${N.format(d.z)}</b> (${N.format(d.d)})</span>` +
       (d.x === "1" ? `<span style="color:var(--accent)">ATTRAVERSA una commutazione</span>` : "") +
+      (d.dato ? `<span><b>${d.dato}</b></span>` : "") +
       `<span>${d.p}</span>`;
   }
   // Sul DOCUMENTO, come gli altri due qui sopra: il DOM finto di
