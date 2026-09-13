@@ -6856,6 +6856,21 @@ Aprire Claude Code nella cartella del progetto e scrivere una di queste.
 Leggi docs/stato-lavori.md e riprendi da lì.
 ```
 
+> ### ⚠ UNA FORMULA PUNTA, NON RIPETE
+>
+> Il 13/09/2026 la prima stesura della formula sul clock **ricopiava** il
+> riquadro di §0: le decisioni, il perché, i vincoli. Trenta righe di copia.
+>
+> È lo stesso difetto che questo documento insegue nel codice — due
+> dichiarazioni dello stesso fatto — e qui è perfino peggio, perché il riquadro
+> di §0 **si mantiene** (lo si legge per primo a ogni ripresa) mentre una
+> formula la si rilegge solo quando la si usa. La copia resta indietro per
+> costruzione.
+>
+> Quindi una formula **punta** al riquadro e aggiunge la sola cosa che il
+> riquadro non dice: il **criterio di fine** — come si sa di aver finito, e con
+> quali numeri. Tutto il resto sta in un posto solo.
+>
 > ### ⚠ Questa sezione si riscrive quando il lavoro si sposta
 >
 > Il 07/09/2026 conteneva ancora otto formule, e metà mandavano su lavoro già
@@ -6881,29 +6896,10 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 **IL PROSSIMO PASSO — il clock: i cicli letti anche come TEMPO:**
 ```
 Leggi docs/stato-lavori.md, il riquadro «DA DOVE SI RIPARTE: IL CLOCK».
-C'e' tutto il ragionamento del 13/09, e non va rifatto.
+C'e' tutto: dove va la frequenza e perche' non in marks.conf, quale
+numero e perche', e i due vincoli sul disegno. Non va rifatto.
 
-DECISO: la frequenza sta nella MACCHINA (include/vcpu.h, accanto a
-CYC_SCALAR_ALU e VEC_LANES), non in marks.conf -- li' il nucleo fattuale
-comincerebbe a dipendere dal catalogo del marcatore per un numero che col
-marcatore non c'entra. Viaggia nella registrazione come i canali
-riservati ("# frequenza 100000000"), piu' un --mhz sugli strumenti per
-rileggere la STESSA registrazione a un'altra frequenza.
-
-DA CONFERMARE CON L'UTENTE: il numero. Proposto 100 MHz, che e' il
-GR712RC -- il modello di timing dice che questa e' una pipeline
-vettoriale a UNA corsia, non una SIMD larga, quindi la famiglia e' quella
-dei core embedded rad-hard o in FPGA (50-250 MHz). A 100 MHz un ciclo e'
-10 ns e la lettura e' immediata.
-
-DUE VINCOLI NEL DISEGNO, e sono il punto: MAI IL TEMPO DA SOLO (sempre
-accanto ai cicli, che restano la cosa misurata) e LA FREQUENZA SEMPRE
-VISIBILE accanto alla conversione. I cicli qui sono l'uscita di un
-modello, non una misura -- non c'e' sistema di memoria -- e un tempo
-sembra piu' reale dei cicli da cui viene.
-
-E in docs/scheduler-facts.md va scritto che il tick dei test e' COMPRESSO
-apposta: a 100 MHz sono 40 us, contro gli 1-10 ms di un tick vero.
+Resta da confermare con l'utente una cosa sola: il numero (proposto 100).
 
 Alla fine ctest 39/39 e le impronte invariate: e' tutto lettura, non
 tocca il bersaglio.
