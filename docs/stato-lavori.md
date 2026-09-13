@@ -21,7 +21,7 @@
 > `ctest` **39/39** (erano 32). Il **13/09** ha chiuso al mattino le tre cose
 > rimaste aperte apposta — ha **fuso** il primo ramo del progetto, ha **deciso
 > la lingua** (§3.42), ha **fatto il rename** (§3.43), otto commit
-> `5b72bd1`→`24dca22` — e poi, in fila, gli **undici pezzi** che portano il
+> `5b72bd1`→`24dca22` — e poi, in fila, i **dodici pezzi** che portano il
 > marcatore dall'idea al numero, e la pagina da documento a strumento:
 >
 > | | |
@@ -37,6 +37,7 @@
 > | §3.52 | **`owner`**: il rapporto fra la marca e `current` lo dichiara il canale |
 > | §3.53 | **un evento sta sulla corsia di chi lo produce**, e ogni marker è una traccia |
 > | §3.54 | **i nomi si registrano**: `A` e `idle` invece di `? (56)` |
+> | §3.55 | **tre cursori**, un gesto per ciascuno, e le due metà più il totale |
 >
 > Il risultato in una riga: esistono due numeri realtime che ieri non c'erano —
 > **18 scansioni dello scheduler** (min 51, max 177, **jitter 126**) e **11
@@ -2999,6 +3000,59 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.55 TRE CURSORI, E UN GESTO PER CIASCUNO (13/09/2026, tredicesima parte)
+
+Due domande dell'utente, e la seconda migliora anche la prima.
+
+**«È possibile posizionare B con shift+click?»** Sì, e conviene: con un gesto
+per cursore sparisce il *modo* — niente più memoria di quale tocchi adesso, e
+soprattutto **spostare A non cancella più B**, che con l'alternanza non si
+poteva fare.
+
+```
+click              A
+shift+click        B
+shift+ctrl+click   C
+```
+
+**«È possibile una misura a tre marker?»** Sì, e le misure interessanti
+diventano **tre**: `A…B`, `B…C` e il totale. Sono cose diverse — le prime due
+sono le due metà, la terza è la cosa — e tenerle tutte a schermo insieme evita
+di doverle sommare a mente, che è precisamente ciò che un righello deve
+togliere.
+
+Il **totale** sta in cima, sempre; sotto, un rigo per segmento; e quello sotto
+il puntatore si **marca**, con la sua campitura più forte nel diagramma. Il
+bottone «fra i cursori» adesso inquadra l'intero span, non più solo due.
+
+#### I segmenti sono fra ADIACENTI NEL TEMPO, non nel nome
+
+I cursori si piantano nell'ordine che capita. Se `C` finisce prima di `B`, il
+segmento fra loro resta quello fra **loro due** — ordinare per nome darebbe
+segmenti che si accavallano, cioè due misure che si contendono lo stesso
+tratto. È un'asserzione del test, non un'intenzione.
+
+#### E un test che passava per caso
+
+La prima stesura prendeva i tre punti a **frazioni della corsa** (20%, 50%,
+80%). Su `multi` — 95 cicli, **due soli istanti notevoli** — si agganciano
+tutti e tre allo stesso punto, i segmenti degenerano e due asserzioni cadono.
+
+Il rimedio non è allentare l'asserzione: è prendere i punti **dai notevoli**, e
+**dichiarare saltato** il caso dove non ce ne sono tre. Un test che non può
+esercitare il suo caso deve dirlo — se lo avessi solo reso tollerante,
+`trace_multi` sarebbe rimasto verde senza provare niente, che è la forma
+silenziosa di questo difetto.
+
+```
+--- i segmenti fra tre cursori ---
+  saltato: servono almeno 3 istanti notevoli, ce ne sono 2
+```
+
+`ctest` **39/39**, impronte invariate: è tutto disegno.
 
 ---
 
@@ -6832,6 +6886,10 @@ quante preemption ci sono dentro, e chi ha avuto la CPU con la sua quota. I
 cursori si **agganciano all'istante vero più vicino** — un bordo di fascia, un
 tick, una preemption — quindi il numero è esatto invece che a occhio: a tutto
 raggio un pixel vale ~55 cicli, su misure che valgono 909.
+
+**Un gesto per cursore** (§3.55): `click` pianta **A**, `shift+click` **B**,
+`shift+ctrl+click` **C** — così spostarne uno non cancella gli altri. Con tre si
+leggono **le due metà e il totale**, e il segmento sotto il puntatore si marca.
 
 **Rotella** per avvicinare dove punti (il ciclo sotto il puntatore non si
 muove), **trascinamento** per scorrere, e i bottoni sopra il diagramma —

@@ -286,8 +286,11 @@
      senza nascondere le fasce sotto. */
   .cursori .banda {
     position: absolute; top: 0; bottom: 0;
-    background: var(--ink); opacity: .07;
+    background: var(--ink); opacity: .05;
   }
+  /* Il segmento sotto il puntatore: con tre cursori una campitura sola non
+     direbbe quale delle due meta' stai guardando. */
+  .cursori .banda.attiva { opacity: .12; }
 
   /* I comandi della vista. Il cursore sul diagramma diventa una croce, perche'
      li' si clicca per misurare e si trascina per scorrere. */
@@ -320,6 +323,18 @@
     font-family: "IBM Plex Mono", monospace; font-size: 15px;
     font-weight: 600; color: var(--ink);
   }
+  .misura .seg {
+    display: flex; flex-wrap: wrap; gap: 3px 14px; align-items: baseline;
+    padding: 3px 8px; border-left: 2px solid var(--rule-2);
+    font-size: 12px; color: var(--ink-3);
+  }
+  .misura .seg.attivo {
+    border-left-color: var(--accent); color: var(--ink-2);
+    background: var(--surface);
+  }
+  .misura .seg b { color: var(--ink-2); }
+  .misura .seg.attivo b { color: var(--ink); }
+  .misura .delta-s { font-family: "IBM Plex Mono", monospace; font-weight: 600; }
   .misura kbd {
     font-family: "IBM Plex Mono", monospace; font-size: 10.5px;
     border: 1px solid var(--rule-2); border-radius: 3px; padding: 0 4px;
@@ -407,8 +422,13 @@
       di nuovo per <b>B</b>: fra i due leggi la durata e chi ha avuto la CPU. I
       cursori si <b>agganciano all'istante vero</b> più vicino — un bordo di fascia,
       un tick, una preemption — quindi il numero è esatto e non a occhio.
-      <b>Rotella</b> per zoomare dove punti, <b>trascina</b> per scorrere,
-      <kbd>Esc</kbd> toglie i cursori e <kbd>0</kbd> torna a tutta la corsa.</span>
+      <b>click</b> pianta <b>A</b>, <b>shift+click</b> pianta <b>B</b>,
+      <b>shift+ctrl+click</b> pianta <b>C</b> — un gesto per cursore, così
+      spostarne uno non cancella gli altri. Con tre si leggono le due metà
+      <em>e</em> il totale; passa il puntatore fra due cursori per marcarne il
+      segmento. <b>Rotella</b> per zoomare dove punti, <b>trascina</b> per
+      scorrere, <kbd>Esc</kbd> toglie i cursori e <kbd>0</kbd> torna a tutta la
+      corsa.</span>
     </div>
   </section>
 
@@ -817,6 +837,35 @@ function fraICursori(a, b) {
   };
 }
 
+/* I SEGMENTI fra cursori: quelli fra due cursori ADIACENTI NEL TEMPO.
+   Con tre cursori le misure interessanti sono tre e non una -- A..B, B..C e il
+   totale -- e sono cose diverse: le prime due sono le due meta' di una cosa, la
+   terza e' la cosa. Tenerle tutte a schermo insieme evita di doverle sommare a
+   mente, che e' precisamente cio' che un righello deve togliere.
+
+   ADIACENTI NEL TEMPO e non nel nome: i cursori si piantano nell'ordine che
+   capita, e se C finisce prima di B il segmento "B..C" resta quello fra loro
+   due. Ordinare per nome darebbe segmenti che si accavallano. */
+function segmentiFra(curs) {
+  const p = Object.entries(curs)
+    .filter(([, v]) => v !== null)
+    .map(([n, v]) => ({ n, v }))
+    .sort((a, b) => a.v - b.v);
+  const out = [];
+  for (let i = 0; i + 1 < p.length; ++i)
+    out.push({ da: p[i].n, a: p[i + 1].n, x0: p[i].v, x1: p[i + 1].v,
+               m: fraICursori(p[i].v, p[i + 1].v) });
+  return out;
+}
+
+/* Quale segmento contiene il ciclo x. Il primo che lo bracketa: i segmenti non
+   si sovrappongono per costruzione, essendo fra adiacenti. */
+function segmentoDi(x, segs) {
+  for (let i = 0; i < segs.length; ++i)
+    if (x >= segs[i].x0 && x <= segs[i].x1) return i;
+  return -1;
+}
+
 /* ---------- LO ZOOM, il calcolo ----------
    La meta' cara era gia' scritta: disegna() e' parametrica su [b0,b1] da quando
    esiste, perche' serviva alla sezione dello zoom automatico. Quello che
@@ -980,22 +1029,32 @@ document.getElementById("rt").innerHTML = rtVis.map(([n, c]) =>
   const lanes  = document.getElementById("lanes");
   const raf    = globalThis.requestAnimationFrame || (f => f());
 
-  let A = null, B = null;
+  // UN GESTO PER CURSORE, e non un modo che si ricorda di chi tocca adesso:
+  //   click               A
+  //   shift+click         B
+  //   shift+ctrl+click    C
+  // Cosi' si sposta A senza perdere B, che con l'alternanza non si poteva.
+  let CUR = { A: null, B: null, C: null };
+  let attivo = -1;               // il segmento sotto il puntatore
   let V = [0, D.fine];           // la vista corrente
   let inCoda = false;
 
   function ridisegnaCursori() {
     const [b0, b1] = V, span = b1 - b0;
     const pc = x => ((x - b0) / span) * 100;
+    const segs = segmentiFra(CUR);
     let h = "";
-    if (A !== null && B !== null) {
-      const lo = Math.min(A, B), hi = Math.max(A, B);
-      // Ritagliato sulla vista: una banda che esce dai bordi non deve
-      // debordare sul resto della pagina.
-      const la = Math.max(lo, b0), lz = Math.min(hi, b1);
-      if (lz > la) h += `<span class="banda" style="left:${pc(la)}%;width:${pc(lz) - pc(la)}%"></span>`;
-    }
-    for (const [n, v] of [["A", A], ["B", B]]) {
+    // Una campitura per SEGMENTO, e quello sotto il puntatore piu' marcato:
+    // con tre cursori una campitura sola non direbbe quale meta' stai
+    // guardando. Ritagliata sulla vista, o deborderebbe sul resto della pagina.
+    segs.forEach((sg, i) => {
+      const la = Math.max(sg.x0, b0), lz = Math.min(sg.x1, b1);
+      if (lz > la)
+        h += `<span class="banda${i === attivo ? " attiva" : ""}"
+                style="left:${pc(la)}%;width:${pc(lz) - pc(la)}%"></span>`;
+    });
+    for (const n of ["A", "B", "C"]) {
+      const v = CUR[n];
       if (v === null || v < b0 || v > b1) continue;   // fuori vista: non si disegna
       h += `<span class="cur" style="left:${pc(v)}%">
               <span class="tag">${n} ${N.format(v)}</span></span>`;
@@ -1004,26 +1063,43 @@ document.getElementById("rt").innerHTML = rtVis.map(([n, c]) =>
     scriviMisura();
   }
 
-  function scriviMisura() {
-    if (A === null) { misura.innerHTML = hint; return; }
-    if (B === null) {
-      misura.innerHTML = `<span>cursore <b>A</b> a <b>${N.format(A)}</b>`
-        + `</span><span class="hint">clicca di nuovo per piantare B</span>`;
-      return;
-    }
-    const r = fraICursori(A, B);
+  const dettaglio = r => {
     const chi = r.proprietari
       .map(([o, c]) => `${o} ${N.format(c)} (${Math.round(100 * c / r.durata)}%)`)
       .join(" · ");
-    misura.innerHTML =
-      `<span class="delta">Δ ${N.format(r.durata)} cicli</span>` +
-      `<span>${N.format(r.a)} → ${N.format(r.b)}</span>` +
+    return `<span>${N.format(r.a)} → ${N.format(r.b)}</span>` +
       (r.tick ? `<span>${r.tick} tick</span>` : "") +
       (r.eventi ? `<span style="color:var(--accent)">${r.eventi} eventi</span>` : "") +
       (r.finestre ? `<span>${r.finestre} finestre</span>` : "") +
-      `<span style="width:100%">${chi}</span>` +
-      `<span class="hint" style="width:100%">I proprietari qui sono DEDOTTI dal
-       <span class="mono">pc</span>, come le fasce. <kbd>Esc</kbd> per togliere i cursori.</span>`;
+      `<span>${chi}</span>`;
+  };
+
+  function scriviMisura() {
+    const posti = ["A", "B", "C"].filter(n => CUR[n] !== null);
+    if (!posti.length) { misura.innerHTML = hint; return; }
+    if (posti.length === 1) {
+      const n = posti[0];
+      misura.innerHTML = `<span>cursore <b>${n}</b> a <b>${N.format(CUR[n])}</b></span>`
+        + `<span class="hint">shift+click per <b>B</b>, shift+ctrl+click per <b>C</b></span>`;
+      return;
+    }
+    const segs = segmentiFra(CUR);
+    // IL TOTALE PER PRIMO: con tre cursori le due meta' si leggono per conto
+    // loro, ma la cosa che si sta misurando e' l'intero.
+    const tot = fraICursori(segs[0].x0, segs[segs.length - 1].x1);
+    let h = `<span class="delta">Δ ${N.format(tot.durata)} cicli</span>`
+          + `<span class="hint">${segs[0].da}…${segs[segs.length - 1].a}</span>`
+          + dettaglio(tot);
+    // ...e poi ogni segmento, con quello sotto il puntatore marcato.
+    if (segs.length > 1)
+      h += segs.map((sg, i) =>
+        `<span class="seg${i === attivo ? " attivo" : ""}" style="width:100%">
+           <b>${sg.da}…${sg.a}</b> <span class="delta-s">Δ ${N.format(sg.m.durata)}</span>
+           ${dettaglio(sg.m)}</span>`).join("");
+    h += `<span class="hint" style="width:100%">I proprietari sono DEDOTTI dal
+       <span class="mono">pc</span>, come le fasce. Passa il puntatore fra due
+       cursori per marcarne il segmento. <kbd>Esc</kbd> li toglie.</span>`;
+    misura.innerHTML = h;
   }
 
   function scriviZoom() {
@@ -1037,7 +1113,7 @@ document.getElementById("rt").innerHTML = rtVis.map(([n, c]) =>
       `<span class="sp"></span>` +
       `<button data-z="out"${tutto ? " disabled" : ""}>− lontano</button>` +
       `<button data-z="in">+ vicino</button>` +
-      `<button data-z="cur"${(A === null || B === null) ? " disabled" : ""}>fra i cursori</button>` +
+      `<button data-z="cur"${segmentiFra(CUR).length ? "" : " disabled"}>fra i cursori</button>` +
       `<button data-z="all"${tutto ? " disabled" : ""}>tutto</button>`;
   }
 
@@ -1075,7 +1151,13 @@ document.getElementById("rt").innerHTML = rtVis.map(([n, c]) =>
     if (b) {
       const z = b.dataset.z;
       if (z === "all") vista(0, D.fine);
-      else if (z === "cur" && A !== null && B !== null) { const f = finestraFra(A, B); vista(f[0], f[1]); }
+      else if (z === "cur") {
+        const sg = segmentiFra(CUR);
+        if (sg.length) {
+          const f = finestraFra(sg[0].x0, sg[sg.length - 1].x1);
+          vista(f[0], f[1]);
+        }
+      }
       else {
         const centro = (V[0] + V[1]) / 2;
         const f = nuovaFinestra(V[0], V[1], z === "in" ? 0.5 : 2, centro);
@@ -1089,9 +1171,12 @@ document.getElementById("rt").innerHTML = rtVis.map(([n, c]) =>
     if (!ev.target.closest || !ev.target.closest(".track")) return;
     const c = ciclo(ev, true);
     if (c === null) return;
-    if (A === null || B !== null) { A = c; B = null; } else { B = c; }
+    // Un gesto per cursore: nessun modo da ricordare, e spostarne uno non
+    // cancella gli altri.
+    const q = ev.shiftKey ? (ev.ctrlKey || ev.metaKey ? "C" : "B") : "A";
+    CUR[q] = c;
     ridisegnaCursori();
-    scriviZoom();                 // "fra i cursori" si accende quando B c'e'
+    scriviZoom();
   });
 
   // La rotella zooma tenendo fermo il ciclo sotto il puntatore: e' quello che
@@ -1115,6 +1200,13 @@ document.getElementById("rt").innerHTML = rtVis.map(([n, c]) =>
     }
   });
   document.addEventListener("mousemove", ev => {
+    // Fuori dal trascinamento: quale segmento e' sotto il puntatore. Si
+    // ridisegna solo quando CAMBIA, o si rifarebbe la misura a ogni pixel.
+    if (!giu && ev.target.closest && ev.target.closest(".track")) {
+      const x = ciclo(ev, false);
+      const i = x === null ? -1 : segmentoDi(x, segmentiFra(CUR));
+      if (i !== attivo) { attivo = i; ridisegnaCursori(); }
+    }
     if (!giu) return;
     if (Math.abs(ev.clientX - giu.x) < 4) return;   // sotto soglia: e' un click
     const r = strato.getBoundingClientRect();
@@ -1126,7 +1218,10 @@ document.getElementById("rt").innerHTML = rtVis.map(([n, c]) =>
   document.addEventListener("mouseup", () => { giu = null; });
 
   document.addEventListener("keydown", ev => {
-    if (ev.key === "Escape") { A = B = null; ridisegnaCursori(); scriviZoom(); }
+    if (ev.key === "Escape") {
+      CUR = { A: null, B: null, C: null }; attivo = -1;
+      ridisegnaCursori(); scriviZoom();
+    }
     if (ev.key === "0")      vista(0, D.fine);
   });
 

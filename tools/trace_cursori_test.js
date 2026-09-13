@@ -113,6 +113,36 @@ print("--- una traccia per MARKER, non per categoria ---");
 ok(TRACCE.every(t => ORDINE.some(o => o.k === t.corsia)),
    "ogni traccia vera sta su una corsia che esiste (" + TRACCE.length + " tracce)");
 
+print("--- i segmenti fra tre cursori ---");
+// I tre punti si prendono dai NOTEVOLI e non da tre frazioni della corsa: su un
+// programma corto -- multi e' 95 cicli con due soli istanti notevoli -- tre
+// frazioni si agganciano tutte allo stesso punto e i segmenti degenerano. Il
+// caso non e' esercitabile li', e va DETTO invece di fallire o di passare per
+// caso.
+if (NOTEVOLI.length < 3) {
+  print("  saltato: servono almeno 3 istanti notevoli, ce ne sono " + NOTEVOLI.length);
+} else {
+  const n0 = NOTEVOLI[0],
+        n1 = NOTEVOLI[Math.floor(NOTEVOLI.length / 2)],
+        n2 = NOTEVOLI[NOTEVOLI.length - 1];
+  const tre = segmentiFra({ A: n0, B: n1, C: n2 });
+  ok(tre.length === 2, "tre cursori danno DUE segmenti");
+  ok(tre[0].da === "A" && tre[0].a === "B" && tre[1].da === "B" && tre[1].a === "C",
+     "e sono A..B e B..C");
+  ok(tre[0].m.durata + tre[1].m.durata === fraICursori(n0, n2).durata,
+     "le due meta' sommano al totale A..C");
+  // piantati in disordine: il segmento resta fra chi e' ADIACENTE NEL TEMPO
+  const dis = segmentiFra({ A: n0, B: n2, C: n1 });
+  ok(dis[0].da === "A" && dis[0].a === "C" && dis[1].da === "C" && dis[1].a === "B",
+     "con C prima di B i segmenti seguono il TEMPO, non il nome");
+  ok(dis.every(sg => sg.x0 <= sg.x1), "e nessun segmento e' rovesciato");
+  ok(segmentiFra({ A: n0, B: null, C: null }).length === 0, "un cursore solo: nessun segmento");
+  ok(segmentiFra({ A: n0, B: n1, C: null }).length === 1, "due cursori: un segmento");
+  ok(segmentoDi(n0, tre) === 0, "il primo cursore cade nel primo segmento");
+  ok(segmentoDi(n1, tre) >= 0, "un punto interno cade in un segmento");
+  ok(segmentoDi(n0 - 1, tre) === -1, "e fuori da tutti non ne cade in nessuno");
+}
+
 print("--- la finestra dello zoom ---");
 const dentro = ([a,z]) => a >= 0 && z <= D.fine && z > a;
 ok(dentro(limitaFinestra(0, D.fine)), "tutta la corsa e' una finestra valida");
