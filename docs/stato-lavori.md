@@ -3001,11 +3001,12 @@ il contratto scritto.
 
 ---
 
-### 3.53 UN EVENTO STA SULLA RIGA DEL SUO CANALE (13/09/2026, undicesima parte)
+### 3.53 UN EVENTO STA SULLA CORSIA DI CHI LO PRODUCE (13/09/2026, undicesima parte)
 
 L'utente: *«il marker di evento deve essere visibile solo nella riga del canale
-che lo ha prodotto»*. Ha ragione, e la mia scelta di prima era giusta **finché
-gli eventi erano uno**.
+che lo ha prodotto»* — e poi, perché avevo capito a metà: *«il marker di evento
+messaggio deve essere associato al canale del task che lo produce»*. Ha ragione,
+e la mia scelta di prima era giusta **finché gli eventi erano uno**.
 
 Avevo dato alla preemption una linea verticale che attraversa tutte le corsie,
 con l'argomento che è un istante del *sistema* e non di una corsia. Regge con
@@ -3014,11 +3015,43 @@ diagramma diventa un pettine di linee colorate in cui **non si distingue più
 quale sia quale** senza passarci sopra una per una. Sedici linee × cinque
 corsie facevano ottanta tratti dipinti sopra i dati.
 
-Adesso **il canale è la riga**, come su un analizzatore di stati logici: sotto
-le corsie dei proprietari ce n'è una per categoria di evento, e ogni marca sta
-solo sulla propria. Si legge per riga invece che per indovinello, e la chiave
-dice quante ne sono visibili su quante — `11/11` — così zoomando sai se ne stai
-perdendo fuori campo.
+#### E la prima correzione l'avevo capita a metà
+
+Avevo dato agli eventi **una corsia per categoria**, sotto quelle dei
+proprietari. Toglieva il pettine, ma non era quello che serve: un istante non è
+del sistema, **è di qualcuno**. Una ricezione la produce il task che riceve, una
+preemption la produce il kernel che gira nell'ISR.
+
+Adesso il triangolo sta **sulla corsia di chi lo produce**, e lì soltanto — come
+su un analizzatore di stati logici, dove un evento sta sul canale che lo emette:
+
+```
+ISR   ▓▓▼▓  ▓▓▼  ▓▓▼      <- 11 preemption
+A     ░░░▼░  ░░▼░         <-  5 ricezioni
+idle  ▓▓▓▓▓▓▓▓▓▓▓▓
+```
+
+**Il colore dice che cosa, la corsia dice a chi.**
+
+#### Chi lo produce si prende dalle FASCE, non da `current`
+
+Sembrerebbe naturale usare `current`, che la marca porta già. Non va: `current`
+è un indirizzo di **TCB**, che vive in un altro spazio di nomi (`tcbA` contro
+`A`), e farli combaciare vorrebbe dire una convenzione sui nomi che nessuno
+garantisce — la specie di cosa che oggi ha già fatto danni tre volte.
+
+Si prende invece **la fascia che contiene quell'istante**, cioè la stessa
+deduzione che disegna le corsie. Così la corsia scelta **esiste per
+costruzione** nel diagramma, e le due cose non possono discordare. E viene
+giusto da sola: la ricezione cade su `A`, la preemption sull'`ISR`.
+
+Due asserzioni nuove lo tengono chiuso: che ogni evento sappia su quale corsia
+sta, e che quella corsia sia **fra quelle disegnate** — altrimenti il segno
+finirebbe in nessun posto, in silenzio.
+
+Quale *entità* sia resta comunque **dichiarato** (`owner`, §3.52): il readout
+dice se `current` è l'autore, la vittima o l'interrotto. Il calcolo qui decide
+solo **dove cade il segno**.
 
 #### Restano nel diagramma principale, e non è indifferente
 

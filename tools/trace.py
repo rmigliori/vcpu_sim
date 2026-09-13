@@ -433,6 +433,10 @@ def analizza(vx, tmp, argomenti=()):
         for k, v in f["r"].items():
             rt[k] += v
 
+    m = marche(rec, vx)
+    if m:
+        assegna_corsia(m, fasce)
+
     return {
         "fine": fine, "tick": tick,
         "fasce": [[f["b"], f["e"], f["o"], f["l"],
@@ -440,8 +444,33 @@ def analizza(vx, tmp, argomenti=()):
         "own": [[o, l, c] for (o, l), c in own.items()],
         "rt": rt.most_common(18),
         "ctx": {"ctx_save": loc_rt["ctx_save"], "ctx_restore": loc_rt["ctx_restore"]},
-        "marche": marche(rec, vx),
+        "marche": m,
     }
+
+
+def assegna_corsia(m, fasce):
+    """Su quale CORSIA va disegnato ogni evento: quella di chi lo PRODUCE.
+
+    Un istante non e' del sistema, e' di qualcuno: una ricezione la produce il
+    task che riceve, una preemption la produce il kernel che gira nell'ISR. Il
+    segno va sulla riga di quello, e li' soltanto -- come su un analizzatore di
+    stati logici, dove un evento sta sul canale che lo emette.
+
+    Chi lo produce e' CHI STAVA GIRANDO in quell'istante, e lo si prende dalle
+    FASCE, cioe' dalla stessa deduzione che disegna le corsie. Non da `current`,
+    che e' un indirizzo di TCB: quello vive in un altro spazio di nomi (`tcbA`
+    contro `A`) e farli combaciare vorrebbe dire una convenzione sui nomi che
+    nessuno garantisce. Cosi' invece la corsia scelta e' per COSTRUZIONE una
+    che esiste nel diagramma, e le due cose non possono discordare.
+
+    Quale sia l'entita' resta comunque dichiarato -- `owner` nel catalogo dice
+    se current e' l'autore, la vittima o l'interrotto -- e il readout lo usa.
+    Qui si decide solo DOVE cade il segno.
+    """
+    ini = [f["b"] for f in fasce]
+    for e in m.get("eventi", []):
+        i = bisect.bisect_right(ini, e["c"]) - 1
+        e["corsia"] = fasce[i]["o"] if i >= 0 else None
 
 
 def marche(rec, vx):

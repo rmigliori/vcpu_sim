@@ -166,11 +166,11 @@
   .track { position: relative; flex: 1; min-height: 34px; background: var(--sunk); }
   .track .tickline { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--rule-2); }
 
-  /* UN EVENTO STA SULLA RIGA DEL SUO CANALE, e solo li'.
-     Non e' una fascia -- non ha durata -- quindi un tratto con la sua punta, non
-     una barra. La corsia e' piu' bassa delle altre: un istante non ha bisogno
-     dell'altezza che serve a mostrare una durata. */
-  .lane-ev .track { min-height: 20px; background: transparent; }
+  /* UN EVENTO STA SULLA CORSIA DI CHI LO PRODUCE, e li' soltanto.
+     Non e' una fascia -- non ha durata -- quindi un tratto con la sua punta e
+     non una barra, appoggiato sopra la fascia di chi girava in quell'istante.
+     Il colore e' quello della sua CATEGORIA, non del proprietario: dice CHE
+     COSA e' successo, mentre la corsia dice A CHI. */
   .track .ev {
     position: absolute; top: 3px; bottom: 3px; width: 0;
     border-left: 1.5px solid rgb(var(--ec));
@@ -632,9 +632,10 @@ document.getElementById("legend").innerHTML =
   `<span class="item" style="--c:var(--c-idle);margin-left:auto">
       <span class="swatch kernel"></span><span>tratteggio = kernel e librerie per conto suo</span></span>` +
   (PRE.length ? `<span class="item" style="width:100%;margin-top:2px">
-      <span>le corsie in fondo sono gli <b>istanti letti</b>, non dedotti: una per
-      canale, e ogni evento sta solo sulla sua. Guarda sopra, alla stessa
-      ascissa, per vedere chi girava e chi ha preso la CPU.</span>` +
+      <span>i triangoli sono <b>istanti letti</b>, non dedotti, e stanno sulla
+      corsia di <b>chi li produce</b>: la ricezione sulla riga del task che
+      riceve, la preemption su quella del kernel. Il colore dice <em>che
+      cosa</em>, la corsia dice <em>a chi</em>.</span>` +
       PRE_CAT.map(c => `<span class="item" style="margin-left:14px">
          <span class="swatch" style="background:rgb(${PRE_COL[c]});width:3px"></span>
          <span>${c}</span></span>`).join("") + `</span>` : "");
@@ -656,7 +657,20 @@ function disegna(axisEl, lanesEl, b0, b1, tickLabel) {
   const rules = MARK.filter(t => t > b0 && t < b1)
     .map(t => `<span class="tickline" style="left:${pc(t)}%"></span>`).join("");
 
-  // --- le corsie dei PROPRIETARI: chi possedeva la CPU ---
+  // Un evento si disegna sulla corsia di CHI LO PRODUCE, e li' soltanto: la
+  // ricezione sulla riga del task che riceve, la preemption su quella del
+  // kernel che gira nell'ISR. La corsia la sceglie tools/trace.py -- qui non si
+  // deduce niente, si posiziona.
+  const evDi = (k, a, z) => PRE.filter(e => e.corsia === k && e.c >= a && e.c <= z)
+    .map(e => `<span class="ev" tabindex="0"
+        style="left:${pc(e.c)}%;--ec:${PRE_COL[e.canale]}"
+        data-c="${e.c}" data-chi="${e.chi}" data-succ="${e.succ}"
+        data-cat="${e.canale}" data-mk="${e.marker}"
+        data-fr="${(e.frase || "").replace(/"/g, "&quot;")}"
+        data-fuori="${e.fuori === null ? "" : e.fuori}"
+        data-dato="${e.dato || ""}"></span>`).join("");
+
+  // --- le corsie dei PROPRIETARI: chi possedeva la CPU, e cosa ha prodotto ---
   const corsie = ORDINE.map(o => {
     const bande = D.fasce.filter(f => f[2] === o.k && f[1] > b0 && f[0] < b1);
     if (!bande.length) return "";
@@ -670,40 +684,11 @@ function disegna(axisEl, lanesEl, b0, b1, tickLabel) {
     }).join("");
     return `<div class="lane" style="--c:${o.c}">
         <div class="lane-key"><span class="n">${o.n}</span><span class="p">${o.p}</span></div>
-        <div class="track">${rules}${bb}</div>
+        <div class="track">${rules}${bb}${evDi(o.k, b0, b1)}</div>
       </div>`;
   });
 
-  /* --- le corsie degli EVENTI: UNA PER CANALE, e l'evento sta solo sulla sua.
-     Fino al 13/09/2026 ogni evento era una linea verticale che attraversava
-     TUTTE le corsie. Si difendeva finche' l'unico evento era la preemption --
-     un istante del sistema -- ma con tre categorie il diagramma diventa un
-     pettine di colori in cui non si distingue piu' quale linea e' quale senza
-     passarci sopra. Il canale E' la riga, come su un analizzatore di stati
-     logici, e cosi' la si legge per riga invece che per indovinello.
-
-     Restano SOTTO le corsie dei proprietari e sullo stesso asse, quindi la
-     lettura in verticale -- chi ha perso la CPU, chi l'ha presa -- si fa lo
-     stesso, a occhio, senza dipingere niente sopra i dati. E stando in questo
-     diagramma zoomano e si misurano con i cursori come tutto il resto. */
-  const corsieEv = PRE_CAT.map(cat => {
-    const ee = PRE.filter(e => e.canale === cat && e.c >= b0 && e.c <= b1);
-    const mm = ee.map(e => `<span class="ev" tabindex="0"
-        style="left:${pc(e.c)}%;--ec:${PRE_COL[cat]}"
-        data-c="${e.c}" data-chi="${e.chi}" data-succ="${e.succ}"
-        data-cat="${e.canale}" data-mk="${e.marker}"
-        data-fr="${(e.frase || "").replace(/"/g, "&quot;")}"
-        data-fuori="${e.fuori === null ? "" : e.fuori}"
-        data-dato="${e.dato || ""}"></span>`).join("");
-    const tot = PRE.filter(e => e.canale === cat).length;
-    return `<div class="lane lane-ev">
-        <div class="lane-key" title="${cat}"><span class="n">${cat.split(" ")[0]}</span>
-          <span class="p">${ee.length}/${tot}</span></div>
-        <div class="track">${rules}${mm}</div>
-      </div>`;
-  });
-
-  lanesEl.innerHTML = corsie.join("") + corsieEv.join("");
+  lanesEl.innerHTML = corsie.join("");
 }
 
 disegna(document.getElementById("axis"), document.getElementById("lanes"),

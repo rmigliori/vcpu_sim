@@ -74,6 +74,11 @@ ok(PRE_CAT.length === new Set(PRE.map(e => e.canale)).size,
    "le categorie di evento sono quelle che compaiono (" + PRE_CAT.join(", ") + ")");
 ok(PRE_CAT.every(c => PRE_COL[c]), "ognuna ha un colore");
 ok(PRE.every(e => e.frase && e.frase.length), "ogni evento porta la frase del suo OWNER");
+// La corsia su cui cade un evento dev'essere una che ESISTE nel diagramma, o
+// il segno finirebbe in nessun posto -- silenziosamente.
+ok(PRE.every(e => e.corsia), "ogni evento sa su quale corsia sta");
+ok(PRE.every(e => ORDINE.some(o => o.k === e.corsia)),
+   "e quella corsia esiste davvero fra quelle disegnate");
 ok(new Set(PRE_CAT.map(c => PRE_COL[c])).size === PRE_CAT.length,
    "e due categorie non hanno lo stesso colore");
 
