@@ -166,6 +166,27 @@
   .track { position: relative; flex: 1; min-height: 34px; background: var(--sunk); }
   .track .tickline { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--rule-2); }
 
+  /* La PREEMPTION. Attraversa tutte le corsie perche' e' un istante del
+     SISTEMA, non di una corsia: leggendola in verticale si vede in un colpo
+     chi e' stato tagliato, che l'ISR ha preso la macchina, e chi ha avuto la
+     CPU dopo -- che e' la correlazione per cui il segno esiste.
+
+     Non un colore e non un tratteggio: quelli dicono gia' altro (pieno = codice
+     del task, tratteggio = kernel per suo conto). Questo non e' una fascia, e'
+     un BORDO, e va marcato come tale. */
+  .track .preline {
+    position: absolute; top: 0; bottom: 0; width: 0;
+    border-left: 1.5px solid var(--accent); opacity: .85;
+  }
+  .track .preline:hover { opacity: 1; border-left-width: 3px; }
+  /* Il triangolo sta sull'asse, una volta sola: ripeterlo su ogni corsia
+     farebbe una colonna di frecce invece di una linea. */
+  .axis .pre {
+    position: absolute; top: 2px; width: 9px; height: 9px;
+    margin-left: -4.5px; background: var(--accent);
+    clip-path: polygon(50% 100%, 0 0, 100% 0);
+  }
+
   .band { position: absolute; top: 6px; bottom: 6px; border-radius: 1px; min-width: 1px; }
   .band.task   { background: rgb(var(--c)); }
   .band.kernel {
@@ -183,6 +204,50 @@
     background-color: rgba(var(--c), var(--fill-op));
     background-image: repeating-linear-gradient(45deg,
       rgba(var(--c), var(--hatch-op)) 0 1.5px, transparent 1.5px 5px);
+  }
+
+  /* ---------- il marcatore ----------
+     Una FINESTRA e' un intervallo dichiarato dal programma, e la sua barra non
+     e' piena: e' divisa nei tratti di chi possedeva la CPU dentro di essa. E'
+     tutto il punto -- una finestra che attraversa una commutazione mostra a
+     colpo d'occhio quanto del tempo di risposta se l'e' preso qualcun altro,
+     cioe' l'INTERFERENZA, che e' il numero che conta in un kernel realtime. */
+  .win {
+    position: absolute; top: 7px; bottom: 7px; min-width: 2px;
+    border-radius: 1px; overflow: hidden;
+    box-shadow: inset 0 0 0 1px var(--rule-2);
+  }
+  .win .seg { position: absolute; top: 0; bottom: 0; background: rgb(var(--sc)); }
+  /* Una finestra che NON attraversa e' un possessore solo, e va detto con la
+     stessa grafica, non con l'assenza di grafica. */
+  .win.cross { box-shadow: inset 0 0 0 1px var(--accent); }
+  .win:hover, .win:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  /* Gli eventi PUNTUALI non hanno durata: un tratto, non una barra. Disegnarli
+     come barre larghe un pixel li farebbe sembrare finestre cortissime. */
+  .evt {
+    position: absolute; top: 3px; bottom: 3px; width: 0;
+    border-left: 2px solid rgb(var(--c-ISR));
+  }
+  .evt::after {
+    content: ""; position: absolute; left: -3px; top: -1px;
+    width: 8px; height: 8px; background: rgb(var(--c-ISR));
+    clip-path: polygon(50% 100%, 0 0, 100% 0);
+  }
+
+  /* La sovrapposizione: ogni finestra ridisegnata da zero, allineata al proprio
+     trigger. Le barre partono tutte dallo stesso bordo e il bordo destro
+     sfrangia: quello sfrangiamento E' il jitter. */
+  .super { position: relative; background: var(--sunk); padding: 6px 0; }
+  .super .row { position: relative; height: 13px; margin: 2px 0; }
+  .super .row .w { position: absolute; left: 0; top: 2px; bottom: 2px; overflow: hidden; border-radius: 1px; }
+  .super .row .w .seg { position: absolute; top: 0; bottom: 0; background: rgb(var(--sc)); }
+  .super .vline { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--rule-2); }
+  .super .vline.hi { background: var(--accent); }
+  .super .vlab {
+    position: absolute; bottom: -16px; transform: translateX(-50%);
+    font-family: "IBM Plex Mono", monospace; font-size: 9.5px; color: var(--ink-3);
+    white-space: nowrap;
   }
 
   .readout {
@@ -273,6 +338,50 @@
       </div>
     </div>
     <div class="readout" id="zseq"></div>
+  </section>
+
+  <!-- Il marcatore. La sezione si nasconde da sola su un programma senza tag:
+       non e' un caso limite ma la norma, visto che oggi un solo programma ne
+       ha. Vedi hal/marker.vinc per cosa costa metterne uno. -->
+  <section id="sec-marche" hidden>
+    <div class="sec-head">
+      <div class="eyebrow">Il marcatore</div>
+      <h2>Le finestre, e chi se le è prese</h2>
+      <p class="lede">Il diagramma qui sopra dice <em>chi</em> possedeva la CPU. Questo dice
+      quanto è durata una <strong>richiesta</strong> — una finestra aperta in un task e chiusa
+      magari in un altro — e come quel tempo si è spartito. La differenza fra i due è
+      l'<strong>interferenza</strong>: quanto ti è costato il resto del sistema.</p>
+      <p class="lede" style="margin-top:10px">I nomi dei proprietari qui sono quelli dei
+      <strong>TCB</strong>, <em>letti</em> dal canale che la macchina riempie da sola; quelli
+      del diagramma sopra sono i corpi dei task, <em>dedotti</em> dal
+      <span class="mono">pc</span>. Sono due viste della stessa cosa, e quando i nomi non
+      combaciano è perché arrivano da due strade diverse.</p>
+    </div>
+    <div class="legend" id="m-legend"></div>
+    <div class="scope">
+      <div class="scope-in">
+        <div class="axis" id="maxis"></div>
+        <div class="lanes" id="mlanes"></div>
+      </div>
+    </div>
+    <div class="readout" id="mreadout"><span>Passa sopra una finestra per vedere quanto è durata e chi se l'è presa.</span></div>
+
+    <div class="sec-head" style="margin-top:34px">
+      <h3 style="margin:0 0 6px">Sovrapposte al trigger</h3>
+      <p class="lede">Le stesse finestre ridisegnate da zero, ognuna allineata al proprio
+      inizio. Il bordo destro sfrangia, e quello sfrangiamento <strong>è</strong> il jitter:
+      la distanza fra la più corta e la più lunga, che su un contatore medio non si vede.</p>
+    </div>
+    <div id="msuper"></div>
+
+    <table id="m-tab" style="margin-top:30px">
+      <thead><tr>
+        <th class="name">categoria</th><th>n</th><th>min</th><th>max</th>
+        <th>media</th><th>jitter</th><th>totale</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <div id="m-errori"></div>
   </section>
 
   <section>
@@ -399,6 +508,18 @@ function confiniDiTurno() {
 const MARK = D.tick.length >= 2 ? D.tick : confiniDiTurno();
 const MARK_ETICHETTA = D.tick.length >= 2 ? "tick @ " : "turno @ ";
 
+/* Gli istanti di PREEMPTION: LETTI dal kernel (un canale EVENT del marcatore),
+   non dedotti dal pc. La differenza non e' accademica -- dalla traccia non si
+   ricava: la fascia di un task che si blocca da solo contiene `_trap_entry`
+   tanto quanto quella di uno preemptato, perche' in quei cicli di kernel un
+   tick e' passato lo stesso. Il fatto sta in UN ramo del kernel, sp_preempted,
+   ed e' quello che lo dichiara.
+
+   Vuoto su un programma non strumentato, che oggi e' la norma -- e allora la
+   pagina NON dice "0 preemption", perche' sarebbe falso: ce ne sono, non sono
+   misurate. Tacere e' l'unica cosa vera che si possa fare. */
+const PRE = (D.marche && D.marche.eventi) ? D.marche.eventi : [];
+
 // Senza tick la pagina racconta un'altra storia, e i titoli scritti per un
 // sistema preemptivo direbbero il falso.
 if (!D.tick.length) {
@@ -416,7 +537,9 @@ document.getElementById("stats").innerHTML = [
   ["commutazioni", nsw],
   // own.idle puo' NON ESISTERE: in un sistema cooperativo ben formato l'idle
   // non gira mai, ed e' un'asserzione, non un caso limite (vedi test_coop).
-  ["CPU libera", Math.round(100 * (own.idle ? own.idle.task + own.idle.kernel : 0) / gran) + "%"]
+  ["CPU libera", Math.round(100 * (own.idle ? own.idle.task + own.idle.kernel : 0) / gran) + "%"],
+  // Solo se sono MISURATE: vedi il commento sopra PRE.
+  ...(PRE.length ? [["preemption", PRE.length]] : [])
 ].map(([k, v]) => `<div class="stat"><span class="v">${v}</span><span class="k">${k}</span></div>`).join("");
 
 /* ---------- legenda ---------- */
@@ -424,7 +547,12 @@ document.getElementById("legend").innerHTML =
   ORDINE.map(o => `<span class="item" style="--c:${o.c}">
       <span class="swatch task"></span><span>${o.n}</span></span>`).join("") +
   `<span class="item" style="--c:var(--c-idle);margin-left:auto">
-      <span class="swatch kernel"></span><span>tratteggio = kernel e librerie per conto suo</span></span>`;
+      <span class="swatch kernel"></span><span>tratteggio = kernel e librerie per conto suo</span></span>` +
+  (PRE.length ? `<span class="item" style="width:100%;margin-top:2px">
+      <span class="swatch" style="background:var(--accent);width:3px"></span>
+      <span>linea verticale = <b>preemption</b>, letta dal kernel: la CPU e' stata
+      TOLTA. Leggila in verticale — sopra chi l'ha persa, sotto chi l'ha presa.
+      Un blocco volontario non ha nessun segno.</span></span>` : "");
 
 /* ---------- diagramma ---------- */
 function disegna(axisEl, lanesEl, b0, b1, tickLabel) {
@@ -434,13 +562,21 @@ function disegna(axisEl, lanesEl, b0, b1, tickLabel) {
   axisEl.innerHTML = MARK
     .filter(t => t >= b0 && t <= b1)
     .map((t, i) => `<span class="t" style="left:${pc(t)}%">${tickLabel(t, i)}</span>`)
-    .join("");
+    .join("")
+    + PRE.filter(e => e.c >= b0 && e.c <= b1)
+         .map(e => `<span class="pre" style="left:${pc(e.c)}%"
+              title="preemption @${e.c}"></span>`).join("");
+
+  const prerules = PRE.filter(e => e.c > b0 && e.c < b1).map(e =>
+    `<span class="preline" style="left:${pc(e.c)}%" data-pre="1"
+       data-c="${e.c}" data-chi="${e.chi}" data-succ="${e.succ}"
+       data-fuori="${e.fuori === null ? "" : e.fuori}"></span>`).join("");
 
   lanesEl.innerHTML = ORDINE.map(o => {
     const bande = D.fasce.filter(f => f[2] === o.k && f[1] > b0 && f[0] < b1);
     if (!bande.length) return "";
     const rules = MARK.filter(t => t > b0 && t < b1)
-      .map(t => `<span class="tickline" style="left:${pc(t)}%"></span>`).join("");
+      .map(t => `<span class="tickline" style="left:${pc(t)}%"></span>`).join("") + prerules;
     const bb = bande.map(f => {
       const a = Math.max(f[0], b0), z = Math.min(f[1], b1);
       const dett = f[4].map(([r, c]) => `${r} ${c}`).join(" · ");
@@ -468,7 +604,19 @@ function mostra(el) {
     `<span>cicli <b>${N.format(d.b)} → ${N.format(d.e)}</b> (${N.format(d.e - d.b)})</span>` +
     `<span>${d.r}</span>`;
 }
+// La linea di preemption ha la precedenza sulla fascia che sta sotto: ci si
+// passa sopra apposta, ed e' larga un pixel e mezzo.
+function mostraPre(el) {
+  const d = el.dataset;
+  readout.innerHTML =
+    `<span style="color:var(--accent)"><b>PREEMPTION</b> @${N.format(d.c)}</span>` +
+    `<span><b>${d.chi}</b> ha perso la CPU</span>` +
+    `<span>a favore di <b>${d.succ}</b></span>` +
+    (d.fuori ? `<span>rientra dopo <b>${N.format(d.fuori)}</b> cicli</span>`
+             : `<span>non rientra piu'</span>`);
+}
 document.addEventListener("mouseover", e => {
+  const p = e.target.closest(".preline"); if (p) { mostraPre(p); return; }
   const b = e.target.closest(".band"); if (b) mostra(b);
 });
 document.addEventListener("focusin", e => {
@@ -543,6 +691,142 @@ document.getElementById("n-ctx").textContent = N.format(ctx);
 document.getElementById("n-tot").textContent = N.format(D.fine);
 document.getElementById("q-ctx").textContent = (100 * ctx / D.fine).toFixed(1) + "%";
 document.getElementById("n-sw").textContent = nsw;
+
+/* ---------- IL MARCATORE ----------
+   Questo blocco NON fa aritmetica sui dati: i tratti di possesso, le durate e
+   le statistiche per categoria arrivano gia' decomposti da tools/marks.py, che
+   e' anche cio' che stampa `marks.py read`. Rifare qui il conto vorrebbe dire
+   che la pagina e il terminale potrebbero dire due numeri diversi sulla stessa
+   registrazione, e nessuno dei due sarebbe sbagliato in modo visibile.
+   Qui si posiziona, e basta.
+
+   Sta in fondo per la ragione scritta piu' su: un errore a meta' script uccide
+   tutto cio' che segue, e in fondo non segue niente. */
+const M = D.marche;
+if (M && (M.finestre.length || M.puntuali.length)) {
+  document.getElementById("sec-marche").hidden = false;
+
+  // I proprietari qui sono nomi di TCB LETTI dal canale 0, non i corpi dedotti
+  // dal pc del diagramma sopra: due strade, due spazi di nomi, quindi una
+  // scaletta di colori propria invece di far finta che combacino.
+  const MRIS = ["88,155,140", "146,112,186", "196,112,140",
+                "140,150,90", "110,130,160", "186,140,80"];
+  const chi = [...new Set(M.finestre.flatMap(f => f.tratti.map(t => t[2])))];
+  const col = Object.fromEntries(chi.map((c, i) => [c, MRIS[i % MRIS.length]]));
+
+  document.getElementById("m-legend").innerHTML =
+    chi.map(c => `<span class="item" style="--c:${col[c]}">
+        <span class="swatch task"></span><span>${c}</span></span>`).join("") +
+    `<span class="item" style="margin-left:auto;color:var(--accent)">
+       bordo acceso = la finestra ATTRAVERSA una commutazione</span>`;
+
+  const segIn = (f, t) =>       // un tratto, in percentuale della sua finestra
+    `<span class="seg" style="--sc:${col[t[2]]};left:${100*(t[0]-f.a)/f.d}%;` +
+    `width:${100*(t[1]-t[0])/f.d}%"></span>`;
+
+  /* --- le corsie: una per categoria, piu' una per gli eventi puntuali --- */
+  const pc = x => (x / D.fine) * 100;
+  const canali = M.categorie.map(c => c.ch);
+
+  document.getElementById("maxis").innerHTML = MARK
+    .map(t => `<span class="t" style="left:${pc(t)}%">${N.format(t)}</span>`).join("");
+
+  let corsie = canali.map(ch => {
+    const cat = M.categorie.find(c => c.ch === ch);
+    const ff = M.finestre.filter(f => f.ch === ch);
+    const rules = MARK.map(t => `<span class="tickline" style="left:${pc(t)}%"></span>`).join("");
+    const ww = ff.map(f => `<span class="win${f.cross ? " cross" : ""}" tabindex="0"
+        style="left:${pc(f.a)}%;width:${Math.max(pc(f.d), 0.15)}%"
+        data-c="${f.canale}" data-m="${f.marker}" data-a="${f.a}" data-z="${f.z}"
+        data-d="${f.d}" data-x="${f.cross ? 1 : 0}"
+        data-p="${f.poss.map(p => p[0] + " " + p[1]).join(" · ").replace(/"/g, "&quot;")}"
+        >${f.tratti.map(t => segIn(f, t)).join("")}</span>`).join("");
+    // La chiave e' larga 74px: ci sta la prima parola. Il nome intero sta nel
+    // title, nel readout e nella tabella in fondo, quindi non si perde.
+    return `<div class="lane">
+        <div class="lane-key" title="${cat.nome}"><span class="n">${cat.nome.split(" ")[0]}</span>
+          <span class="p">${cat.n}&times;</span></div>
+        <div class="track">${rules}${ww}</div>
+      </div>`;
+  });
+
+  // Gli eventi puntuali della macchina (il tasto): una corsia sola, perche'
+  // sono il TRIGGER di cio' che sta sopra e vanno letti sulla stessa scala.
+  if (M.puntuali.length) {
+    const ee = M.puntuali.map(p => `<span class="evt" style="left:${pc(p.c)}%"
+        title="${p.canale} ${p.v} @${p.c} (girava ${p.cur})"></span>`).join("");
+    corsie.push(`<div class="lane">
+        <div class="lane-key"><span class="n">${M.puntuali[0].canale}</span>
+          <span class="p">macchina</span></div>
+        <div class="track">${ee}</div>
+      </div>`);
+  }
+  document.getElementById("mlanes").innerHTML = corsie.join("");
+
+  /* --- il readout --- */
+  const mread = document.getElementById("mreadout");
+  function mostraWin(el) {
+    const d = el.dataset;
+    mread.innerHTML =
+      `<span><b>${d.c}</b> · ${d.m}</span>` +
+      `<span>cicli <b>${N.format(d.a)} → ${N.format(d.z)}</b> (${N.format(d.d)})</span>` +
+      (d.x === "1" ? `<span style="color:var(--accent)">ATTRAVERSA una commutazione</span>` : "") +
+      `<span>${d.p}</span>`;
+  }
+  // Sul DOCUMENTO, come gli altri due qui sopra: il DOM finto di
+  // tools/trace_dom.js stubba addEventListener li' e non sugli elementi, e
+  // allargare il finto per una comodita' vorrebbe dire che la verifica gira su
+  // un DOM diverso da quello per cui e' stata scritta.
+  document.addEventListener("mouseover", e => {
+    const w = e.target.closest(".win"); if (w) mostraWin(w);
+  });
+  document.addEventListener("focusin", e => {
+    const w = e.target.closest(".win"); if (w) mostraWin(w);
+  });
+
+  /* --- la sovrapposizione al trigger ---
+     Ogni finestra da zero, sulla scala della piu' lunga della SUA categoria:
+     categorie diverse misurano cose diverse e una scala comune schiaccerebbe
+     la piu' veloce fino a renderla illeggibile. */
+  document.getElementById("msuper").innerHTML = M.categorie.map(cat => {
+    const ff = M.finestre.filter(f => f.ch === cat.ch);
+    const s = x => (x / cat.max) * 100;
+    const righe = ff.map(f =>
+      `<div class="row"><span class="w" style="width:${s(f.d)}%">
+         ${f.tratti.map(t => segIn(f, t)).join("")}</span></div>`).join("");
+    return `<div style="margin-bottom:30px">
+        <div style="font-size:13px;color:var(--ink-2);margin-bottom:6px">
+          <b style="color:var(--ink)">${cat.nome}</b> — ${cat.n} finestre,
+          jitter <b style="color:var(--ink)">${N.format(cat.jitter)}</b> cicli
+          su un minimo di ${N.format(cat.min)}</div>
+        <div class="super" style="padding-bottom:22px">
+          ${righe}
+          <span class="vline" style="left:${s(cat.min)}%"></span>
+          <span class="vlab" style="left:${s(cat.min)}%">min ${N.format(cat.min)}</span>
+          <span class="vline hi" style="left:${s(cat.max)}%"></span>
+          <span class="vlab" style="left:${s(cat.max)}%">max ${N.format(cat.max)}</span>
+        </div>
+      </div>`;
+  }).join("");
+
+  /* --- la tabella per categoria: gli stessi numeri del terminale --- */
+  document.querySelector("#m-tab tbody").innerHTML = M.categorie.map(c =>
+    `<tr><td class="name">${c.nome}</td><td class="num">${c.n}</td>
+      <td class="num">${N.format(c.min)}</td><td class="num">${N.format(c.max)}</td>
+      <td class="num">${N.format(c.media)}</td><td class="num">${N.format(c.jitter)}</td>
+      <td class="num">${N.format(c.totale)}</td></tr>`).join("");
+
+  // Gli errori della registrazione si MOSTRANO. Una finestra mai chiusa e' una
+  // misura che non c'e', e una pagina che la tacesse disegnerebbe le altre
+  // lasciando credere che siano tutte.
+  if (M.errori.length) {
+    document.getElementById("m-errori").innerHTML =
+      `<div style="margin-top:20px;padding:12px 14px;background:var(--surface);
+         border-left:3px solid rgb(var(--c-ISR));font-size:13px">
+         <b>La registrazione ha ${M.errori.length} problema/i</b><ul style="margin:8px 0 0">` +
+      M.errori.map(e => `<li>${e}</li>`).join("") + `</ul></div>`;
+  }
+}
 </script>
 
 </body>

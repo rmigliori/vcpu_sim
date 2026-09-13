@@ -71,6 +71,46 @@ function(_vasm_require_kind where keyword kind)
   endforeach()
 endfunction()
 
+# --- una CONFIGURAZIONE -----------------------------------------------------
+#
+#   vasm_config(marks DEFINES MARKS INTERFACES vinc_marks)
+#
+#  Lo stesso sorgente, la stessa macchina, la stessa ISA: cambia solo cosa ci
+#  entra dentro a tempo di assemblaggio. Non e' una "variante" -- quella parola
+#  in un toolchain vuol dire un altro bersaglio -- ed e' la stessa nozione che
+#  CMake chiama configurazione per debug/release.
+#
+#  ESISTE PER TOGLIERE UNA RIPETIZIONE, e la ripetizione e' vera: strumentare
+#  non e' solo un -D. Il sorgente strumentato include il catalogo generato, che
+#  a sua volta include hal/marker.vinc, quindi DEFINES e INTERFACES si accendono
+#  INSIEME. Senza questo sostantivo le due cose andrebbero ripetute identiche su
+#  ogni libreria che ha dei tag -- scheduler, e poi dispatcher, e poi ISR -- e
+#  divergerebbero alla quarta categoria. E' lo stesso argomento di marks.conf,
+#  applicato al build.
+#
+#  Le due specie di dipendenza dell'intestazione di questo file restano
+#  separate: qui arrivano solo in coppia perche' questa particolare
+#  configurazione le vuole entrambe, non perche' siano la stessa cosa.
+function(vasm_config name)
+  cmake_parse_arguments(A "" "" "DEFINES;INTERFACES" ${ARGN})
+  _vasm_require_kind("vasm_config(${name})" INTERFACES interface ${A_INTERFACES})
+  add_library(${name} INTERFACE)
+  set_property(TARGET ${name} PROPERTY VASM_KIND config)
+  set_property(TARGET ${name} PROPERTY VASM_CFG_DEFINES    ${A_DEFINES})
+  set_property(TARGET ${name} PROPERTY VASM_CFG_INTERFACES ${A_INTERFACES})
+endfunction()
+
+# Il nome di un target in una configurazione. Un posto solo, perche' lo
+# calcolano tre funzioni e un suffisso scritto tre volte e' un suffisso che
+# prima o poi si scrive in due modi.
+function(_vasm_cfg_name out base cfg)
+  if(cfg STREQUAL "")
+    set(${out} "${base}" PARENT_SCOPE)
+  else()
+    set(${out} "${base}_${cfg}" PARENT_SCOPE)
+  endif()
+endfunction()
+
 # --- una libreria di interfaccia: i .vinc -----------------------------------
 #
 # I .vinc sono header-only *per costruzione*: contengono solo costanti di
@@ -150,7 +190,7 @@ endfunction()
 # DICHIARATA, non scoperta: se un .vasm include un .vinc senza che INTERFACES lo
 # dica, CMake non lo sapra' mai. La versione scoperta e' --emit-deps (punto 3).
 function(vasm_object name)
-  cmake_parse_arguments(A "" "SOURCE" "INTERFACES" ${ARGN})
+  cmake_parse_arguments(A "" "SOURCE" "INTERFACES;DEFINES" ${ARGN})
   _vasm_require_kind("vasm_object(${name})" INTERFACES interface ${A_INTERFACES})
   _vasm_closure(dirs headers ${A_INTERFACES})
 
@@ -158,11 +198,17 @@ function(vasm_object name)
   foreach(d ${dirs})
     list(APPEND iflags -I${d})
   endforeach()
+  # DEFINES -> i -D di `asm`: i nomi che .ifdef interroga (§4.2.3 del manuale).
+  # Presenza, mai un valore -- l'assembler rifiuta -DNOME=valore.
+  set(dflags "")
+  foreach(d ${A_DEFINES})
+    list(APPEND dflags -D ${d})
+  endforeach()
 
   set(out ${VASM_BINARY_DIR}/${name}.vo)
   add_custom_command(
     OUTPUT  ${out}
-    COMMAND vcpu_sim asm ${iflags} ${A_SOURCE} -o ${out}
+    COMMAND vcpu_sim asm ${iflags} ${dflags} ${A_SOURCE} -o ${out}
     DEPENDS vcpu_sim ${A_SOURCE} ${headers}
     COMMENT "asm  ${name}.vo"
     VERBATIM)
@@ -205,23 +251,51 @@ endfunction()
 #  La chiusura e' il punto: un programma che linka lib_messaggi non deve sapere
 #  che sotto ci sono lib_queue e lib_hal. Prima quella conoscenza stava scritta a
 #  mano nell'intestazione di ogni test, come lista ordinata di .vo.
+#  CONFIGS elenca le configurazioni in cui questa libreria esiste OLTRE a
+#  quella pulita: `CONFIGS marks` produce lib_kernel E lib_kernel_marks dallo
+#  stesso sorgente. La pulita tiene il nome nudo perche' e' il caso normale, e
+#  rinominarla vorrebbe dire toccare ogni programma e ogni valore atteso per
+#  un'informazione che e' gia' il default.
 function(vasm_library name)
-  cmake_parse_arguments(A "" "" "SOURCES;INTERFACES;LINK" ${ARGN})
+  cmake_parse_arguments(A "" "" "SOURCES;INTERFACES;LINK;CONFIGS" ${ARGN})
   _vasm_require_kind("vasm_library(${name})" INTERFACES interface ${A_INTERFACES})
   _vasm_require_kind("vasm_library(${name})" LINK archive ${A_LINK})
-  set(objs "")
-  set(i 0)
-  foreach(src ${A_SOURCES})
-    get_filename_component(base ${src} NAME_WE)
-    vasm_object(${name}_${base} SOURCE ${src} INTERFACES ${A_INTERFACES})
-    list(APPEND objs ${name}_${base})
-    math(EXPR i "${i} + 1")
+  _vasm_require_kind("vasm_library(${name})" CONFIGS config ${A_CONFIGS})
+
+  # "" e' la configurazione pulita, ed e' sempre presente.
+  foreach(cfg "" ${A_CONFIGS})
+    set(extra_i "")
+    set(extra_d "")
+    if(NOT cfg STREQUAL "")
+      get_target_property(extra_i ${cfg} VASM_CFG_INTERFACES)
+      get_target_property(extra_d ${cfg} VASM_CFG_DEFINES)
+      if(NOT extra_i)
+        set(extra_i "")
+      endif()
+      if(NOT extra_d)
+        set(extra_d "")
+      endif()
+    endif()
+    _vasm_cfg_name(lib ${name} "${cfg}")
+
+    set(objs "")
+    foreach(src ${A_SOURCES})
+      get_filename_component(base ${src} NAME_WE)
+      _vasm_cfg_name(obj ${name}_${base} "${cfg}")
+      vasm_object(${obj} SOURCE ${src}
+                  INTERFACES ${A_INTERFACES} ${extra_i}
+                  DEFINES    ${extra_d})
+      list(APPEND objs ${obj})
+    endforeach()
+    vasm_archive(${lib} OBJECTS ${objs})
+    set_property(TARGET ${lib} PROPERTY VASM_LINK ${A_LINK})
+    # La configurazione di cui questo archivio fa parte: e' cio' che permette
+    # alla chiusura di un programma di scegliere la controparte giusta.
+    set_property(TARGET ${lib} PROPERTY VASM_CONFIG "${cfg}")
+    if(A_LINK)
+      _vasm_order_after(${lib} ${A_LINK})
+    endif()
   endforeach()
-  vasm_archive(${name} OBJECTS ${objs})
-  set_property(TARGET ${name} PROPERTY VASM_LINK ${A_LINK})
-  if(A_LINK)
-    _vasm_order_after(${name} ${A_LINK})
-  endif()
 endfunction()
 
 # Chiusura transitiva delle librerie, in ordine di scoperta: le dirette per
@@ -264,14 +338,42 @@ function(vasm_archive name)
 endfunction()
 
 # --- un eseguibile: .vo/.va -> .vx ------------------------------------------
+#  CONFIG sceglie in quale configurazione linkare: ogni libreria della chiusura
+#  che ha una controparte in quella configurazione viene sostituita con essa, e
+#  quelle che non ce l'hanno restano come sono -- lib_queue non ha tag, quindi
+#  di lib_queue ce n'e' una sola e la linkano entrambi i programmi.
+#
+#  Si chiude PRIMA e si sostituisce DOPO, ed e' corretto perche' una
+#  configurazione aggiunge interfacce e -D, non dipendenze di link: le due
+#  controparti hanno per costruzione lo stesso VASM_LINK. Se un giorno una
+#  configurazione dovesse aggiungere una libreria, quest'ordine andrebbe girato.
+#
+#  MAI TUTTE E DUE INSIEME: due controparti dello stesso archivio sulla stessa
+#  riga di `ld` sono gli stessi simboli due volte, e il linker si ferma
+#  ("duplicate global 'pcb0'"). E' rumoroso, non "prende la prima e tace".
 function(vasm_program name)
-  cmake_parse_arguments(A "" "ENTRY" "OBJECTS;LINK" ${ARGN})
+  cmake_parse_arguments(A "" "ENTRY;CONFIG" "OBJECTS;LINK" ${ARGN})
   _vasm_require_kind("vasm_program(${name})" LINK archive ${A_LINK})
+  if(A_CONFIG)
+    _vasm_require_kind("vasm_program(${name})" CONFIG config ${A_CONFIG})
+  endif()
   # Gli oggetti espliciti (sempre linkati) per primi, poi le librerie della
   # chiusura, da cui il linker pesca solo cio' che serve.
   set(all ${A_OBJECTS})
   if(A_LINK)
     _vasm_link_closure(libs ${A_LINK})
+    if(A_CONFIG)
+      set(mapped "")
+      foreach(l ${libs})
+        _vasm_cfg_name(cand ${l} ${A_CONFIG})
+        if(TARGET ${cand})
+          list(APPEND mapped ${cand})
+        else()
+          list(APPEND mapped ${l})
+        endif()
+      endforeach()
+      set(libs ${mapped})
+    endif()
     list(APPEND all ${libs})
   endif()
   _vasm_outputs(objs ${all})
@@ -291,6 +393,28 @@ function(vasm_program name)
   _vasm_order_after(${name} ${A_OBJECTS})
   set_property(TARGET ${name} PROPERTY VASM_KIND program)
   set_property(TARGET ${name} PROPERTY VASM_OUTPUT ${out})
+  set_property(TARGET ${name} PROPERTY VASM_CONFIG "${A_CONFIG}")
+  # Il manifesto delle configurazioni, per chi sta FUORI dal build.
+  #
+  # tools/scheduler_facts.py deve sapere quali programmi sono strumentati,
+  # perche' il nucleo fattuale e' per definizione quello PULITO. Dedurlo dal
+  # suffisso del nome sarebbe una convenzione che nessuno garantisce -- la
+  # stessa famiglia dell'elenco ORDINE scritto a mano in trace.template.html,
+  # che il 12/09 ha fatto sparire un task. Qui lo dichiara il build, che e'
+  # l'unico che lo sa davvero.
+  set_property(GLOBAL APPEND PROPERTY VASM_PROGRAM_CONFIGS "${name} ${A_CONFIG}")
+endfunction()
+
+# Scrive il manifesto. Va chiamata DOPO tutti i vasm_program, cioe' in fondo al
+# CMakeLists di primo livello: una proprieta' globale si legge quando e' piena.
+function(vasm_write_manifest path)
+  get_property(righe GLOBAL PROPERTY VASM_PROGRAM_CONFIGS)
+  set(testo "# programma <spazio> configurazione (vuota = pulita)\n")
+  set(testo "${testo}# GENERATO da vasm_write_manifest(): non si modifica a mano.\n")
+  foreach(r ${righe})
+    set(testo "${testo}${r}\n")
+  endforeach()
+  file(WRITE ${path} "${testo}")
 endfunction()
 
 # --- un'invariante di regressione -> un test di ctest -----------------------

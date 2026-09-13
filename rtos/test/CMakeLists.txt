@@ -182,6 +182,41 @@ vasm_check(tmgr MODE DUMPS PROGRAM test_tmgr
            EXPECT "5 0 2566")
 
 # ---------------------------------------------------------------------------
+#  test_tmgr_marks — LO STESSO PROGRAMMA, COL KERNEL STRUMENTATO (13/09/2026).
+#
+#  Stesso oggetto dell'applicazione (t_tmgr, non ricompilato) e stesso sorgente
+#  del kernel: cambia solo che lib_kernel_marks e' assemblata con -D MARKS,
+#  quindi i `.ifdef` di scheduler.vasm entrano. E' `CONFIG marks` a sostituire
+#  lib_kernel con la sua controparte lungo la chiusura; lib_queue, lib_hal e le
+#  altre non hanno tag, quindi restano quelle di sempre e sono le STESSE.
+#
+#  PERCHE' QUESTO TEST ESISTE, e non e' un doppione: il terzo numero dei due e'
+#  DIVERSO -- 2566 pulito, 2539 strumentato -- ed e' cntI, i giri dell'idle.
+#  Cioe' la strumentazione COSTA, e il costo si vede in un valore dichiarato
+#  invece che in un commento. Se un giorno i due numeri coincidessero vorrebbe
+#  dire che i tag non sono piu' nel kernel, e uno dei due test lo direbbe.
+#
+#  E ci sono perche' senza il programma strumentato non lo costruirebbe nessuno:
+#  un percorso che nessun test esegue marcisce, che e' la ragione per cui questa
+#  configurazione sta nello STESSO albero e non in un secondo albero di build.
+#  I primi due numeri (cntA=5, cntErr=0) non dipendono dai cicli e non si
+#  muovono: sono la prova che il kernel strumentato fa le stesse cose.
+# ---------------------------------------------------------------------------
+vasm_program(test_tmgr_marks OBJECTS t_tmgr
+             LINK lib_timeout_manager lib_messaggi lib_kernel lib_pool
+                  lib_timeout
+             CONFIG marks)
+
+#  DUE categorie dentro, e il costo e' +18 istruzioni sull'intero programma
+#  (21925 -> 21943): la finestra SCHED su ogni chiamata di `scheduler`, e
+#  l'evento puntuale PREEMPT sul ramo sp_preempted, che scatta 11 volte. Il
+#  numero atteso si e' mosso due volte -- 2566, poi 2548 con la sola SCHED, poi
+#  2539 -- ed e' la misura che dice perche' l'interruttore DEVE essere a
+#  compile-time: con --marks spento quelle istruzioni si eseguirebbero lo stesso.
+vasm_check(tmgr_marks MODE DUMPS PROGRAM test_tmgr_marks
+           EXPECT "5 0 2539")
+
+# ---------------------------------------------------------------------------
 #  test_semaphore — il semaforo contatore, e l'INSERIMENTO ORDINATO di §13.6.
 #
 #  E' il primo test della serie in cui il numero che conta non misura QUANTO ma

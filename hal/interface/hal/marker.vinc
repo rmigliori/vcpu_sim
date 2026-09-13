@@ -50,16 +50,27 @@
 ;
 ; Scriverci da programma e' un errore e la macchina lo dice.
 ;
-; --- COSA MANCA ANCORA, E VA SAPUTO LEGGENDO QUI ---
-; I nomi. Oggi il canale e' un indirizzo e il punto un numero, e chi legge la
-; registrazione vede "canale 2, valore 1". Il passo successivo e' un FILE DI
-; CONFIGURAZIONE che associa nome visualizzato e identificatore, e da cui questo
-; .vinc venga GENERATO: due dichiarazioni dello stesso fatto -- una qui e una
-; nello strumento -- divergerebbero in silenzio, che e' il difetto appena
-; corretto in trace.template.html (l'elenco ORDINE scritto a mano).
-; Finche' quel file non c'e', i nomi se li dichiara l'applicazione con degli
-; .equ sui canali generici qui sotto, ed e' esattamente il lavoro che il
-; generatore toglierebbe di mezzo.
+; --- I NOMI CI SONO, E NON STANNO QUI ---
+; Questo file dichiara i canali GREZZI: un indirizzo per canale, e basta. I nomi
+; -- categorie, marker, e come si chiamano a schermo -- stanno in `marks.conf`
+; alla radice, da cui `tools/marks.py generate` produce il .vinc con gli .equ
+; che il programma include (`marks/marks.vinc`, nell'albero di build). Una
+; sorgente, due consumatori: l'assembler che vuole gli .equ e il lettore che
+; vuole i nomi, che e' il motivo per cui il catalogue esiste separato.
+;
+; Quindi NON si dichiarano i nomi con degli .equ al punto d'uso sui canali
+; generici qui sotto: sarebbe la seconda verita' che marks.conf esiste per
+; togliere. I canali qui sotto restano per chi vuole un colpo di sonda senza
+; dichiarare niente, e per quello soltanto.
+;
+; --- E ADESSO SI VEDONO ---
+; Dal 13/09/2026 `tools/trace.py` legge la registrazione e la DISEGNA nella
+; stessa pagina della traccia: una corsia per categoria, ogni finestra rigata
+; dai tratti di chi possedeva la CPU dentro di essa, e la sovrapposizione
+; allineata al trigger, dove il jitter si vede. Nella stessa pagina e non in
+; un'altra perche' una finestra che attraversa una commutazione si legge solo
+; sotto le commutazioni che attraversa.
+; Il testo nel terminale resta: `python3 tools/marks.py read marks.conf <rec>`.
 ;
 ; File FOGLIA: non include niente.
 

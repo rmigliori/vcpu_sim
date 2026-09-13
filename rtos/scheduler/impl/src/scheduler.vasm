@@ -42,6 +42,15 @@
 .include "tcb/tcb.vinc"
 .include "queue/queue_api.vinc"
 
+; Il catalogo delle misure, e SOLO nella configurazione strumentata: senza
+; -D MARKS non entra niente di tutto questo nell'oggetto -- ne' l'include, ne' i
+; tag piu' sotto. E' la ragione per cui .ifdef e' stato scritto (§3.44): con
+; l'interruttore a runtime (--marks) le istruzioni dei tag si eseguirebbero
+; comunque, e i numeri attesi che dipendono dai cicli non tornerebbero mai piu'.
+.ifdef MARKS
+.include "marks/marks.vinc"
+.endif
+
   .data
 
   .global pcb0
@@ -510,6 +519,23 @@ sp_tail:
 
   ; --- trovato uno PIU' PRIORITARIO: l'uscente e' stato preemptato (§2) ---
 sp_preempted:
+  ; L'EVENTO: da qui in poi e' deciso che l'uscente e' stato preemptato, e
+  ; questo e' l'unico ramo del kernel in cui lo e'. Puntuale, non una finestra:
+  ; la preemption e' un istante. Chi l'ha subita non si scrive -- la marca porta
+  ; gia' `current`, che qui e' ancora l'uscente perche' a scriverlo e' il
+  ; dispatcher, dopo.
+  ;
+  ; I REGISTRI: r7 e r3, e non r1. Qui r1 e' VIVO e porta il task ENTRANTE --
+  ; ci arriva da entrambi i rami della scansione (lo slot a sp_scan, la coda a
+  ; sp_tail) ed e' il valore di ritorno. r7 e' il puntatore della scansione,
+  ; morto appena la scansione finisce; r3 viene assegnato due istruzioni sotto.
+  ; Scritto per esteso perche' sbagliarlo non da' un errore: da' un `current`
+  ; che vale l'indirizzo di un canale del marcatore, e il sistema prosegue.
+.ifdef MARKS
+  li r7, MARK_PREEMPT
+  li r3, M_PREEMPT_CUT
+  sw r3, 0(r7)
+.endif
   lw r2, 0(r14)          ; l'uscente
   sw r2, PCB.preempted(r8)
   li r3, PREEMPTED
@@ -563,6 +589,15 @@ scheduler:
   addi r14, r14, -4
   sw r15, 0(r14)         ; non-foglia: preserva il ritorno
 
+  ; APRE la finestra: da qui comincia la SCELTA. r1 e r2 sono liberi
+  ; all'ingresso (questa routine non prende argomenti e r1 e' il valore di
+  ; ritorno, che esiste solo alla fine).
+.ifdef MARKS
+  li r1, MARK_SCHED
+  li r2, M_SCHED_SCAN
+  sw r2, 0(r1)
+.endif
+
   ; --- scansione dall'alto: a ogni livello lo slot batte la coda (§4) ---
   ; Il PCB corrente sta in r7 e NON in uno scratch: dequeue_head sporca r2, r4
   ; e r5 (lo dichiara queue_api.vinc), quindi tenerlo in r5 lo farebbe avanzare
@@ -587,6 +622,16 @@ sched_scan_done:
   ; sta a PRIO_IDLE e non si blocca mai, quindi l'ultimo livello e' pronto per
   ; costruzione (§4). Se un giorno lo fosse, si uscirebbe da qui oltre pcb7 con
   ; r1 = 0 -- ed e' un errore di costruzione del sistema, non un caso da gestire.
+
+  ; CHIUDE: la scelta e' fatta. Due istruzioni e non una, perche' l'indirizzo
+  ; del canale va ricaricato -- r1 dall'apertura in poi e' il registro di
+  ; lavoro della scansione e adesso porta il TCB scelto, cioe' il valore di
+  ; ritorno. Si usa r7, che dopo la scansione e' morto.
+.ifdef MARKS
+  li r7, MARK_SCHED
+  sw r0, 0(r7)
+.endif
+
   lw r15, 0(r14)
   addi r14, r14, 4
   ret                    ; r1 = TCB scelto

@@ -91,6 +91,23 @@ vasm_interface(vinc_marks
   HEADERS    marks/marks.vinc
   INTERFACES vinc_hal)          # il generato include hal/marker.vinc
 
+# ---------------------------------------------------------------------------
+#  La configurazione STRUMENTATA (13/09/2026, §3.47).
+#
+#  Un nome solo per cio' che significa "con il marcatore dentro", dichiarato
+#  qui e nominato da ogni libreria che ha dei tag. Le due cose viaggiano in
+#  coppia e non e' un caso: il sorgente strumentato include il catalogo
+#  generato, che include hal/marker.vinc. Ripeterle libreria per libreria
+#  sarebbe la ripetizione che marks.conf esiste per togliere, un piano piu' su.
+#
+#  Perche' a COMPILE-TIME e non con l'interruttore a runtime (--marks): con
+#  quello le istruzioni dei tag si eseguono comunque -- e' il registratore a
+#  tacere, non il programma -- quindi i valori attesi che dipendono dai cicli
+#  non tornerebbero mai piu'. Misurato: bastano DICIOTTO istruzioni in tutto un
+#  programma per spostarne uno.
+# ---------------------------------------------------------------------------
+vasm_config(marks DEFINES MARKS INTERFACES vinc_marks)
+
 add_subdirectory(generic)
 add_subdirectory(rtos)
 
@@ -190,3 +207,12 @@ foreach(src ${STANDALONE})
   get_filename_component(nm ${src} NAME_WE)
   add_test(NAME standalone_${nm} COMMAND vcpu_sim ${src})
 endforeach()
+
+# Il manifesto delle configurazioni, per chi sta fuori dal build: quale
+# programma e' strumentato e quale no. Lo legge tools/scheduler_facts.py, che
+# per regola raccoglie i numeri SOLO dai programmi puliti -- e lo chiede qui
+# invece di dedurlo dal suffisso di un nome.
+#
+# In FONDO, dopo ogni vasm_program: la proprieta' globale che raccoglie le
+# righe si legge quando e' piena.
+vasm_write_manifest(${VASM_BINARY_DIR}/configs.txt)

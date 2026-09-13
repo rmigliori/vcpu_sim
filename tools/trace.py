@@ -55,12 +55,31 @@ listato sia nel programma linkato.
 
 Il costo e' un `asm` per modulo, che su questo progetto e' istantaneo.
 
+--- E DAL 13/09/2026 ANCHE IL MARCATORE ---
+
+La stessa corsa produce la REGISTRAZIONE delle marche (--marks), e la pagina la
+disegna: una corsia per categoria, ogni finestra rigata dai tratti di chi
+possedeva la CPU dentro di essa, e la sovrapposizione allineata al trigger dove
+il jitter si vede. Una corsa sola e non due, perche' allineare a occhio la
+finestra di un'esecuzione alle commutazioni di un'altra e' esattamente cio' che
+il disegno esiste per non dover chiedere. E' neutrale: con e senza --marks
+test_events fa gli stessi 9259/18785.
+
+L'analisi NON e' qui: si importa da tools/marks.py, che e' anche cio' che
+stampa `marks.py read`. Un programma senza tag non e' un caso limite -- oggi e'
+la norma -- e la sezione si nasconde da sola.
+
 --- COSA PRODUCE ---
 
 Una pagina HTML autosufficiente (i dati sono dentro; le uniche risorse esterne
 sono i font, che senza rete cadono sui fallback dichiarati). Il modello e'
 tools/trace.template.html: si modifica quello per cambiare il disegno, e questo
 file non si tocca.
+
+E SI VERIFICA: tools/trace_dom.js piu' gjs eseguono lo script della pagina fuori
+dal browser. La ricetta e' in testa a quel file, e va fatta su PIU' programmi --
+i difetti di questa pagina sono tutti della forma "funziona su quello per cui e'
+stata scritta".
 """
 
 import argparse, bisect, collections, datetime, glob, json, os, re, subprocess, sys
@@ -79,6 +98,33 @@ def sim():
     sys.exit("vcpu_sim non trovato: cmake -B out -S . && cmake --build out -j")
 
 
+def base_programma(vx):
+    """Il nome del programma SENZA la sua configurazione.
+
+    Serve perche' l'applicazione si ritrova dal nome del .vx, ed e' l'unico
+    legame fra il programma e il suo sorgente. Dal 13/09/2026 lo stesso sorgente
+    puo' produrre piu' programmi -- test_tmgr e test_tmgr_marks (§3.47) -- e il
+    secondo non ha un test_tmgr_marks.vasm: e' lo stesso t_tmgr.vo con un kernel
+    diverso sotto.
+
+    Il suffisso NON si indovina: lo dice il manifesto che scrive il build,
+    accanto ai .vx. Tagliare un "_qualcosa" finale a naso funzionerebbe finche'
+    un programma non si chiama test_due_task, e poi sbaglierebbe in silenzio --
+    che e' il modo in cui questo strumento ha gia' perso un task intero.
+    """
+    nome = os.path.splitext(os.path.basename(vx))[0]
+    man = os.path.join(os.path.dirname(os.path.abspath(vx)), "configs.txt")
+    if not os.path.exists(man):
+        return nome
+    for riga in open(man):
+        if riga.startswith("#") or not riga.strip():
+            continue
+        parti = riga.rstrip("\n").split(" ", 1)
+        if parti[0] == nome and len(parti) > 1 and parti[1].strip():
+            return nome[: -(len(parti[1].strip()) + 1)]    # "_marks"
+    return nome
+
+
 def sorgenti(vx):
     """I moduli .vasm del programma: le librerie, piu' l'APPLICAZIONE.
 
@@ -92,7 +138,7 @@ def sorgenti(vx):
     for pat in ("hal/impl/src/*.vasm", "generic/*/impl/src/*.vasm",
                 "rtos/*/impl/src/*.vasm", "rtos/*/*/impl/src/*.vasm"):
         fuori += glob.glob(os.path.join(RADICE, pat))
-    nome = os.path.splitext(os.path.basename(vx))[0] + ".vasm"
+    nome = base_programma(vx) + ".vasm"
     app = [p for p in glob.glob(os.path.join(RADICE, "**", nome), recursive=True)
            if os.sep + "impl" + os.sep not in p
            and os.path.relpath(p, RADICE).split(os.sep)[0] not in IGNORA]
@@ -112,6 +158,17 @@ def includes():
     dentro la stessa gerarchia, quindi ogni interface/ comparirebbe due volte e
     si sfonderebbe il tetto di 16 -I dell'assembler (MAX_INC_DIRS) con dei
     doppioni.
+
+    CON UNA ECCEZIONE, e non e' un'eccezione alla regola ma il suo complemento:
+    le interfacce GENERATE nell'albero di build non esistono nel sorgente, e
+    nessun doppione le rispecchia. Sono in <build>/vasm/<libreria>/, una
+    cartella per libreria generata, e senza di loro un modulo che le include non
+    si ri-assembla affatto -- che e' un fallimento SILENZIOSO qui dentro: il
+    listato resta vuoto, nessun corpo viene riconosciuto e tutto il programma
+    finisce attribuito al boot.
+    E' successo: dal 12/09/2026 test_events include "marks/marks.vinc", che
+    tools/marks.py genera da marks.conf, e la sua ripartizione e' diventata
+    "boot 100%" senza che niente dicesse perche'.
     """
     fuori = []
     for pat in ("*/interface", "*/*/interface", "*/*/*/interface"):
@@ -119,7 +176,23 @@ def includes():
             rel = os.path.relpath(d, RADICE)
             if os.path.isdir(d) and rel.split(os.sep)[0] not in IGNORA:
                 fuori.append(d)
+    fuori += generate()
     return sorted(set(fuori))
+
+
+def generate():
+    """Le interfacce GENERATE: <build>/vasm/<libreria>/, accanto al simulatore.
+
+    Si prende l'albero di build da cui viene il simulatore, non tutti e due, o i
+    -I raddoppierebbero. Una cartella entra solo se contiene davvero un .vinc,
+    cosi' i .vo e i .va che le stanno accanto non diventano dei -I inutili.
+    """
+    base = os.path.join(os.path.dirname(sim()), "vasm")
+    fuori = []
+    for d in sorted(glob.glob(os.path.join(base, "*"))):
+        if os.path.isdir(d) and glob.glob(os.path.join(d, "**", "*.vinc"), recursive=True):
+            fuori.append(d)
+    return fuori
 
 
 def globali(vx):
@@ -222,8 +295,16 @@ def analizza(vx, tmp, argomenti=()):
     # programma guidato da un device non e' autosufficiente, e senza il suo
     # alimentatore non termina -- resta a pollare un flag che nessuno alzera'.
     # Da cui il timeout, che trasforma una sospensione muta in una diagnosi.
+    # --marks nella STESSA corsa, non in una seconda: due esecuzioni dello
+    # stesso programma sarebbero due storie, e allineare a occhio la finestra
+    # dell'una alle commutazioni dell'altra e' esattamente cio' che il disegno
+    # deve evitare di chiedere al lettore. Verificato che sia neutrale: con e
+    # senza --marks test_events fa gli stessi 9259/18785 -- la macchina annota,
+    # non esegue. (Il costo dei TAG invece sta nel programma e si paga sempre,
+    # ed e' un'altra cosa: lo dice hal/marker.vinc.)
+    rec = os.path.join(tmp, "marks.txt")
     try:
-        trace = subprocess.run([sim(), "run", vx, "--trace", *argomenti],
+        trace = subprocess.run([sim(), "run", vx, "--trace", "--marks", rec, *argomenti],
                                capture_output=True, text=True, timeout=TIMEOUT).stdout
     except subprocess.TimeoutExpired:
         sys.exit(f"il programma non e' terminato in {TIMEOUT}s. Se dipende da un "
@@ -278,7 +359,33 @@ def analizza(vx, tmp, argomenti=()):
         "own": [[o, l, c] for (o, l), c in own.items()],
         "rt": rt.most_common(18),
         "ctx": {"ctx_save": loc_rt["ctx_save"], "ctx_restore": loc_rt["ctx_restore"]},
+        "marche": marche(rec, vx),
     }
+
+
+def marche(rec, vx):
+    """L'analisi della registrazione, se ce n'e' una da leggere.
+
+    Il calcolo NON e' qui: si importa da tools/marks.py, che e' anche cio' che
+    stampa `marks.py read`. Rifarlo qui darebbe due analisi della stessa
+    registrazione, e il disegno direbbe un numero diverso dal testo sugli stessi
+    dati -- la forma precisa del difetto che marks.conf esiste per togliere.
+
+    Un programma senza tag non e' un errore: la macchina riempie comunque il
+    canale 0, e cio' che manca sono le finestre. La pagina lo nota da sola.
+    """
+    if not os.path.exists(rec):
+        return None
+    cat = os.path.join(RADICE, "marks.conf")
+    if not os.path.exists(cat):
+        return None
+    sys.path.insert(0, QUI)
+    import marks
+    catalogue, by_channel = marks.read_catalogue(cat)
+    try:
+        return marks.analizza(catalogue, by_channel, rec, vx)
+    except SystemExit:
+        return None      # «nessuna marca»: un programma che non ne emette
 
 
 def main():

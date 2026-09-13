@@ -10,3 +10,10 @@ out/
 *.vo
 *.vx
 *.va
+
+# Bytecode di Python. Dal 13/09/2026 tools/trace.py IMPORTA tools/marks.py --
+# l'analisi delle marche sta in un posto solo -- e ogni corsa lascia qui un
+# .pyc, che senza questa riga comparirebbe come file non tracciato a ogni
+# `git status`. (Ce n'e' uno TRACCIATO dal commit di trace.py, col nome di
+# prima del rename: questa riga non lo tocca, va tolto dall'indice a parte.)
+__pycache__/
