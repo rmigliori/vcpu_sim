@@ -439,14 +439,32 @@ function(vasm_program name)
   # stessa famiglia dell'elenco ORDINE scritto a mano in trace.template.html,
   # che il 12/09 ha fatto sparire un task. Qui lo dichiara il build, che e'
   # l'unico che lo sa davvero.
-  set_property(GLOBAL APPEND PROPERTY VASM_PROGRAM_CONFIGS "${name} ${A_CONFIG}")
+  #
+  # Il manifesto porta anche i -D della configurazione, e NON per completezza:
+  # tools/trace.py ri-assembla i moduli per averne le etichette locali, e se li
+  # assemblasse con dei -D diversi da quelli con cui il programma e' stato
+  # costruito otterrebbe un listato PIU' CORTO -- un blocco .ifdef sposta ogni
+  # etichetta che lo segue, i corpi dei task finiscono nel posto sbagliato, e
+  # la pagina attribuisce tutto al modulo sbagliato senza dire niente.
+  # E' successo il 13/09/2026, appena il primo tag e' finito in
+  # un'APPLICAZIONE invece che in una libreria di kernel.
+  set(_defs "")
+  if(A_CONFIG)
+    get_target_property(_defs ${A_CONFIG} VASM_CFG_DEFINES)
+    if(NOT _defs)
+      set(_defs "")
+    endif()
+    string(REPLACE ";" " " _defs "${_defs}")
+  endif()
+  set_property(GLOBAL APPEND PROPERTY VASM_PROGRAM_CONFIGS
+               "${name}|${A_CONFIG}|${_defs}")
 endfunction()
 
 # Scrive il manifesto. Va chiamata DOPO tutti i vasm_program, cioe' in fondo al
 # CMakeLists di primo livello: una proprieta' globale si legge quando e' piena.
 function(vasm_write_manifest path)
   get_property(righe GLOBAL PROPERTY VASM_PROGRAM_CONFIGS)
-  set(testo "# programma <spazio> configurazione (vuota = pulita)\n")
+  set(testo "# programma|configurazione|-D  (configurazione vuota = pulita)\n")
   set(testo "${testo}# GENERATO da vasm_write_manifest(): non si modifica a mano.\n")
   foreach(r ${righe})
     set(testo "${testo}${r}\n")

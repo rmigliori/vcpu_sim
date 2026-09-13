@@ -3075,6 +3075,41 @@ riga diceva *«7828 cicli fuori»* su una ricezione — un numero vero sotto
 un'etichetta che mente. Adesso è «riprende dopo», che è vera per tutti; che per
 una preemption sia anche il tempo fuori CPU lo dicono i documenti.
 
+#### E il difetto che ha stanato, che è il più istruttivo della giornata
+
+L'utente ha aperto la pagina e ha detto: *«si vedono solo boot e tmgr»*. Vero, e
+la causa era **il tag stesso**.
+
+`trace.py` ri-assembla i moduli con `--emit-expanded` per averne le etichette
+locali. Li assemblava **senza `-D MARKS`**, mentre il programma era stato
+linkato **con**: il blocco `.ifdef` sposta di sei istruzioni ogni etichetta che
+lo segue, i corpi dei task cadono nel posto sbagliato, e tutto finisce
+attribuito al modulo sbagliato.
+
+**Con i tag nello `scheduler` non si vedeva**, e la ragione dice quanto era
+nascosto: in una libreria di kernel non ci sono *corpi di task*. Lo slittamento
+sfasava le routine nel bilancio per routine — un errore reale che nessuno stava
+guardando — mentre le corsie restavano giuste. Appena il primo tag è finito in
+un'**applicazione**, cioè dove i corpi stanno, è collassato tutto.
+
+Rimediato facendo portare al manifesto anche i `-D` della configurazione: il
+build li sa, e adesso lo dice.
+
+E dietro ce n'era un **secondo**, che ha ingannato anche me: `sim()` cercava il
+simulatore in `out/` prima che in `build/`, e un `out/` vecchio accanto a un
+`build/` fresco ha un catalogo delle marche **stale**. Il ri-assemblaggio
+falliva su una costante che lì non esisteva ancora — stesso sintomo, causa
+diversa. Adesso il simulatore e le interfacce generate vengono dall'albero del
+`.vx`, che è esatto invece che cercato.
+
+**Due volte in silenzio nella stessa ora**, e tutte e due con lo stesso
+travestimento: `boot 100%`, un risultato plausibile. Da cui la rete che
+mancava: il modulo dell'**applicazione** è scelto per nome dal `.vx`, quindi se
+non si aggancia è una **diagnosi**, non il caso lecito che `listato()` è fatto
+per assorbire (una libreria che non fa parte del programma). Le librerie
+restano silenziose, l'applicazione no — e un programma che non ha un sorgente
+d'applicazione, come `multi`, non pretende niente.
+
 #### Il prezzo, che finisce in un `EXPECT`
 
 `test_tmgr` strumentato: **2566 → 2548 → 2539 → 2532**, una volta per categoria

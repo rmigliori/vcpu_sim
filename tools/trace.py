@@ -112,6 +112,33 @@ def sim():
              "  (se l'albero di build ha un altro nome, dillo con --sim <percorso>)")
 
 
+def manifesto(vx):
+    """(base, configurazione, [-D...]) per il programma, dal manifesto del build.
+
+    Il nome del programma NON basta a ri-assemblarne i moduli: se e' stato
+    costruito in una configurazione, i suoi .ifdef erano accesi, e un listato
+    prodotto senza gli stessi -D e' PIU' CORTO di cio' che gira. Le etichette
+    dopo il primo blocco condizionale slittano, i corpi dei task cadono nel
+    posto sbagliato, e la pagina attribuisce tutto a un modulo solo -- senza
+    dirlo, perche' listato() scarta i fallimenti apposta.
+    """
+    nome = os.path.splitext(os.path.basename(vx))[0]
+    man = os.path.join(os.path.dirname(os.path.abspath(vx)), "configs.txt")
+    if not os.path.exists(man):
+        return nome, "", []
+    for riga in open(man):
+        if riga.startswith("#") or not riga.strip():
+            continue
+        parti = riga.rstrip("\n").split("|")
+        if parti[0] != nome:
+            continue
+        cfg  = parti[1].strip() if len(parti) > 1 else ""
+        defs = parti[2].split() if len(parti) > 2 else []
+        base = nome[: -(len(cfg) + 1)] if cfg else nome
+        return base, cfg, defs
+    return nome, "", []
+
+
 def base_programma(vx):
     """Il nome del programma SENZA la sua configurazione.
 
@@ -126,17 +153,7 @@ def base_programma(vx):
     un programma non si chiama test_due_task, e poi sbaglierebbe in silenzio --
     che e' il modo in cui questo strumento ha gia' perso un task intero.
     """
-    nome = os.path.splitext(os.path.basename(vx))[0]
-    man = os.path.join(os.path.dirname(os.path.abspath(vx)), "configs.txt")
-    if not os.path.exists(man):
-        return nome
-    for riga in open(man):
-        if riga.startswith("#") or not riga.strip():
-            continue
-        parti = riga.rstrip("\n").split(" ", 1)
-        if parti[0] == nome and len(parti) > 1 and parti[1].strip():
-            return nome[: -(len(parti[1].strip()) + 1)]    # "_marks"
-    return nome
+    return manifesto(vx)[0]
 
 
 def sorgenti(vx):
@@ -159,7 +176,12 @@ def sorgenti(vx):
     if not app:
         print(f"attenzione: non trovo il sorgente dell'applicazione ({nome}): "
               f"i corpi dei task non saranno riconosciuti", file=sys.stderr)
-    return sorted(fuori) + app[:1]
+    # (moduli, applicazione o None). Il secondo e' separato perche' su di lui il
+    # fallimento non e' ammesso, mentre sulle librerie si': se ne prendono tutte
+    # e una che non fa parte del programma non aggancia niente. Un programma
+    # senza sorgente d'applicazione (multi, che nasce da due moduli) non ne ha,
+    # e allora non c'e' niente da pretendere.
+    return sorted(fuori) + app[:1], (app[0] if app else None)
 
 
 IGNORA = ("out", "build")     # le cartelle di build, che rispecchiano l'albero
@@ -239,12 +261,17 @@ def globali(vx):
             for m in (re.match(r"\s*(\d+)\s+T\s+(\S+)", l) for l in out.splitlines()) if m}
 
 
-def listato(src, inc, tmp):
+def listato(src, inc, tmp, defs=()):
     """(indice, etichetta) per ogni label di codice del modulo, piu' la sua lunghezza."""
     lst = os.path.join(tmp, "traccia.lst")
     cmd = [sim(), "asm", src, "-o", os.path.join(tmp, "traccia.vo"), "--emit-expanded", lst]
     for d in inc:
         cmd += ["-I", d]
+    # GLI STESSI -D con cui il programma e' stato costruito: un listato prodotto
+    # con .ifdef diversi e' piu' corto di cio' che gira, e ogni etichetta dopo
+    # il primo blocco condizionale slitta. Li dice il manifesto del build.
+    for d in defs:
+        cmd += ["-D", d]
     if subprocess.run(cmd, capture_output=True, text=True).returncode:
         return [], 0          # non assembla da solo: non e' un modulo del programma
     fuori, pend, ultimo = [], [], 0
@@ -281,12 +308,28 @@ def proprietario(etichetta):
 def raccogli(vx, tmp):
     """(mappa fine, corpi con i loro estremi, mappa dei soli globali)."""
     G = globali(vx)
+    defs = manifesto(vx)[2]
     fini = [(a, n) for n, a in G.items()]     # mappa fine: ogni etichetta nota
     grezzi = []                               # (inizio, proprietario, fine modulo)
-    for src in sorgenti(vx):
-        loc, lung = listato(src, includes(), tmp)
+    # L'APPLICAZIONE e' l'ultimo della lista, e su di lei il silenzio non e'
+    # ammesso: le librerie possono legittimamente non agganciarsi -- se ne
+    # prendono tutte e una che non fa parte del programma non aggancia niente --
+    # ma il modulo dell'applicazione e' stato scelto PER NOME dal .vx. Se quello
+    # non si assembla, i corpi dei task non esistono e la pagina attribuisce
+    # tutto al boot: "boot 100%", plausibile e falso. E' successo due volte il
+    # 13/09/2026, e tutte e due in silenzio.
+    srcs, app = sorgenti(vx)
+    for src in srcs:
+        loc, lung = listato(src, includes(), tmp, defs)
         basi = {G[n] - i for i, n in loc if n in G}
         if len(basi) != 1:                    # nessun aggancio, o agganci
+            if app is not None and src == app:
+                sys.exit(f"il modulo dell'applicazione non si aggancia: {src}\n"
+                         f"  ri-assemblato con: {' '.join('-D ' + d for d in defs) or '(nessun -D)'}\n"
+                         f"  senza i suoi corpi la pagina direbbe 'boot 100%', che e'\n"
+                         f"  plausibile e falso. Cause viste: i -D non combaciano con\n"
+                         f"  quelli del programma (lo dice il manifesto), oppure un\n"
+                         f"  albero di build stale accanto a quello buono.")
             continue                          # incoerenti: non e' di questo programma
         base = basi.pop()
         for i, n in loc:
@@ -440,7 +483,17 @@ def main():
     a = ap.parse_args()
 
     global G_SIM
+    # Il simulatore e le interfacce GENERATE devono venire dallo stesso albero
+    # del .vx, non da una ricerca: un out/ vecchio accanto a un build/ fresco ha
+    # un catalogo delle marche STALE, il ri-assemblaggio fallisce su una
+    # costante che non c'e' ancora, il listato resta vuoto e la pagina dice
+    # "boot 100%". Il .vx sta in <build>/vasm/, quindi l'albero lo sappiamo.
     G_SIM = a.sim
+    if not G_SIM:
+        cand = os.path.join(os.path.dirname(os.path.dirname(
+                            os.path.abspath(a.programma))), "vcpu_sim")
+        if os.path.exists(cand):
+            G_SIM = cand
 
     vx = a.programma
     out_path = a.out or os.path.join(RADICE, "out", "trace.html")
