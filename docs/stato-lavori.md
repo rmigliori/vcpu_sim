@@ -1,7 +1,12 @@
 # Stato dei lavori — `vcpu_sim`
 
 > Ultimo aggiornamento: **13 settembre 2026** (§3.42 il primo ramo si fonde e la
-> **lingua è decisa**; §3.43 **il rename è FATTO**, provato byte per byte; il
+> **lingua è decisa**; §3.43 **il rename è FATTO**, provato byte per byte;
+> §3.44 **l'assemblaggio condizionale**, `.ifdef` e `-D`; §3.45 **il nucleo
+> fattuale è cominciato**, e ha trovato due errori; §3.46 **il marcatore si
+> vede**: le finestre, rigate per proprietario; §3.47 **la configurazione
+> strumentata**, e il primo tag dentro il kernel; §3.48 **la preemption si
+> vede**, letta invece che dedotta; il
 > 12/09: §3.39 `task_yield`, §3.40 il marcatore e il contesto vettoriale, §3.41
 > **§13 chiusa**)
 > Scopo: fotografia dello stato per riprendere il lavoro a distanza di giorni
@@ -13,9 +18,28 @@
 
 > ### ▶ RIPRENDI DA QUI (14/09/2026 o dopo)
 >
-> `ctest` **32/32**. Il **13/09** ha chiuso tre cose che erano rimaste aperte
-> apposta: ha **fuso** il primo ramo del progetto, ha **deciso la lingua**
-> (§3.42), e ha **fatto il rename** (§3.43) — otto commit, `5b72bd1`→`24dca22`.
+> `ctest` **35/35** (erano 32). Il **13/09** ha chiuso sei cose: ha **fuso** il
+> primo ramo del progetto, ha **deciso la lingua** (§3.42), ha **fatto il
+> rename** (§3.43) — otto commit, `5b72bd1`→`24dca22` — e poi, in fila, i
+> quattro pezzi che portano il marcatore dall'idea al numero:
+>
+> | | |
+> |---|---|
+> | §3.44 | **`.ifdef` e `-D`**, il prerequisito: strumentare senza restare strumentati |
+> | §3.45 | **il nucleo fattuale**, dove stanno i numeri dei quattro documenti |
+> | §3.46 | **il disegno** delle finestre: l'analisi grafica |
+> | §3.47 | **la configurazione strumentata**, e il primo tag dentro il kernel |
+> | §3.48 | **la preemption si vede**, ed è letta dal kernel invece che dedotta |
+>
+> Il risultato in una riga: esistono due numeri realtime che ieri non c'erano —
+> **18 scansioni dello scheduler** (min 51, max 177, **jitter 126**) e **11
+> preemption** con il tempo fuori CPU (909 e 2093 alternati) — e la catena che
+> li produce è provata da capo a fondo.
+>
+> **Da guardare**, se si vuole vedere il sistema invece che leggerlo:
+> `out/trace-tmgr-marks.html` (il marcatore del kernel e le preemption) e
+> `out/trace-events.html` (il marcatore applicativo, con le finestre che
+> attraversano le commutazioni). Si rifanno con `tools/trace.py`.
 >
 > **L'ALBERO È IN INGLESE.** Tutti e **72 i simboli esportati**, le strutture, i
 > campi, le costanti, sei cartelle, tredici file, i nomi dei test. I **commenti
@@ -187,35 +211,89 @@
 > e da lì in avanti **non è più una proposta**: è il contratto, e una divergenza
 > fra il codice e quelle tabelle è un difetto del codice.
 >
-> **E ADESSO: L'ASSEMBLAGGIO CONDIZIONALE** (`.ifdef` e `-D`), che è il prerequisito di
-> tutto il resto del marcatore. L'utente ha impostato tre **categorie fisse**
-> nello strumento — `scheduler`, `dispatcher`, `ISR` — e quelle stanno nel
-> kernel: senza un modo di compilarle via, il kernel resta strumentato **per
-> sempre** e ogni `EXPECT` che dipende dai cicli si sposta una volta e non torna
-> più. L'assembler oggi conosce diciassette direttive e nessuna condizionale.
-> L'albero è ora in inglese, quindi le categorie nascono col nome giusto invece
-> di prenderlo e cambiarlo dopo.
+> ~~**2. L'ASSEMBLAGGIO CONDIZIONALE**~~ — **FATTO** il 13/09 (§3.44).
+> `.ifdef`/`.ifndef`/`.else`/`.endif` e `-D NOME`; il filtro in `inc_next_line`
+> dove era previsto, e `.ifdef` che interroga **solo** i `-D` come deciso. Le
+> due prove: `ctest` **34/34** (i due nuovi girano lo **stesso sorgente** con e
+> senza `-D`) e `fingerprint.sh` con **diff vuoto** — il lettore di righe è
+> stato riscritto e i quattordici `.vx` sono gli stessi byte, cioè un sorgente
+> senza condizionali non se ne accorge. Il kernel adesso **si può** strumentare
+> senza restare strumentato per sempre.
 >
-> È anche ciò che rende scrivibile `start_misura(FFT, primoStage)` come l'utente
-> l'ha scritta: oggi serve l'idioma in linea a tre istruzioni, perché **non ci
-> sono macro**.
+> ~~**3. IL NUCLEO FATTUALE**~~ — **COMINCIATO** il 13/09 (§3.45), e sono **due
+> file** perché le due specie di numero non si mantengono allo stesso modo:
+> [`docs/generated/scheduler-measures.md`](generated/scheduler-measures.md) è
+> **generato** da `tools/scheduler_facts.py` (che di suo sa solo *quali*
+> programmi, da `scheduler-facts.conf`, e tutto il resto lo chiede a
+> `ctest --show-only=json-v1`), e
+> [`docs/scheduler-facts.md`](scheduler-facts.md) tiene i numeri **dedotti**,
+> che a mano ci stanno perché non c'è altro modo. `--check` pretende che
+> rigenerare non cambi niente.
 >
-> > **Dove va il filtro condizionale, già guardato il 13/09.** L'assembler legge
-> > il sorgente **una volta sola**: pass 1 scorre le righe con `inc_next_line` e
-> > **salva le righe di codice** per pass 2, e questo vale identico per entrambi
-> > gli ingressi, `assemble()` e `assemble_object()`. Quindi il punto di
-> > strozzatura è unico — `inc_next_line` in `assembler.c` — e le due passate non
-> > possono divergere **per costruzione**, che è la proprietà che si vuole.
+> Ha già trovato **due errori**, ed è il punto: «245 cicli» in §3.41 erano 245
+> **istruzioni** (i cicli sono 557), e `tools/trace.py` non sapeva tracciare
+> `test_events` — dava `boot 100%` invece di `idle 86,4%` — perché escludeva
+> dai `-I` l'albero di build, dove vive l'interfaccia **generata** del
+> marcatore. Entrambi corretti.
+>
+> ~~**4. IL DISEGNO DELLE MARCHE**~~ — **FATTO** il 13/09 (§3.46), ed è
+> l'analisi grafica che mancava. L'anello assente era **solo il disegno**: il
+> lettore testuale (`marks.py read`) esisteva già. Adesso la pagina di
+> `trace.py` ha una corsia per categoria, le barre **rigate** dai tratti di chi
+> possedeva la CPU dentro la finestra — cioè l'**interferenza**, visibile — e la
+> sovrapposizione al trigger dove il jitter è lo sfrangiamento del bordo destro.
+> Una pagina sola e una corsa sola, e il disegno **non fa aritmetica**: i tratti
+> arrivano già decomposti da `marks.py`, che è anche ciò che stampa il
+> terminale. Provata con `gjs` su dieci programmi.
+>
+> **E ADESSO: SCRIVERE I QUATTRO DOCUMENTI** — il riquadro qui sotto, «I QUATTRO
+> DOCUMENTI SULLO SCHEDULER». Forma, lingue e regole sono decise dal 12/09, e da
+> oggi i numeri hanno un posto. Il didattico è **la sorgente**: si comincia da
+> quello, in italiano, e gli altri tre sono derivati. È anche ciò che il 1°
+> ottobre misura: quel che si porta a ND Satcom è il ragionamento, non i
+> `.vasm`.
+>
+> > ~~**Resta da decidere come il build accende la strumentazione.**~~ —
+> > **DECISO E FATTO** il 13/09 (§3.47), e la decisione è dell'utente: non un
+> > interruttore globale con un secondo albero, ma **configurazioni per
+> > target** nello stesso albero. `vasm_config(marks ...)`, `CONFIGS` su una
+> > libreria, `CONFIG` su un programma. La ragione che decide: due alberi
+> > vogliono dire che quello strumentato non lo costruisce nessuno e marcisce;
+> > qui `ctest` li prova **entrambi** — `tmgr` a `5 0 2566` e `tmgr_marks` a
+> > `5 0 2548`.
 > >
-> > Una scelta di portata, da prendere alla luce: **`.ifdef` interroga solo i
-> > simboli di `-D`, non quelli di `.equ`**. Gli assembler classici fanno il
-> > contrario, ma qui `.equ` si raccoglie durante pass 1 e **in ordine**, quindi
-> > `.ifdef` su una `.equ` dipenderebbe da *dove* sta scritto — la stessa trappola
-> > silenziosa di `.word` con una costante, che è già qui sotto fra i debiti. Con
-> > solo `-D` la risposta è indipendente dall'ordine e il filtro può stare nel
-> > lettore. Quattro direttive (`.ifdef`, `.ifndef`, `.else`, `.endif`) e `-D NOME`
-> > come **presenza**: `-DNOME=valore` che definisce anche una costante è un'altra
-> > funzione e non serve a compilare via la strumentazione.
+> > Il **primo tag del kernel** c'è: `scheduler` misura la propria scansione.
+> > Diciotto istruzioni su tutto `test_tmgr`, e il valore atteso si è già
+> > mosso — la misura che dice perché l'interruttore doveva essere a
+> > compile-time. E ne è uscito un numero realtime che ieri non c'era: 18
+> > scansioni, min 51, max 177, **jitter 126 cicli**.
+> >
+> > Restano `dispatcher` e `ISR`, e sono ciò che dà la **latenza di
+> > preemption** e il **costo di un context switch** — i due buchi dichiarati
+> > in fondo a `scheduler-facts.md`. Adesso è lavoro meccanico: il vocabolario
+> > c'è, il disegno c'è, e ogni tag nuovo si paga in un `EXPECT` dichiarato.
+>
+> **Ciò che manca al nucleo è dichiarato in fondo a `scheduler-facts.md`**, e
+> pesa: la **latenza di preemption** e il **costo di un context switch** oggi
+> non esistono come misure. Servono un tag in `task_ready` e uno nel
+> dispatcher — cioè il marcatore dentro il kernel, che §3.44 ha sbloccato e
+> nessuno ha ancora scritto. Un documento realtime senza quei due numeri si
+> nota.
+>
+> Sul marcatore, ciò che resta ora che la strada è aperta:
+>
+> - **il build non sa ancora accendere la strumentazione.** `vasm_object` non ha
+>   una parola chiave `DEFINES`, e il `-D` dei due test nuovi arriva dagli
+>   `IFLAGS` del percorso legacy. Non è un debito dimenticato: è la decisione di
+>   *come* si accende — un'opzione CMake globale? per target? — che nessuno ha
+>   preso, e scriverla prima sarebbe indovinare. Quattro righe, quando la
+>   strumentazione avrà una forma;
+> - **le tre categorie dentro il kernel** (`scheduler`, `dispatcher`, `ISR`),
+>   che sono ciò per cui il condizionale esiste. L'albero è in inglese, quindi
+>   nascono col nome giusto invece di prenderlo e cambiarlo dopo;
+> - **`start_mark(FFT, primoStage)` come l'utente l'ha scritta** non è ancora
+>   scrivibile: serve l'idioma in linea a tre istruzioni, perché **non ci sono
+>   macro**. Il condizionale non era quel pezzo, e non lo ha avvicinato.
 >
 > Il resto in fila, dal più vicino:
 >
@@ -228,9 +306,11 @@
 >   prima istruzione vettoriale — cioè una **seconda sorgente di trap con una
 >   causa leggibile**, che è la stessa decisione parcheggiata da §3.37 per
 >   l'interrupt della tastiera. Si ripresenta, ed è la seconda volta;
-> - **il disegno** delle marche: corsie per canale, barre **a strisce** per
->   proprietario, e la sovrapposizione allineata al trigger, che è dove il jitter
->   si vede. Con `test_vectors` adesso c'è finalmente qualcosa da disegnare.
+> - ~~**il disegno** delle marche~~ — **FATTO** il 13/09 (§3.46): corsie per
+>   categoria, barre **a strisce** per proprietario, sovrapposizione allineata
+>   al trigger. Nella stessa pagina della traccia e dalla **stessa corsa**,
+>   perché una finestra che attraversa una commutazione si legge solo sotto le
+>   commutazioni che attraversa. Provata con `gjs` su **dieci** programmi.
 >
 > Poi resta **la decisione grossa: cosa deve *fare* l'eseguibile che mostra il
 > sistema al lavoro**. Il disaccordo sull'ordine (qui sotto) si è ridotto: il
@@ -2902,6 +2982,496 @@ il contratto scritto.
 
 ---
 
+### 3.48 LA PREEMPTION SI VEDE, ED È LETTA (13/09/2026, sesta parte)
+
+L'osservazione è dell'utente: *«quando un task è preemptato si deduce ma non si
+vede»*. Vero, ed era il buco centrale del diagramma — la distinzione fra
+**preemption** e **fine turno** è la semantica di questo scheduler (§3.30), e la
+pagina mostrava solo che la CPU aveva cambiato mano.
+
+`ctest` **35/35**, quattordici impronte pulite invariate.
+
+#### Perché NON si deduce dalla traccia, verificato prima di decidere
+
+Il primo istinto è leggerlo dal `pc`: chi esce passando da `_trap_entry` è stato
+interrotto. **Non regge**, e si vede su una transizione volontaria vera in
+`test_tmgr` — `A` chiama `receive` e si blocca:
+
+```
+[  1548-1903  ] A  kernel  ctx_restore _trap_entry receive
+```
+
+`_trap_entry` c'è lo stesso, perché in quei 355 cicli di kernel un tick è
+passato. Si potrebbe raffinare con una regola ordinata nel tempo, ma sarebbe una
+**terza inferenza** sopra le due che ci sono, in uno strumento le cui inferenze
+hanno già prodotto risultati plausibili-e-sbagliati **tre volte**.
+
+#### Il fatto è del kernel, e sta in un ramo solo
+
+`sp_preempted` in `scheduler.vasm` è l'**unico** punto che *riempie* uno slot
+`PCB.preempted` — controllati tutti e quattro i punti che lo toccano: gli altri
+tre lo svuotano. Quel ramo è raggiunto se e solo se c'è stata preemption, e il
+suo fratello `sp_mio_livello` è il fine turno. Un tag lì è **esatto**, non
+ricostruito: è la decisione del kernel che si dichiara.
+
+E **chi** l'ha subita non si dichiara: ogni marca porta già `current` nella
+quarta colonna, che lì è ancora l'uscente perché a scriverlo è il dispatcher,
+dopo. Chi ha preso la CPU lo dice il canale 0. Nessuna seconda verità.
+
+#### `event`: la prima specie nuova del catalogo
+
+Una preemption è un **istante**, non una durata, e il marcatore conosceva solo
+finestre. Forzarcela dentro avrebbe dato o finestre lunghe zero (rumore) o
+finestre mai chiuse — che il lettore dichiara come **misure mancanti**, cioè un
+errore falso. Da cui `event` accanto a `category` in `marks.conf`: un valore si
+scrive e basta. Costa **tre istruzioni e nessuna chiusura**, meno di una
+finestra.
+
+#### Il disegno: né colore né tratteggio, perché non è una fascia
+
+Pieno e tratteggio dicono già altro (codice del task / kernel per suo conto).
+E ciò che si marca non è una fascia ma un **bordo**. Quindi una **linea
+verticale che attraversa tutte le corsie**, nel colore d'accento, più un
+triangolo sull'asse.
+
+Attraversa tutto perché la preemption è un istante del **sistema**, non di una
+corsia: leggendola in verticale si vede chi è stato tagliato, l'ISR che prende
+la macchina e chi ha la CPU dopo — che è la correlazione per cui il segno
+esiste. E attraversare le corsie evita di dover mappare i nomi dei **TCB**
+(`tcbI`, letti dal canale 0) sui nomi dei **corpi** (`idle`, dedotti dal `pc`):
+due spazi di nomi diversi, e una convenzione per farli combaciare sarebbe
+l'ennesimo elenco scritto a mano.
+
+**Nessun segno sul fine turno**, che qui è il caso normale: marcare entrambi
+farebbe un pettine. Si marca l'eccezione.
+
+E su un programma non strumentato la pagina **tace** invece di dire «0
+preemption»: ce ne sono, non sono misurate, e lo zero direbbe il falso.
+Verificato su otto programmi che il riquadro non compaia.
+
+#### Il risultato, su `test_tmgr_marks`
+
+Undici preemption, tutte dello stesso task, con il tempo **fuori CPU**:
+
+```
+ciclo 5793  preemption  la CPU e' stata tolta   ? (80) -> ? (32)   909 cicli fuori
+ciclo 9793  preemption  la CPU e' stata tolta   ? (80) -> ? (32)  2093 cicli fuori
+...
+```
+
+909 e 2093 alternati — due quantità di lavoro diverse che il tick innesca. È
+un numero realtime che prima non esisteva in nessuna forma.
+
+I proprietari restano numeri perché `test_tmgr` non pubblica i propri TCB con
+`.global`. È il limite già dichiarato da `marks.py`, e si toglierebbe con una
+riga — ma quella riga muove il `.symmap`, quindi l'impronta: va fatta sapendo
+che è un cambiamento, non una decorazione.
+
+#### E l'errore che ho fatto, che è quello che avevo appena documentato
+
+Il primo tag usava `r1` e `r3`. **`r1` è vivo** a `sp_preempted`: ci arriva da
+entrambi i rami della scansione e porta il task **entrante**, cioè il valore di
+ritorno. L'ho sovrascritto con l'indirizzo di un canale del marcatore.
+
+Il sintomo dice tutto: `cntErr` è passato da 0 a 1, il successore letto dalla
+registrazione era `? (1048852)` — cioè `0x100114`, un canale — e la macchina ha
+detto `MMIO load from unmapped register`. Il sistema **è proseguito**: un tag
+sbagliato non dà un errore di assemblaggio, dà un `current` che è un indirizzo
+di periferica.
+
+È esattamente la trappola che la formula di §6 avverte di guardare, scritta poche
+ore prima. Rimediato con `r7` (il puntatore della scansione, morto) e `r3`, e il
+perché è scritto accanto al tag invece che lasciato da riscoprire.
+
+---
+
+### 3.47 LA CONFIGURAZIONE STRUMENTATA, E IL KERNEL HA IL PRIMO TAG (13/09/2026, quinta parte)
+
+`ctest` **35/35**, e le **quattordici impronte pulite identiche** a quelle di
+stamattina: `scheduler.vasm` ha guadagnato due tag e i programmi puliti non si
+sono mossi di un byte. È la prova che `.ifdef` si compila via a zero, e non un
+argomento.
+
+#### Prima: «variante» era la parola sbagliata, e l'ha detto l'utente
+
+In un toolchain *variant* vuol dire un altro **bersaglio** — altra macchina,
+altra ISA. Qui la macchina è la stessa, l'ISA è la stessa e il sorgente è lo
+stesso: cambia solo cosa ci entra a compile-time. Il nome giusto è
+**configurazione**, che è anche quello che CMake usa per debug/release: non
+collide, si allinea. Il vocabolario del build adesso dice quello.
+
+#### Il disaccordo, e come si è risolto
+
+Avevo raccomandato un **interruttore globale** con un secondo albero di build.
+L'utente ha chiesto se non si potesse differenziare per target, e **ha ragione
+lui**. La mia obiezione — «due configurazioni sono due verità» — era debole e va
+ritirata: due configurazioni non sono due dichiarazioni dello stesso fatto, sono
+due programmi da un sorgente solo. È debug/release, e nessuno lo chiama doppia
+verità.
+
+E la sua strada **risolve** il problema che avevo sollevato invece di crearlo.
+Con l'interruttore globale `scheduler-measures.md` avrebbe avuto due contenuti
+possibili e `--check` sarebbe stato verde in un albero e rosso nell'altro. Con i
+target la domanda sparisce: nomi diversi, e il nucleo fattuale legge i puliti.
+
+Ma la ragione che decide è di **metodo**: con un secondo albero, l'albero
+strumentato non lo costruisce nessuno, `ctest` non lo copre e marcisce. Qui i
+due stanno nello stesso albero e si testano entrambi. *Un'invariante che nessuno
+esegue è un commento* — è la regola di questo progetto, e vale anche per un
+percorso di build.
+
+#### Il vocabolario nuovo, e perché è un sostantivo
+
+```cmake
+vasm_config(marks DEFINES MARKS INTERFACES vinc_marks)
+
+vasm_library(lib_kernel SOURCES scheduler.vasm
+             INTERFACES vinc_tcb vinc_queue
+             LINK lib_queue lib_hal
+             CONFIGS marks)                    # -> anche lib_kernel_marks
+
+vasm_program(test_tmgr_marks OBJECTS t_tmgr LINK ... CONFIG marks)
+```
+
+`vasm_config` esiste per una ripetizione **vera**: strumentare non è solo un
+`-D`. Il sorgente strumentato include il catalogo generato, che include
+`hal/marker.vinc`, quindi `DEFINES` e `INTERFACES` si accendono **insieme**.
+Senza il sostantivo andrebbero ripetuti identici su ogni libreria con dei tag —
+scheduler, poi dispatcher, poi ISR — e divergerebbero alla quarta categoria. È
+l'argomento di `marks.conf`, un piano più su.
+
+Il pulito tiene il **nome nudo**: rinominarlo in qualcosa come `productive`
+vorrebbe dire toccare nove programmi, i loro `vasm_check` e ogni citazione nei
+documenti, per un'informazione che è già il default. Il caso normale non ha
+bisogno di un aggettivo.
+
+**La chiusura si fa prima e la sostituzione dopo**, ed è corretto perché una
+configurazione aggiunge interfacce e `-D`, non dipendenze di link: le due
+controparti hanno per costruzione lo stesso `VASM_LINK`. `lib_queue` non ha tag,
+quindi ce n'è **una sola** e la linkano entrambi i programmi. Se un giorno una
+configurazione dovesse aggiungere una libreria, quell'ordine va girato, ed è
+scritto dove si vede.
+
+**E linkarle entrambe è un errore rumoroso**, verificato prima di scrivere il
+codice: `ld error: duplicate global 'pcb0'`. Non «prende la prima e tace», che
+era il rischio vero di questa strada.
+
+#### Il primo tag del kernel, e cosa costa
+
+`scheduler` apre una finestra all'ingresso e la chiude quando la scansione ha
+finito — non copre prologo né epilogo, perché la domanda è sulla **politica**,
+non sulla chiamata. Chiudere costa **due** istruzioni e non una: `r1`
+dall'apertura in poi è il registro di lavoro della scansione e alla fine porta
+il TCB scelto, cioè il valore di ritorno, quindi l'indirizzo del canale si
+ricarica in `r7`, che dopo la scansione è morto.
+
+| `test_tmgr` | dumps | istruzioni | cicli |
+|---|---|---:|---:|
+| pulito | `5 0 2566` | 21925 | 49729 |
+| strumentato | `5 0 `**`2548`** | 21943 | 49747 |
+
+**Diciotto istruzioni** su tutto il programma — cinque per chiamata di
+`scheduler` — e il valore atteso si è già mosso. È la misura che dice perché
+l'interruttore **deve** essere a compile-time: con `--marks` spento quelle
+diciotto si eseguirebbero lo stesso, ed è il registratore a tacere, non il
+programma.
+
+I primi due numeri (`cntA=5`, `cntErr=0`) non dipendono dai cicli e **non si
+muovono**: sono la prova che il kernel strumentato fa le stesse cose.
+
+#### E adesso c'è un numero realtime che ieri non esisteva
+
+Sul programma strumentato, diciotto scansioni misurate:
+
+| | n | min | max | media | **jitter** |
+|---|---:|---:|---:|---:|---:|
+| la scelta di chi gira | 18 | 51 | 177 | 118 | **126** |
+
+Il jitter è più del doppio del minimo, ed è esattamente il genere di numero che
+una media nasconde. Si vede anche disegnato (§3.46), nella sovrapposizione al
+trigger.
+
+#### La regola sul nucleo fattuale, applicata invece che raccomandata
+
+`scheduler_facts.py` **rifiuta** un programma strumentato:
+
+```
+scheduler_facts: questi sono STRUMENTATI e il nucleo fattuale e' l'albero pulito:
+  tmgr_marks (test_tmgr_marks, configurazione 'marks')
+```
+
+E non lo deduce dal suffisso del nome: lo chiede al **manifesto**
+(`build/vasm/configs.txt`) che il build scrive con `vasm_write_manifest()`. Una
+convenzione sui nomi è una cosa che nessuno garantisce — la stessa famiglia
+dell'elenco `ORDINE` scritto a mano che il 12/09 ha fatto sparire un task.
+
+Stessa ragione per una correzione dentro `trace.py`: l'applicazione si ritrova
+dal nome del `.vx`, e `test_tmgr_marks.vasm` **non esiste**. Tagliare un
+`_qualcosa` finale a naso funzionerebbe finché un programma non si chiama
+`test_due_task`. Anche lì: lo dice il manifesto.
+
+---
+
+### 3.46 IL MARCATORE SI VEDE: il disegno delle finestre (13/09/2026, quarta parte)
+
+L'anello che mancava era **solo il disegno**, e va detto perché io stesso avevo
+sbagliato la diagnosi: il **lettore esisteva già**. `marks.py read` stampa da
+sempre le finestre, il jitter, e quali attraversano una commutazione — il mio
+primo `grep` cercava delle macro (`start_mark`) che in questo progetto non
+esistono, perché l'idioma è `li`/`sw` in linea. Cercare il nome sbagliato e
+concludere «non c'è» è lo stesso errore che gli strumenti di qui fanno quando
+non trovano qualcosa e producono un risultato plausibile.
+
+Adesso la pagina di `tools/trace.py` ha una sezione **Il marcatore**:
+
+- **una corsia per categoria**, ogni finestra una barra sulla scala del
+  programma, con le stesse linee di riferimento del diagramma sopra;
+- **le barre sono rigate per proprietario** — i tratti di chi possedeva la CPU
+  *dentro* la finestra. È tutto il punto: una finestra che attraversa una
+  commutazione mostra a colpo d'occhio quanto del tempo di risposta se l'è preso
+  qualcun altro, cioè l'**interferenza**;
+- **la sovrapposizione allineata al trigger**: le stesse finestre ridisegnate da
+  zero. Il bordo destro sfrangia, e quello sfrangiamento **è** il jitter;
+- **gli eventi puntuali della macchina** (il tasto) in una corsia sola, sulla
+  stessa scala, perché sono il trigger di ciò che sta sopra.
+
+#### Una pagina sola, e la ragione non è di comodità
+
+Il marcatore misura una finestra che **attraversa** le commutazioni. Su due
+pagine separate quella relazione la dovrebbe ricucire il lettore a mente, ed è
+esattamente l'interferenza a sparire. Per la stessa ragione la registrazione
+esce dalla **stessa corsa** del trace e non da una seconda: due esecuzioni sono
+due storie. Verificato che `--marks` sia **neutrale** — con e senza,
+`test_events` fa gli stessi 9259 istruzioni e 18785 cicli: la macchina annota,
+non esegue. (Il costo dei **tag** invece sta nel programma e si paga sempre, ed
+è un'altra cosa: lo dice `marker.vinc`.)
+
+#### Il disegno NON fa aritmetica, e per un pelo l'avrebbe fatta
+
+I tratti di possesso stavano per essere calcolati in JavaScript a partire dalla
+partizione del canale 0. Sarebbe stata una **seconda implementazione** della
+stessa decomposizione che `marks.py` fa già per il terminale: pagina e terminale
+avrebbero potuto dire due numeri diversi sulla stessa registrazione, e nessuno
+dei due sarebbe stato sbagliato in modo visibile.
+
+Adesso `analizza()` emette i tratti **con le posizioni**, e i totali di `poss`
+sono **derivati da quelli** invece che contati a parte — così il totale in fondo
+deve per forza tornare con i tratti disegnati sopra. La pagina posiziona, e
+basta. È `MAILBOX.count` applicato a un disegno.
+
+Per lo stesso motivo `read()` è stata spezzata in **`analizza()`** (dati) e
+**`report()`** (testo): due consumatori, un calcolo. Il testo nel terminale è
+**identico byte per byte** a prima, che è la prova che lo spezzare non ha
+spostato niente.
+
+#### Provata su nove programmi, non su quello per cui è stata scritta
+
+`gjs` più il DOM finto di `trace_dom.js`, su **nove** programmi: `coop`, `tmgr`,
+`mutex`, `vectors`, `scheduler`, `block`, `chain`, `mailbox`, `semaphore` —
+nessun errore JS, il resto della pagina intatto, e la sezione del marcatore
+**nascosta da sola**, perché nessuno di loro emette tag. Più `test_events`, che
+è l'unico che ne emette, dove i numeri a schermo combaciano con quelli del
+terminale (jitter 1170 e 103, minimi 1718 e 598).
+
+Un difetto trovato così: i gestori erano attaccati agli **elementi**, e il DOM
+finto stubba `addEventListener` sul **documento**. Allargare il finto avrebbe
+voluto dire verificare su un DOM diverso da quello per cui la verifica esiste;
+i gestori sono stati spostati sul documento, come gli altri due della pagina.
+
+#### E un commento diventato falso
+
+`hal/marker.vinc` diceva ancora *«manca un file di configurazione con i nomi;
+finché non c'è, i nomi se li dichiara l'applicazione con degli `.equ` al punto
+d'uso»*. Quel file è `marks.conf` e c'è dal 12/09: il commento istruiva a
+ricostruire a mano proprio la seconda verità che il catalogue esiste per
+togliere. Riscritto.
+
+---
+
+### 3.45 IL NUCLEO FATTUALE È COMINCIATO, E HA GIÀ TROVATO UN ERRORE (13/09/2026, terza parte)
+
+Il posto unico in cui stanno i numeri dei quattro documenti esiste, ed è **due
+file**, perché le due specie di numero non si mantengono allo stesso modo:
+
+| | dove | come si mantiene |
+|---|---|---|
+| **misurati** | [`docs/generated/scheduler-measures.md`](generated/scheduler-measures.md) | **generato** da `tools/scheduler_facts.py` |
+| **dedotti** | [`docs/scheduler-facts.md`](scheduler-facts.md) | a mano, e non c'è altro modo |
+
+Tenerli insieme avrebbe fatto **sembrare misurate** le inferenze, che è
+esattamente il difetto che la terza regola di costruzione esiste per impedire.
+E la rigenerazione mangerebbe la parte scritta.
+
+#### Il generatore non duplica niente: chiede al build
+
+`tools/scheduler_facts.py` sa **una cosa sola** di suo, e la legge da
+[`scheduler-facts.conf`](../scheduler-facts.conf): **quali** programmi sono in
+argomento, con il criterio scritto in testa al file (esercita una decisione
+dello scheduler — non una struttura dati, non un device, non la toolchain).
+
+Tutto il resto glielo dice `ctest --show-only=json-v1`: il `.vx`, gli argomenti
+della **macchina** (`--kbd` e simili, che vivono in `ARGS` di `vasm_check`) e i
+valori attesi dichiarati. Riscriverli nel generatore sarebbe stata la seconda
+verità che l'esercizio esiste per togliere — la stessa forma di `marks.conf`,
+un cliente in più.
+
+**`--check` rigenera e pretende un diff vuoto**, che è la forma di prova di
+`fingerprint.sh` applicata alla prosa. Per questo nell'intestazione **non c'è
+una data di generazione**: divergerebbe da sé stessa a ogni esecuzione e
+`--check` non potrebbe esistere. Quando è stato rifatto lo dice git.
+
+#### Il primo frutto: «245 cicli» erano 245 ISTRUZIONI
+
+Rifacendo i conti di §3.41 sulla tabella delle tre varianti di `mutex_unlock`:
+`3679 − 3434 = 245` sono **istruzioni**; i cicli sono `7700 − 7143 = **557**`.
+Nessuna conclusione di §3.41 si muove — il −7% è calcolato sui cicli — ma il
+numero stava nella colonna sbagliata, e un documento che l'avesse copiato
+avrebbe dichiarato una cessione a vuoto a **122 cicli** invece di 278. Corretto
+in §3.41 e registrato in `scheduler-facts.md`.
+
+#### Il secondo frutto: `trace.py` non sapeva tracciare `test_events`
+
+La prima esecuzione del generatore ha dato `events: boot 100,0%`, contro
+l'**86,9% di idle** che §3.39 riporta. Non era il generatore: `tools/trace.py`
+ri-assembla ogni modulo con `--emit-expanded` per avere le etichette locali, e
+i suoi `-I` **escludevano in blocco l'albero di build**. Dal 12/09
+`test_events` include `"marks/marks.vinc"`, che `tools/marks.py` **genera** in
+`<build>/vasm/marks/` e che nel sorgente non esiste: l'assemblaggio falliva,
+il listato restava vuoto, nessun corpo veniva riconosciuto e **tutto il
+programma finiva attribuito al boot**. In silenzio.
+
+L'esclusione dell'albero di build aveva una ragione buona e resta (CMake ci
+rispecchia la gerarchia, e i doppioni sfonderebbero il tetto di 16 `-I`). Il
+rimedio è il suo complemento: le interfacce **generate** non hanno un originale
+nel sorgente, quindi non possono essere doppioni, e ora entrano — solo le
+cartelle che contengono davvero un `.vinc`, e solo dall'albero da cui viene il
+simulatore.
+
+Dopo il rimedio: **idle 86,4%**, E all'11,9%, boot all'1,7%. Un solo programma
+dei dieci si è mosso, ed è quello che era rotto. Lo scarto dall'86,9% di §3.39
+è la strumentazione stessa, aggiunta dopo quella misura.
+
+**È il terzo difetto silenzioso di `trace.py` trovato guardandone l'uscita
+invece di leggerne il codice**, dopo i due di §3.39. La famiglia è sempre la
+stessa: uno strumento che, non trovando qualcosa, **produce un risultato
+plausibile** invece di un errore.
+
+#### Cosa c'è dentro, e cosa manca
+
+Dentro: il costo di ogni programma (istruzioni, vec-elem-ops, cicli), ciò che
+`ctest` asserisce accanto a ciò su cui **tace** — nessun test guarda i cicli, e
+per metà dei programmi è una scelta dichiarata — e la ripartizione per
+proprietario dei dieci programmi.
+
+`scheduler-facts.md` chiude con l'elenco di ciò che **manca**, che è la parte
+che i quattro documenti sentiranno di più: la **latenza di preemption** e il
+**costo di un context switch** oggi non esistono come misure, e ottenerli vuol
+dire il marcatore dentro il kernel — cioè §3.44 ha sbloccato il prerequisito,
+non il lavoro.
+
+---
+
+### 3.44 L'ASSEMBLAGGIO CONDIZIONALE: `.ifdef` e `-D` (13/09/2026, seconda parte)
+
+L'assembler conosceva diciassette direttive e nessuna condizionale. Adesso ne
+conosce ventuno: `.ifdef`, `.ifndef`, `.else`, `.endif`, guidate da `-D NOME`
+sulla riga di comando. È il prerequisito del marcatore, non il marcatore: le tre
+categorie fisse — `scheduler`, `dispatcher`, `ISR` — stanno **dentro il
+kernel**, e senza un modo di compilarle via il kernel resterebbe strumentato per
+sempre, con ogni `EXPECT` che dipende dai cicli spostato una volta e mai più
+tornato indietro.
+
+`ctest` **34/34** (erano 32: i due nuovi sono `ifdef_off` e `ifdef_on`), e
+`tools/fingerprint.sh` con **diff vuoto** sui quattordici programmi. La seconda
+prova è quella che conta qui: il lettore di righe è stato riscritto, e i
+quattordici `.vx` sono **gli stessi byte**. Un sorgente senza condizionali non
+si accorge di niente, ed è verificato invece che dedotto.
+
+#### Il filtro sta nel lettore, ed è una proprietà, non una comodità
+
+`inc_next_line` in [`src/assembler.c`](../src/assembler.c) è il **punto unico**
+in cui una riga entra nell'assembler: il pass 1 legge da lì e conserva per il
+pass 2 le righe di codice sopravvissute, e questo vale identico per `assemble()`
+(file singolo) e `assemble_object()` (`asm`). Mettere il filtro lì significa che
+le due passate e i due ingressi **non possono divergere per costruzione** su
+cosa dice il sorgente — non perché due filtri sono stati tenuti allineati, ma
+perché ce n'è uno.
+
+La conseguenza si dichiara perché è il contratto: una riga in un ramo compilato
+via **non esiste**. Non definisce un'etichetta, non definisce una costante, non
+avanza il puntatore dei dati, non entra in un corpo di `.proc`, non arriva a
+`--emit-expanded`.
+
+#### `.ifdef` NON guarda le `.equ`, ed è la scelta di portata
+
+Gli assembler classici fanno il contrario. Qui sarebbe una trappola silenziosa:
+le `.equ` si raccolgono **durante** il pass 1 e **in ordine**, quindi
+`.ifdef VLMAX` risponderebbe «no» sopra la sua `.equ` e «sì» sotto. È lo stesso
+difetto di `.word` con il nome di una costante, che sta ancora fra i debiti qui
+sotto — e un difetto già presente non è un argomento per aggiungerne un secondo.
+
+Con i soli `-D` la risposta **non dipende da dove è scritta la domanda**, ed è
+esattamente questa proprietà a permettere al filtro di stare nel lettore, cioè
+prima che qualunque cosa sia stata raccolta. La scelta di portata e la sua
+collocazione sono la stessa decisione presa due volte.
+
+`-D NOME` è **presenza**, non valore. `-DNOME=valore` è **rifiutato**: definire
+anche una costante è un'altra funzione, e non serve a compilare via la
+strumentazione. Rifiutato e non ignorato, perché accettare la sintassi buttando
+via la metà dopo l'`=` è la peggiore delle tre uscite. Stesso trattamento per un
+nome che non è un identificatore (`-D a-b`): nessun `.ifdef` potrebbe scriverlo,
+quindi non scatterebbe mai e il build sarebbe sbagliato **senza dire niente**.
+
+#### Sette errori, tutti dichiarati
+
+Nessuno di questi è silenzioso, ed è il criterio con cui sono stati scelti: ogni
+modo in cui un condizionale può essere scritto male porterebbe, tacendo, ad
+assemblare l'altro ramo.
+
+| scritto | detto |
+|---|---|
+| `.endif` / `.else` senza `.ifdef` | `line N: .endif without .ifdef` |
+| un secondo `.else` | `line N: second .else for the .ifdef at line M` |
+| `.ifdef` aperto a fine file | `unterminated conditional: the .ifdef at line M …` |
+| `lab: .ifdef X` | `line N: a label cannot share a line with '.ifdef'` |
+| `.ifdef` senza nome, o con due | `needs a name` / `takes one name, got 2` |
+| `.endif X` | `line N: .endif takes no argument` |
+| `-DNOME=valore`, `-D 2bad` | `-D takes a name, not a value` / `is not a name` |
+
+Il terzo è controllato **per file**, non solo alla fine: un `.ifdef` aperto
+dentro un `.vinc` non può chiudersi in chi lo include, o l'`.endif` sbagliato
+chiuderebbe quello esterno e la fine del file sparirebbe. Un `.ifdef` annidato
+dentro un ramo morto viene **contato** lo stesso, per la stessa ragione.
+
+E i numeri di riga contano le righe **fisiche**, quelle compilate via comprese,
+verificato: un errore dopo un blocco tolto punta ancora dove punta il sorgente.
+
+#### Il test gira due volte, ed è il punto
+
+[`tests/test_ifdef.vasm`](../tests/test_ifdef.vasm) è **un sorgente solo** e due
+righe nel `CMakeLists.txt`: senza `-D` e con `-D MARKS`. Un test solo proverebbe
+che il filtro fa qualcosa, non che **sceglie**.
+
+Le verifiche sono scritte in modo che il difetto sia un errore di assemblaggio e
+non un numero da leggere a occhio: `MODE`, `LEVEL` e `SILENT` sono definite in
+**entrambi** i rami (se il ramo morto passasse: `duplicate constant`), e così
+l'etichetta `buf` nella sezione dati (`duplicate label`). L'indirizzo di `tail`
+— l'ultima cifra stampata — si sposterebbe di 4 se la `.word` del ramo morto
+emettesse. Il `.ifdef` annidato dentro il ramo morto è la parte meno ovvia, e
+c'è apposta.
+
+#### Cosa NON è stato fatto, e perché
+
+**Il build non sa ancora accendere la strumentazione.** `vasm_object` non ha una
+parola chiave `DEFINES`, e il `-D` del test arriva dagli `IFLAGS` del percorso
+legacy. Aggiungerla adesso vorrebbe dire indovinare *come* il build la
+accenderà — un'opzione CMake globale? per target? — che è una decisione che
+nessuno ha preso, e scriverla prima è precisamente ciò che questo progetto non
+fa. Il flag funziona su `asm` e sul percorso a file singolo: quando la
+strumentazione avrà una forma, la parola chiave sono quattro righe.
+
+---
+
 ### 3.43 IL RENAME È FATTO, E LA PROVA È BYTE PER BYTE (13/09/2026)
 
 Otto commit, `5b72bd1`→`24dca22`, e una prova invece di un argomento: i
@@ -3163,8 +3733,16 @@ Misurato su `test_mutex`, che ha **quattro** unlock:
 | arma e cede **sempre** | 3679 | 7700 (+22%) | 4 |
 | **chiede, poi cede** | 3434 | 7143 (+13%) | **2** |
 
-Le due cessioni saltate sono esattamente quelle che rientravano su se stesse, e i
-245 cicli recuperati sono le loro. Le altre due trovano davvero qualcuno sopra.
+Le due cessioni saltate sono esattamente quelle che rientravano su se stesse, e
+sono loro il recupero: **245 istruzioni** (`3679 − 3434`) e **557 cicli**
+(`7700 − 7143`), cioè 278 cicli l'una.
+
+> **Correggeva «245 cicli», il 13/09.** 245 è la differenza delle *istruzioni*;
+> i cicli sono 557. Nessuna conclusione qui sopra cambia — il −7% è calcolato
+> sui cicli — ma il numero stava nella colonna sbagliata, e un documento che
+> l'avesse copiato avrebbe detto che una cessione a vuoto costa 122 cicli invece
+> di 278. L'ha trovato il nucleo fattuale (§3.45) rifacendo il conto, che è
+> precisamente ciò per cui esiste. Le altre due trovano davvero qualcuno sopra.
 
 Che sia **solo la metà** è una proprietà di *questo* test e non del rimedio:
 `test_mutex` è costruito per avere un contendente pronto durante la sezione
@@ -5112,9 +5690,10 @@ servono i numeri della macchina.
 > cmake -B out -S . && cmake --build out -j && ctest --test-dir out
 > ```
 >
-> 32 test: le tre invarianti storiche, i test mirati (`coda`, `pool`,
-> `timeout`, `mailbox`, `scheduler`, `block`, `catena`, `gestore`, `semaforo`,
-> `mutex`, `coop`, `mondo`, più `proc`/`include`/`epsw`/`kbd` sulla toolchain e
+> 35 test: le tre invarianti storiche, i test mirati (`queue`, `pool`,
+> `timeout`, `mailbox`, `scheduler`, `block`, `chain`, `tmgr`, `tmgr_marks`,
+> `semaphore`, `mutex`, `coop`, `events`, `vectors`, più
+> `proc`/`include`/`epsw`/`kbd`/`ifdef_off`/`ifdef_on` sulla toolchain e
 > sulla macchina), e i 13 programmi di `standalone/`
 > che devono continuare a girare da soli. I numeri
 > attesi stanno **ognuno accanto al programma che lo produce** — nel
@@ -5140,8 +5719,8 @@ servono i numeri della macchina.
 > Per isolare un singolo passo si usa quello che il build già sa dire:
 >
 > ```bash
-> ctest --test-dir out -R coda --output-on-failure   # un test solo, con l'output
-> ctest --test-dir out -N                            # elenca i 32 senza eseguirli
+> ctest --test-dir out -R queue --output-on-failure  # un test solo, con l'output
+> ctest --test-dir out -N                            # elenca i 35 senza eseguirli
 > cmake --build out -j --verbose                     # i comandi asm/ld esatti
 > ```
 >
@@ -5587,47 +6166,71 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 > 26/26» quando i test sono **32**. Erano diventate esattamente ciò che il
 > riquadro qui sopra mette in guardia dal tenere.
 
-**IL PROSSIMO PASSO — l'assemblaggio condizionale (`.ifdef` e `-D`):**
-```
-Leggi docs/stato-lavori.md dal riquadro «RIPRENDI DA QUI», poi la nota
-«Dove va il filtro condizionale» dentro la sezione del prossimo passo.
+> **E tolta la sera del 13/09, appena scaduta:** la formula «il prossimo passo —
+> l'assemblaggio condizionale», che §3.44 ha reso lavoro **fatto** nel giro di
+> una sessione. Diceva anche «alla fine `ctest` 32/32», e i test sono **34**
+> proprio per merito suo — una formula che manda a rifare ciò che ha appena
+> ottenuto è il caso limite del difetto qui sopra. Al suo posto c'è la formula
+> per strumentare il kernel, che è ciò che quel passo serviva ad abilitare.
 
-Serve perche' le tre categorie fisse del marcatore -- scheduler, dispatcher,
-ISR -- stanno nel KERNEL: senza un modo di compilarle via, il kernel resta
-strumentato per sempre e ogni EXPECT che dipende dai cicli si sposta una
-volta e non torna piu'.
-
-GIA' GUARDATO, da non ri-scoprire: l'assembler legge il sorgente UNA VOLTA
-SOLA -- pass 1 scorre le righe con inc_next_line e salva le righe di codice
-per pass 2, e vale identico per assemble() e assemble_object(). Quindi il
-filtro ha un punto di strozzatura unico, inc_next_line in src/assembler.c,
-e le due passate non possono divergere per costruzione.
-
-DECISO: .ifdef interroga SOLO i simboli di -D, non quelli di .equ. Le .equ
-si raccolgono durante pass 1 e IN ORDINE, quindi .ifdef su una .equ
-dipenderebbe da dove sta scritta -- la stessa trappola silenziosa di .word
-con una costante, che e' gia' fra i debiti. Quattro direttive (.ifdef,
-.ifndef, .else, .endif) e -D NOME come PRESENZA: -DNOME=valore e' un'altra
-funzione e non serve a compilare via la strumentazione.
-
-Alla fine ctest 32/32 e tools/fingerprint.sh con diff VUOTO -- e si
-controlla l'EXIT CODE del build, non il suo log (§3.43).
-```
-
-**Per i quattro documenti sullo scheduler (il nucleo fattuale, non ancora
-cominciato):**
+**IL PROSSIMO PASSO — scrivere il primo dei quattro documenti (il didattico,
+che e' la sorgente degli altri tre):**
 ```
 Leggi docs/stato-lavori.md, il riquadro «I QUATTRO DOCUMENTI SULLO
-SCHEDULER». Forma e lingue sono decise il 12/09; quel che manca e' il
-NUCLEO FATTUALE -- il posto unico in cui stanno i numeri, con scritto COME
-sono stati ottenuti, che i quattro testi citano invece di ripetere.
+SCHEDULER», poi docs/scheduler-facts.md e
+docs/generated/scheduler-measures.md, che sono il NUCLEO FATTUALE e
+esistono dal 13/09 (§3.45). I numeri si CITANO da li', non si ricopiano.
 
-Tre regole, e sono quelle del codice: un nucleo fattuale solo; il didattico
-e' la sorgente e quello per il collega una compressione; ogni numero o e'
-misurato, e si dice come, o e' dedotto, e si dice da cosa.
+Il didattico e' la SORGENTE: italiano, ordinato per CONCETTI, per chi
+impara. Non parte da zero -- da' per noti context switch, priorita' e
+preemption -- e va dritto a rate/deadline monotonic, inversione di
+priorita' e ceiling. Gli altri tre sono derivati e si fanno dopo: la
+versione inglese si RIGENERA, e quella per il collega e' una compressione
+ordinata per DECISIONI.
 
-Dove si puo', quel posto si GENERA dalla build invece di scriverlo: e' la
-mossa di marks.conf applicata alla prosa.
+Lo scopo e' LO SCHEDULER, non il progetto: §13 e' chiusa dal 12/09, quindi
+c'e' un oggetto concluso da descrivere. Il sincronizzatore, il linker e vc
+non lo sono e non lo saranno per il 1° ottobre.
+
+SAPPI COSA MANCA, e' in fondo a scheduler-facts.md: la latenza di
+preemption e il costo di un context switch NON ESISTONO come misure. O si
+scrivono senza, dicendolo, o prima si strumenta il kernel (la formula qui
+sotto). Non si inventano: la regola 3 e' che ogni numero o e' misurato, e
+si dice come, o e' dedotto, e si dice da cosa.
+
+Se tocchi un numero misurato: python3 tools/scheduler_facts.py --check
+deve restare verde, o rigeneralo.
+```
+
+**Per le due categorie che mancano nel kernel — dispatcher e ISR (§3.47):**
+```
+Leggi §3.47 di docs/stato-lavori.md e poi scheduler.vasm, dove la categoria
+SCHED e' gia' fatta: e' il modello da copiare.
+
+NIENTE DA DECIDERE, e' lavoro meccanico. Il vocabolario c'e':
+  marks.conf            si aggiunge una category e i suoi marker
+  scheduler.vasm        i tag dentro .ifdef MARKS
+  vasm_config(marks)    dice gia' cosa significa "strumentato"
+  CONFIGS / CONFIG      la libreria produce le due controparti
+
+DA SAPERE, e non e' un dettaglio: chiudere una finestra costa DUE
+istruzioni se fra apertura e chiusura il registro con l'indirizzo del
+canale viene sporcato -- in `scheduler` succede, e si ricarica in r7.
+Guarda quali registri sono vivi PRIMA di scegliere, o si corrompe un
+valore di ritorno.
+
+OGNI TAG SI PAGA IN UN EXPECT DICHIARATO. Il primo e' costato 18
+istruzioni su test_tmgr e ha spostato tmgr_marks da 2566 a 2548. Il numero
+nuovo va misurato e scritto nel vasm_check, non stimato.
+
+Alla fine: ctest 35/35 (o piu'), e tools/fingerprint.sh con le impronte dei
+programmi PULITI INVARIATE -- e' quella la prova che .ifdef si compila via.
+I programmi strumentati si muovono, ed e' il punto. Si controlla l'EXIT
+CODE del build, non il suo log (§3.43).
+
+E poi i numeri nuovi vanno in docs/scheduler-facts.md, NON nel file
+generato: quello e' l'albero pulito per regola, e scheduler_facts.py
+rifiuta un programma strumentato.
 ```
 
 **Per guardare come girano i task (non e' una modifica, e' uno strumento):**
@@ -5641,6 +6244,22 @@ conto (§3.34). Funziona su qualunque `.vx`; il disegno sta in
 `--` (§3.39): un programma guidato da un device senza il suo alimentatore non
 termina, e lo strumento ora lo dice invece di restare appeso.
 
+**Dal 13/09 la stessa pagina disegna anche il MARCATORE** (§3.46), quando il
+programma emette dei tag — oggi solo `test_events`: una corsia per categoria, le
+barre rigate dai tratti di chi possedeva la CPU dentro la finestra, e la
+sovrapposizione allineata al trigger dove si vede il jitter. Le stesse misure
+nel terminale, senza pagina:
+```
+python3 tools/marks.py read marks.conf <registrazione> --vx <prog.vx>
+```
+
+**La pagina si VERIFICA, non si legge** (§3.39, §3.46). Non c'è `node` e Firefox
+headless non parte, ma `gjs` c'è, e con il DOM finto di `tools/trace_dom.js`
+esegue lo script della pagina e le eccezioni si vedono. La ricetta è in testa a
+quel file. Va fatto su **più programmi**: i difetti di questa pagina sono tutti
+della forma «funziona su quello per cui è stata scritta», e sono già passati
+così quattro volte.
+
 **Per andare sul linguaggio ad alto livello:**
 ```
 Leggi docs/stato-lavori.md e docs/proposta-linguaggio-alto-livello.md.
@@ -5651,10 +6270,14 @@ Criterio di successo: saxpy in vc deve dare 17 istruzioni / 40 vec-elem-ops / 94
 
 Utile da sapere: il modello si cambia con `/model`, ed è ora impostato su Opus
 come default in `~/.claude/settings.json`. Il contesto del progetto si
-ricostruisce in fretta perché il repo è piccolo e i **quattro** documenti in
-`docs/` sono aggiornati: `stato-lavori.md` (questo), `manual.md`,
+ricostruisce in fretta perché il repo è piccolo e i documenti in `docs/` sono
+aggiornati. I **quattro di sempre**: `stato-lavori.md` (questo), `manual.md`,
 `proposta-kernel-realtime.md` (fronte attivo) e
-`proposta-linguaggio-alto-livello.md`.
+`proposta-linguaggio-alto-livello.md`. Più il **nucleo fattuale** nato il
+13/09 (§3.45), che è un'altra specie di documento e va letto come tale —
+non racconta, dichiara: `scheduler-facts.md` (i numeri **dedotti**, a mano) e
+`generated/scheduler-measures.md` (i numeri **misurati**, generato da
+`tools/scheduler_facts.py` e da non modificare).
 
 I sorgenti C sono a **2 spazi** dal 29/08/2026 (§3.7): scrivere nuovo codice
 con la stessa convenzione.
