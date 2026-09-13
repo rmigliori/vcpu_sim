@@ -53,10 +53,22 @@
 > l'impronta di **dieci programmi su quindici** mentre `ctest` resta 32/32.
 >
 > **PUSHATO** il 13/09 a fine giornata, su richiesta: `origin/master` è a
-> `463191b` — quindici commit, dalla fusione all'ultimo del rename — e il tag
-> **`italiano-pre-rename` è fuori** (`6bb3383`), mandato a parte perché i tag non
-> viaggiano da soli. Fuori non resta niente, salvo il commit che aggiorna questo
-> paragrafo: un commit non può nominare il proprio hash.
+> **`2a3d7c1`**, cioè i **quattro commit** del marcatore sopra i quindici del
+> mattino (`7c2bacb`→`2a3d7c1`):
+>
+> | | |
+> |---|---|
+> | `1704e91` | l'assemblaggio condizionale, `.ifdef` e `-D` |
+> | `20819fd` | il marcatore, dall'idea al numero — §3.45÷§3.48 |
+> | `61c297d` | l'handoff |
+> | `2a3d7c1` | il nucleo fattuale indipendente dal nome della build |
+>
+> Il primo è stato **verificato da solo** in un worktree (34/34), e il quarto
+> **nasce** da quella verifica: costruire in una cartella chiamata `b` ha stanato
+> due difetti che in `build/` non si vedono. Il tag **`italiano-pre-rename`** è
+> fuori dal mattino (`6bb3383`), mandato a parte perché i tag non viaggiano da
+> soli. Fuori non resta niente, salvo il commit che aggiorna questo paragrafo: un
+> commit non può nominare il proprio hash.
 >
 > **Resta da cancellare il ramo `mutex-cede-solo-se-serve`**, locale e remoto: è
 > fuso per intero in `master` e non serve più. Non l'ho fatto di mia iniziativa
