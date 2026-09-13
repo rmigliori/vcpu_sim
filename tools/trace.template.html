@@ -277,6 +277,27 @@
     background: var(--ink); opacity: .07;
   }
 
+  /* I comandi della vista. Il cursore sul diagramma diventa una croce, perche'
+     li' si clicca per misurare e si trascina per scorrere. */
+  .zoomctl {
+    display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline;
+    font-size: 12.5px; color: var(--ink-2);
+  }
+  .zoomctl .vista {
+    font-family: "IBM Plex Mono", monospace; font-weight: 600; color: var(--ink);
+  }
+  .zoomctl .hint { color: var(--ink-3); font-size: 12px; }
+  .zoomctl .sp { flex: 1; }
+  .zoomctl button {
+    font: inherit; font-size: 12px;
+    background: var(--surface); color: var(--ink);
+    border: 1px solid var(--rule-2); border-radius: 3px;
+    padding: 3px 9px; cursor: pointer;
+  }
+  .zoomctl button:hover:not([disabled]) { border-color: var(--accent); color: var(--accent); }
+  .zoomctl button[disabled] { opacity: .38; cursor: default; }
+  .track { cursor: crosshair; }
+
   .misura {
     margin-top: 10px; font-size: 12.5px; color: var(--ink-2);
     display: flex; flex-wrap: wrap; gap: 4px 18px; align-items: baseline;
@@ -356,6 +377,7 @@
       e il controllo scende di corsia in corsia solo quando chi sta sopra si blocca.</p>
     </div>
     <div class="legend" id="legend"></div>
+    <div class="zoomctl" id="zoomctl"></div>
     <div class="scope">
       <div class="scope-in">
         <div class="axis" id="axis"></div>
@@ -373,7 +395,8 @@
       di nuovo per <b>B</b>: fra i due leggi la durata e chi ha avuto la CPU. I
       cursori si <b>agganciano all'istante vero</b> più vicino — un bordo di fascia,
       un tick, una preemption — quindi il numero è esatto e non a occhio.
-      <kbd>Esc</kbd> per togliere.</span>
+      <b>Rotella</b> per zoomare dove punti, <b>trascina</b> per scorrere,
+      <kbd>Esc</kbd> toglie i cursori e <kbd>0</kbd> torna a tutta la corsa.</span>
     </div>
   </section>
 
@@ -613,9 +636,13 @@ function disegna(axisEl, lanesEl, b0, b1, tickLabel) {
   const span = b1 - b0;
   const pc = x => ((x - b0) / span) * 100;
 
+  // L'indice e' quello GLOBALE, non quello dei visibili: zoomando, il primo
+  // tick nella finestra resta "t5" e non ridiventa "t1". Un'etichetta che si
+  // rinumera quando cambi vista e' un'etichetta che mente.
   axisEl.innerHTML = MARK
-    .filter(t => t >= b0 && t <= b1)
-    .map((t, i) => `<span class="t" style="left:${pc(t)}%">${tickLabel(t, i)}</span>`)
+    .map((t, i) => [t, i])
+    .filter(([t]) => t >= b0 && t <= b1)
+    .map(([t, i]) => `<span class="t" style="left:${pc(t)}%">${tickLabel(t, i)}</span>`)
     .join("")
     + PRE.filter(e => e.c >= b0 && e.c <= b1)
          .map(e => `<span class="pre" style="left:${pc(e.c)}%"
@@ -714,6 +741,43 @@ function fraICursori(a, b) {
   };
 }
 
+/* ---------- LO ZOOM, il calcolo ----------
+   La meta' cara era gia' scritta: disegna() e' parametrica su [b0,b1] da quando
+   esiste, perche' serviva alla sezione dello zoom automatico. Quello che
+   mancava era cambiare quei due numeri. Anche qui il conto sta separato dalla
+   colla, per la stessa ragione dei cursori.
+
+   Il fondo scala e' MIN_SPAN cicli e non 1: sotto, le fasce diventano piu'
+   strette di un pixel e il diagramma smette di dire qualcosa: si zooma dentro
+   il vuoto fra due istruzioni. Il tetto e' la corsa intera -- non si esce dai
+   dati, perche' lo spazio fuori non e' vuoto, non esiste. */
+const MIN_SPAN = 40;
+
+function limitaFinestra(b0, b1) {
+  let span = Math.max(MIN_SPAN, Math.min(b1 - b0, D.fine));
+  let a = b0, z = a + span;
+  if (z > D.fine) { z = D.fine; a = z - span; }
+  if (a < 0)      { a = 0;      z = span;     }
+  return [Math.round(a), Math.round(z)];
+}
+
+/* Zoom di 'fattore' tenendo fermo il ciclo 'ancora' (dove sta il puntatore):
+   e' quello che fa sembrare naturale la rotella, perche' il punto che stai
+   guardando non scappa. fattore < 1 avvicina. */
+function nuovaFinestra(b0, b1, fattore, ancora) {
+  const span = b1 - b0;
+  const q = span > 0 ? (ancora - b0) / span : 0.5;
+  const nuovo = span * fattore;
+  return limitaFinestra(ancora - q * nuovo, ancora - q * nuovo + nuovo);
+}
+
+/* La finestra che inquadra [a,b] con un margine, per "zooma fra i cursori". */
+function finestraFra(a, b) {
+  const lo = Math.min(a, b), hi = Math.max(a, b);
+  const m = Math.max(MIN_SPAN * 0.1, (hi - lo) * 0.06);
+  return limitaFinestra(lo - m, hi + m);
+}
+
 /* ---------- readout ---------- */
 const readout = document.getElementById("readout");
 function mostra(el) {
@@ -806,33 +870,52 @@ document.getElementById("rt").innerHTML = rtVis.map(([n, c]) =>
      <span class="rt-bar"><i style="width:100%;opacity:.28"></i></span>
      <span class="rv">${N.format(rtMap["loopI"])}</span></div>`);
 
-/* ---------- i cursori: la colla ----------
+/* ---------- CURSORI E ZOOM: la colla ----------
    Da qui in giu' si leggono pixel e si ricevono eventi, cioe' le due cose che
-   il DOM finto non ha. E' tenuta SOTTILE apposta: nessun conto sta qui, solo la
-   conversione pixel -> ciclo e la scrittura nel DOM. Se un giorno questa parte
-   sbaglia, sbaglia in modo visibile (un cursore nel posto sbagliato); se
-   sbagliasse la parte pura, sbaglierebbe un numero -- ed e' per questo che la
-   divisione passa di qui. */
-(function cursori() {
+   il DOM finto non ha. E' tenuta SOTTILE apposta: nessun conto sta qui, solo
+   la conversione pixel -> ciclo e la scrittura nel DOM. Se un giorno questa
+   parte sbaglia, sbaglia in modo VISIBILE (un cursore o una vista nel posto
+   sbagliato); se sbagliasse la parte pura, sbaglierebbe un NUMERO -- ed e' per
+   questo che la divisione passa di qui.
+
+   Cursori e zoom stanno insieme perche' condividono una cosa sola e la
+   condividono davvero: la finestra. Un cursore si disegna in percentuale della
+   VISTA, non della corsa, quindi zoomando deve muoversi con lei. Tenerli in due
+   blocchi vorrebbe dire due copie di quello stato. */
+(function scopio() {
   const strato = document.getElementById("cursori");
   const misura = document.getElementById("misura");
+  const zoomEl = document.getElementById("zoomctl");
   const hint   = misura.innerHTML;
-  let A = null, B = null;
+  const axis   = document.getElementById("axis");
+  const lanes  = document.getElementById("lanes");
+  const raf    = globalThis.requestAnimationFrame || (f => f());
 
-  function ridisegna() {
-    const pc = x => (x / D.fine) * 100;
+  let A = null, B = null;
+  let V = [0, D.fine];           // la vista corrente
+  let inCoda = false;
+
+  function ridisegnaCursori() {
+    const [b0, b1] = V, span = b1 - b0;
+    const pc = x => ((x - b0) / span) * 100;
     let h = "";
     if (A !== null && B !== null) {
       const lo = Math.min(A, B), hi = Math.max(A, B);
-      h += `<span class="banda" style="left:${pc(lo)}%;width:${pc(hi - lo)}%"></span>`;
+      // Ritagliato sulla vista: una banda che esce dai bordi non deve
+      // debordare sul resto della pagina.
+      const la = Math.max(lo, b0), lz = Math.min(hi, b1);
+      if (lz > la) h += `<span class="banda" style="left:${pc(la)}%;width:${pc(lz) - pc(la)}%"></span>`;
     }
     for (const [n, v] of [["A", A], ["B", B]]) {
-      if (v === null) continue;
+      if (v === null || v < b0 || v > b1) continue;   // fuori vista: non si disegna
       h += `<span class="cur" style="left:${pc(v)}%">
               <span class="tag">${n} ${N.format(v)}</span></span>`;
     }
     strato.innerHTML = h;
+    scriviMisura();
+  }
 
+  function scriviMisura() {
     if (A === null) { misura.innerHTML = hint; return; }
     if (B === null) {
       misura.innerHTML = `<span>cursore <b>A</b> a <b>${N.format(A)}</b>`
@@ -854,28 +937,111 @@ document.getElementById("rt").innerHTML = rtVis.map(([n, c]) =>
        <span class="mono">pc</span>, come le fasce. <kbd>Esc</kbd> per togliere i cursori.</span>`;
   }
 
-  // Il pixel -> ciclo, e subito l'aggancio: un cursore non si ferma mai fra due
-  // istanti veri, quindi il Δ e' esatto invece che approssimato dalla scala.
-  function ciclo(ev) {
-    const r = strato.getBoundingClientRect();
-    if (r.width <= 0) return null;
-    const q = (ev.clientX - r.left) / r.width;
-    return aggancia(Math.max(0, Math.min(1, q)) * D.fine);
+  function scriviZoom() {
+    const [b0, b1] = V, span = b1 - b0;
+    const tutto = (span >= D.fine);
+    zoomEl.innerHTML =
+      `<span class="vista">${tutto ? "tutta la corsa" :
+        `${N.format(b0)} → ${N.format(b1)}`}</span>` +
+      `<span class="hint">${N.format(span)} cicli` +
+        (tutto ? "" : ` · ${(D.fine / span).toFixed(1)}×`) + `</span>` +
+      `<span class="sp"></span>` +
+      `<button data-z="out"${tutto ? " disabled" : ""}>− lontano</button>` +
+      `<button data-z="in">+ vicino</button>` +
+      `<button data-z="cur"${(A === null || B === null) ? " disabled" : ""}>fra i cursori</button>` +
+      `<button data-z="all"${tutto ? " disabled" : ""}>tutto</button>`;
   }
 
-  // Sul DOCUMENTO, come tutti gli altri gestori della pagina: il DOM finto di
-  // tools/trace_dom.js stubba addEventListener li' e non sugli elementi.
-  // Il .track filtra: si misura cliccando sul diagramma, non sulla legenda.
+  // Ridisegna tutto: il diagramma con la vista nuova, poi i cursori sopra.
+  // In coda a un frame perche' la rotella arriva a raffica e ogni passata
+  // ricostruisce 250 fasce.
+  function vista(b0, b1) {
+    V = limitaFinestra(b0, b1);
+    if (inCoda) return;
+    inCoda = true;
+    raf(() => {
+      inCoda = false;
+      disegna(axis, lanes, V[0], V[1], (t, i) => "t" + (i + 1));
+      ridisegnaCursori();
+      scriviZoom();
+    });
+  }
+
+  // pixel -> ciclo NELLA VISTA. L'aggancio e' subito dopo: un cursore non si
+  // ferma mai fra due istanti veri, quindi il Δ e' esatto invece che
+  // approssimato dalla scala a cui stai guardando.
+  function ciclo(ev, snap) {
+    const r = strato.getBoundingClientRect();
+    if (r.width <= 0) return null;
+    const q = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width));
+    const x = V[0] + q * (V[1] - V[0]);
+    return snap ? aggancia(x) : x;
+  }
+
+  // Sul DOCUMENTO, come tutti gli altri gestori: il DOM finto stubba
+  // addEventListener li' e non sugli elementi. Il .track filtra, cosi' si
+  // misura cliccando sul diagramma e non sulla legenda.
   document.addEventListener("click", ev => {
+    const b = ev.target.closest && ev.target.closest("[data-z]");
+    if (b) {
+      const z = b.dataset.z;
+      if (z === "all") vista(0, D.fine);
+      else if (z === "cur" && A !== null && B !== null) { const f = finestraFra(A, B); vista(f[0], f[1]); }
+      else {
+        const centro = (V[0] + V[1]) / 2;
+        const f = nuovaFinestra(V[0], V[1], z === "in" ? 0.5 : 2, centro);
+        vista(f[0], f[1]);
+      }
+      return;
+    }
+    // Dopo un trascinamento il click scatta lo stesso: se piantasse un cursore,
+    // ogni scorrimento ne lascerebbe uno per strada.
+    if (trascinato) { trascinato = false; return; }
     if (!ev.target.closest || !ev.target.closest(".track")) return;
-    const c = ciclo(ev);
+    const c = ciclo(ev, true);
     if (c === null) return;
     if (A === null || B !== null) { A = c; B = null; } else { B = c; }
-    ridisegna();
+    ridisegnaCursori();
+    scriviZoom();                 // "fra i cursori" si accende quando B c'e'
   });
+
+  // La rotella zooma tenendo fermo il ciclo sotto il puntatore: e' quello che
+  // la fa sembrare naturale, perche' il punto che stai guardando non scappa.
+  document.addEventListener("wheel", ev => {
+    if (!ev.target.closest || !ev.target.closest(".track")) return;
+    ev.preventDefault();
+    const anc = ciclo(ev, false);
+    if (anc === null) return;
+    const f = nuovaFinestra(V[0], V[1], ev.deltaY < 0 ? 0.8 : 1.25, anc);
+    vista(f[0], f[1]);
+  }, { passive: false });
+
+  // Trascinare fa scorrere. Sotto la soglia e' un click, non un trascinamento:
+  // senza, piantare un cursore diventerebbe impossibile con un mouse vero.
+  let giu = null, trascinato = false;
+  document.addEventListener("mousedown", ev => {
+    if (ev.target.closest && ev.target.closest(".track")) {
+      giu = { x: ev.clientX, V: V.slice() };
+      trascinato = false;
+    }
+  });
+  document.addEventListener("mousemove", ev => {
+    if (!giu) return;
+    if (Math.abs(ev.clientX - giu.x) < 4) return;   // sotto soglia: e' un click
+    const r = strato.getBoundingClientRect();
+    if (r.width <= 0) return;
+    trascinato = true;
+    const d = ((ev.clientX - giu.x) / r.width) * (giu.V[1] - giu.V[0]);
+    vista(giu.V[0] - d, giu.V[1] - d);
+  });
+  document.addEventListener("mouseup", () => { giu = null; });
+
   document.addEventListener("keydown", ev => {
-    if (ev.key === "Escape") { A = B = null; ridisegna(); }
+    if (ev.key === "Escape") { A = B = null; ridisegnaCursori(); scriviZoom(); }
+    if (ev.key === "0")      vista(0, D.fine);
   });
+
+  scriviZoom();
 })();
 
 document.getElementById("n-ctx").textContent = N.format(ctx);

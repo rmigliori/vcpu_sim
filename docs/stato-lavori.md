@@ -21,8 +21,8 @@
 > `ctest` **39/39** (erano 32). Il **13/09** ha chiuso al mattino le tre cose
 > rimaste aperte apposta — ha **fuso** il primo ramo del progetto, ha **deciso
 > la lingua** (§3.42), ha **fatto il rename** (§3.43), otto commit
-> `5b72bd1`→`24dca22` — e poi, in fila, i **sei pezzi** che portano il marcatore
-> dall'idea al numero e la pagina dentro `ctest`:
+> `5b72bd1`→`24dca22` — e poi, in fila, i **sette pezzi** che portano il
+> marcatore dall'idea al numero, e la pagina da documento a strumento:
 >
 > | | |
 > |---|---|
@@ -32,6 +32,7 @@
 > | §3.47 | **la configurazione strumentata**, e il primo tag dentro il kernel |
 > | §3.48 | **la preemption si vede**, ed è letta dal kernel invece che dedotta |
 > | §3.49 | **i cursori** con l'aggancio, e la pagina smette di essere una ricetta |
+> | §3.50 | **lo zoom**: rotella, trascinamento, e la finestra è uno stato solo |
 >
 > Il risultato in una riga: esistono due numeri realtime che ieri non c'erano —
 > **18 scansioni dello scheduler** (min 51, max 177, **jitter 126**) e **11
@@ -41,7 +42,8 @@
 > **Da guardare**, se si vuole vedere il sistema invece che leggerlo:
 > `out/trace-tmgr-marks.html` (il marcatore del kernel e le preemption) e
 > `out/trace-events.html` (il marcatore applicativo, con le finestre che
-> attraversano le commutazioni). Si rifanno con `tools/trace.py`.
+> attraversano le commutazioni). Si rifanno con `tools/trace.py`, e adesso
+> sono **strumenti**: ci si zooma e ci si misura (§3.49, §3.50).
 >
 > **L'ALBERO È IN INGLESE.** Tutti e **72 i simboli esportati**, le strutture, i
 > campi, le costanti, sei cartelle, tredici file, i nomi dei test. I **commenti
@@ -2993,6 +2995,62 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.50 LO ZOOM, e la finestra diventa uno stato solo (13/09/2026, ottava parte)
+
+La metà cara era già scritta da giorni: `disegna()` è **parametrica su
+`[b0,b1]`** da quando esiste, perché serviva alla sezione dello zoom
+automatico. Quello che mancava era cambiare quei due numeri.
+
+Rotella per avvicinare dove punti, trascinamento per scorrere, quattro bottoni
+(`− lontano`, `+ vicino`, `fra i cursori`, `tutto`), `0` per tornare a tutta la
+corsa. Sopra il diagramma c'è sempre scritto **che finestra stai guardando** e
+il suo ingrandimento (`5.793 → 9.795 · 4.002 cicli · 12,4×`).
+
+#### Cursori e zoom sono un blocco solo, e non per comodità
+
+Condividono **una** cosa e la condividono davvero: la finestra. Un cursore si
+disegna in percentuale della **vista**, non della corsa, quindi zoomando deve
+muoversi con lei — e uno che esce dai bordi non si disegna affatto, o
+deborderebbe sul resto della pagina. Tenerli in due blocchi avrebbe voluto dire
+due copie di quello stato, cioè due che possono discordare.
+
+#### Tre decisioni che sono numeri, non gusti
+
+- **Il fondo scala è 40 cicli.** Sotto, le fasce diventano più strette di un
+  pixel e il diagramma smette di dire qualcosa: si starebbe zoomando dentro il
+  vuoto fra due istruzioni;
+- **il tetto è la corsa intera.** Non si esce dai dati, perché lo spazio fuori
+  non è vuoto: non esiste;
+- **l'ancora non scappa.** La rotella zooma tenendo fermo il ciclo sotto il
+  puntatore. È ciò che la fa sembrare naturale, ed è un'asserzione del test, non
+  un'impressione.
+
+#### Due difetti trovati scrivendo, ed entrambi sono di interazione
+
+- **dopo un trascinamento il `click` scatta lo stesso**: senza soglia, ogni
+  scorrimento avrebbe lasciato per strada un cursore. Sotto i 4 pixel è un
+  click, sopra è un trascinamento, e il click che segue si scarta;
+- **l'indice dei tick si rinumerava**: l'asse etichettava `t1, t2…` sui tick
+  *visibili*, quindi zoomando il quinto tick diventava «t1». Adesso l'indice è
+  quello **globale** — un'etichetta che cambia quando cambi vista è
+  un'etichetta che mente.
+
+Nessuno dei due lo avrebbe preso `gjs`: sono pixel ed eventi, cioè la metà non
+provabile. Li ha presi il fatto di doverli scrivere pensando a come sbagliano.
+
+#### E undici asserzioni in più
+
+Sulle funzioni pure dello zoom: che la finestra rientri sempre nei dati da
+entrambi i lati, che non si scenda sotto il fondo scala né si salga sopra la
+corsa, che gli estremi siano interi, che **l'ancora resti dov'è** su cinque
+posizioni diverse, che avvicinare e poi allontanare torni al punto di partenza,
+e che la finestra «fra i cursori» li contenga entrambi.
+
+Provate a rovescio come le altre: togliendo i limiti a `limitaFinestra` cadono
+gli stessi quattro test, e nessun altro.
 
 ---
 
@@ -6355,12 +6413,17 @@ nel terminale, senza pagina:
 python3 tools/marks.py read marks.conf <registrazione> --vx <prog.vx>
 ```
 
-**Sul diagramma si MISURA** (§3.49): un click pianta il cursore **A**, il
-secondo **B**, e fra i due si legge Δ in cicli, quanti tick e quante preemption
-ci sono dentro, e chi ha avuto la CPU con la sua quota. I cursori si
-**agganciano all'istante vero più vicino** — un bordo di fascia, un tick, una
-preemption — quindi il numero è esatto invece che a occhio: a tutto raggio un
-pixel vale ~55 cicli, su misure che valgono 909. `Esc` li toglie.
+**Sul diagramma si MISURA e si ZOOMA** (§3.49, §3.50). Un click pianta il
+cursore **A**, il secondo **B**, e fra i due si legge Δ in cicli, quanti tick e
+quante preemption ci sono dentro, e chi ha avuto la CPU con la sua quota. I
+cursori si **agganciano all'istante vero più vicino** — un bordo di fascia, un
+tick, una preemption — quindi il numero è esatto invece che a occhio: a tutto
+raggio un pixel vale ~55 cicli, su misure che valgono 909.
+
+**Rotella** per avvicinare dove punti (il ciclo sotto il puntatore non si
+muove), **trascinamento** per scorrere, e i bottoni sopra il diagramma —
+fra cui **«fra i cursori»**, che inquadra esattamente ciò che hai misurato.
+`Esc` toglie i cursori, `0` torna a tutta la corsa.
 
 **E LA PAGINA È IN `ctest`** (§3.49). Era una ricetta da eseguire a mano; adesso
 sono quattro test, `trace_*`:
