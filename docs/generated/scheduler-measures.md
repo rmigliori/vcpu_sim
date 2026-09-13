@@ -38,16 +38,16 @@
 Misurati così, uno per riga:
 
 ```bash
-vcpu_sim run build/vasm/test_scheduler.vx
-vcpu_sim run build/vasm/test_block.vx
-vcpu_sim run build/vasm/test_chain.vx
-vcpu_sim run build/vasm/test_mailbox.vx
-vcpu_sim run build/vasm/test_semaphore.vx
-vcpu_sim run build/vasm/test_mutex.vx
-vcpu_sim run build/vasm/test_tmgr.vx
-vcpu_sim run build/vasm/test_coop.vx
-vcpu_sim run build/vasm/test_events.vx --kbd 2000:a,6000:b,10000:c,14000:d,18000:e
-vcpu_sim run build/vasm/test_vectors.vx
+vcpu_sim run <build>/vasm/test_scheduler.vx
+vcpu_sim run <build>/vasm/test_block.vx
+vcpu_sim run <build>/vasm/test_chain.vx
+vcpu_sim run <build>/vasm/test_mailbox.vx
+vcpu_sim run <build>/vasm/test_semaphore.vx
+vcpu_sim run <build>/vasm/test_mutex.vx
+vcpu_sim run <build>/vasm/test_tmgr.vx
+vcpu_sim run <build>/vasm/test_coop.vx
+vcpu_sim run <build>/vasm/test_events.vx --kbd 2000:a,6000:b,10000:c,14000:d,18000:e
+vcpu_sim run <build>/vasm/test_vectors.vx
 ```
 
 ## 2. Cosa asserisce `ctest`, e su cosa tace

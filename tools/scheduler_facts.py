@@ -173,12 +173,18 @@ def occupancy(t):
     Gli argomenti della MACCHINA vanno dopo un «--», ed e' la ragione per cui
     trace.py li vuole cosi': sono gli stessi che il build mette in ARGS.
     """
-    cmd = [sys.executable, TRACE, t["vx"]]
+    # --sim: il simulatore glielo si DICE, invece di lasciarglielo cercare in
+    # out/ e build/. Su un albero costruito altrove trace.py non lo troverebbe,
+    # e il fallimento arrivava qui come "nessuna traccia" -- cioe' questa pagina
+    # perdeva una sezione intera SENZA DIRLO. Trovato da un worktree con la
+    # build in 'b'.
+    cmd = [sys.executable, TRACE, t["vx"], "--sim", t["sim"]]
     if t["args"]:
         cmd += ["--"] + t["args"]
     r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
     if r.returncode != 0:
-        return []
+        die("tools/trace.py non e' riuscito su %s:\n%s"
+            % (os.path.basename(t["vx"]), r.stderr.strip() or r.stdout.strip()))
     rows = []
     for line in r.stdout.splitlines():
         m = OCC.match(line)
@@ -258,7 +264,13 @@ def render(names, tests):
     for n in names:
         t = tests[n]
         m = measure(t)
-        vx = os.path.relpath(t["vx"], ROOT)
+        # <build> e non il nome vero della cartella: `cmake -B <dir>` non impone
+        # un nome, quindi incorporarlo farebbe dipendere il CONTENUTO di questa
+        # pagina da come ha costruito chi l'ha rigenerata, e --check fallirebbe
+        # su un albero chiamato diversamente dicendo "non e' aggiornato" di un
+        # file che lo e'. Trovato cosi', da un worktree con la build in 'b'.
+        # Tutti i .vx stanno in <build>/vasm/ (VASM_BINARY_DIR), sempre.
+        vx = "<build>/vasm/" + os.path.basename(t["vx"])
         out.append("| `%s` | %d | %d | %d |\n" % (n, m["instr"], m["vecops"], m["cycles"]))
         cmds.append("vcpu_sim run %s%s" %
                     (vx, (" " + " ".join(t["args"])) if t["args"] else ""))

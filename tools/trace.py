@@ -89,13 +89,27 @@ QUI    = os.path.dirname(os.path.abspath(__file__))
 TIMEOUT = 60      # secondi: un programma di questo progetto ne impiega meno di uno
 
 
+G_SIM = None      # --sim: lo dice il chiamante invece di farlo indovinare
+
+
 def sim():
-    """Il simulatore, che e' anche assembler e nm. Costruito da CMake in out/."""
+    """Il simulatore, che e' anche assembler e nm.
+
+    Si cerca in out/ e build/, che sono i due nomi usati nella documentazione.
+    Ma `cmake -B <dir>` non impone un nome, quindi chi ne usa un altro deve
+    poterlo dire: --sim. Senza, questo strumento fallisce su un albero
+    costruito altrove -- e chi lo chiama da dentro un programma rischia di
+    prendere il fallimento per "nessuna traccia" (e' successo a
+    tools/scheduler_facts.py, che perdeva un terzo della pagina in silenzio).
+    """
+    if G_SIM:
+        return G_SIM
     for p in ("out/vcpu_sim", "build/vcpu_sim"):
         c = os.path.join(RADICE, p)
         if os.path.exists(c):
             return c
-    sys.exit("vcpu_sim non trovato: cmake -B out -S . && cmake --build out -j")
+    sys.exit("vcpu_sim non trovato: cmake -B out -S . && cmake --build out -j\n"
+             "  (se l'albero di build ha un altro nome, dillo con --sim <percorso>)")
 
 
 def base_programma(vx):
@@ -149,6 +163,7 @@ def sorgenti(vx):
 
 
 IGNORA = ("out", "build")     # le cartelle di build, che rispecchiano l'albero
+MAX_INC_DIRS = 16             # il tetto dell'assembler: src/assembler.c
 
 
 def includes():
@@ -170,14 +185,37 @@ def includes():
     tools/marks.py genera da marks.conf, e la sua ripartizione e' diventata
     "boot 100%" senza che niente dicesse perche'.
     """
+    # L'albero di build si esclude per QUELLO CHE E', non per come si chiama.
+    # IGNORA elenca i due nomi della documentazione, ma `cmake -B <dir>` non ne
+    # impone nessuno: con un terzo nome ogni interface/ compariva due volte e i
+    # -I passavano da 10 a 18, sopra il tetto di 16 dell'assembler. Ogni
+    # ri-assemblaggio falliva, il listato restava vuoto, nessun corpo veniva
+    # riconosciuto e la pagina diceva "boot 100%" -- in silenzio, perche'
+    # listato() scarta i fallimenti apposta (un modulo puo' non assemblare da
+    # solo, ed e' lecito). Trovato il 13/09/2026 da un worktree con la build
+    # in 'b'. Qui la cartella la sappiamo: e' quella del simulatore.
+    salta = set(IGNORA)
+    rel_build = os.path.relpath(os.path.dirname(sim()), RADICE).split(os.sep)[0]
+    if rel_build not in ("", "."):
+        salta.add(rel_build)
+
     fuori = []
     for pat in ("*/interface", "*/*/interface", "*/*/*/interface"):
         for d in glob.glob(os.path.join(RADICE, pat)):
             rel = os.path.relpath(d, RADICE)
-            if os.path.isdir(d) and rel.split(os.sep)[0] not in IGNORA:
+            if os.path.isdir(d) and rel.split(os.sep)[0] not in salta:
                 fuori.append(d)
     fuori += generate()
-    return sorted(set(fuori))
+    fuori = sorted(set(fuori))
+
+    # Sopra il tetto NESSUN assemblaggio riesce, quindi non e' il caso lecito
+    # che listato() e' fatto per assorbire: e' una diagnosi, e va detta.
+    if len(fuori) > MAX_INC_DIRS:
+        sys.exit(f"{len(fuori)} cartelle -I, ma l'assembler ne accetta "
+                 f"{MAX_INC_DIRS} (MAX_INC_DIRS in src/assembler.c): nessun "
+                 f"modulo si ri-assemblerebbe e la pagina direbbe 'boot 100%'.\n"
+                 f"  " + "\n  ".join(os.path.relpath(d, RADICE) for d in fuori))
+    return fuori
 
 
 def generate():
@@ -393,12 +431,16 @@ def main():
     ap.add_argument("programma", help="il .vx da tracciare (es. out/vasm/test_tmgr.vx)")
     ap.add_argument("-o", "--out", help="la pagina da scrivere (default: out/trace.html)")
     ap.add_argument("--json", help="scrive anche i dati grezzi qui")
+    ap.add_argument("--sim", help="il vcpu_sim da usare (default: out/ o build/)")
     ap.add_argument("argomenti", nargs="*", metavar="-- OPZIONI",
                     help="dopo un --: opzioni per la MACCHINA, non per questo "
                          "strumento (es. -- --kbd \"2000:a,6000:b\"). Servono ai "
                          "programmi guidati da un device, che senza alimentatore "
                          "non terminano")
     a = ap.parse_args()
+
+    global G_SIM
+    G_SIM = a.sim
 
     vx = a.programma
     out_path = a.out or os.path.join(RADICE, "out", "trace.html")
