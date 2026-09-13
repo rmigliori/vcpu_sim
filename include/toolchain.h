@@ -76,6 +76,13 @@ void vobject_free(VObject* obj);
 int  asm_add_include_dir(const char* dir);
 void asm_clear_include_dirs(void);
 
+// Conditional assembly (-D), shared by the same two entry points: the set of
+// names that .ifdef/.ifndef ask about. PRESENCE only — a name is defined or it
+// is not, it never carries a value, and .equ constants are NOT in this set (see
+// the header over the conditionals in assembler.c). Returns 0, or -1 if full.
+int  asm_add_define(const char* name);
+void asm_clear_defines(void);
+
 // --- toolchain.c -----------------------------------------------------------
 int  vo_write(const char* path, const VObject* obj, char* err, size_t errsz);
 int  vo_read(const char* path, VObject* obj, char* err, size_t errsz);

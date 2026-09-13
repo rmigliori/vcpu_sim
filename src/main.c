@@ -27,6 +27,57 @@ static int parse_include_flag(int argc, char** argv, int* i)
   return 1;
 }
 
+// -D <name> / -Dname: define a name for .ifdef/.ifndef. Same contract as
+// parse_include_flag, and fatal for the same reason — a -D that went missing
+// would not fail, it would quietly assemble the OTHER branch.
+//
+// Two refusals on purpose, both of things that would otherwise be silent:
+//   -DNAME=value   PRESENCE is the whole feature; a name that also carried a
+//                  value would look like a constant and not be one.
+//   -Dnot.an.ident a name that no .ifdef can ever spell would simply never
+//                  match, and the build would be wrong without a word.
+static int parse_define_flag(int argc, char** argv, int* i)
+{
+  const char* name = NULL;
+  if (strcmp(argv[*i], "-D") == 0 && *i + 1 < argc)          name = argv[++(*i)];
+  else if (strncmp(argv[*i], "-D", 2) == 0 && argv[*i][2])   name = argv[*i] + 2;
+  else return 0;
+
+  if (strchr(name, '='))
+  {
+    fprintf(stderr, "error: -D takes a name, not a value ('%s'). A name is "
+                    "either defined or not; it never has a value.\n", name);
+    return -1;
+  }
+  if (!(isalpha((unsigned char) name[0]) || name[0] == '_'))
+  {
+    fprintf(stderr, "error: '-D %s' is not a name\n", name);
+    return -1;
+  }
+  for (const char* p = name + 1; *p; ++p)
+    if (!(isalnum((unsigned char) *p) || *p == '_'))
+    {
+      fprintf(stderr, "error: '-D %s' is not a name\n", name);
+      return -1;
+    }
+
+  if (asm_add_define(name) != 0)
+  {
+    fprintf(stderr, "error: too many -D names ('%s')\n", name);
+    return -1;
+  }
+  return 1;
+}
+
+// The two assembler flags together, in the order a command line writes them.
+// Returns 1 consumed, 0 not ours, -1 error (already reported).
+static int parse_asm_flag(int argc, char** argv, int* i)
+{
+  int r = parse_include_flag(argc, argv, i);
+  if (r != 0) return r;
+  return parse_define_flag(argc, argv, i);
+}
+
 static void print_stats(const VCpu* cpu)
 {
   printf("---- stats ----\n");
@@ -128,15 +179,15 @@ static int cmd_asm(int argc, char** argv)
   const char* expanded = NULL;
   for (int i = 2; i < argc; ++i)
   {
-    int inc = parse_include_flag(argc, argv, &i);
-    if (inc < 0) return 2;
-    if (inc > 0) continue;
+    int f = parse_asm_flag(argc, argv, &i);
+    if (f < 0) return 2;
+    if (f > 0) continue;
     if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) out = argv[++i];
     else if (strcmp(argv[i], "--emit-expanded") == 0 && i + 1 < argc) expanded = argv[++i];
     else in = argv[i];
   }
   if (!in || !out)
-  { fprintf(stderr, "usage: %s asm <in.vasm> -o <out.vo> [-I <dir>]... [--emit-expanded <file>]\n", argv[0]); return 2; }
+  { fprintf(stderr, "usage: %s asm <in.vasm> -o <out.vo> [-I <dir>]... [-D <name>]... [--emit-expanded <file>]\n", argv[0]); return 2; }
 
   VObject* obj = calloc(1, sizeof(VObject));
   if (!obj) { fprintf(stderr, "out of memory\n"); return 1; }
@@ -468,9 +519,9 @@ int main(int argc, char** argv)
   RunMode     mode = RUN_NORMAL;
   for (int i = 1; i < argc; ++i)
   {
-    int inc = parse_include_flag(argc, argv, &i);
-    if (inc < 0) return 2;
-    if (inc > 0) continue;
+    int f = parse_asm_flag(argc, argv, &i);
+    if (f < 0) return 2;
+    if (f > 0) continue;
     if (strcmp(argv[i], "--trace") == 0)      mode = RUN_TRACE;
     else if (strcmp(argv[i], "--debug") == 0) mode = RUN_DEBUG;
     else if (strcmp(argv[i], "--kbd") == 0 && i + 1 < argc) g_kbd_spec = argv[++i];
@@ -479,8 +530,8 @@ int main(int argc, char** argv)
   if (!path)
   {
     fprintf(stderr,
-            "usage: %s [--trace|--debug] [--kbd <ciclo:car,...>] [-I <dir>]... <program.vasm>\n"
-            "       %s asm <in.vasm> -o <out.vo> [-I <dir>]...\n"
+            "usage: %s [--trace|--debug] [--kbd <ciclo:car,...>] [-I <dir>]... [-D <name>]... <program.vasm>\n"
+            "       %s asm <in.vasm> -o <out.vo> [-I <dir>]... [-D <name>]...\n"
             "       %s ld  <a.vo|lib.va> ... [-e <sym>] -o <out.vx>\n"
             "       %s run <prog.vx> [--trace|--debug] [--kbd <ciclo:car,...>]\n"
             "       %s nm  [-n|-p] [-r] <file.vo|file.vx>\n"

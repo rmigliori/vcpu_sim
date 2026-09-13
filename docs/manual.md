@@ -296,7 +296,7 @@ ispezionare con `cat`. I dettagli del formato sono in
 
 | Comando | Effetto |
 |---|---|
-| `vcpu_sim asm <in.vasm> -o <out.vo> [-I <dir>]...` | assembla un modulo in un **oggetto rilocabile**; `-I` aggiunge una cartella alla ricerca di `.include` (§4.2.2) |
+| `vcpu_sim asm <in.vasm> -o <out.vo> [-I <dir>]... [-D <nome>]...` | assembla un modulo in un **oggetto rilocabile**; `-I` aggiunge una cartella alla ricerca di `.include` (§4.2.2), `-D` definisce un nome per `.ifdef` (§4.2.3) |
 | `vcpu_sim ar <lib.va> <o1.vo> ...` | raccoglie oggetti in una **libreria** |
 | `vcpu_sim ld <a.vo\|lib.va> ... [-e <sym>] -o <out.vx>` | **linka** oggetti e librerie in un eseguibile |
 | `vcpu_sim run <prog.vx> [--trace\|--debug]` | **carica ed esegue** un eseguibile |
@@ -575,6 +575,9 @@ loop:   setvl r4, r3      ; 'loop' = indice di questa istruzione
 | `.field` | `.field campo [dim]` | dentro `.struct`: definisce `NOME.campo` = offset corrente e avanza di `dim` byte (default 4) |
 | `.res` | `etichetta: .res TIPO` | nel segmento dati: riserva `TIPO.size` byte (come una `.space` *type-aware*); l'etichetta ne è l'indirizzo |
 | `.include` | `.include "file"` | inserisce testualmente `file` a quel punto, **una volta sola** (§4.2.2); il nome si cerca nella **cartella del file di primo livello** e poi nelle cartelle passate con `-I` (o si usa così com'è, se assoluto). Utile per condividere `.struct`/`.equ` fra più sorgenti |
+| `.ifdef` / `.ifndef` | `.ifdef NOME` … `.endif` | assembla le righe che seguono **solo se** `NOME` è (o non è) fra i nomi passati con `-D` sulla riga di comando (§4.2.3) |
+| `.else` | `.else` | l'altro ramo del `.ifdef`/`.ifndef` aperto |
+| `.endif` | `.endif` | chiude il condizionale aperto più di recente |
 | `.proc` / `.endproc` | `.proc NOME` … `.endproc NOME` | prologo/epilogo automatico per procedure non-foglia a corpo lineare (§4.2.1) |
 | `.global` | `.global sym ...` | **esporta** un simbolo definito qui (compilazione separata, §2.5) |
 | `.extern` | `.extern sym ...` | **importa** un simbolo definito in un altro modulo (§2.5) |
@@ -788,6 +791,60 @@ distinti per unità di assemblaggio. Un file che include sé stesso è un no-op,
 una ricorsione.
 
 `tests/test_include.vasm` è il test mirato di entrambe le proprietà.
+
+#### 4.2.3 `.ifdef`: compilare via del codice, e perché non guarda le `.equ`
+
+Quattro direttive — `.ifdef`, `.ifndef`, `.else`, `.endif` — e un flag, `-D`:
+
+```asm
+.ifdef MARKS
+  start_mark SCHEDULER, SCAN      ; c'è solo se il kernel è strumentato
+.endif
+```
+
+```bash
+./build/vcpu_sim asm -D MARKS scheduler.vasm -o scheduler.vo   # con
+./build/vcpu_sim asm          scheduler.vasm -o scheduler.vo   # senza
+```
+
+`-D NOME` (o `-DNOME`) dichiara una **presenza**, non un valore: un nome è
+definito o non lo è. `-DNOME=valore` è **rifiutato** — definire anche una
+costante è un'altra funzione, e accettare la sintassi ignorando la metà dopo
+l'`=` sarebbe la peggiore delle tre uscite. Lo stesso vale per un nome che non
+è un identificatore (`-D a-b`): nessun `.ifdef` potrebbe mai scriverlo, quindi
+non scatterebbe mai e il build sarebbe sbagliato senza dire niente.
+
+Il flag sta su `asm` e sul percorso legacy a file singolo, come `-I`. Un nome
+non definito non è un errore: è la domanda a cui si risponde «no».
+
+I condizionali si **annidano**, e un `.ifdef` dentro un ramo compilato via resta
+compilato via qualunque cosa dica: il suo `.else` non può resuscitarlo.
+
+> **`.ifdef` interroga SOLO i nomi di `-D`, mai una costante `.equ`.** Gli
+> assembler classici fanno il contrario, e qui sarebbe una trappola: le `.equ`
+> si raccolgono **durante** il pass 1 e **in ordine**, quindi la stessa
+> `.ifdef VLMAX` risponderebbe «no» sopra la sua `.equ` e «sì» sotto — lo
+> stesso difetto silenzioso di una `.word` che riceve il nome di una costante.
+> Con i soli `-D` la risposta non dipende da **dove** è scritta la domanda, ed è
+> questa proprietà che permette al filtro di stare nel **lettore di righe**, cioè
+> prima di tutto il resto.
+
+Che il filtro stia lì ha una conseguenza che conviene sapere: una riga in un ramo
+compilato via **non esiste**. Non definisce un'etichetta, non definisce una
+costante, non avanza il puntatore dei dati, non finisce nel listato di
+`--emit-expanded`. Ed è lo stesso filtro per il percorso a file singolo e per
+`asm`: l'assembler legge il sorgente in un punto solo, quindi le due strade non
+possono divergere su cosa dice il sorgente.
+
+Quattro errori, tutti dichiarati invece che silenziosi: un `.else`/`.endif` senza
+`.ifdef`, un secondo `.else`, un condizionale ancora aperto alla fine di un file
+(anche di un `.vinc`: non può chiudersi in quello che lo include), e
+un'etichetta sulla stessa riga di un condizionale — che dovrebbe essere definita
+dalla riga che il filtro sta per togliere.
+
+`tests/test_ifdef.vasm` è il test mirato, e gira **due volte** con lo stesso
+sorgente: senza `-D` e con `-D MARKS`. Una sola delle due proverebbe che il
+filtro fa qualcosa, non che sceglie.
 
 ### 4.3 Manuale delle istruzioni
 
@@ -1045,6 +1102,16 @@ l'equivalente vettoriale di un `if` senza divergenza di flusso.
 
 L'assembler (`src/assembler.c`) traduce il sorgente `.vasm` in un array di
 strutture `Instr` decodificate. Lavora in **due passi**.
+
+### Passo 0 — il lettore di righe
+
+Prima dei due passi c'è il punto in cui una riga **entra** nell'assembler, ed è
+uno solo (`inc_next_line`): il passo 1 legge da lì e conserva per il passo 2 le
+righe di codice sopravvissute. Lì stanno le due cose che decidono *quale
+sorgente* si sta assemblando — la pila delle `.include` (§4.2.2) e il filtro dei
+condizionali (§4.2.3) — e starci in un punto solo è ciò che impedisce alle due
+passate, e ai due ingressi (file singolo e `asm`), di non essere d'accordo su
+cosa dice il sorgente.
 
 ### Passo 1 — raccolta simboli ed emissione dati
 

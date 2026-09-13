@@ -1,0 +1,82 @@
+; tests/test_ifdef.vasm — test mirato dell'assemblaggio condizionale.
+;
+; Verifica una proprieta' dell'ASSEMBLER, non un comportamento della macchina,
+; e non ha bisogno del link: gira in modalita' legacy a file singolo, come
+; test_include. La macchina serve solo a rendere osservabile quale ramo e'
+; sopravvissuto.
+;
+; QUESTO FILE E' UN TEST SOLO SE GIRA DUE VOLTE. Sorgente identico, due righe
+; nel CMakeLists: una con -D MARKS e una senza, due sequenze attese diverse.
+; Una sola delle due proverebbe che il filtro fa qualcosa, non che SCEGLIE.
+;
+; Il ramo morto non deve lasciare NIENTE dietro di se', e qui ogni verifica e'
+; scritta in modo che il difetto sia un errore di assemblaggio, non un numero
+; sbagliato da leggere a occhio:
+;
+;   costanti   MODE e LEVEL e SILENT sono definite in ENTRAMBI i rami. Se il
+;              ramo morto passasse: "duplicate constant MODE";
+;   etichette  'buf' idem, nella sezione dati: "duplicate label 'buf'";
+;   dati       l'indirizzo di 'tail' e' l'ultima cifra stampata, e si sposta di
+;              4 se la .word del ramo morto emette;
+;   codice     le due istruzioni dentro l'ultimo .ifdef ci sono o non ci sono,
+;              e si vedono nel numero di valori stampati.
+;
+; Il .ifdef annidato dentro il ramo MORTO e' la parte meno ovvia: le sue quattro
+; direttive devono essere CONTATE anche se nessuna riga in mezzo sopravvive,
+; altrimenti il suo .endif chiuderebbe quello esterno e la fine del file
+; sparirebbe in silenzio.
+;
+; Atteso, in ordine:  senza -D   2 21 1 222 8
+;                     con -D     1 11 0 7 111 8
+
+.ifdef MARKS
+  .equ MODE 1
+  .ifdef DEEP
+    .equ LEVEL 10
+  .else
+    .equ LEVEL 11        ; <- il ramo vivo con -D MARKS
+  .endif
+.else
+  .equ MODE 2
+  .ifdef DEEP
+    .equ LEVEL 20
+  .else
+    .equ LEVEL 21        ; <- il ramo vivo senza
+  .endif
+.endif
+
+; .ifndef e' la stessa domanda al contrario, e va provata a parte: scambiare i
+; due rami in silenzio darebbe gli stessi numeri sopra.
+.ifndef MARKS
+  .equ SILENT 1
+.else
+  .equ SILENT 0
+.endif
+
+  .data
+.ifdef MARKS
+buf:  .word 111
+.else
+buf:  .word 222
+.endif
+tail: .word 333          ; l'indirizzo di questa: 8, da entrambe le parti
+
+  .text
+
+main:
+  li r1, MODE
+  dumps r1
+  li r2, LEVEL
+  dumps r2
+  li r3, SILENT
+  dumps r3
+.ifdef MARKS
+  li r4, 7               ; codice, non una costante: c'e' solo con -D
+  dumps r4
+.endif
+  li r5, buf
+  lw r6, 0(r5)
+  dumps r6
+  li r7, tail            ; l'INDIRIZZO, non il contenuto
+  dumps r7
+  halt

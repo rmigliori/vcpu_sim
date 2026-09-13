@@ -1098,6 +1098,65 @@ int asm_add_include_dir(const char* dir)
   return 0;
 }
 
+// ---------------------------------------------------------------------------
+//  CONDITIONAL ASSEMBLY: .ifdef / .ifndef / .else / .endif, driven by -D.
+//
+//  The filter sits in inc_next_line(), which is the ONE place where a source
+//  line enters the assembler: pass 1 reads there and keeps the surviving code
+//  lines for pass 2, and that is true of assemble() and assemble_object()
+//  alike. So a line dropped here is invisible to everything downstream — it
+//  defines no label, no constant, no .proc body line, and does not reach the
+//  expanded listing — and the two passes cannot disagree about what the source
+//  says, by construction rather than by two filters kept in step.
+//
+//  .ifdef ASKS THE -D SYMBOLS ONLY, never a .equ. A .equ is collected DURING
+//  pass 1 and in order, so ".ifdef on a .equ" would answer differently
+//  depending on WHERE the question is written — the same silent trap as .word
+//  with a constant. Against -D alone the answer does not depend on the position
+//  of the question, which is exactly what lets the filter live in the reader.
+//
+//  -D NAME is PRESENCE, not a value. -DNAME=value would also define a constant,
+//  which is a different feature and not one that compiling instrumentation out
+//  needs; it is refused rather than half-honoured.
+// ---------------------------------------------------------------------------
+#define MAX_DEFINES 32
+#define MAX_COND    16
+
+// The -D set, global for the same reason as the -I list above.
+static char g_defines[MAX_DEFINES][64];
+static int  g_define_count;
+
+void asm_clear_defines(void)
+{
+  g_define_count = 0;
+}
+
+int asm_add_define(const char* name)
+{
+  if (g_define_count >= MAX_DEFINES) return -1;
+  snprintf(g_defines[g_define_count++], sizeof g_defines[0], "%s", name);
+  return 0;
+}
+
+static int asm_defined(const char* name)
+{
+  for (int i = 0; i < g_define_count; ++i)
+    if (strcmp(g_defines[i], name) == 0) return 1;
+  return 0;
+}
+
+// One open conditional. 'live' is what the ENCLOSING level said, kept so that
+// .else can flip this level without ever reviving a block that an outer .ifdef
+// had already compiled out.
+typedef struct
+{
+  int emit;       // lines at this level survive (enclosing live AND test held)
+  int live;       // the enclosing level was live
+  int seen_else;  // .else already used here
+  int inc_sp;     // include depth where the .ifdef was opened
+  int lineno;     // where it was opened, for the error message
+} CondLevel;
+
 // Per-assembly-unit include state: the open-file stack plus the set of files
 // already pulled in (canonical paths), which is what makes .include idempotent.
 typedef struct
@@ -1107,7 +1166,16 @@ typedef struct
   char  base_dir[400];
   char  seen[MAX_INC_SEEN][512];
   int   nseen;
+  CondLevel cond[MAX_COND];
+  int       ncond;
 } IncState;
+
+// Are the lines arriving right now part of the assembly? Outside every
+// conditional they are, which is the only state existing sources ever see.
+static int cond_live(const IncState* inc)
+{
+  return inc->ncond == 0 ? 1 : inc->cond[inc->ncond - 1].emit;
+}
 
 static void base_dir_of(const char* path, char* out, size_t sz)
 {
@@ -1157,11 +1225,111 @@ static int inc_begin(IncState* inc, FILE* top, const char* path, char* err, size
   return inc_remember(inc, canon, err, errsz);
 }
 
-static int inc_next_line(IncState* inc, char* line, size_t sz)
+// Recognise and act on one conditional directive. 'raw' is the source line as
+// read; it is not modified. Returns 1 if it was one (the caller then drops the
+// line), 0 if it was not, -1 on error (message in 'err').
+//
+// Every conditional is acted on whatever the current state is: inside a block
+// that is being compiled out, a nested .ifdef still has to be counted, or its
+// .endif would close the outer one and the rest of the file would vanish in
+// silence. Only the plain lines are dropped.
+static int cond_line(IncState* inc, const char* raw, int lineno,
+                     char* err, size_t errsz)
+{
+  char  work[512];
+  char* toks[8];
+  snprintf(work, sizeof work, "%s", raw);
+  int n = tokenize(work, toks, 8);
+  if (n == 0) return 0;
+
+  int    k   = 0;
+  size_t len = strlen(toks[0]);
+  int labelled = (len > 1 && toks[0][len - 1] == ':');
+  if (labelled) k = 1;
+  if (k >= n) return 0;
+
+  const char* d = toks[k];
+  int is_ifdef  = strcmp(d, ".ifdef")  == 0;
+  int is_ifndef = strcmp(d, ".ifndef") == 0;
+  int is_else   = strcmp(d, ".else")   == 0;
+  int is_endif  = strcmp(d, ".endif")  == 0;
+  if (!is_ifdef && !is_ifndef && !is_else && !is_endif) return 0;
+
+  // A label on a conditional would have to be defined by the very line the
+  // filter is about to drop. Refused out loud instead of disappearing with it.
+  if (labelled)
+  {
+    snprintf(err, errsz, "line %d: a label cannot share a line with '%s'", lineno, d);
+    return -1;
+  }
+
+  if (is_ifdef || is_ifndef)
+  {
+    if (k + 1 >= n) { snprintf(err, errsz, "line %d: %s needs a name", lineno, d); return -1; }
+    if (n > k + 2)  { snprintf(err, errsz, "line %d: %s takes one name, got %d", lineno, d, n - k - 1); return -1; }
+    if (inc->ncond >= MAX_COND)
+    { snprintf(err, errsz, "line %d: conditionals nested too deep", lineno); return -1; }
+
+    int hit = asm_defined(toks[k + 1]);
+    if (is_ifndef) hit = !hit;
+
+    int live = cond_live(inc);       // the enclosing level, read before the push
+
+    CondLevel* c = &inc->cond[inc->ncond++];
+    c->live      = live;
+    c->emit      = live && hit;
+    c->seen_else = 0;
+    c->inc_sp    = inc->sp;
+    c->lineno    = lineno;
+    return 1;
+  }
+
+  if (n > k + 1) { snprintf(err, errsz, "line %d: %s takes no argument", lineno, d); return -1; }
+
+  if (is_else)
+  {
+    if (inc->ncond == 0) { snprintf(err, errsz, "line %d: .else without .ifdef", lineno); return -1; }
+    CondLevel* c = &inc->cond[inc->ncond - 1];
+    if (c->seen_else)
+    { snprintf(err, errsz, "line %d: second .else for the .ifdef at line %d", lineno, c->lineno); return -1; }
+    c->seen_else = 1;
+    // 'live' is what keeps this an AND: inside a dead outer block 'emit' is 0
+    // on both sides, so flipping it must not turn the else-branch back on.
+    c->emit = c->live && !c->emit;
+    return 1;
+  }
+
+  if (inc->ncond == 0) { snprintf(err, errsz, "line %d: .endif without .ifdef", lineno); return -1; }
+  inc->ncond -= 1;
+  return 1;
+}
+
+// Read the next line of the assembly unit. '*lineno' counts PHYSICAL lines,
+// the ones compiled out included, so a message still points where the source
+// does. Returns 1 (line in 'line'), 0 at end of unit, -1 on error.
+static int inc_next_line(IncState* inc, char* line, size_t sz, int* lineno,
+                         char* err, size_t errsz)
 {
   while (inc->sp > 0)
   {
-    if (fgets(line, sz, inc->stk[inc->sp - 1])) return 1;
+    if (fgets(line, sz, inc->stk[inc->sp - 1]))
+    {
+      *lineno += 1;
+      int c = cond_line(inc, line, *lineno, err, errsz);
+      if (c < 0) return -1;
+      if (c > 0) continue;            // the directive itself never reaches pass 1
+      if (!cond_live(inc)) continue;  // a line inside a branch compiled out
+      return 1;
+    }
+    // A conditional opened in this file cannot be closed anywhere else: an
+    // .endif left behind in a .vinc would otherwise swallow its includer.
+    if (inc->ncond > 0 && inc->cond[inc->ncond - 1].inc_sp == inc->sp)
+    {
+      snprintf(err, errsz, "unterminated conditional: the .ifdef at line %d is "
+                           "still open at the end of the file",
+               inc->cond[inc->ncond - 1].lineno);
+      return -1;
+    }
     if (inc->sp == 1) return 0;      // leave the top-level file open for the caller
     fclose(inc->stk[inc->sp - 1]);
     inc->sp -= 1;
@@ -1265,9 +1433,9 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
   IncState inc;
   if (inc_begin(&inc, fp, path, err, errsz) != 0) { fclose(fp); return -1; }
 
-  while (inc_next_line(&inc, line, sizeof(line)))
+  int rc;
+  while ((rc = inc_next_line(&inc, line, sizeof(line), &lineno, err, errsz)) == 1)
   {
-    lineno += 1;
     char work[512];
     snprintf(work, sizeof(work), "%s", line);
 
@@ -1379,6 +1547,7 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
     g_code_lines[g_code_count] = strdup(joined);
     g_code_count += 1;
   }
+  if (rc < 0) { free_code_lines(); inc_cleanup(&inc); fclose(fp); return -1; }
 
   if (g_struct_active) { snprintf(err, errsz, "unterminated .struct '%s'", g_struct_name); free_code_lines(); fclose(fp); return -1; }
   if (g_proc_active) { snprintf(err, errsz, "unterminated .proc '%s'", g_proc_name); free_proc_body(); free_code_lines(); fclose(fp); return -1; }
@@ -1484,9 +1653,9 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
   if (inc_begin(&inc, fp, path, err, errsz) != 0) goto fail;
 
   // ---- Pass 1: symbols, data image, bindings, keep code lines -----------
-  while (inc_next_line(&inc, line, sizeof(line)))
+  int rc;
+  while ((rc = inc_next_line(&inc, line, sizeof(line), &lineno, err, errsz)) == 1)
   {
-    lineno += 1;
     char work[512];
     snprintf(work, sizeof(work), "%s", line);
 
@@ -1601,6 +1770,7 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
     g_code_lines[g_code_count] = strdup(joined);
     g_code_count += 1;
   }
+  if (rc < 0) goto fail;
 
   // ---- Apply .global / .extern to the symbol table ----------------------
   if (g_struct_active) { snprintf(err, errsz, "unterminated .struct '%s'", g_struct_name); goto fail; }

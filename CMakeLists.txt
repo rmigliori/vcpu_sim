@@ -145,6 +145,26 @@ vasm_check(include    MODE DUMPS EXPECT "24 16 16 512 1"
 vasm_check(epsw       MODE DUMPS EXPECT "1 0 0 7"
            SOURCE ${CMAKE_SOURCE_DIR}/tests/test_epsw.vasm)
 
+# test_ifdef — l'assemblaggio condizionale (13/09/2026, §3.44).
+#
+# DUE RIGHE, UN SORGENTE SOLO, ed e' il punto: un test solo proverebbe che il
+# filtro fa qualcosa, non che SCEGLIE. La differenza fra le due sequenze attese
+# e' tutta prodotta dal `-D MARKS` della seconda.
+#
+# Il -D sta in IFLAGS e non in ARGS perche' le due cose vanno in due momenti
+# diversi, come gli -I: questo lo vuole l'ASSEMBLER, ARGS lo vuole la macchina.
+# Qui la distinzione non e' una sottigliezza — e' l'intera cosa in prova.
+#
+# Sta in modalita' legacy a file singolo di proposito, come test_include: il
+# soggetto e' l'assembler, e il percorso `asm`/`ld` passa per lo stesso filtro
+# (inc_next_line e' unico per costruzione), quindi linkarlo non proverebbe
+# niente di piu'.
+vasm_check(ifdef_off  MODE DUMPS EXPECT "2 21 1 222 8"
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_ifdef.vasm)
+vasm_check(ifdef_on   MODE DUMPS EXPECT "1 11 0 7 111 8"
+           IFLAGS -D MARKS
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_ifdef.vasm)
+
 # test_kbd — il primo device del progetto, letto in polling (11/09/2026).
 #
 # I cinque numeri sono derivabili a mano dalla traccia: 'a'+'b'+'c' = 294, e
