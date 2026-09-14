@@ -1061,6 +1061,205 @@ static void join_tokens(char** toks, int start, int n, char* out, size_t outsz)
 }
 
 // ---------------------------------------------------------------------------
+//  .macro / .endmacro: one definition of a sequence, expanded where it is used.
+//
+//  WHY IT EXISTS (14/09/2026). The marker's tags were eleven hand-written
+//  copies of the same three instructions, each with its own scratch register
+//  picked by eyeballing liveness -- a silent corruption waiting to happen -- and
+//  each wrapped in its own .ifdef MARKS at the point of use.
+//
+//  A PROCEDURE WOULD BE THE WRONG SHAPE. A probe is three instructions; call +
+//  ret costs more than what it measures, and an empty stub in the production
+//  build is not free: measured on test_tmgr, 158 tag executions would cost ~1%
+//  of the run and ~5% of the published ready-to-running latency, paid by code
+//  that does nothing. It would also kill the invariant fingerprint.sh proves:
+//  that the clean programs are byte-identical, i.e. the kernel you measure is
+//  the kernel you ship.
+//
+//  A macro is the shape that keeps both: one definition, and nothing at all in
+//  the binary when it expands to an empty body. The "empty library / full
+//  library" idea lands as TWO DEFINITIONS of the same macro chosen by one
+//  .ifdef in marker.vinc -- the call sites then carry no conditional.
+//
+//  THE RULES, and every one of them is a loud error rather than a surprise:
+//    - a body holds plain instruction lines only. No labels (two expansions
+//      would define the same symbol twice), no directives, no nested .macro,
+//      and no macro calling another macro. Same restriction .proc already has,
+//      for the same reason: the body bypasses the label/directive dispatch and
+//      goes straight to the code lines.
+//    - an EMPTY body is legal, and is the whole point of the disabled variant.
+//    - a call passes exactly as many arguments as the definition has names.
+//    - substitution is by WHOLE TOKEN: a parameter named 'ch' never rewrites
+//      the 'ch' inside 'CHAR.ch'.
+//    - .text only, like .proc.
+// ---------------------------------------------------------------------------
+#define MAX_MACROS      32
+#define MAX_MACRO_PARMS  8
+#define MAX_MACRO_BODY  16
+
+typedef struct
+{
+  char  name[64];
+  char  parm[MAX_MACRO_PARMS][32];
+  int   nparm;
+  char* body[MAX_MACRO_BODY];
+  int   nbody;
+} Macro;
+
+static Macro g_macros[MAX_MACROS];
+static int   g_macro_count;
+static int   g_macro_active;          // a .macro definition is open
+static int   g_macro_line;            // where it was opened, for the error
+
+static void free_macros(void)
+{
+  for (int i = 0; i < g_macro_count; ++i)
+    for (int j = 0; j < g_macros[i].nbody; ++j) free(g_macros[i].body[j]);
+  g_macro_count = 0;
+  g_macro_active = 0;
+}
+
+static Macro* find_macro(const char* name)
+{
+  for (int i = 0; i < g_macro_count; ++i)
+    if (strcmp(g_macros[i].name, name) == 0) return &g_macros[i];
+  return NULL;
+}
+
+// Is 'c' part of an identifier? Used to make substitution whole-token: the
+// parameter 'ch' must not rewrite 'CHAR.ch' nor the 'ch' of 'chunk'.
+static int ident_char(char c)
+{
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+         (c >= '0' && c <= '9') || c == '_';
+}
+
+// One body line with the parameters replaced by the call's arguments.
+static int macro_substitute(const Macro* m, char** args, const char* src,
+                            char* out, size_t outsz, char* err, size_t errsz)
+{
+  size_t o = 0;
+  for (size_t i = 0; src[i];)
+  {
+    if (ident_char(src[i]) && (i == 0 || !ident_char(src[i - 1])))
+    {
+      size_t len = 0;
+      while (ident_char(src[i + len])) ++len;
+      int hit = -1;
+      for (int p = 0; p < m->nparm; ++p)
+        if (strlen(m->parm[p]) == len && strncmp(src + i, m->parm[p], len) == 0)
+        { hit = p; break; }
+      const char* rep = (hit >= 0) ? args[hit] : NULL;
+      size_t rl = rep ? strlen(rep) : len;
+      if (o + rl >= outsz)
+      { snprintf(err, errsz, "macro '%s': expanded line too long", m->name); return -1; }
+      if (rep) memcpy(out + o, rep, rl);
+      else     memcpy(out + o, src + i, rl);
+      o += rl; i += len;
+      continue;
+    }
+    if (o + 1 >= outsz)
+    { snprintf(err, errsz, "macro '%s': expanded line too long", m->name); return -1; }
+    out[o++] = src[i++];
+  }
+  out[o] = '\0';
+  return 0;
+}
+
+// The ".macro" / ".endmacro" directives themselves. Returns 1 handled, 0 not
+// mine, -1 error.
+// La DEFINIZIONE non emette niente, quindi non chiede .text: sta in un .vinc,
+// incluso prima che il sorgente apra una sezione. E' la CHIAMATA che deve
+// stare nel testo, e quella lo controlla.
+static int handle_macro_directive(const char* first, char** toks, int k, int n,
+                                  int lineno, char* err, size_t errsz)
+{
+  if (strcmp(first, ".macro") == 0)
+  {
+    if (g_macro_active)
+    { snprintf(err, errsz, "line %d: nested .macro (the one at line %d is still open)", lineno, g_macro_line); return -1; }
+    if (g_proc_active)
+    { snprintf(err, errsz, "line %d: .macro inside .proc", lineno); return -1; }
+    if (n - k < 2) { snprintf(err, errsz, "line %d: .macro needs a name", lineno); return -1; }
+    if (g_macro_count >= MAX_MACROS)
+    { snprintf(err, errsz, "line %d: too many macros (max %d)", lineno, MAX_MACROS); return -1; }
+    if (find_macro(toks[k + 1]))
+    { snprintf(err, errsz, "line %d: macro '%s' is already defined", lineno, toks[k + 1]); return -1; }
+    Macro* m = &g_macros[g_macro_count++];
+    memset(m, 0, sizeof *m);
+    snprintf(m->name, sizeof m->name, "%s", toks[k + 1]);
+    for (int i = k + 2; i < n; ++i)
+    {
+      if (m->nparm >= MAX_MACRO_PARMS)
+      { snprintf(err, errsz, "line %d: macro '%s' has too many parameters (max %d)", lineno, m->name, MAX_MACRO_PARMS); return -1; }
+      snprintf(m->parm[m->nparm++], sizeof m->parm[0], "%s", toks[i]);
+    }
+    g_macro_active = 1;
+    g_macro_line = lineno;
+    return 1;
+  }
+  if (strcmp(first, ".endmacro") == 0)
+  {
+    // Reached only with no .macro open: handle_macro_body_line() eats it while
+    // a definition is being read.
+    snprintf(err, errsz, "line %d: .endmacro without .macro", lineno);
+    return -1;
+  }
+  return 0;
+}
+
+// Every physical line while a .macro body is being read. 1 consumed, 0 no
+// definition open, -1 error.
+static int handle_macro_body_line(const char* raw_line, char** toks, int n,
+                                  int lineno, char* err, size_t errsz)
+{
+  if (!g_macro_active) return 0;
+  Macro* m = &g_macros[g_macro_count - 1];
+
+  size_t len0 = strlen(toks[0]);
+  int k0 = (len0 > 1 && toks[0][len0 - 1] == ':') ? 1 : 0;
+
+  if (k0 < n && strcmp(toks[k0], ".endmacro") == 0)
+  {
+    if (k0 != 0) { snprintf(err, errsz, "line %d: a label on .endmacro", lineno); return -1; }
+    g_macro_active = 0;
+    return 1;
+  }
+  if (k0 != 0)
+  { snprintf(err, errsz, "line %d: labels are not allowed inside .macro '%s': two expansions would define the same symbol twice", lineno, m->name); return -1; }
+  if (toks[0][0] == '.')
+  { snprintf(err, errsz, "line %d: directives are not allowed inside .macro '%s'", lineno, m->name); return -1; }
+  if (find_macro(toks[0]))
+  { snprintf(err, errsz, "line %d: macro '%s' calls macro '%s': a body holds instructions only", lineno, m->name, toks[0]); return -1; }
+  if (m->nbody >= MAX_MACRO_BODY)
+  { snprintf(err, errsz, "line %d: macro '%s' is too long (max %d lines)", lineno, m->name, MAX_MACRO_BODY); return -1; }
+  m->body[m->nbody++] = strdup(raw_line);
+  return 1;
+}
+
+// A call site, after the optional label has been dealt with. 1 expanded,
+// 0 not a macro, -1 error.
+static int handle_macro_call(char** toks, int k, int n, int section,
+                             int lineno, char* err, size_t errsz)
+{
+  Macro* m = find_macro(toks[k]);
+  if (!m) return 0;
+  if (section != SEC_TEXT)
+  { snprintf(err, errsz, "line %d: macro '%s' used outside .text", lineno, m->name); return -1; }
+  int nargs = n - k - 1;
+  if (nargs != m->nparm)
+  { snprintf(err, errsz, "line %d: macro '%s' wants %d argument%s, got %d", lineno, m->name, m->nparm, m->nparm == 1 ? "" : "s", nargs); return -1; }
+  for (int i = 0; i < m->nbody; ++i)
+  {
+    char line[512];
+    if (macro_substitute(m, toks + k + 1, m->body[i], line, sizeof line, err, errsz) != 0)
+      return -1;
+    if (emit_synth_line(line, err, errsz) != 0) return -1;
+  }
+  return 1;
+}
+
+// ---------------------------------------------------------------------------
 //  .include support: a small stack of open source files. The bottom of the
 //  stack is the top-level file (left open so the caller's fclose(fp) frees it);
 //  nested includes are closed on EOF.
@@ -1410,6 +1609,7 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
   g_const_count   = 0;
   g_struct_active = 0;
   g_proc_active   = 0;
+  free_macros();
   g_proc_body_count = 0;
 
   FILE* fp = fopen(path, "r");
@@ -1441,6 +1641,10 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
 
     int n = tokenize(work, toks, 64);
     if (n == 0) continue;
+
+    int hm = handle_macro_body_line(line, toks, n, lineno, err, errsz);
+    if (hm < 0) { inc_cleanup(&inc); fclose(fp); return -1; }
+    if (hm == 1) continue;
 
     int hb = handle_proc_body_line(line, toks, n, lineno, err, errsz);
     if (hb < 0) { inc_cleanup(&inc); fclose(fp); return -1; }
@@ -1528,6 +1732,11 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
           if (h < 0) { fclose(fp); return -1; }
           if (h == 0)
           {
+            h = handle_macro_directive(first, toks, k, n, lineno, err, errsz);
+          }
+          if (h < 0) { fclose(fp); return -1; }
+          if (h == 0)
+          {
             snprintf(err, errsz, "line %d: unknown directive '%s'", lineno, first);
             fclose(fp); return -1;
           }
@@ -1535,6 +1744,12 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
       }
       continue;
     }
+
+    // Una CHIAMATA a macro: qui e non prima, cosi' un'etichetta davanti e' gia'
+    // stata definita al g_code_count giusto e la macro si espande sotto.
+    int hc = handle_macro_call(toks, k, n, section, lineno, err, errsz);
+    if (hc < 0) { fclose(fp); return -1; }
+    if (hc == 1) continue;
 
     // A text instruction: store its tokens (sans label) for pass 2.
     if (g_code_count >= MAX_INSTR)
@@ -1551,6 +1766,7 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
 
   if (g_struct_active) { snprintf(err, errsz, "unterminated .struct '%s'", g_struct_name); free_code_lines(); fclose(fp); return -1; }
   if (g_proc_active) { snprintf(err, errsz, "unterminated .proc '%s'", g_proc_name); free_proc_body(); free_code_lines(); fclose(fp); return -1; }
+  if (g_macro_active) { snprintf(err, errsz, "unterminated .macro '%s' opened at line %d", g_macros[g_macro_count-1].name, g_macro_line); free_macros(); free_code_lines(); fclose(fp); return -1; }
 
   // ---- Pass 2: encode instructions with resolved symbols ----------------
   for (int i = 0; i < g_code_count; ++i)
@@ -1625,6 +1841,7 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
   g_const_count   = 0;
   g_struct_active = 0;
   g_proc_active   = 0;
+  free_macros();
   g_proc_body_count = 0;
 
   FILE* fp = fopen(path, "r");
@@ -1661,6 +1878,10 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
 
     int n = tokenize(work, toks, 64);
     if (n == 0) continue;
+
+    int hm = handle_macro_body_line(line, toks, n, lineno, err, errsz);
+    if (hm < 0) { inc_cleanup(&inc); fclose(fp); return -1; }
+    if (hm == 1) continue;
 
     int hb = handle_proc_body_line(line, toks, n, lineno, err, errsz);
     if (hb < 0) goto fail;
@@ -1752,6 +1973,11 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
           if (h < 0) goto fail;
           if (h == 0)
           {
+            h = handle_macro_directive(first, toks, k, n, lineno, err, errsz);
+          }
+          if (h < 0) goto fail;
+          if (h == 0)
+          {
             snprintf(err, errsz, "line %d: unknown directive '%s'", lineno, first);
             goto fail;
           }
@@ -1759,6 +1985,12 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
       }
       continue;
     }
+
+    // Una CHIAMATA a macro: qui e non prima, cosi' un'etichetta davanti e' gia'
+    // stata definita al g_code_count giusto e la macro si espande sotto.
+    int hc = handle_macro_call(toks, k, n, section, lineno, err, errsz);
+    if (hc < 0) goto fail;
+    if (hc == 1) continue;
 
     if (g_code_count >= MAX_INSTR)
     {
@@ -1775,6 +2007,7 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
   // ---- Apply .global / .extern to the symbol table ----------------------
   if (g_struct_active) { snprintf(err, errsz, "unterminated .struct '%s'", g_struct_name); goto fail; }
   if (g_proc_active) { snprintf(err, errsz, "unterminated .proc '%s'", g_proc_name); goto fail; }
+  if (g_macro_active) { snprintf(err, errsz, "unterminated .macro '%s' opened at line %d", g_macros[g_macro_count-1].name, g_macro_line); goto fail; }
   for (int i = 0; i < nglobal; ++i)
   {
     int idx = find_symbol_idx(globals[i]);

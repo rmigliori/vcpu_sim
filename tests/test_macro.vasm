@@ -1,0 +1,66 @@
+; test_macro.vasm — test mirato: .macro/.endmacro (docs/stato-lavori.md §3.65).
+;
+; Le macro sono nate per il marcatore: undici copie a mano delle stesse tre
+; istruzioni, e la necessita' di una forma che si espanda in ZERO quando la
+; strumentazione e' spenta -- perche' fingerprint.sh dimostra che i programmi
+; puliti sono identici byte per byte, e una procedura vuota non lo e'.
+;
+; Qui si provano le quattro cose che possono rompersi in silenzio:
+;
+;   1. la SOSTITUZIONE e' per token intero. Un parametro che si chiama `a` non
+;      deve riscrivere la `a` dentro un altro identificatore -- se lo facesse,
+;      `vale_a` diventerebbe `vale_r1` e il simbolo non esisterebbe;
+;   2. un corpo VUOTO si espande in niente. E' la meta' spenta della coppia, ed
+;      e' il caso che giustifica l'intera scelta contro le procedure;
+;   3. la stessa macro usata DUE VOLTE da due espansioni indipendenti, coi
+;      registri che il chiamante sceglie;
+;   4. un'ETICHETTA davanti a una chiamata cade dove deve, cioe' sulla prima
+;      istruzione dell'espansione e non dopo.
+;
+; I numeri sono tutti derivabili a mano, ed e' voluto: un test del linguaggio
+; che dipendesse dai cicli misurerebbe la macchina invece dell'assembler.
+
+  .text
+  .global main
+
+.equ vale_a  70          ; il nome contiene 'a': il parametro non deve toccarlo
+
+; Tre istruzioni, due parametri e due registri d'appoggio scelti dal chiamante:
+; e' la forma di MARK_OPEN.
+.macro SOMMA dst, k, tmp
+  li dst, k
+  li tmp, 5
+  add dst, dst, tmp
+.endmacro
+
+; Corpo vuoto: si espande in ZERO istruzioni.
+.macro NIENTE x, y
+.endmacro
+
+main:
+  li r14, 4096
+
+  SOMMA r1, 10, r2       ; -> r1 = 15
+  NIENTE r9, 99          ; -> niente, e r9 resta intatto
+  li r9, 42
+  NIENTE r9, 99
+  SOMMA r3, 20, r4       ; -> r3 = 25, e non disturba r1
+
+  ; la sostituzione per token intero: `vale_a` deve restare `vale_a`, non
+  ; diventare `vale_r5` per via del parametro chiamato `a`.
+  SOMMA r5, vale_a, r6   ; -> r5 = 75
+
+  ; un'etichetta davanti a una chiamata: il salto deve cadere sulla PRIMA
+  ; istruzione dell'espansione. Se cadesse dopo, r7 resterebbe 999.
+  li r7, 999
+  j qui
+  li r7, 888             ; mai eseguita
+qui:
+  SOMMA r7, 30, r10      ; -> r7 = 35
+
+  dumps r1               ; atteso 15
+  dumps r3               ; atteso 25
+  dumps r5               ; atteso 75
+  dumps r7               ; atteso 35
+  dumps r9               ; atteso 42 — la macro vuota non lo ha toccato
+  halt

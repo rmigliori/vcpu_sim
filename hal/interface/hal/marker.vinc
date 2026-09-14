@@ -118,3 +118,111 @@
 .equ MARKD_CH5    0x100194
 .equ MARKD_CH6    0x100198
 .equ MARKD_CH7    0x10019C
+
+; ===========================================================================
+;  LE MACRO DEL MARCATORE (14/09/2026, §3.65)
+;
+;  Fino a oggi ogni tag era scritto a mano al punto d'uso: undici copie delle
+;  stesse tre istruzioni, ognuna col suo registro d'appoggio scelto guardando la
+;  liveness. Adesso la forma sta scritta qui una volta sola.
+;
+;  --- PERCHE' MACRO E NON PROCEDURE ---
+;  Una procedura sarebbe la forma naturale -- una libreria vuota per il codice di
+;  produzione, una piena per quello strumentato, al prezzo di una call e un ret.
+;  Il prezzo pero' e' misurato, non teorico: su test_tmgr sono 158 esecuzioni di
+;  tag, cioe' ~1% della corsa e ~5% del cammino "pronto -> gira" che
+;  scheduler-facts.md §6.1 pubblica -- pagati dal binario DI PRODUZIONE per non
+;  fare niente. E morirebbe l'invariante che tools/fingerprint.sh dimostra a ogni
+;  sessione: i programmi puliti sono IDENTICI BYTE PER BYTE, cioe' il kernel che
+;  misuri e' il kernel che spedisci.
+;
+;  La macro prende tutto: una definizione sola, e con il corpo vuoto si espande
+;  in ZERO istruzioni. L'idea "una vuota e una piena" e' qui sotto, scelta a
+;  compile-time invece che a link-time.
+;
+;  --- DUE FAMIGLIE, PERCHE' SONO DUE COSE ---
+;  MARK_*  emette SEMPRE. E' per il codice la cui misura e' parte di cio' che il
+;          programma E': test_events esiste per misurare il tempo di risposta a
+;          un tasto, e senza i suoi tag non misurerebbe niente.
+;  DBG_*   emette SOLO nella configurazione strumentata (-D MARKS). E' per il
+;          kernel e per l'HAL, dove la strumentazione deve sparire dal prodotto.
+;
+;  Distinguerle e' il motivo per cui il punto d'uso non ha piu' nessun `.ifdef`:
+;  la domanda "questo tag sopravvive in produzione?" ha una risposta nel NOME.
+;
+;  --- IL CONTRATTO ---
+;  `tmp` e' un registro che la macro SPORCA, e lo sceglie il chiamante perche'
+;  solo lui sa chi e' vivo. Non e' una comodita': la chiusura dentro ctx_restore
+;  gira quando ogni registro porta gia' un valore del task, e l'unico libero e'
+;  quello che la riga dopo ricarica. Una macro che scegliesse da se' lo
+;  corromperebbe.
+;
+;  Aprire costa TRE istruzioni, chiudere DUE. Non una: la chiusura da una sola
+;  vale se il registro con l'indirizzo e' sopravvissuto all'intervallo, e in
+;  questo progetto non succede in nessuno dei cinque siti.
+; ===========================================================================
+
+; --- SEMPRE: la misura e' parte del programma ---
+.macro MARK_OPEN ch, mk, tmp, tmp2
+  li tmp, ch
+  li tmp2, mk
+  sw tmp2, 0(tmp)
+.endmacro
+
+.macro MARK_CLOSE ch, tmp
+  li tmp, ch
+  sw r0, 0(tmp)
+.endmacro
+
+; Un ISTANTE, non una durata: un canale dichiarato `event` in marks.conf. Si
+; scrive e basta, non c'e' niente da chiudere.
+.macro MARK_EVENT ch, mk, tmp, tmp2
+  li tmp, ch
+  li tmp2, mk
+  sw tmp2, 0(tmp)
+.endmacro
+
+; ARMA il porto dati: il valore che la PROSSIMA marca su quel canale si portera'
+; dietro. `val` e' un registro, non una costante.
+.macro MARK_DATA chd, val, tmp
+  li tmp, chd
+  sw val, 0(tmp)
+.endmacro
+
+.ifdef MARKS
+
+; --- SOLO STRUMENTATA: in produzione questi non esistono ---
+.macro DBG_OPEN ch, mk, tmp, tmp2
+  li tmp, ch
+  li tmp2, mk
+  sw tmp2, 0(tmp)
+.endmacro
+.macro DBG_CLOSE ch, tmp
+  li tmp, ch
+  sw r0, 0(tmp)
+.endmacro
+.macro DBG_EVENT ch, mk, tmp, tmp2
+  li tmp, ch
+  li tmp2, mk
+  sw tmp2, 0(tmp)
+.endmacro
+.macro DBG_DATA chd, val, tmp
+  li tmp, chd
+  sw val, 0(tmp)
+.endmacro
+
+.else
+
+; LE STESSE QUATTRO, VUOTE: zero istruzioni, zero byte, impronta del programma
+; pulito immutata. Che sia una definizione vuota invece di una libreria vuota e'
+; precisamente cio' che la rende gratuita.
+.macro DBG_OPEN ch, mk, tmp, tmp2
+.endmacro
+.macro DBG_CLOSE ch, tmp
+.endmacro
+.macro DBG_EVENT ch, mk, tmp, tmp2
+.endmacro
+.macro DBG_DATA chd, val, tmp
+.endmacro
+
+.endif

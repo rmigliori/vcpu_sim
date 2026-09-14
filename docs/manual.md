@@ -582,6 +582,7 @@ loop:   setvl r4, r3      ; 'loop' = indice di questa istruzione
 | `.else` | `.else` | l'altro ramo del `.ifdef`/`.ifndef` aperto |
 | `.endif` | `.endif` | chiude il condizionale aperto più di recente |
 | `.proc` / `.endproc` | `.proc NOME` … `.endproc NOME` | prologo/epilogo automatico per procedure non-foglia a corpo lineare (§4.2.1) |
+| `.macro` / `.endmacro` | `.macro NOME p1, p2` … `.endmacro` | una sequenza definita una volta ed **espansa** dove la si nomina; il corpo può essere **vuoto**, e allora non emette niente (§4.2.4) |
 | `.global` | `.global sym ...` | **esporta** un simbolo definito qui (compilazione separata, §2.5) |
 | `.extern` | `.extern sym ...` | **importa** un simbolo definito in un altro modulo (§2.5) |
 
@@ -848,6 +849,67 @@ dalla riga che il filtro sta per togliere.
 `tests/test_ifdef.vasm` è il test mirato, e gira **due volte** con lo stesso
 sorgente: senza `-D` e con `-D MARKS`. Una sola delle due proverebbe che il
 filtro fa qualcosa, non che sceglie.
+
+#### 4.2.4 `.macro`: una sequenza scritta una volta, e la variante che non c'è
+
+```asm
+.macro SOMMA dst, k, tmp
+  li dst, k
+  li tmp, 5
+  add dst, dst, tmp
+.endmacro
+
+  SOMMA r1, 10, r2        ; -> li r1, 10 / li r2, 5 / add r1, r1, r2
+```
+
+Il corpo viene **espanso** dove la macro è nominata, con i parametri sostituiti
+dagli argomenti della chiamata. La sostituzione è per **token intero**: un
+parametro che si chiama `a` non riscrive la `a` dentro `vale_a`.
+
+**Un corpo vuoto è legale, e si espande in zero istruzioni.** Non è un caso
+limite: è il motivo per cui la direttiva esiste. Due definizioni della stessa
+macro dentro un `.ifdef` — una piena e una vuota — danno un tag che nel
+programma strumentato c'è e in quello di produzione **non lascia un byte**:
+
+```asm
+.ifdef MARKS
+.macro DBG_CLOSE ch, tmp
+  li tmp, ch
+  sw r0, 0(tmp)
+.endmacro
+.else
+.macro DBG_CLOSE ch, tmp
+.endmacro
+.endif
+```
+
+Al punto d'uso non resta nessun condizionale, e `tools/fingerprint.sh` continua
+a dimostrare che i programmi puliti sono identici byte per byte. È la forma che
+il marcatore usa (`hal/marker.vinc`), scelta contro una coppia di **procedure**
+vuota/piena: una `call` più un `ret` costerebbero più di ciò che la sonda misura
+e li pagherebbe il binario di produzione (misurato: ~1% della corsa, ~5% del
+cammino di latenza pubblicato in `scheduler-facts.md` §6.1).
+
+Le regole, e ognuna è un errore rumoroso invece di una sorpresa:
+
+- il corpo contiene **solo istruzioni semplici**. Niente etichette — due
+  espansioni definirebbero lo stesso simbolo due volte — niente direttive,
+  niente `.macro` annidata, e nessuna macro che ne chiama un'altra. È la stessa
+  restrizione di `.proc`, per la stessa ragione: il corpo scavalca il normale
+  smistamento di etichette e direttive;
+- la chiamata passa **esattamente** tanti argomenti quanti sono i parametri;
+- una `.macro` non chiusa è un errore, e il messaggio dice a che riga era aperta;
+- la **definizione** può stare ovunque (non emette niente, quindi vive bene in
+  un `.vinc` incluso prima di `.text`); la **chiamata** deve stare nel testo.
+
+Un'etichetta davanti a una chiamata cade sulla **prima** istruzione
+dell'espansione.
+
+`tests/test_macro.vasm` è il test mirato: sostituzione per token intero, corpo
+vuoto, due espansioni indipendenti della stessa macro e l'etichetta davanti a
+una chiamata. I cinque numeri attesi sono tutti derivabili a mano — un test del
+linguaggio che dipendesse dai cicli misurerebbe la macchina invece
+dell'assembler.
 
 ### 4.3 Manuale delle istruzioni
 
