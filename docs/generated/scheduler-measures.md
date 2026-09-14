@@ -41,7 +41,7 @@
 | `mailbox` | 288 | 0 | 639 | 6,39 µs |
 | `semaphore` | 3516 | 0 | 7288 | 72,9 µs |
 | `mutex` | 3434 | 0 | 7143 | 71,4 µs |
-| `tmgr` | 21925 | 0 | 49729 | 497,3 µs |
+| `tmgr` | 22216 | 0 | 49834 | 498,3 µs |
 | `coop` | 4866 | 0 | 10531 | 105,3 µs |
 | `events` | 9265 | 0 | 18767 | 187,7 µs |
 | `vectors` | 92628 | 43712 | 159568 | 1,60 ms |
@@ -79,7 +79,7 @@ silenzio.
 | `mailbox` | DUMPS | `0 1 2 11 22 0 33 0 0` | — |
 | `semaphore` | DUMPS | `123456 2 1 -6` | — |
 | `mutex` | DUMPS | `0 0 1 1 1` | — |
-| `tmgr` | DUMPS | `5 0 2566` | — |
+| `tmgr` | DUMPS | `5 0 2324` | — |
 | `coop` | DUMPS | `0 5 5 5 0` | — |
 | `events` | DUMPS | `0 5 495 5 718` | `--kbd 2000:a,6000:b,10000:c,14000:d,18000:e` |
 | `vectors` | DUMPS | `0 0 20 19 39` | — |
@@ -156,9 +156,9 @@ Un programma che non compare non ha prodotto una traccia leggibile.
 
 | proprietario | cicli | quota |
 |---|---:|---:|
-| idle | 26860 | 54.0% |
-| tmgr | 11436 | 23.0% |
-| ISR | 5675 | 11.4% |
+| idle | 24440 | 49.0% |
+| tmgr | 12833 | 25.8% |
+| ISR | 6803 | 13.7% |
 | A | 4375 | 8.8% |
 | boot | 1383 | 2.8% |
 

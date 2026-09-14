@@ -177,6 +177,7 @@ vasm_check(chain MODE DUMPS PROGRAM test_chain
 vasm_object(t_tmgr SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_tmgr.vasm
                       INTERFACES vinc_queue vinc_tcb vinc_mailbox vinc_message
                                  vinc_timeout vinc_timeout_manager vinc_hal
+                               vinc_pool
                       CONFIGS marks)
 
 vasm_program(test_tmgr OBJECTS t_tmgr
@@ -184,7 +185,7 @@ vasm_program(test_tmgr OBJECTS t_tmgr
                   lib_timeout)
 
 vasm_check(tmgr MODE DUMPS PROGRAM test_tmgr
-           EXPECT "5 0 2566")
+           EXPECT "5 0 2324")
 
 # ---------------------------------------------------------------------------
 #  test_tmgr_marks — LO STESSO PROGRAMMA, COL KERNEL STRUMENTATO (13/09/2026).
@@ -227,6 +228,7 @@ vasm_program(test_tmgr_marks OBJECTS t_tmgr
 #    2491  + la finestra LATENCY, che e' la piu' cara finora (14/09/2026)
 #    2458  + la finestra HALSW, dentro ctx_restore (14/09/2026)
 #    2519  i tag diventano UN'ISTRUZIONE, `mark` (14/09/2026)
+#    2274  il risveglio del gestore viene dal POOL (14/09/2026)
 #
 #  L'ULTIMO GRADINO E' UNA CORREZIONE, e vale la pena leggerlo al contrario.
 #  Il commento del 13/09 diceva che quelle tre istruzioni erano "una volta
@@ -247,6 +249,17 @@ vasm_program(test_tmgr_marks OBJECTS t_tmgr
 #  tre istruzioni che si pagano anche quando la risposta e' no. Aprire e
 #  chiudere costa quanto le altre; e' la DOMANDA a costare, ed e' il prezzo di
 #  misurare una cosa che comincia in una routine e finisce in un'altra.
+#
+#  L'ULTIMO GRADINO NON E' UN TAG, ed e' il primo che non lo e': il messaggio di
+#  tick ha smesso di essere uno statico coalescente ed e' diventato un buffer del
+#  pool (§3.70). Costa un alloc + un free per ogni tick, sul percorso dell'ISR --
+#  245 giri d'idle, il prezzo piu' alto che questo programma abbia mai pagato per
+#  una singola decisione. Sta in questo elenco perche' il criterio e' lo stesso:
+#  un costo dichiarato e' un costo che qualcuno rivede.
+#
+#  Si compra una cosa sola, e va detta perche' non e' velocita': la profondita'
+#  della coda del gestore diventa LEGGIBILE. Col coalescing "e' rimasto indietro
+#  di tre tick" e "ha tenuto il passo" davano lo stesso identico stato.
 #
 #  HALSW costa 33 giri d'idle, quasi quanto LATENCY, e per una ragione
 #  parente: sta in `ctx_restore`, che gira a OGNI commutazione -- ma senza
@@ -269,7 +282,7 @@ vasm_program(test_tmgr_marks OBJECTS t_tmgr
 #  tocca registri, quindi la chiusura di HALSW e' scesa fino a ridosso della
 #  `reti`. Il confine non misurato della latenza passa da 11 cicli a 1.
 vasm_check(tmgr_marks MODE DUMPS PROGRAM test_tmgr_marks
-           EXPECT "5 0 2519")
+           EXPECT "5 0 2274")
 
 # ---------------------------------------------------------------------------
 #  test_semaphore — il semaforo contatore, e l'INSERIMENTO ORDINATO di §13.6.
@@ -465,3 +478,64 @@ vasm_program(test_vectors OBJECTS t_vectors LINK lib_kernel)
 
 vasm_check(vectors MODE DUMPS PROGRAM test_vectors
            EXPECT "0 0 20 19 39")
+
+# ---------------------------------------------------------------------------
+#  test_mondo — TUTTO INSIEME, E CON DUE SORGENTI (14/09/2026, §3.69).
+#
+#  E' il primo programma in cui il sistema ha DUE origini di lavoro
+#  indipendenti -- il tempo e il mondo -- e quattro task su quattro livelli. Non
+#  era scrivibile fino al 14/09: la tastiera non interrompeva (§3.67), quindi
+#  ogni evento entrava dal tick.
+#
+#  Sei numeri, e CINQUE SONO DERIVATI PRIMA DI ESEGUIRE -- il commento in testa
+#  al sorgente li deriva per esteso:
+#
+#    75 97         il tasto, e il CARATTERE 'a' che ha attraversato tutta la
+#                  catena: ISR -> K -> pool -> mailbox -> P. Non e' il fatto
+#                  che e' arrivato, e' il dato
+#    71            il timer, al decimo conteggio
+#    75 98 71      di nuovo, col secondo carattere
+#
+#                  L'ORDINE e' derivabile perche' i caratteri arrivano a meta'
+#                  fra due decine: se cadessero vicino a una, dipenderebbe dai
+#                  cicli e questo EXPECT si sposterebbe a ogni modifica che
+#                  tocca la latenza
+#    24            i conteggi di C: si sveglia ai tick 1..24
+#     0            cntErr, e vale piu' di tutti gli altri: conta gli arm
+#                  rifiutati, le buf_alloc fallite, le send rifiutate e le
+#                  buf_free rifiutate. Cioe' conta la SATURAZIONE da entrambe le
+#                  parti -- pool esaurito e coda che non drena -- e conta anche
+#                  i buffer non restituiti, che sono la stessa cosa vista tardi
+#
+#  L'ultimo -- la CPU libera -- dipende dai cicli, e cio' che si asserisce e'
+#  che sia > 0: con quattro task e due sorgenti, un sistema che non lascia mai
+#  girare l'idle e' un sistema saturo.
+# ---------------------------------------------------------------------------
+vasm_object(t_mondo SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_mondo.vasm
+                    INTERFACES vinc_queue vinc_tcb vinc_mailbox vinc_message
+                               vinc_timeout vinc_timeout_manager vinc_hal
+                               vinc_pool
+                    CONFIGS marks)
+
+vasm_program(test_mondo OBJECTS t_mondo
+             LINK lib_timeout_manager lib_messaggi lib_kernel lib_pool
+                  lib_timeout)
+
+vasm_check(mondo MODE DUMPS PROGRAM test_mondo
+           ARGS --kbd "24000:a,64000:b"
+           EXPECT "75 97 71 75 98 71 24 0 2493")
+
+# 2493 e' il PULITO. La variante strumentata piu' sotto ne fa di meno: i tag si
+# pagano, e si pagano in giri d'idle come ovunque in questo progetto. Le due
+# corse sono lo stesso sistema che fa le stesse cose -- i primi sei numeri
+# coincidono, ed e' quello il controllo.
+
+# La variante STRUMENTATA. E' questa che serve al caso peggiore della latenza:
+# con quattro livelli popolati la scansione di sched_preempt trova il vincitore
+# a profondita' DIVERSE, quindi il jitter smette di essere zero per costruzione
+# del test -- che e' l'ultima voce rimasta in «Cosa manca ancora qui dentro» di
+# scheduler-facts.md.
+vasm_program(test_mondo_marks OBJECTS t_mondo
+             LINK lib_timeout_manager lib_messaggi lib_kernel lib_pool
+                  lib_timeout
+             CONFIG marks)

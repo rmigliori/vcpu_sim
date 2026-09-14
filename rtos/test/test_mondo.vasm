@@ -1,0 +1,533 @@
+; rtos/test/test_mondo.vasm — TUTTO INSIEME, E CON DUE SORGENTI.
+;
+; E' il primo programma del progetto in cui il sistema ha DUE origini di lavoro
+; indipendenti -- il tempo e il mondo -- e quattro task su quattro livelli di
+; priorita' diversi. Fino al 14/09/2026 non era scrivibile: la tastiera non
+; interrompeva (§3.67), quindi ogni evento entrava dal tick.
+;
+; --- CHI GIRA ---
+;   G  livello 0   il GESTORE dei timeout (rtos/timeout_manager), a PRIO_MAX
+;                  come vuole §9.2
+;   K  livello 1   il task del TASTO: dorme sulla propria mailbox, lo sveglia
+;                  l'ISR della tastiera, e gira un messaggio allo stampatore
+;   C  livello 2   il CONTATORE: si riarma un timeout a ogni tick, conta, e
+;                  ogni DIECI conteggi manda un messaggio allo stampatore
+;   P  livello 3   lo STAMPATORE: dorme sulla propria mailbox e stampa un
+;                  codice diverso a seconda di chi gli ha scritto
+;   I  livello 7   l'idle
+;
+; --- LE DUE CATENE, E PERCHE' SI INCROCIANO ---
+;
+;   tick   ISR -> tmgr_tick -> sveglia G -> G consegna la scadenza a C
+;          C conta; al decimo manda a P
+;   tasto  ISR -> legge KBD_DATA -> manda un messaggio a K
+;          K manda a P
+;
+; Le due entrano nello stesso pozzo da livelli diversi, e P sta SOTTO tutti e
+; due: si fa preemptare da entrambi i produttori. E' voluto -- e' la condizione
+; che fa attraversare alla scansione di `sched_preempt` dei livelli POPOLATI
+; invece di trovare al primo colpo, che e' la sola cosa che mancava per misurare
+; la latenza nel CASO PEGGIORE (scheduler-facts.md, «Cosa manca ancora qui
+; dentro»).
+;
+; --- PERCHE' L'ISR DEL TASTO MANDA UN MESSAGGIO E NON SVEGLIA IL TCB ---
+; K dorme dentro `receive`, quindi il suo TCB e' accodato nella mailbox: un
+; `task_ready` diretto lo metterebbe in due liste insieme. La `send` raw e' il
+; modo giusto, ed e' lo stesso che il gestore dei timeout usa da sempre --
+; messageHandling.vasm lo dichiara: «il gestore dei timeout e' un mittente e
+; gira dentro l'ISR del tick, e' per questo che il nucleo e' raw».
+;
+; --- OGNI MESSAGGIO E' UN BUFFER DEL POOL: LO PRENDE IL PRODUTTORE, LO RENDE
+;     IL CONSUMATORE ---
+; Nessuna eccezione, e nessuna variabile condivisa per far viaggiare un dato.
+; Il carattere e' un campo del messaggio (clientTag), non un global che l'ISR
+; scrive e un task legge.
+;
+;   ISR tasto   buf_alloc, mette dentro codice e CARATTERE, send a K
+;   K           inoltra LO STESSO buffer a P: non alloca e non libera, quello
+;               che aggiunge e' il LIVELLO -- il lavoro esce dall'ISR e continua
+;               a priorita' di task
+;   C           buf_alloc, codice, send a P
+;   P           stampa e buf_free: e' lui il consumatore
+;
+; Un messaggio STATICO avrebbe la semantica del COALESCING -- se il mittente lo
+; rimanda mentre e' ancora accodato la `send` lo rifiuta -- e per un carattere
+; quella semantica e' sbagliata: due tasti devono diventare due stampe.
+;
+; Il carattere viaggia fino a P, che lo stampa: cosi' il test prova che il DATO
+; ha attraversato ISR -> pool -> mailbox -> K -> mailbox -> P, e non solo il
+; fatto che qualcosa sia successo.
+;
+; L'unico statico che resta in tutta la corsa e' il messaggio di TICK, e sta
+; dentro la libreria (timeout_manager.vasm): li' il coalescing e' la semantica
+; voluta, perche' il tempo non sta nel messaggio ma in tmo_now, che e' un
+; contatore assoluto.
+;
+; --- ALLOCARE DENTRO L'ISR NON ALLUNGA LA LATENZA MISURATA, E VA SAPUTO ---
+; La finestra LATENCY si apre in `task_ready_preempt`, cioe' DENTRO la `send`:
+; la buf_alloc sta prima, quindi il suo costo non entra in quel numero. Allunga
+; il cammino interruzione -> fine ISR, che e' un'altra grandezza e oggi non ha
+; una finestra sua.
+;
+; cntErr conta tutte e quattro le strade in cui questo puo' rompersi -- arm
+; rifiutato, buf_alloc fallita, send rifiutata, buf_free rifiutata -- quindi la
+; saturazione e' un NUMERO da tutte e due le parti: pool esaurito e coda che non
+; drena. Con i tempi scelti qui deve restare 0.
+;
+; --- I VALORI ATTESI, DERIVATI PRIMA DI ESEGUIRE ---
+;
+; Il timer batte ogni 4000 cicli e l'ISR ferma tutto al 25o tick. C si riarma a
+; +1 tick, quindi si sveglia ai tick 1..24: VENTIQUATTRO conteggi, e manda a P
+; al 10o e al 20o -- DUE messaggi del timer, ai tick 10 e 20.
+;
+; I due caratteri arrivano a 24000 e 64000 cicli, e i due numeri sono scelti,
+; non capitati. Servono DUE cose insieme.
+;
+; La prima: devono cadere lontano da una decina, o l'ORDINE delle stampe
+; dipenderebbe dai cicli e il valore atteso si sposterebbe a ogni modifica che
+; tocca la latenza. Cosi' invece e' derivabile --
+;
+;     tasto (24000) · timer (tick 10) · tasto (64000) · timer (tick 20)
+;
+; La seconda, ed e' quella che e' costata una misura sbagliata: devono cadere a
+; META' FRA DUE TICK VERI. I tick non stanno a multipli di 4000 -- `timer_init`
+; parte a boot inoltrato, quindi il primo cade a ~5884 e gli altri ogni ~4002.
+; Un carattere che arriva SOPRA un tick trova gli interrupt chiusi, viene
+; differito, e quando la trap parte sta girando G a livello 0: K non lo batte,
+; NON PREEMPTA, e il caso interessante non succede. Con i caratteri a meta'
+; dell'intervallo K trova in esecuzione un task sotto di lui e lo preempta --
+; che e' tutto il motivo per cui questo programma esiste.
+;
+; Quindi la sequenza attesa e':
+;
+;     75 97         il tasto, e il carattere 'a' arrivato fino in fondo
+;     71            il timer, al decimo conteggio
+;     75 98 71      di nuovo, col secondo carattere
+;     24            i conteggi di C
+;      0            cntErr: niente rifiutato, da nessuna delle quattro parti
+;     >0            la CPU libera
+;
+; L'ultimo dipende dai cicli; gli altri cinque no.
+;
+; --- E QUELLO CHE SI MISURA SULLA VARIANTE STRUMENTATA ---
+; Qui sta il motivo vero di questo programma. Su test_tmgr la latenza di
+; preemption aveva jitter ZERO -- l'idle perdeva la CPU a favore del gestore,
+; sempre, e la scansione trovava al primo livello. Qui le preemption sono di due
+; specie:
+;
+;     24 dal TIMER    G (livello 0) preempta: la scansione trova subito   160
+;      2 dal TASTO    K (livello 1) preempta: un livello da attraversare  167
+;
+; SETTE CICLI PER LIVELLO, misurati. Da cui il caso peggiore si DEDUCE invece di
+; doverlo costruire: il vincitore piu' profondo possibile e' a livello 6 --
+; sotto c'e' solo l'idle, che non sveglia nessuno -- cioe' 160 + 6*7 = 202.
+
+  .text
+.include "tcb/tcb.vinc"
+.include "queue/queue_api.vinc"
+.include "mailbox/mailbox.vinc"
+.include "message/message.vinc"
+.include "pool/pool.vinc"
+.include "timeout/timeout.vinc"
+.include "hal/hal.vinc"
+.include "hal/kbd.vinc"
+.include "hal/marker.vinc"
+
+.ifdef MARKS
+.include "marks/marks.vinc"
+.endif
+
+; I due codici che P sa distinguere. Non sono stringhe perche' la macchina non
+; ha un device di uscita: l'unica uscita e' `dumps`, ed e' anche cio' che
+; vasm_check confronta -- quindi la "stampa" E' l'asserzione del test.
+.equ COD_DA_TIMER  71
+.equ COD_DA_TASTO  75
+
+; Il codice che C si fa recapitare dal gestore alla scadenza. E' OPACO per il
+; gestore, che lo copia e basta: lo sceglie chi arma, e serve solo a chi riceve.
+.equ COD_EXPIRY    77
+
+  .data
+
+cntC:    .word 0        ; i conteggi di C
+cntErr:  .word 0        ; DEVE restare 0: arm rifiutati + send rifiutate
+cntI:    .word 0        ; la CPU libera
+tagC:    .word 1        ; il clientTag dell'attesa corrente di C
+
+mbK:     .res HEAD      ; la mailbox di K, dove scrive l'ISR del tasto
+mbC:     .res HEAD      ; quella di C, dove il gestore consegna le scadenze
+mbP:     .res HEAD      ; quella di P, dove scrivono K e C
+
+
+tcbG:    .res TCB
+tcbK:    .res TCB
+tcbC:    .res TCB
+tcbP:    .res TCB
+tcbI:    .res TCB
+
+stackG:  .space 64
+stackG_top:
+stackK:  .space 64
+stackK_top:
+stackC:  .space 64
+stackC_top:
+stackP:  .space 64
+stackP_top:
+stackI:  .space 64
+stackI_top:
+
+  .text
+
+  .global main
+  .extern current
+  .extern pcb0
+  .extern pcb1
+  .extern pcb2
+  .extern pcb3
+  .extern pcb7
+  .extern sched_init
+  .extern sched_isr_exit
+  .extern send
+  .extern send_s
+  .extern receive
+  .extern timeout_arm
+  .extern tmo_now
+  .extern pool_init
+  .extern buf_alloc
+  .extern buf_free
+  .extern ctx_init
+  .extern irq_install
+  .extern timer_init
+  .extern irq_arm
+  .extern irq_enable
+
+; ==========================================================================
+;  BOOT.
+; ==========================================================================
+main:
+  li r14, stackC_top       ; lo stack del task che parte a freddo, che e' C
+  call sched_init
+  call pool_init
+  call tmgr_init
+
+  li r1, mbK
+  call queue_init
+  li r1, mbC
+  call queue_init
+  li r1, mbP
+  call queue_init
+
+  ; --- G, livello 0 ---
+  li r1, stackG_top
+  li r2, tmgr_task
+  call ctx_init
+  li r3, tcbG
+  sw r1, TCB.sp(r3)
+  li r4, pcb0
+  sw r4, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r1, r4
+  mov r2, r3
+  call enqueue_tail
+
+  ; --- K, livello 1 ---
+  li r1, stackK_top
+  li r2, taskK
+  call ctx_init
+  li r3, tcbK
+  sw r1, TCB.sp(r3)
+  li r4, pcb1
+  sw r4, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r1, r4
+  mov r2, r3
+  call enqueue_tail
+
+  ; --- P, livello 3 ---
+  li r1, stackP_top
+  li r2, taskP
+  call ctx_init
+  li r3, tcbP
+  sw r1, TCB.sp(r3)
+  li r4, pcb3
+  sw r4, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r1, r4
+  mov r2, r3
+  call enqueue_tail
+
+  ; --- I, livello 7 ---
+  li r1, stackI_top
+  li r2, taskI
+  call ctx_init
+  li r3, tcbI
+  sw r1, TCB.sp(r3)
+  li r4, pcb7
+  sw r4, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r1, r4
+  mov r2, r3
+  call enqueue_tail
+
+  ; --- C, livello 2: parte a freddo, quindi RUNNING e fuori da ogni coda ---
+  li r3, tcbC
+  li r4, pcb2
+  sw r4, TCB.pcb(r3)
+  li r1, current
+  sw r3, 0(r1)
+  li r5, RUNNING
+  sw r5, TCB.state(r3)
+
+  ; --- le DUE sorgenti ---
+  li r1, isr
+  call irq_install
+  call irq_arm
+  li r1, KBD_CTRL
+  li r2, KBD_IE
+  sw r2, 0(r1)             ; la tastiera interrompe (§3.67): nasce spenta
+  li r1, 4000
+  call timer_init
+  call irq_enable
+  li r5, taskC
+  jr r5
+
+; ==========================================================================
+;  K — il task del TASTO. Dorme, lo sveglia l'ISR, gira il messaggio a P.
+;
+;  Non legge KBD_DATA: l'ha gia' letto l'ISR, e deve farlo lei -- il flag del
+;  device lo abbassa la lettura, quindi un'ISR che non leggesse si ritroverebbe
+;  la trap subito (hal/kbd.vinc). K riceve il fatto, non il device.
+; ==========================================================================
+taskK:
+.ifdef MARKS
+  li r1, MARKN_EXEC
+  li r2, N_EXEC_TASTO
+  sw r2, 0(r1)
+.endif
+loopK:
+  li r1, mbK
+  call receive             ; r2 = il buffer che l'ISR ha riempito
+
+  ; K NON alloca e NON libera: inoltra. Il buffer e' stato preso dal produttore
+  ; (l'ISR) e lo rendera' il consumatore (P), che e' la regola di questo
+  ; programma -- un alloc+free in mezzo sarebbe lavoro per niente, e una coppia
+  ; in piu' da sbagliare.
+  ;
+  ; Quello che K aggiunge non e' il messaggio: e' il LIVELLO. Il lavoro esce
+  ; dall'ISR e continua a priorita' di task, che e' tutto il motivo per cui
+  ; questo task esiste.
+  li r1, mbP
+  call send_s              ; r3 = esito
+  beq r3, r0, loopK
+  li r1, cntErr
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  j loopK
+
+; ==========================================================================
+;  C — il CONTATORE. Si riarma a ogni tick, conta, e ogni dieci manda a P.
+; ==========================================================================
+taskC:
+.ifdef MARKS
+  li r1, MARKN_EXEC
+  li r2, N_EXEC_CONTA
+  sw r2, 0(r1)
+.endif
+loopC:
+  li r5, tagC
+  lw r2, 0(r5)
+  li r1, 1                 ; fra un tick
+  li r3, COD_EXPIRY
+  li r4, mbC
+  call timeout_arm         ; r2 = esito
+  beq r2, r0, c_armed   ; TMO_OK == 0
+  li r1, cntErr
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+
+c_armed:
+  li r1, mbC
+  call receive             ; r2 = il buffer di scadenza, dal pool
+  call buf_free            ; si rende subito: e' una risorsa di sistema
+  beq r1, r0, c_freed   ; POOL_OK == 0
+  li r1, cntErr
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+
+c_freed:
+  li r1, tagC              ; il tag cresce: l'attesa successiva e' un'altra
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+
+  li r1, cntC
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+
+  ; --- ogni DIECI: un messaggio a P ---
+  ; Il resto si legge da cntC, che c'e' gia'. Un secondo contatore che si azzera
+  ; direbbe la stessa cosa in un posto in piu', e sarebbe uno stato da tenere
+  ; d'accordo col primo.
+  li r3, 10
+  rem r4, r2, r3
+  bne r4, r0, loopC
+
+  li r1, POOL_D16
+  call buf_alloc           ; r1 = esito, r2 = buffer
+  beq r1, r0, c_got     ; POOL_OK == 0
+  li r1, cntErr
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  j loopC
+
+c_got:
+  addi r3, r2, MESSAGE.payload
+  li r4, COD_DA_TIMER
+  sw r4, PAYLOAD.messageCode(r3)
+
+  li r1, mbP
+  call send_s              ; r3 = esito
+  beq r3, r0, loopC
+  li r1, cntErr
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  j loopC
+
+; ==========================================================================
+;  P — lo STAMPATORE. Dorme sulla propria mailbox e stampa un codice diverso a
+;  seconda di chi gli ha scritto. Sta SOTTO tutti e due i produttori: e' il
+;  livello che si fa attraversare.
+; ==========================================================================
+taskP:
+.ifdef MARKS
+  li r1, MARKN_EXEC
+  li r2, N_EXEC_STAMP
+  sw r2, 0(r1)
+.endif
+loopP:
+  li r1, mbP
+  call receive             ; r2 = il messaggio, che viene dal POOL
+  addi r3, r2, MESSAGE.payload
+  lw r4, PAYLOAD.messageCode(r3)
+  dumps r4                 ; 75 = tasto, 71 = timer
+
+  ; per il tasto stampa anche il CARATTERE: e' la prova che il dato ha
+  ; attraversato ISR -> K -> pool -> mailbox -> P, e non solo il fatto
+  li r5, COD_DA_TASTO
+  bne r4, r5, p_free
+  lw r4, PAYLOAD.clientTag(r3)
+  dumps r4
+
+p_free:
+  ; IL BUFFER SI RENDE SUBITO. E' una risorsa di sistema in prestito, e P e' il
+  ; consumatore: se non lo rendesse, il pool si svuoterebbe e i produttori
+  ; comincerebbero a contare errori -- il che sarebbe vero, ma sul colpevole
+  ; sbagliato.
+  call buf_free            ; r2 = buffer (intatto), r1 = esito
+  beq r1, r0, loopP     ; POOL_OK == 0
+  li r1, cntErr
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  j loopP
+
+; ==========================================================================
+;  I — l'idle.
+; ==========================================================================
+taskI:
+.ifdef MARKS
+  li r1, MARKN_EXEC
+  li r2, N_EXEC_IDLE
+  sw r2, 0(r1)
+.endif
+  li r1, cntI
+loopI:
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  j loopI
+
+; ==========================================================================
+;  L'ISR, che adesso serve DUE sorgenti e deve chiedersi chi e' stato.
+;
+;  La causa si legge SUBITO, prima di qualunque call: vale fino alla trap
+;  successiva, e questa ISR chiama roba che potrebbe prenderne un'altra.
+;
+;  r1 arriva col contesto opaco e `mfcause` lo sovrascrive, quindi il contesto
+;  si mette via per primo -- stesso motivo per cui test_tmgr fa `mov r6, r1`.
+; ==========================================================================
+isr:
+  ; IL CONTESTO IN r8 e non in un registro basso: qui si chiama `buf_alloc`, che
+  ; sporca r1..r6 (lo dichiara la sua intestazione), e `tmgr_tick`, che sporca
+  ; r1..r5 e r7. r8 non lo tocca nessuno dei due.
+  mov r8, r1
+  mfcause r7
+  li r1, CAUSE_KBD
+  beq r7, r1, isr_tasto
+
+  ; --- il TIMER ---
+  call tmgr_tick        ; incrementa tmo_now e sveglia G
+
+  li r1, tmo_now
+  lw r2, 0(r1)
+  li r3, 25
+  blt r2, r3, isr_esci
+  li r1, cntC
+  lw r5, 0(r1)
+  dumps r5                 ; 24: i conteggi, derivabili dai tick
+  li r1, cntErr
+  lw r5, 0(r1)
+  dumps r5                 ; DEVE essere 0
+  li r1, cntI
+  lw r5, 0(r1)
+  dumps r5                 ; > 0: la CPU libera
+  halt
+
+isr_tasto:
+  ; IL CARATTERE VA LETTO, o la trap si ripresenta subito: il flag lo abbassa
+  ; la lettura, non la trap (hal/kbd.vinc).
+  li r1, KBD_DATA
+  lw r2, 0(r1)
+  mov r9, r2               ; il carattere, finche' buf_alloc non ha finito
+
+  ; IL BUFFER LO PRENDE IL PRODUTTORE, e qui il produttore e' l'ISR: il
+  ; carattere e' un DATO, e un dato viaggia dentro il messaggio. Una variabile
+  ; condivisa fra ISR e task farebbe la stessa cosa in peggio -- sarebbe stato
+  ; mutabile senza proprietario, e due caratteri ravvicinati ne perderebbero uno
+  ; senza che niente lo dica.
+  li r1, POOL_D16
+  call buf_alloc           ; r1 = esito, r2 = buffer
+  beq r1, r0, isr_got   ; POOL_OK == 0
+  li r1, cntErr            ; pool vuoto: il carattere si perde, e si CONTA
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  j isr_esci
+
+isr_got:
+  addi r3, r2, MESSAGE.payload
+  li r4, COD_DA_TASTO
+  sw r4, PAYLOAD.messageCode(r3)
+  sw r9, PAYLOAD.clientTag(r3)   ; IL CARATTERE, dentro il messaggio
+
+  ; `send` RAW e non send_s: qui IE e' gia' 0 perche' ci ha pensato la trap, e
+  ; il wrapper rifarebbe irq_save/irq_restore per niente. E' la stessa scelta
+  ; che il gestore dei timeout fa da sempre.
+  li r1, mbK
+  call send                ; r3 = esito
+  beq r3, r0, isr_esci
+  li r1, cntErr
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+
+isr_esci:
+  mov r1, r8
+  j sched_isr_exit
+

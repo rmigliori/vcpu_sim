@@ -390,14 +390,58 @@ il periodo è compresso, o racconta un RTOS che gira a 25 kHz di tick.
 
 ## Cosa manca ancora qui dentro
 
+### 6.2 Il caso peggiore, e quanto costa un livello di scansione
+
+Fino al 14/09 la latenza di preemption aveva **jitter zero**, e §6.1 dichiarava
+che non era una virtù del kernel ma una proprietà del test: in `test_tmgr` la
+preemption ha sempre la stessa forma — l'idle perde la CPU a favore del gestore,
+che sta a livello 0 — quindi la scansione di `sched_preempt` trova al **primo
+livello**, ogni volta.
+
+`test_mondo` (§3.69) è il programma che mancava: due sorgenti di interruzione e
+quattro task su quattro livelli. Le preemption diventano di **due specie**:
+
+| chi preempta | livello | n | cicli |
+|---|---:|---:|---:|
+| il gestore dei timeout, svegliato dal tick | 0 | 24 | **160** |
+| il task del tasto, svegliato dall'ISR della tastiera | 1 | 2 | **167** |
+
+```bash
+vcpu_sim run build/vasm/test_mondo_marks.vx --kbd "24000:a,64000:b" --marks rec.txt
+python3 tools/marks.py read marks.conf rec.txt --vx build/vasm/test_mondo_marks.vx
+```
+
+**Un livello di scansione costa 7 cicli**, ed è la prima volta che questo numero
+esiste. Da qui il caso peggiore si **deduce** invece di doverlo costruire: il
+vincitore più profondo possibile sta a **livello 6** — sotto c'è solo l'idle, che
+non sveglia nessuno — quindi
+
+> **latenza nel caso peggiore = 160 + 6 × 7 = 202 cicli**, più il ripristino
+> dell'HAL e la `reti` di §6.1: **299 cicli, 2,99 µs**.
+
+È una deduzione e va citata come tale: il programma che la mette in scena non
+esiste, e costruirlo vorrebbe dire sette task su sette livelli. Ma il costo per
+livello è misurato, e la profondità massima è una proprietà dichiarata dello
+scheduler (otto livelli, l'ottavo è l'idle) — non una stima.
+
+> **Perché i due caratteri arrivano a 24000 e 64000, e non è un dettaglio.** I
+> tick non cadono a multipli di 4000: `timer_init` parte a boot inoltrato, il
+> primo tick è a ~5884 e gli altri ogni ~4002. Un carattere che arriva **sopra**
+> un tick trova gli interrupt chiusi, viene differito, e quando la trap parte sta
+> girando il gestore a livello 0 — il task del tasto non lo batte, **non
+> preempta**, e il caso interessante non succede. È esattamente quello che è
+> successo al primo tentativo: 24 finestre tutte da 160, jitter zero di nuovo.
+
+---
+
 Elencato perché un nucleo fattuale incompleto è utile e un nucleo fattuale che
 finge di essere completo no. In ordine di quanto serve ai quattro documenti:
 
 - ~~la latenza di preemption~~ — **fatta il 14/09**, ed è §6.1 qui sopra:
-  169 cicli, 1,69 µs. Resta però la sua metà mancante, che è un'altra voce di
-  questo elenco: **la latenza nel CASO PEGGIORE**, che vuole un programma con
-  più livelli popolati. Oggi tutte e undici le preemption hanno la stessa
-  forma, quindi il jitter è zero per costruzione del test e non del kernel;
+  257 cicli fino all'istante in cui il task esegue davvero;
+- ~~la latenza nel CASO PEGGIORE~~ — **fatta il 14/09**, ed è §6.2 qui sotto.
+  Voleva un programma con più livelli popolati, e adesso c'è: `test_mondo`, due
+  sorgenti e quattro task. Il jitter ha smesso di essere zero;
 - **il costo di un context switch**, idem: oggi si legge solo come differenza
   fra totali, che è la forma in cui §3.41 ha già prodotto un'inferenza
   sbagliata;

@@ -49,11 +49,6 @@
 ; con timeout_arm e si riceve nella propria, di mailbox.
 mbox_tmgr: .res MAILBOX
 
-; Il messaggio di tick: due sole parole, cioe' i soli link. Non ha payload e non
-; ne ha bisogno -- porta il FATTO che un tick sia passato, non quanti: il tempo
-; sta in tmo_now, che e' un contatore assoluto. E' anche il motivo per cui
-; coalescarlo non perde niente.
-msg_tick:     .space 2
 
   .text
 
@@ -96,9 +91,13 @@ msg_tick:     .space 2
 ;  per non avere un ordine da rispettare a memoria.
 ;
 ;  --- PERCHE' UN CICLO INTERNO ---
-;  Piu' timeout possono scadere allo stesso tick, e anche piu' tick possono
-;  essere stati coalescati in un messaggio solo. Si drena finche' timeout_expired
-;  dice TMO_NONE: e' la condizione di uscita, non un errore.
+;  Piu' timeout possono scadere allo stesso tick. Si drena finche'
+;  timeout_expired dice TMO_NONE: e' la condizione di uscita, non un errore.
+;
+;  Dal 14/09/2026 il ciclo serve anche a un secondo caso: se il pool era vuoto
+;  quando un tick e' passato, quel risveglio si e' perso, e il primo che riesce
+;  ad allocare trova PIU' scadenze maturate. Il recupero e' gratis perche'
+;  tmo_now e' assoluto -- il gestore non conta i risvegli, legge l'orologio.
 ; ==========================================================================
 tmgr_task:
   ; Si presenta, come i task del test: tre istruzioni UNA VOLTA SOLA, e da qui
@@ -119,8 +118,12 @@ tmgr_task:
 
 tmgr_loop:
   li r1, mbox_tmgr
-  call receive             ; r2 = il messaggio di tick. Non si legge e non si
-                           ; libera: e' lo statico qui sopra, non un buffer
+  call receive             ; r2 = il risveglio, che viene dal POOL
+  call buf_free            ; e lo rende il consumatore, che e' qui. r1 = esito,
+                           ; e non si guarda: un buffer che torna da una receive
+                           ; e' per costruzione uno che il pool ha dato, e un
+                           ; rifiuto qui sarebbe un difetto del pool, non un
+                           ; caso da gestire in un ciclo di servizio
 
 tmgr_drain:
   li r1, POOL_D16          ; la taglia del PAYLOAD senza specifiche, che
@@ -181,13 +184,27 @@ tmgr_tick:
   addi r2, r2, 1
   sw r2, 0(r1)             ; il contatore ASSOLUTO dei tick
 
+  ; --- IL RISVEGLIO VIENE DAL POOL, COME OGNI ALTRO MESSAGGIO (14/09/2026) ---
+  ;
+  ; Fino a oggi era uno STATICO da due parole, e tmgr_tick coalescava: se ce
+  ; n'era gia' uno in lista non ne mandava un altro. Funzionava -- il tempo sta
+  ; in tmo_now, che e' assoluto, quindi un risveglio solo basta a recuperare
+  ; tutte le scadenze -- ma DISTRUGGEVA UN'INFORMAZIONE: "il gestore e' rimasto
+  ; indietro di tre tick" e "ha tenuto il passo" uscivano identici.
+  ;
+  ; Con un buffer per tick la profondita' della coda e' quel numero, e si legge.
+  ; E il sistema smette di avere un tetto scritto nel .data: quanti tick possano
+  ; essere in volo lo decide il pool, non una dichiarazione.
+  ;
+  ; SE IL POOL E' VUOTO il risveglio si perde, e NON e' una perdita di dati:
+  ; tmo_now e' gia' stato incrementato, quindi il prossimo tick che trova un
+  ; buffer recupera tutte le scadenze maturate. E' lo stesso "arriva tardi
+  ; invece di non arrivare" che §9.2 accetta gia' per il buffer di tmgr_drain.
+  li r1, POOL_D16
+  call buf_alloc           ; r1 = esito, r2 = buffer
+  bne r1, r0, tick_end  ; niente buffer: si recupera al tick prossimo
+
   li r1, mbox_tmgr
-  lw r2, MAILBOX.count(r1)
-  blt r0, r2, tick_end    ; count > 0: un tick e' gia' in lista, si coalesce.
-                           ; Il test NON e' "count == 0" (§9.2): il caso normale
-                           ; e' il gestore bloccato, cioe' count == -1, e li' si
-                           ; deve mandare
-  li r2, msg_tick
   call send                ; raw: siamo in ISR, IE e' gia' 0 (§8.5). La consegna
                            ; diretta sveglia il gestore e chiede la preemption,
                            ; perche' il livello 0 batte chiunque

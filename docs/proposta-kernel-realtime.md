@@ -1048,12 +1048,28 @@ invece di non arrivare. È anche il motivo per cui il buffer si può prendere
 
 Due dettagli che il modello a task porta con sé:
 
-- **Il messaggio di tick è uno statico, e va coalescato.** Se l'ISR lo rispedisce
-  mentre è ancora accodato, riaccoda un nodo già in lista e sfascia la mailbox
-  (§8.3, «un oggetto, una lista»). L'ISR lo manda **solo se in mailbox non c'è
-  già un tick non consumato**, cioè se `count <= 0` — e il gestore legge il
-  **contatore assoluto** dei tick invece di assumere «ne è passato uno». Così un
-  tick coalescato non si perde.
+- ~~**Il messaggio di tick è uno statico, e va coalescato.**~~ **Superato il
+  14/09/2026 (§3.70): il risveglio viene dal pool come ogni altro messaggio.**
+  Il testo originale, e il difetto che ci era stato corretto dentro, restano qui
+  sotto perché la lezione vale: se l'ISR rispedisce uno statico mentre è ancora
+  accodato riaccoda un nodo già in lista e sfascia la mailbox (§8.3, «un oggetto,
+  una lista»), quindi andava mandato solo con `count > 0` falso.
+
+  **Perché è stato superato**: il coalescing funzionava — il gestore legge il
+  contatore assoluto dei tick, quindi un risveglio solo basta a recuperarli tutti
+  — ma **distruggeva un'informazione**. «Il gestore è rimasto indietro di tre
+  tick» e «ha tenuto il passo» producevano lo stesso identico stato, e la
+  profondità della coda non era leggibile. Con un buffer per tick lo è.
+
+  E il tetto smette di essere scritto nel `.data`: quanti tick possano essere in
+  volo lo decide il pool, non una dichiarazione. Se il pool è vuoto il risveglio
+  si perde, e non è una perdita di dati — `tmo_now` è già stato incrementato,
+  quindi il primo tick che trova un buffer recupera tutte le scadenze maturate.
+  È lo stesso «arriva tardi invece di non arrivare» che questa sezione accetta
+  già per il buffer della scadenza.
+
+  Il prezzo è misurato e sta nel gradino di `rtos/test/CMakeLists.txt`: un
+  `alloc` + un `free` per ogni tick, sul percorso dell'ISR, **245 giri d'idle**.
 
   > **Corretto il 07/09/2026, implementando.** Questo punto diceva «`count == 0`
   > è il test», e sarebbe stato **sbagliato nel caso normale**: il gestore passa
