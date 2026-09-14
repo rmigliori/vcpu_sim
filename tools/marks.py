@@ -575,11 +575,17 @@ def report(a):
     if not a["puntuali"]:
         print("  nessuno")
 
+    # LA LARGHEZZA SI MISURA, non si dichiara. Era 24 fisso, e il giorno che un
+    # nome l'ha superata la riga del tempo -- che usa lo stesso campo -- ha
+    # smesso di allinearsi con la propria. marks.conf e' un file che si edita:
+    # il lettore non ha titolo per dare per scontata nessuna lunghezza. Il 24
+    # resta come MINIMO, cosi' le tabelle strette non si stringono ancora.
+    wcat = max([24] + [len(c["nome"]) for c in a["categorie"]])
     print("\n--- per categoria ---")
-    print(f"  {'categoria':<24} {'n':>3} {'min':>9} {'max':>9} {'media':>9} "
+    print(f"  {'categoria':<{wcat}} {'n':>3} {'min':>9} {'max':>9} {'media':>9} "
           f"{'jitter':>9} {'totale':>9}")
     for c in a["categorie"]:
-        print(f"  {c['nome']:<24} {c['n']:>3} {c['min']:>9} {c['max']:>9} "
+        print(f"  {c['nome']:<{wcat}} {c['n']:>3} {c['min']:>9} {c['max']:>9} "
               f"{c['media']:>9} {c['jitter']:>9} {c['totale']:>9}")
         # La riga del tempo sotto quella dei cicli, e non al posto suo: i cicli
         # restano la misura, il tempo e' la lettura. La frequenza sta in testa
@@ -587,7 +593,7 @@ def report(a):
         if hz:
             campi = ("min", "max", "media", "jitter", "totale")
             u = unita_per(max(c[k] for k in campi), hz)
-            print(f"  {clock(hz):<24} {'':>3} "
+            print(f"  {clock(hz):<{wcat}} {'':>3} "
                   + " ".join(f"{tempo(c[k], hz, u):>9}" for k in campi))
 
     if a["eventi"]:
@@ -604,12 +610,18 @@ def report(a):
             print(f"  ciclo {e['c']:>7}  {e['canale']:<20} {e['marker']:<26} "
                   f"{e['frase']:<44} {fuori}{d}")
 
+    # Stessa cosa qui, e qui il difetto si vedeva GIA': "pronto, non ancora in
+    # esecuzione" supera i 30 del campo del marker, e quella riga era storta da
+    # quando esiste. Nessuno se n'era accorto perche' la colonna a sinistra
+    # teneva -- i due nomi di categoria erano per caso lunghi uguali.
+    wcan = max([20] + [len(f["canale"]) for f in a["finestre"]])
+    wmrk = max([30] + [len(f["marker"]) for f in a["finestre"]])
     print("\n--- finestra per finestra, e dove sono finiti i cicli ---")
     for f in a["finestre"]:
         dett = "  ".join(f"{o} {n}" for o, n in f["poss"])
         cross = " ATTRAVERSA" if f["cross"] else ""
         dd = ("  " + f["dato"]) if f.get("dato") else ""
-        print(f"  {f['canale']:<20} {f['marker']:<30} "
+        print(f"  {f['canale']:<{wcan}} {f['marker']:<{wmrk}} "
               f"@{f['a']:<7} {f['d']:>6} cicli{t(f['d'])}{cross}{dd}   [{dett}]")
 
     if a["errori"]:

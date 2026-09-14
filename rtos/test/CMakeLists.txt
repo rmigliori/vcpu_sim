@@ -176,7 +176,7 @@ vasm_check(chain MODE DUMPS PROGRAM test_chain
 # codici li conosce e' chi li ha chiesti.
 vasm_object(t_tmgr SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_tmgr.vasm
                       INTERFACES vinc_queue vinc_tcb vinc_mailbox vinc_message
-                                 vinc_timeout vinc_timeout_manager
+                                 vinc_timeout vinc_timeout_manager vinc_hal
                       CONFIGS marks)
 
 vasm_program(test_tmgr OBJECTS t_tmgr
@@ -224,6 +224,8 @@ vasm_program(test_tmgr_marks OBJECTS t_tmgr
 #    2532  + l'evento RECV, col codice sul porto dati
 #    2519  + i tre task che REGISTRANO IL PROPRIO NOME (3 istruzioni ognuno)
 #    2530  il RIENTRO spostato sotto il blocco .ifdef (14/09/2026)
+#    2491  + la finestra LATENCY, che e' la piu' cara finora (14/09/2026)
+#    2458  + la finestra HALSW, dentro ctx_restore (14/09/2026)
 #
 #  L'ULTIMO GRADINO E' UNA CORREZIONE, e vale la pena leggerlo al contrario.
 #  Il commento del 13/09 diceva che quelle tre istruzioni erano "una volta
@@ -237,11 +239,28 @@ vasm_program(test_tmgr_marks OBJECTS t_tmgr
 #  che in un commento per la stessa ragione per cui ci sono gli altri quattro
 #  gradini: un costo dichiarato e' un costo che qualcuno rivede.
 #
+#  LATENCY costa piu' di tutte le altre (39 giri d'idle) e la ragione e'
+#  strutturale, non una svista: e' l'unica il cui estremo di CHIUSURA sta su un
+#  percorso che gira SEMPRE. Il dispatcher passa a ogni uscita da trap, con o
+#  senza switch, e deve chiedersi ogni volta se c'e' una finestra aperta --
+#  tre istruzioni che si pagano anche quando la risposta e' no. Aprire e
+#  chiudere costa quanto le altre; e' la DOMANDA a costare, ed e' il prezzo di
+#  misurare una cosa che comincia in una routine e finisce in un'altra.
+#
+#  HALSW costa 33 giri d'idle, quasi quanto LATENCY, e per una ragione
+#  parente: sta in `ctx_restore`, che gira a OGNI commutazione -- ma senza
+#  bisogno di chiedersi niente, perche' qui una finestra e' sempre aperta.
+#  Cinque istruzioni secche su un percorso caldissimo.
+#
+#  E' il tag che ha il rapporto prezzo/verita' migliore di tutti: misura i 153
+#  cicli che il numero realtime di §6.1 taceva, cioe' il 47% della misura
+#  pubblicata. Trentatre' giri d'idle per smettere di dichiarare meta' numero.
+#
 #  E' anche la misura che dice perche' l'interruttore DEVE essere a
 #  compile-time: con --marks spento quelle istruzioni si eseguirebbero lo
 #  stesso. Ogni tag si paga, e il prezzo finisce qui.
 vasm_check(tmgr_marks MODE DUMPS PROGRAM test_tmgr_marks
-           EXPECT "5 0 2530")
+           EXPECT "5 0 2458")
 
 # ---------------------------------------------------------------------------
 #  test_semaphore — il semaforo contatore, e l'INSERIMENTO ORDINATO di §13.6.

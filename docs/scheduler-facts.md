@@ -151,8 +151,17 @@ Dal 13/09 `scheduler` porta un tag, nella sola configurazione strumentata
 
 | | n | min | max | media | **jitter** |
 |---|---:|---:|---:|---:|---:|
-| la scelta di chi gira | 18 | 51 | 177 | 118 | **126** |
+| scheduler: cessione volontaria | 18 | 51 | 177 | 118 | **126** |
 | *gli stessi, @ 100 MHz* | | *0,51 µs* | *1,77 µs* | *1,18 µs* | ***1,26 µs*** |
+
+> **Il nome è qualificato, e quella qualificazione è metà del fatto.** Fino al
+> 14/09 la categoria si chiamava «la scelta di chi gira», e rivendicava troppo:
+> `scheduler` **non è l'unico posto dove si sceglie**. Il percorso preemptivo
+> passa da `sched_preempt`, che ha una scansione sua e **non è tagliata**, quindi
+> queste diciotto scansioni ne ignorano altre undici — una per ogni preemption
+> della tabella qui sotto. Un'etichetta non qualificata faceva leggere
+> «scegliere costa 118 cicli», che è falso: di quel percorso qui dentro non c'è
+> niente. Chi cita questa riga citi il nome intero.
 
 ```bash
 vcpu_sim run build/vasm/test_tmgr_marks.vx --marks rec.txt
@@ -170,6 +179,144 @@ L'alternanza non è rumore: sono le due quantità di lavoro diverse che il tick
 innesca. È il tempo in cui un task è stato tolto dalla CPU **involontariamente**,
 e va detto così — non è latenza di preemption (quella è il ritardo fra «qualcuno
 di più prioritario è pronto» e «gira»), è la sua conseguenza sulla vittima.
+
+### 6.1 La latenza di preemption, che dal 14/09 ESISTE
+
+È il numero che questa pagina ha dichiarato mancante per primo, ed è quello che
+un lettore realtime cerca prima di ogni altro: **il ritardo fra «qualcuno di più
+prioritario è pronto» e «gira»**. Non è il fuori CPU della tabella qui sopra —
+quello è la conseguenza sulla vittima, questo è il **debito del kernel verso chi
+aspetta**. Sono due numeri diversi sulla stessa commutazione.
+
+| | n | min | max | media | **jitter** |
+|---|---:|---:|---:|---:|---:|
+| latenza di preemption (**misurata dal kernel**) | 11 | 169 | 169 | 169 | **0** |
+| *gli stessi, @ 100 MHz* | | *1,69 µs* | *1,69 µs* | *1,69 µs* | ***0,00 µs*** |
+| `hal: ripristino del contesto` (le 11 su questo cammino) | 11 | 83 | 83 | 83 | **0** |
+| **pronto → ESEGUE DAVVERO** | 11 | **275** | **275** | **275** | **0** |
+| *gli stessi, @ 100 MHz* | | ***2,75 µs*** | ***2,75 µs*** | ***2,75 µs*** | ***0,00 µs*** |
+
+**La riga che conta per un lettore realtime è l'ultima**, e fino al 14/09 questa
+pagina pubblicava la prima. La differenza non è un dettaglio: **169 è il 61% di
+275**.
+
+**Undici finestre chiuse, una per ognuna delle undici preemption** della tabella
+precedente: le due misure si contano a vicenda, e il fatto che i conti tornino
+non è una coincidenza da notare ma un controllo da fare.
+
+Il controllo però va fatto sul numero giusto, perché **le aperture sono dodici**,
+e l'ultima riga che il comando qui sopra stampa è questa:
+
+```
+--- ERRORI ---
+  canale 7 (latenza di preemption) aperto al ciclo 49705 e MAI CHIUSO: quella misura non c'e'
+```
+
+**È output corretto, non un difetto del tag**, ed è dichiarato qui per la ragione
+per cui esiste questa pagina: chi esegue il comando quella riga la vede, e un
+nucleo fattuale che non la spiega la lascia sembrare un guasto. Al **dodicesimo**
+tick `tmgr_tick` sveglia il gestore — quindi apre la finestra — e l'ISR di
+`test_tmgr` arriva a `halt` **senza passare da `sched_isr_exit`**: la corsa
+finisce con qualcuno pronto e mai messo a girare, e quella latenza non ha un
+secondo estremo. Il lettore dice che la misura *non c'è*, ed è esattamente ciò
+che va detto: una dodicesima finestra chiusa a fine registrazione sarebbe un
+numero inventato, cioè la cosa che la regola 3 vieta.
+
+Da cui la forma esatta del controllo, che è quella da rifare ogni volta:
+
+| | quante | perché |
+|---|---:|---|
+| eventi `preemption` | 11 | le commutazioni davvero avvenute |
+| **chiusure** del canale 7 | **11** | una per ognuna: è qui che i conti tornano |
+| aperture del canale 7 | 12 | la dodicesima è la coda della corsa, e non si conta |
+
+Su un programma che non termina dentro il kernel le tre righe coincidono. Che
+qui non coincidano è una proprietà di **dove `test_tmgr` si ferma**, non del
+kernel — la stessa specie di cosa del jitter zero qui sotto.
+
+La finestra **apre** in `task_ready_preempt` — l'unico punto in cui il kernel
+constata «questo batte chi gira», una riga sotto la `blt` sui puntatori di §7.3
+— e **chiude** nel `dispatcher`, dopo il commit di `current`, perché il
+dispatcher è per costruzione l'unico punto da cui un task entra in esecuzione.
+Attraversa quindi la commutazione, ed è la prima finestra del progetto che nasce
+in una routine e muore in un'altra.
+
+Ogni finestra si decompone in **149 cicli ancora della vittima** (il kernel che
+lavora mentre `current` è ancora l'idle) e **20 già del gestore** — i cicli fra
+il commit di `current` e la chiusura. Non è un dettaglio di lettura: è il
+marcatore che fa quello per cui esiste, cioè dire *dove* sono finiti i cicli di
+una misura che attraversa un cambio di proprietario.
+
+> ### ⚠ JITTER ZERO NON È UNA VIRTÙ DEL KERNEL, È UNA PROPRIETÀ DI QUESTO TEST
+>
+> Undici campioni identici dicono che **quel percorso** è deterministico — non
+> ci sono cicli data-dependent fra il risveglio e il dispatch — e questo è un
+> fatto vero e utile. Ma **non è la latenza nel caso peggiore**, e un documento
+> che lo presentasse così direbbe una cosa falsa.
+>
+> La ragione è nella forma del test: in `test_tmgr` la preemption ha **sempre la
+> stessa forma** — l'idle (`pcb7`) perde la CPU a favore del gestore (`pcb0`) —
+> quindi la scansione di `sched_preempt` trova al **primo livello**, ogni volta.
+> Il caso peggiore è una vittima a livello basso con il vincitore trovato dopo
+> aver attraversato più livelli vuoti, e **quel programma non esiste**: vederlo
+> richiede un test con più livelli popolati.
+>
+> Si noti che questa finestra **non** contiene la scansione che §6 misura: quel
+> tag sta in `scheduler`, che è la scansione *nuda* usata da `task_block` e
+> `task_yield`. Il percorso preemptivo passa da `sched_preempt`, che ha una
+> scansione sua e non è tagliata. Due routine diverse, due misure diverse — ed è
+> il motivo per cui le finestre delle due categorie non si sovrappongono mai.
+
+> ### ⚠ PER UN GIORNO QUESTA PAGINA HA PUBBLICATO IL 61% DI UN NUMERO
+>
+> I 169 sono il pezzo che **il kernel** misura, e la finestra chiude all'ultima
+> istruzione prima di `call ctx_restore`. Ma il task non gira ancora: mancano il
+> ripristino dei registri e la `reti`. Dal 14/09 il cammino è misurato tutto, in
+> quattro pezzi, **identici su tutte e undici le preemption**:
+>
+> ```
+> latenza di preemption   169      finestra del KERNEL
+> (dispatcher)             12      le ultime istruzioni + call ctx_restore
+> hal: ripristino          83      finestra dell'HAL
+> (coda)                   11      lw, addi, lw, addi, reti
+> ───────────────────────────
+> pronto → esegue         275      2,75 µs
+> ```
+>
+> `HALSW` conta **29 finestre** su tutta la corsa — una per ogni commutazione,
+> anche quelle volontarie — e sono tutte da 83 cicli. Le undici qui sopra sono
+> quelle che cadono su questo cammino.
+>
+> **Il confine era già dichiarato — ed è giusto dichiararlo — ma era
+> minimizzato con una cifra sbagliata.** Si leggeva: «`trace.py` attribuisce a
+> `ctx_restore` 203 cicli su tutta la corsa», e 203 fa sembrare il resto
+> trascurabile. **203 è l'etichetta fine `ctx_restore`, cioè il solo preambolo**;
+> il corpo è `cr_scalar`, **2407**, e il totale è **2610**. Che il totale della
+> nuova categoria `HALSW` sia esattamente **2407** è la conferma incrociata: la
+> finestra copre il corpo, non il preambolo.
+>
+> Un confine dichiarato e poi sminuito con un numero falso è peggio che non
+> dichiararlo, perché chi legge conclude che si può ignorare.
+>
+> **Perché la misura è in DUE finestre e non in una.** `ctx_restore` **non
+> ritorna**: cede il controllo al task e la pila non torna indietro, quindi non
+> esiste un'istruzione di kernel dopo il ripristino su cui appoggiare una
+> chiusura. Il kernel quei cicli non può misurarli, e allungargli un tag dentro
+> l'HAL vorrebbe dire che lo strato di sotto conosce cosa misura quello di sopra.
+> Quindi **l'HAL dichiara una categoria sua** e si misura da sé (§3.63).
+>
+> **I 23 cicli che restano fuori, e perché non si possono prendere.** I 12 del
+> dispatcher stanno fra le due finestre. Gli 11 della coda sono il limite del
+> linguaggio: scrivere una marca vuole un registro per l'indirizzo del canale, e
+> da `lw r1` in giù ogni registro porta già un valore del task — toccarne uno lo
+> corromperebbe. La chiusura sta nell'ultimo istante in cui esiste ancora uno
+> scratch. Sono costanti, misurati e nominati: è la differenza fra un confine
+> dichiarato e un confine taciuto.
+>
+> **Una cosa da tenere a mente leggendo 275:** è il cammino nella build
+> **strumentata**, che porta le istruzioni dei tag. Il sistema pulito è più
+> veloce, e di quanto lo dice il gradino in `rtos/test/CMakeLists.txt` — dove
+> ogni tag paga il suo prezzo in giri d'idle.
 
 > **Questi due numeri sono stati per un giorno 915 e 2120, ed è la storia di un
 > difetto che si è visto solo leggendo i cicli come tempo.** `cadb40b` fa
@@ -238,11 +385,11 @@ il periodo è compresso, o racconta un RTOS che gira a 25 kHz di tick.
 Elencato perché un nucleo fattuale incompleto è utile e un nucleo fattuale che
 finge di essere completo no. In ordine di quanto serve ai quattro documenti:
 
-- **la latenza di preemption**, che è il numero che un lettore realtime cerca
-  per primo e che ancora **non esiste**: richiede un tag in `task_ready` e uno
-  nel dispatcher. Dal 13/09 non è più bloccato da niente — il vocabolario del
-  build c'è (`vasm_config`, §3.47) e il disegno pure (§3.46) — è lavoro da
-  fare, non una decisione da prendere;
+- ~~la latenza di preemption~~ — **fatta il 14/09**, ed è §6.1 qui sopra:
+  169 cicli, 1,69 µs. Resta però la sua metà mancante, che è un'altra voce di
+  questo elenco: **la latenza nel CASO PEGGIORE**, che vuole un programma con
+  più livelli popolati. Oggi tutte e undici le preemption hanno la stessa
+  forma, quindi il jitter è zero per costruzione del test e non del kernel;
 - **il costo di un context switch**, idem: oggi si legge solo come differenza
   fra totali, che è la forma in cui §3.41 ha già prodotto un'inferenza
   sbagliata;

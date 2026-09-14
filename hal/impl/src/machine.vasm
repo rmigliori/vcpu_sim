@@ -30,6 +30,26 @@
 
 .include "hal/hal.vinc"
 
+; LE MACRO DEL MARCATORE, e SENZA .ifdef: la definizione dev'essere visibile
+; anche quando e' VUOTA, o il punto d'uso non assemblerebbe. E' il prezzo della
+; forma macro, e si paga qui invece che a ogni tag -- e' un file FOGLIA di sole
+; .equ e .macro, che nella build pulita non emette un byte.
+.include "hal/marker.vinc"
+
+; Il catalogo delle misure, e SOLO nella configurazione strumentata -- stessa
+; regola di scheduler.vasm: senza -D MARKS non entra ne' l'include ne' i tag,
+; e l'HAL pulito resta a zero dipendenze come dichiara il suo CMakeLists.
+;
+; Che l'HAL includa un file GENERATO dal catalogo di progetto e' voluto e non
+; una svista di strato: il porto del marcatore e' roba sua -- sta in
+; hal/marker.vinc, e il generato lo include -- quindi qui l'HAL sta leggendo
+; quale canale gli e' stato assegnato per misurare SE STESSO. Il numero del
+; canale sta in marks.conf e in nessun altro posto, che e' il motivo per cui
+; questo include esiste invece di una `.equ` scritta a mano qui.
+.ifdef MARKS
+.include "marks/marks.vinc"
+.endif
+
   .data
 
 ; Il vettore applicativo, registrato con irq_install. Sta QUI e non nel kernel
@@ -235,6 +255,20 @@ cs_clean:
 ; ==========================================================================
 ctx_restore:
   mov r14, r1
+
+  ; SOLO STRUMENTAZIONE: apre la finestra del ripristino.
+  ;
+  ; Questi cicli sono il pezzo che il KERNEL NON PUO' MISURARE: la sua finestra
+  ; di latenza chiude prima di `call ctx_restore`, e da qui in poi non esiste
+  ; piu' un'istruzione di kernel su cui appoggiare una chiusura -- questa
+  ; routine non ritorna. Quindi l'HAL dichiara una categoria SUA e si misura da
+  ; se': lo strato di sotto dice quanto costa, senza sapere cosa ne fa quello
+  ; di sopra.
+  ;
+  ; r1 e' MORTO: e' appena stato copiato in r14 e la riga sotto lo ricarica.
+  ; r2 e' del chiamante ed e' sporcato comunque da qui in giu'.
+  DBG_OPEN MARK_HALSW, M_HALSW_LOAD, r1, r2
+
   lw r1, 0(r14)           ; il flag: c'e' un blocco vettoriale sotto?
   addi r14, r14, 4
   beq r1, r0, cr_scalar
@@ -339,6 +373,20 @@ cr_scalar:
   addi r14, r14, 4
   lw r2, 0(r14)
   addi r14, r14, 4
+
+  ; SOLO STRUMENTAZIONE: chiude la finestra del ripristino.
+  ;
+  ; E' QUI E NON PIU' IN LA', ed e' un limite del linguaggio e non una scelta:
+  ; scrivere una marca vuole un registro per l'indirizzo del canale, e da `lw r1`
+  ; in giu' OGNI registro porta gia' un valore del task. Toccarne uno lo
+  ; corromperebbe. r1 e' l'ultimo che sia ancora morto -- la riga sotto lo
+  ; ricarica -- quindi questo e' l'ultimo istante utile.
+  ;
+  ; Restano fuori CINQUE istruzioni: le due lw, i due addi e la reti. Vanno
+  ; dette, perche' una finestra che non arriva fino in fondo e tace e' la
+  ; stessa cosa che il kernel faceva prima.
+  DBG_CLOSE MARK_HALSW, r1
+
   lw r1, 0(r14)
   addi r14, r14, 4
   lw r15, 0(r14)

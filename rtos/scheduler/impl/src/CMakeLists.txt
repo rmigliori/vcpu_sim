@@ -20,6 +20,6 @@
 # livello, in un posto solo.
 vasm_library(lib_kernel
   SOURCES    ${CMAKE_CURRENT_SOURCE_DIR}/scheduler.vasm
-  INTERFACES vinc_tcb vinc_queue
+  INTERFACES vinc_tcb vinc_queue vinc_hal
   LINK       lib_queue lib_hal
   CONFIGS    marks)

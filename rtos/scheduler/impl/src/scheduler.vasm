@@ -42,6 +42,12 @@
 .include "tcb/tcb.vinc"
 .include "queue/queue_api.vinc"
 
+; LE MACRO DEL MARCATORE, e SENZA .ifdef: la definizione dev'essere visibile
+; anche quando e' VUOTA, o il punto d'uso non assemblerebbe. E' il prezzo della
+; forma macro, e si paga qui invece che a ogni tag -- e' un file FOGLIA di sole
+; .equ e .macro, che nella build pulita non emette un byte.
+.include "hal/marker.vinc"
+
 ; Il catalogo delle misure, e SOLO nella configurazione strumentata: senza
 ; -D MARKS non entra niente di tutto questo nell'oggetto -- ne' l'include, ne' i
 ; tag piu' sotto. E' la ragione per cui .ifdef e' stato scritto (§3.44): con
@@ -94,6 +100,24 @@ pcb7:      .res PCB       ; PRIO_IDLE — l'idle, che non si blocca mai
 
 current:   .word 0        ; &TCB del task RUNNING (0 = nessuno, boot)
 g_resched: .word 0        ; need_resched: !=0 => switch a uscita IRQ
+
+; --------------------------------------------------------------------------
+;  SOLO STRUMENTAZIONE: c'e' una finestra di LATENZA aperta?
+;
+;  La finestra nasce in task_ready_preempt e muore nel dispatcher, che pero'
+;  gira a OGNI uscita da trap -- anche senza switch. Senza questa parola il
+;  dispatcher chiuderebbe un canale mai aperto, che il lettore dichiara errore.
+;
+;  Sta qui e non nel TCB per la ragione di §3.54: un campo dentro una struttura
+;  condivisa, dichiarato sotto .ifdef, farebbe valere TCB.size 24 in una
+;  configurazione e 28 nell'altra, e il linker non se ne accorgerebbe. Una
+;  parola privata di questo modulo non cambia la taglia di niente.
+;
+;  Nella build pulita NON ESISTE: zero byte, zero impronte mosse.
+; --------------------------------------------------------------------------
+.ifdef MARKS
+g_lat_open: .word 0       ; !=0 => una finestra LATENCY e' aperta
+.endif
 
   .text
 
@@ -275,6 +299,18 @@ task_ready:
   ret
 task_ready_preempt:
   call request_preempt
+  ; APRE la finestra della LATENZA. E' l'unico punto in cui il kernel constata
+  ; "questo batte chi gira" -- una riga sotto la blt sui puntatori -- quindi e'
+  ; l'istante in cui qualcuno diventa PRONTO senza ancora girare.
+  ;
+  ; r1 e r2 sono liberi: request_preempt li sporca entrambi, e lo dichiara la
+  ; sua intestazione. Il flag si arma qui e lo consuma il dispatcher.
+  DBG_OPEN MARK_LATENCY, M_LATENCY_READY, r1, r2
+.ifdef MARKS
+  li r1, g_lat_open
+  li r2, 1
+  sw r2, 0(r1)
+.endif
   lw r15, 0(r14)
   addi r14, r14, 4
   ret
@@ -531,11 +567,7 @@ sp_preempted:
   ; morto appena la scansione finisce; r3 viene assegnato due istruzioni sotto.
   ; Scritto per esteso perche' sbagliarlo non da' un errore: da' un `current`
   ; che vale l'indirizzo di un canale del marcatore, e il sistema prosegue.
-.ifdef MARKS
-  li r7, MARK_PREEMPT
-  li r3, M_PREEMPT_CUT
-  sw r3, 0(r7)
-.endif
+  DBG_EVENT MARK_PREEMPT, M_PREEMPT_CUT, r7, r3
   lw r2, 0(r14)          ; l'uscente
   sw r2, PCB.preempted(r8)
   li r3, PREEMPTED
@@ -582,8 +614,13 @@ sp_done:
 
 ; ==========================================================================
 ;  scheduler (POLITICA, interno) -> r1 = TCB scelto: la scansione NUDA, per chi
-;  non ha un uscente da mettere via -- oggi task_block, il cui chiamante si e'
-;  gia' accodato altrove.
+;  non ha un uscente da mettere via -- task_block e task_yield, che l'uscente
+;  se lo sono gia' accodato per conto proprio.
+;
+;  E' la scansione delle CESSIONI VOLONTARIE, e non quella del percorso
+;  preemptivo: quello passa da sched_preempt, che ha una scansione sua (mette
+;  via l'uscente e poi sceglie). Due routine, due misure -- ed e' il motivo per
+;  cui la finestra SCHED e quella LATENCY non si sovrappongono mai.
 ; ==========================================================================
 scheduler:
   addi r14, r14, -4
@@ -592,11 +629,7 @@ scheduler:
   ; APRE la finestra: da qui comincia la SCELTA. r1 e r2 sono liberi
   ; all'ingresso (questa routine non prende argomenti e r1 e' il valore di
   ; ritorno, che esiste solo alla fine).
-.ifdef MARKS
-  li r1, MARK_SCHED
-  li r2, M_SCHED_SCAN
-  sw r2, 0(r1)
-.endif
+  DBG_OPEN MARK_SCHED, M_SCHED_SCAN, r1, r2
 
   ; --- scansione dall'alto: a ogni livello lo slot batte la coda (§4) ---
   ; Il PCB corrente sta in r7 e NON in uno scratch: dequeue_head sporca r2, r4
@@ -627,10 +660,7 @@ sched_scan_done:
   ; del canale va ricaricato -- r1 dall'apertura in poi e' il registro di
   ; lavoro della scansione e adesso porta il TCB scelto, cioe' il valore di
   ; ritorno. Si usa r7, che dopo la scansione e' morto.
-.ifdef MARKS
-  li r7, MARK_SCHED
-  sw r0, 0(r7)
-.endif
+  DBG_CLOSE MARK_SCHED, r7
 
   lw r15, 0(r14)
   addi r14, r14, 4
@@ -664,5 +694,28 @@ dispatcher:
   sw r1, 0(r2)           ; COMMIT: current = il TCB che sta per girare
   li r3, RUNNING
   sw r3, TCB.state(r1)   ; ... ed e' RUNNING per definizione di dispatcher
+
+  ; CHIUDE la finestra della LATENZA, se ce n'e' una aperta. E' QUI e non altrove
+  ; perche' questa routine e' l'unico punto da cui un task entra in esecuzione
+  ; (lo dichiara l'intestazione qui sopra), quindi "gira" e' un istante e non
+  ; un'opinione. Ed e' DOPO il commit di `current`, cosi' la marca di chiusura
+  ; porta il task NUOVO: la finestra attraversa la commutazione, e il lettore
+  ; lo dice.
+  ;
+  ; Il flag e' obbligatorio: qui ci si passa a ogni uscita da trap, anche senza
+  ; switch, mentre la finestra si apre solo sulle preemption. r2 e r3 sono morti
+  ; (r1 no: serve due righe piu' giu').
+.ifdef MARKS
+  ; Il flag e' STATO DEL KERNEL e non una marca: esiste solo sotto MARKS, quindi
+  ; qui il condizionale e' onesto -- non e' il tag a essere condizionale, e'
+  ; la variabile. La marca invece passa dalla macro come tutte le altre.
+  li r2, g_lat_open
+  lw r3, 0(r2)
+  beq r3, r0, disp_no_lat
+  sw r0, 0(r2)
+  DBG_CLOSE MARK_LATENCY, r2
+disp_no_lat:
+.endif
+
   lw r1, TCB.sp(r1)      ; r1 = contesto opaco da riprendere
   call ctx_restore       ; HAL: ripristina i registri e cede il controllo

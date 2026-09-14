@@ -1,6 +1,23 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **14 settembre 2026** (§3.56 **il CLOCK**: i cicli si
+> Ultimo aggiornamento: **14 settembre 2026** (§3.65 **`.macro` nell'assembler**:
+> i tag del marcatore smettono di essere undici copie, e la variante vuota si
+> espande in niente; §3.64 **che cosa è girato fra i
+> cursori**: le etichette fini, e tre numeri sbagliati che si portavano dietro;
+> §3.63 **l'HAL si misura da sé**: la latenza vera è 275 e non 169;
+> §3.62 **un nome che rivendicava
+> troppo**: la categoria è ora `scheduler: cessione volontaria`, e il nome lungo
+> ha stanato tre campi a larghezza fissa in `marks.py`; §3.61 **a mani nude si naviga,
+> col modificatore si misura**: i cursori passano a shift/ctrl/ctrl+shift e il
+> click nudo non pianta più niente; §3.60 **un comando chiamato come
+> un dato**: `data-z` voleva dire due cose e i cursori non si piantavano più;
+> §3.59 **le finestre del marcatore
+> entrano nel diagramma**, sullo stesso righello delle fasce: la correlazione si
+> legge in verticale, e `ctest` sale a 40; §3.58 **le righe non spariscono
+> più zoomando**, e il difetto era una regola scritta due volte al contrario;
+> §3.57 **la LATENZA DI PREEMPTION
+> esiste**: 169 cicli, 1,69 µs, undici finestre per undici preemption; §3.56
+> **il CLOCK**: i cicli si
 > leggono anche come tempo, 100 MHz, e le due cose che il tempo a schermo ha
 > fatto saltare fuori — il tick compresso e due numeri stale in §6; il **13/09**:
 > §3.42 il primo ramo si fonde e la
@@ -21,7 +38,137 @@
 
 > ### ▶ RIPRENDI DA QUI (15/09/2026 o dopo)
 >
-> **Il 14/09: il CLOCK (§3.56), e il difetto che il clock ha stanato.** I cicli
+> **`.macro` NELL'ASSEMBLER (§3.65).** I tag del marcatore erano **undici copie**
+> a mano delle stesse istruzioni, ognuna col suo `.ifdef` e il suo registro
+> scelto a occhio. Ora la forma sta in `hal/marker.vinc` una volta sola, e al
+> punto d'uso non c'è nessun condizionale. Scelta contro le **procedure**
+> vuota/piena per un conto misurato — ~1% della corsa e **~5% del cammino di
+> latenza pubblicato**, pagati dal binario di produzione — e perché una procedura
+> vuota ucciderebbe l'identità byte per byte dei programmi puliti.
+> Due famiglie: `MARK_*` emette **sempre** (misura che è parte del programma),
+> `DBG_*` solo sotto `-D MARKS`. **Quindici impronte su quindici identiche**: le
+> macro danno gli stessi byte del codice scritto a mano. `ctest` **41/41**.
+>
+> ---
+>
+> **CHE COSA È GIRATO FRA I CURSORI (§3.64).** Il righello adesso dice anche i
+> **nomi** di ciò che ha girato nell'intervallo, con i cicli. Il dato c'era già —
+> `trace.py` ri-assembla ogni modulo apposta per le etichette locali — e veniva
+> buttato via: il kernel era attribuito al simbolo `.global` precedente, cioè
+> **3088 cicli sotto `sched_isr_exit`, che ne vale 231**. Nessuna gerarchia
+> inventata: le etichette si mostrano come sono, perché il linguaggio non
+> dichiara quali siano procedure. Ha scoperchiato altre due bugie dalla stessa
+> radice: il contesto costa **192 cicli a commutazione e non 91** (quindi la
+> stima di ~120 di §3.28 **non regge**), e le commutazioni sono 29, contate,
+> non 31 dedotte da una divisione.
+>
+> ---
+>
+> **L'HAL SI MISURA DA SÉ (§3.63).** La latenza di preemption vera è **275
+> cicli, 2,75 µs** — §6.1 ne pubblicava **169**, cioè il 61%. `ctx_restore` non
+> ritorna, quindi il kernel quei cicli non può misurarli: l'HAL dichiara una
+> categoria **sua**. Quattro pezzi, identici su tutte e undici le preemption:
+> `169 + 12 + 83 + 11`. Impronte dei puliti ferme, HAL compreso.
+>
+> ---
+>
+> **UN NOME CHE RIVENDICAVA TROPPO (§3.62).** «La scelta di chi gira» è ora
+> **`scheduler: cessione volontaria`**. Non «scheduler» e basta, che era la
+> proposta iniziale: `scheduler` non è l'unico posto dove si sceglie — il
+> percorso preemptivo passa da `sched_preempt`, non tagliato — quindi quel nome
+> avrebbe messo l'etichetta dello scheduler su un numero che ignora **11
+> decisioni su 29**. Il prefisso apre uno spazio di nomi: la gemella si chiamerà
+> `scheduler: preemption`. Il nome più lungo ha stanato **tre campi a larghezza
+> fissa** in `marks.py`, uno dei quali era già storto da sempre («pronto, non
+> ancora in esecuzione» sforava il suo): ora le larghezze si misurano dai nomi.
+>
+> ---
+>
+> **A MANI NUDE SI NAVIGA, COL MODIFICATORE SI MISURA (§3.61).** Proposta
+> dell'utente: il click nudo piantava A, e lo stesso gesto voleva dire anche
+> «scorri» — con una soglia di 4 px a indovinare quale dei due. Ora:
+>
+> ```
+> (niente)           navigazione: trascina per scorrere
+> shift+click        A      ctrl+click         B      ctrl+shift+click   C
+> ```
+>
+> Il trascinamento parte **solo senza modificatori**. Del tasto destro per B —
+> più mnemonico, ed era nella proposta — si è fatto a meno: non emette `click`,
+> e **Firefox riserva shift+destro per scavalcare il menu della pagina**.
+> La regola è uscita dalla colla ed è ora `cursoreDi()`, pura e provata in nove
+> asserzioni; i suggerimenti a schermo si derivano da lì.
+>
+> ---
+>
+> **IL COMANDO CHIAMATO COME UN DATO (§3.60).** Regressione di §3.59, segnalata
+> subito: **shift+click non piantava più il cursore B**. Il click cercava i
+> bottoni dello zoom con `closest("[data-z]")`, e le finestre appena entrate nel
+> diagramma portavano `data-z` = il loro ciclo di fine — quindi ogni click su una
+> barra era letto come comando di zoom e usciva prima del cursore. Il nome
+> cambiato è quello del **comando** (`data-zoom`), non quello del dato. La
+> collisione **c'era già** prima di §3.59, nascosta dalla distanza fra le due
+> sezioni. Il test confronta i nomi `data-*` dei controlli con quelli del
+> diagramma e li vuole **disgiunti** — forma generale, non «non c'è data-zoom».
+>
+> ---
+>
+> **LE FINESTRE DEL MARCATORE SONO NEL DIAGRAMMA (§3.59).** Segnalato
+> dall'utente: *«con il diagramma di latenza separato dal diagramma dei task,
+> non è possibile fare correlazioni che servono»*. Le finestre stavano in una
+> sezione a parte su scala **fissa**, le fasce sul diagramma **zoomabile**: due
+> righelli, e la lettura verticale — questa latenza sotto quale fascia cade, e di
+> chi era la CPU dentro — non esisteva. Ora le disegna `disegna()`, quindi zoomano
+> con le fasce e stanno sotto gli stessi cursori. La copia a scala fissa è stata
+> **tolta**, non lasciata: in fondo resta la sovrapposizione al trigger, che è
+> un'altra scala per costruzione. `ctest` **40/40** — il quinto programma è
+> `trace_events`, aggiunto perché la corsia della macchina era codice nuovo che
+> nessun test vedeva.
+>
+> ---
+>
+> **LE RIGHE DEL DIAGRAMMA NON SPARISCONO PIÙ ZOOMANDO (§3.58).** Segnalato
+> dall'utente guardando la pagina: la corsia di un proprietario si disegnava solo
+> se aveva fasce **dentro la vista**, quindi al fondo scala `test_tmgr_marks`
+> passava da **7 righe a 1**. Ora la corsia c'è sempre e una corsia vuota dice
+> «qui non ha avuto la CPU», che è un'informazione — nasconderla trasformava
+> «non gira» in «non esiste». Pagato in tre asserzioni di `trace_cursori_test.js`,
+> **verificate fallire** sul codice vecchio (3 test su 4).
+>
+> ---
+>
+> **LA LATENZA DI PREEMPTION ESISTE (§3.57)**, ed è il numero che
+> `scheduler-facts.md` dichiarava mancante per primo:
+>
+> ```
+> latenza di preemption   11 finestre   169 cicli   ·   1,69 µs @ 100 MHz
+> ```
+>
+> Undici finestre **chiuse** per undici preemption — i due conti si controllano a
+> vicenda. Le **aperture sono dodici**, e la dodicesima `marks.py read` la stampa
+> sotto `--- ERRORI ---`: è output corretto, non un guasto, ed è ora dichiarata
+> in §6.1 e in `marks.conf` invece di far sembrare rotta una misura buona.
+> Al dodicesimo tick l'ISR del test fa `halt` senza passare da
+> `sched_isr_exit`, quindi la corsa finisce con qualcuno pronto e mai messo a
+> girare: quella latenza non ha un secondo estremo e non si inventa.
+> Apre `task_ready_preempt`, chiude il `dispatcher` dopo il commit di `current`:
+> è la prima finestra del progetto che nasce in una routine e muore in un'altra,
+> e si decompone in **149 cicli ancora della vittima** e **20 già del gestore**.
+>
+> **Il jitter è zero e NON è una virtù del kernel**: in `test_tmgr` la preemption
+> ha sempre la stessa forma (idle → gestore, trovato al primo livello), quindi il
+> caso peggiore non è misurato. È la voce che ho messo in «Cosa manca» al posto
+> di quella cancellata.
+>
+> Costa **39 giri d'idle** — `5 0 2530` → **`5 0 2491`**, il tag più caro finora
+> — perché è l'unico la cui chiusura sta su un percorso che gira **sempre**: il
+> dispatcher paga la domanda «c'è una finestra aperta?» a ogni uscita da trap.
+>
+> **Non committato.**
+>
+> ---
+>
+> Prima, il **CLOCK (§3.56) e il difetto che ha stanato**. I cicli
 > si leggono anche come tempo, **100 MHz confermati dall'utente**, e la forma è
 > quella:
 >
@@ -3096,6 +3243,646 @@ il contratto scritto.
 
 ---
 
+### 3.65 `.macro` NELL'ASSEMBLER, E I TAG SMETTONO DI ESSERE COPIE (14/09/2026, decima parte)
+
+Proposta dell'utente, discussa e adottata con una correzione. La sua
+formulazione: *«una procedura è la forma giusta — avere gli `ifdef` nel codice
+non è propriamente professionale, e due librerie, una vuota (productive code) e
+una piena (debugging code), al costo di una call e un return»*.
+
+#### Dove aveva ragione, e dove il conto diceva di no
+
+Due dei tre punti erano già veri o chiaramente giusti. **L'interruttore sta già
+nel build** — `vasm_config(marks DEFINES MARKS)` — e l'`.ifdef` è solo come il
+sorgente gli risponde. E **una definizione sola batte undici copie**: il
+registro d'appoggio si sceglieva a mano a ogni sito guardando la liveness, e
+sbagliare corrompe un valore in silenzio.
+
+Il secondo punto invece ha un prezzo, misurato prima di rispondere: **158
+esecuzioni di tag** in una corsa di `test_tmgr`. A 3-4 cicli per call+ret vuota
+sono ~1% della corsa — e, quel che conta in un kernel realtime, **~5% del
+cammino «pronto → esegue»** che §6.1 pubblica, pagati dal binario di produzione
+per non fare niente.
+
+E soprattutto morirebbe l'invariante che `fingerprint.sh` dimostra a ogni
+sessione: i programmi puliti sono identici byte per byte, cioè **il kernel che
+misuri è il kernel che spedisci**. Con le procedure vuote ogni sonda aggiunta
+cambierebbe il prodotto.
+
+#### La macro prende tutti e due gli obiettivi
+
+Perché una macro **dal corpo vuoto si espande in zero istruzioni**. L'idea «una
+vuota e una piena» diventa due definizioni della stessa macro dentro un
+`.ifdef`, in `hal/marker.vinc` — e al punto d'uso non resta nessun condizionale.
+
+```asm
+  DBG_OPEN  MARK_SCHED, M_SCHED_SCAN, r1, r2
+  ...
+  DBG_CLOSE MARK_SCHED, r7
+```
+
+**La prova che il refactor non cambia niente: tutte e quindici le impronte
+identiche, la strumentata compresa.** Le macro producono byte per byte lo stesso
+codice dei tag scritti a mano.
+
+#### Due famiglie, e le ha scoperte un test rosso
+
+Convertito tutto a una famiglia sola, `events` è caduto. La ragione è il punto
+del disegno: **i tag di `test_events` non erano sotto `.ifdef`** — sono tag
+applicativi, parte di ciò che quel programma *è*: esiste per misurare il tempo
+di risposta a un tasto. Le macro gated li avevano fatti sparire.
+
+Da cui due famiglie, perché sono due cose:
+
+| | quando emette | per chi |
+|---|---|---|
+| `MARK_*` | **sempre** | codice la cui misura è parte del programma |
+| `DBG_*` | solo sotto `-D MARKS` | kernel e HAL, dove deve sparire dal prodotto |
+
+La domanda «questo tag sopravvive in produzione?» ha una risposta **nel nome**,
+ed è il motivo per cui il punto d'uso non ha più bisogno di un condizionale.
+
+#### Il prezzo della forma macro, dichiarato
+
+La definizione dev'essere **visibile anche quando è vuota**, o il punto d'uso non
+assembla. Quindi ogni modulo che tagga include `hal/marker.vinc` senza
+condizionale, e il kernel ha dovuto dichiarare `vinc_hal` fra le sue
+`INTERFACES` — cosa che il suo CMakeLists notava di non fare solo perché «l'HAL
+non ha ancora il suo `_api`». È un file foglia di sole `.equ` e `.macro`, che
+nella build pulita non emette un byte.
+
+#### Le regole della direttiva, tutte errori rumorosi
+
+Corpo di sole istruzioni semplici: niente etichette (due espansioni
+definirebbero lo stesso simbolo due volte), niente direttive, niente `.macro`
+annidata, nessuna macro che ne chiama un'altra — le stesse restrizioni di
+`.proc`, e per la stessa ragione. Argomenti in numero esatto. `.macro` non
+chiusa segnalata con la riga di apertura. Sostituzione per **token intero**: un
+parametro `a` non riscrive la `a` dentro `vale_a`.
+
+La **definizione** può stare ovunque, perché non emette niente — deve, visto che
+vive in un `.vinc` incluso prima di `.text`; è la **chiamata** che vuole il
+testo.
+
+`tests/test_macro.vasm` è il test mirato, `ctest` **41/41**. I cinque numeri
+attesi sono tutti derivabili a mano: un test del linguaggio che dipendesse dai
+cicli misurerebbe la macchina invece dell'assembler. Il quinto è quello che
+conta — dice che il corpo vuoto si espande davvero in niente.
+
+#### Una correzione al documento, già che c'eravamo
+
+`marker.vinc` dichiarava «aprire costa TRE istruzioni, chiudere UNA». Le
+chiusure sono cinque e **costano due tutte e cinque**: la chiusura da una sola
+vale se il registro con l'indirizzo è sopravvissuto all'intervallo, e in questo
+progetto non succede mai.
+
+---
+
+### 3.64 CHE COSA È GIRATO FRA I CURSORI (14/09/2026, nona parte)
+
+Domanda dell'utente: *«sarebbe possibile avere il nome delle procedure eseguite
+nell'ambito dei cursori?»* Sì — e il dato **c'era già**, calcolato a ogni corsa e
+buttato via. Tirarlo fuori ha scoperchiato tre bugie sulla stessa pagina.
+
+#### Il dato che si buttava
+
+`trace.py` ri-assembla ogni modulo con `--emit-expanded` **apposta** per avere le
+etichette locali, e lo dichiara in testa al file: *«con i soli `.global`, i rami
+dello scheduler finiscono dentro il simbolo che li precede»*. Poi, nel corpo,
+attribuiva il codice dei **task** all'etichetta fine e quello di **kernel** a
+quella globale — e delle etichette fini sopravvivevano due nomi cablati,
+`ctx_save` e `ctx_restore`.
+
+Risultato: **3088 cicli sotto il nome `sched_isr_exit`, che ne vale 231.** Il
+resto erano `scheduler`, `dispatcher`, `sched_scan`, `sched_preempt`.
+
+#### Niente gerarchia inventata
+
+Le etichette sono **più fini di una procedura**: `sched_scan_queue`, `deq_empty`,
+`cr_scalar`, `disp_no_lat` sono rami interni. Raggrupparle vorrebbe dire sapere
+quali etichette *siano* procedure, e il linguaggio non lo dichiara — `.proc` sta
+su 26 etichette di 283, ed è riservato a una classe precisa.
+
+Dedurlo dai bersagli di `call` sembra ovvio e **non funziona**: a `dispatcher` ci
+si arriva con `j`, mai con `call`, quindi finirebbe assorbito da `scheduler` —
+la stessa bugia in piccolo. Quindi si mostrano come sono, sommate per nome e
+ordinate per cicli. Il rumore è informazione: `sched_scan` + `sched_scan_queue` +
+`deq_empty` **è** la discesa sui sette livelli, cioè ciò che spiega perché quella
+finestra vale 142 e non 51.
+
+#### Le altre due bugie, che erano la stessa
+
+`ctx_save` + `ctx_restore` = 2807 su 31 commutazioni, **91 cicli l'una**. Ma quei
+due sono i *preamboli*: col corpo (`cs_clean`, `cr_scalar`) il contesto costa
+**5569 su 29 commutazioni, 192 l'una**.
+
+Da cui una conseguenza che va detta ad alta voce: **la stima di ~120 cicli di
+§3.28 — quella con cui si giustificavano gli otto livelli di priorità — NON
+regge.** La pagina scriveva «la stima regge» perché il numero contro cui la
+confrontava era dimezzato. Il 60% di scarto stava nascosto in `cr_scalar`.
+
+E le **commutazioni** si contavano dividendo un totale per 84, un costo medio
+scritto a mano; ora si contano gli ingressi in `ctx_restore`. Erano 31, sono 29.
+
+#### Il prezzo, e un tetto che si è sfondato
+
+La linea temporale pesa **~35 KB** — 2710 tratti, 85 nomi, in due pezzi (i nomi
+una volta sola, la linea come coppie `[ciclo, indice]`). La pagina passa da 120 a
+159 KB.
+
+E ha rotto `trace_check.sh`, che passava lo script intero a `gjs -c "$(cat)"`:
+**Linux limita un singolo argomento a 128 KB** (`MAX_ARG_STRLEN`), e l'errore —
+«Elenco degli argomenti troppo lungo» — non dice quale cosa sia cresciuta. Ora i
+tre pezzi vanno in un file, che quel tetto non ce l'ha.
+
+Quindici asserzioni nuove, e quella che conta è la solita: i cicli delle routine
+devono sommare **esattamente** alla durata dell'intervallo, e restare additivi
+spezzandolo. Un profilo che non torna non è un profilo. C'è anche il caso che una
+ricerca binaria sbagliata sbaglierebbe in silenzio: un intervallo tutto dentro un
+solo tratto.
+
+`ctest` **40/40**, impronte ferme.
+
+---
+
+### 3.63 L'HAL SI MISURA DA SÉ (14/09/2026, ottava parte)
+
+Scelta dell'utente fra tre strade, e la sua è quella che non rompe gli strati.
+
+**Il problema**: §6.1 pubblicava la latenza di preemption come **169 cicli**. Il
+ritardo vero fra «pronto» e «gira» è **275**. La pagina dichiarava il 61% di un
+numero, e il confine escluso era stato **minimizzato con una cifra sbagliata** —
+«`ctx_restore` costa 203 cicli su tutta la corsa», che è il solo preambolo
+mentre il corpo (`cr_scalar`) ne vale 2407.
+
+**Perché il kernel non può misurarlo**: `ctx_restore` **non ritorna**. Cede il
+controllo al task e la pila non torna indietro, quindi non esiste un'istruzione
+di kernel dopo il ripristino su cui appoggiare una chiusura.
+
+**La scelta scartata** era allungare il tag del kernel dentro l'HAL: lo strato di
+sotto conoscerebbe una categoria di quello di sopra. **Quella presa**: l'HAL
+dichiara una categoria **sua** e si misura da sé.
+
+```
+LATENCY        169   finestra del kernel
+(dispatcher)    12   ultime istruzioni + call ctx_restore
+HALSW           83   finestra dell'HAL
+(coda)          11   lw, addi, lw, addi, reti
+──────────────────
+pronto → esegue 275   2,75 µs
+```
+
+Identico su tutte e undici le preemption. `HALSW` conta **29 finestre** su tutta
+la corsa, una per commutazione, tutte da 83 cicli — e il suo totale, **2407**,
+coincide esattamente con l'etichetta fine `cr_scalar`: conferma incrociata.
+
+#### I due estremi, e il limite del linguaggio
+
+Apre all'ingresso di `ctx_restore`, dopo `mov r14, r1`, dove r1 è morto. Chiude
+**prima di `lw r1, 0(r14)`**, e più in là **non si può**: scrivere una marca
+vuole un registro per l'indirizzo del canale, e da lì in giù ogni registro porta
+già un valore del task. La chiusura sta nell'ultimo istante in cui esiste ancora
+uno scratch, e restano fuori cinque istruzioni — misurate, 11 cicli, dichiarate.
+
+#### Il build: l'HAL entra in due tempi
+
+`lib_hal` ora dichiara `CONFIGS marks`, e quel target nasce dal catalogo, che a
+sua volta include `hal/marker.vinc`. Non è un ciclo — l'**interfaccia** dell'HAL
+sta sotto al catalogo, l'**implementazione** sopra — ma impone di aggiungere
+`hal/interface` prima e `hal/impl` dopo. È il DAG vero, reso visibile.
+
+Nessun programma cambia una riga: `vasm_program(... CONFIG marks)` rimappa da
+solo ogni libreria alla sua variante quando esiste.
+
+Prezzo: `5 0 2491` → **`5 0 2458`**, 33 giri d'idle. **Impronte: solo
+`test_tmgr_marks.vx` si muove**, i 14 puliti byte per byte, HAL compreso.
+
+#### Un errore mio, corretto strada facendo
+
+Avevo misurato il buco cercando «la prima fascia di tipo *task*» dopo la
+chiusura, e mi era venuto 153, totale 322. Sbagliato: il `reti` costa **un
+ciclo**, e il task riparte subito — solo che la sua prima mossa è chiamare
+`irq_save`, che è classificata *kernel*, quindi la fascia task comincia 69 cicli
+dopo. Si vede solo leggendo il trace istruzione per istruzione. I numeri veri
+sono 11 e 275.
+
+---
+
+### 3.62 UN NOME CHE RIVENDICAVA TROPPO (14/09/2026, settima parte)
+
+Domanda dell'utente, guardando la corsia: *«un nome più significativo per "la
+scelta di chi gira" non sarebbe esattamente "scheduler"?»* — e la risposta è
+stata **no**, ma la domanda aveva ragione a esistere.
+
+#### Perché non «scheduler», e perché nemmeno il nome vecchio andava
+
+`scheduler` avrebbe rivendicato **due volte** più del dovuto. La finestra è un
+*pezzo* di `scheduler` — apre dopo il prologo, chiude prima dell'epilogo,
+perché la domanda è sulla politica e non sulla chiamata. E soprattutto
+`scheduler` **non è l'unico posto dove si sceglie**: il percorso preemptivo
+passa da `sched_preempt`, che ha una scansione sua e non è tagliata.
+
+Il conto rende la cosa concreta, su `test_tmgr_marks`:
+
+```
+18   scansioni contate     task_block, task_yield
+11   NON contate           una per ogni preemption, dentro sched_preempt
+```
+
+Un'etichetta «scheduler» avrebbe messo il nome dello scheduler su un numero che
+ignora **undici decisioni di scheduling su ventinove**. È l'ennesima
+riedizione del difetto di famiglia — *un'etichetta plausibile su un dato vero* —
+lo stesso del readout che scriveva `PREEMPTION` su qualunque evento, e di §3.41.
+
+Ma «la scelta di chi gira» non era innocente: era muto su **quale percorso**, e
+letto da solo suonava come *la* scelta, al singolare. Passava solo perché
+l'altra strada non è strumentata.
+
+#### Il nome nuovo, che è dell'utente ed è migliore di quello che avevo proposto
+
+```
+scheduler: cessione volontaria
+```
+
+Il prefisso apre uno **spazio di nomi** e la qualificazione dopo i due punti dice
+quale strada. Il giorno che si tagga `sched_preempt`, la gemella si chiama da
+sé — `scheduler: preemption` — e le due corsie si leggono come una coppia invece
+che come due cose scollegate. La mia proposta («scelta a cessione volontaria»)
+perdeva proprio questo. E *volontaria* è vocabolario già in uso: è il **blocco
+volontario** con cui la pagina descrive i sistemi cooperativi.
+
+#### Il difetto che il nome lungo ha stanato
+
+Il nome passa da 21 a 30 caratteri, e `marks.py` stampava le tabelle con campi a
+**larghezza fissa** — 24 per la categoria, 20 e 30 per canale e marker. Il nome
+nuovo sforava, e la riga del tempo sotto (stesso campo 24) non si sarebbe più
+allineata con la propria.
+
+Guardando lì è saltato fuori che **il difetto era già in casa**: nell'elenco
+finestra per finestra, «pronto, non ancora in esecuzione» supera da sempre il
+campo del marker, e quella riga era storta da quando esiste. Nessuno se n'era
+accorto perché la colonna a sinistra teneva — i due nomi di categoria erano **per
+caso lunghi uguali**, 21 e 21.
+
+La cura non è accorciare il nome: `marks.conf` è un file che si edita, quindi il
+lettore non ha titolo per dare per scontata nessuna lunghezza. Le tre larghezze
+adesso si **misurano dai nomi che ci sono**, con i vecchi valori come minimo.
+
+Un commento in `scheduler.vasm` diceva che quella scansione serve «oggi
+`task_block`»: la chiama anche `task_yield` da un pezzo. Corretto, e gli ho
+aggiunto la ragione per cui le due finestre non si sovrappongono mai.
+
+`ctest` **40/40**, `scheduler_facts --check` verde, impronte ferme — il nome vive
+solo nei commenti del `.vinc` generato.
+
+---
+
+### 3.61 A MANI NUDE SI NAVIGA, COL MODIFICATORE SI MISURA (14/09/2026, sesta parte)
+
+Proposta dell'utente, discussa e adottata con una modifica. La sua formulazione:
+*«per settare i cursori è meglio shift+sinistro per A, shift+destro per B,
+ctrl+shift+sinistro per C — così quando si trascina non c'è il pericolo che il
+cursore A si sposti»*.
+
+#### Il principio è giusto, e la ragione è più forte di quella data
+
+Il click nudo aveva **due significati**: «misura qui» e, se ti muovi, «scorri».
+La convivenza stava in piedi su una soglia:
+
+```js
+if (Math.abs(ev.clientX - giu.x) < 4) return;   // sotto soglia: e' un click
+```
+
+Quattro pixel che **indovinano l'intenzione**. Sotto, un nudge da 1-3 px mentre
+scorrevi **spostava A**; sopra, un trascinamento da 5 px che volevi fosse un
+click non piantava niente. È §3.60 un'altra volta — un gesto, due significati —
+con un cerotto sopra invece di una separazione.
+
+La regola nuova la toglie alla radice: **nudo = navigazione, modificato =
+misura.** Da cui anche il corollario, che non era nella proposta: il
+trascinamento parte **solo senza modificatori**, o shift+trascina farebbe le due
+cose insieme. E la soglia è rimasta solo come zona morta contro il tremolio: la
+domanda che arbitrava non esiste più.
+
+#### Perché NON il tasto destro per B, che era la parte più bella della proposta
+
+Sinistro/destro per A/B è più mnemonico — A e B *sono* una coppia, e il mouse ha
+due tasti. Due ostacoli concreti, non di gusto:
+
+1. **il tasto destro non emette `click`** — emette `contextmenu` — quindi B
+   andrebbe agganciato lì con `preventDefault`. Fattibile, e da solo non basta a
+   scartarlo;
+2. **Firefox riserva shift+destro per scavalcare il menu contestuale della
+   pagina.** È il gesto con cui l'utente dice «dammi il menu del browser, ignora
+   quello del sito»: l'unica combinazione col destro che un handler di pagina,
+   per progetto, non deve ricevere. E Firefox è il browser di questa macchina
+   (lo dice `trace_dom.js`, che non può girare headless perché l'istanza
+   interattiva tiene il profilo).
+
+Tre combinazioni sul tasto sinistro non dipendono da niente di tutto questo.
+`Alt` era escluso a monte: sotto GNOME se lo prende il window manager.
+
+```
+(niente)           navigazione: trascina per scorrere
+shift+click        A
+ctrl+click         B
+ctrl+shift+click   C
+```
+
+#### La parte che vale: la regola è uscita dalla colla
+
+La riga che decideva il gesto stava dentro il gestore del click, cioè nella
+**colla**, dove il DOM finto non arriva e niente si prova. Adesso è
+`cursoreDi(shift, ctrl)`: due booleani, un nome o `null`. Nove asserzioni —
+ognuna delle quattro combinazioni, che i tre cursori siano tutti raggiungibili e
+da **un gesto solo**, e che i suggerimenti a schermo si derivino da lì.
+
+Quest'ultima non è zelo: il suggerimento diceva «shift+click per B,
+shift+ctrl+click per C» dando per scontato che il primo cursore piantato fosse
+A. Con un gesto per cursore il primo può essere B o C, quindi metà delle volte
+avrebbe detto il falso. Ora `GESTI` si costruisce interrogando `cursoreDi`, e
+cambiare la mappatura aggiorna i suggerimenti senza toccarli.
+
+`ctest` **40/40**.
+
+---
+
+### 3.60 IL COMANDO CHIAMATO COME UN DATO (14/09/2026, quinta parte)
+
+Segnalato dall'utente subito dopo §3.59: **shift+click non piantava più il
+cursore B**. Regressione di quel lavoro, e la causa vale più della correzione.
+
+Il gestore del click riconosce i bottoni dello zoom per attributo:
+
+```js
+const b = ev.target.closest("[data-z]");
+if (b) { /* ...zooma... */ return; }        // e ritorna PRIMA del cursore
+```
+
+Le finestre entrate nel diagramma portano `data-a` e `data-z` — gli estremi
+della marca. Quindi ogni click su una barra trovava un `[data-z]`, veniva letto
+come comando di zoom, allargava la vista e usciva prima di piantare il cursore.
+Non solo shift+click: **nessun** cursore si piantava sopra una finestra.
+
+#### Quello che c'è da imparare, che non è «rinomina l'attributo»
+
+`data-z` voleva dire due cose: *il ciclo di fine di una finestra* e *quale zoom
+fare*. Finché le due cose vivevano in due sezioni diverse la collisione non si
+vedeva — **e c'era già**: cliccare una finestra nella vecchia sezione del
+marcatore zoomava il diagramma sopra, solo che nessuno ci cliccava. §3.59 non ha
+creato il difetto, gli ha tolto la distanza che lo nascondeva.
+
+Il nome giusto da cambiare è quello del **comando**, non quello del dato:
+`data-a`/`data-z` sono la coppia naturale di una marca, mentre un comando che si
+chiama come un dato se lo prende chiunque lo porti. Ora è `data-zoom`.
+
+#### Il test, e cosa può e non può provare
+
+La colla del click non è esercitabile nel DOM finto — `addEventListener` è un
+no-op e `closest()` torna `null` — ed è la divisione dichiarata in testa a
+`trace_cursori_test.js`. Ma **la collisione non è un fatto sugli eventi, è un
+fatto sul markup**: si estraggono i nomi `data-*` dai controlli dello zoom e
+quelli dal diagramma, e i due insiemi devono essere **disgiunti**.
+
+È una forma migliore di «nelle corsie non c'è `data-zoom`»: quella proverebbe
+solo il caso di oggi, questa prende **qualunque** nome condiviso, che è
+l'invariante vera — un pezzo di diagramma che porta il nome di un comando
+diventa un bottone. Verificata fallire rimettendo `data-z`.
+
+`ctest` **40/40**.
+
+---
+
+### 3.59 LE FINESTRE ENTRANO NEL DIAGRAMMA (14/09/2026, quarta parte)
+
+Segnalato dall'utente, di nuovo guardando la pagina: *«con il diagramma di
+latenza separato dal diagramma dei task, non è possibile fare correlazioni che
+servono»*. È esatto, e la causa stava in una riga:
+
+```js
+const pc = x => (x / D.fine) * 100;   // le finestre: scala FISSA
+const pc = x => ((x - b0) / span) * 100;   // le fasce: la vista
+```
+
+Due righelli diversi sulla stessa corsa. Le fasce dei task vivevano in
+`disegna()`, parametrica su `[b0,b1]` — zoom, tick, cursori; le finestre del
+marcatore vivevano in una sezione in fondo, ferme su tutta la corsa. La domanda
+per cui il marcatore esiste — **questa latenza cade sotto quale fascia, e di chi
+era la CPU dentro di essa** — è verticale, e non c'era modo di leggerla.
+
+#### Cosa si è mosso
+
+Le corsie delle finestre sono **dentro `disegna()`**: una per categoria, più
+quella degli eventi puntuali della macchina. Quindi zoomano con le fasce,
+portano le stesse linee dei tick, e cadono sotto gli stessi cursori — che già
+contavano le finestre fra A e B (`fraICursori` restituiva `finestre` da prima:
+il calcolo c'era, mancava il disegno).
+
+La copia a scala fissa in fondo è stata **tolta**, non lasciata lì: le stesse
+finestre su due righelli sono la seconda verità che questa pagina toglie
+altrove. Nella sezione resta ciò che **non si può** co-scalare — la
+sovrapposizione al trigger, che allinea ogni finestra al proprio inizio, cioè
+cambia l'origine di ognuna per costruzione — e la tabella.
+
+#### Il ritaglio, che è la parte che poteva mentire
+
+Una finestra più larga della vista va tagliata come le fasce. Ma i suoi **tratti
+di possesso** sono in percentuale della finestra *intera*: riusare quelle
+percentuali su una barra ritagliata farebbe scivolare le righe dentro la barra —
+un disegno che sbaglia di poco proprio mentre lo stai usando per misurare. I
+tratti si rifanno sulla parte visibile, e c'è un'asserzione che li verifica tutti
+dentro `0..100%` sulla finestra più lunga tagliata da **entrambi** i lati.
+
+E una barra troncata porta il **bordo tratteggiato**: senza, una finestra tagliata
+dal bordo si legge come una finestra corta, e il numero che uno crede di vedere è
+sbagliato. Il readout dice comunque gli estremi **veri**, non quelli ritagliati.
+
+#### Il difetto che mi sono fatto da solo, e il test che mancava
+
+La corsia degli **eventi puntuali della macchina** è codice nuovo, e **nessuno
+dei quattro programmi in `ctest` la produce**: la fa solo `test_events`, che
+girava a mano. Cioè, mentre correggevo un difetto della specie «funziona su
+quello per cui è stata scritta», ne stavo creando uno identico.
+
+Da cui il quinto programma nella serie, `trace_events`, col suo alimentatore
+(`-- --kbd ...`, §3.39: senza tasti non termina). **`ctest` 40/40.**
+
+Sei asserzioni nuove in `trace_cursori_test.js`: che a tutta la corsa ci siano
+tutte le finestre, che in vista ci siano **esattamente** quelle che la toccano,
+che chi esce porti il bordo, che i tratti restino dentro la barra ritagliata, e
+che la vecchia copia a scala fissa non si disegni più.
+
+---
+
+### 3.58 LE RIGHE CHE SPARIVANO ZOOMANDO (14/09/2026, terza parte)
+
+Segnalato dall'utente guardando la pagina, e non da un test: *«mano a mano che si
+zooma spariscono le righe del diagramma»*. È vero, ed erano parecchie — su
+`test_tmgr_marks`, al fondo scala, **da 7 righe a 1**.
+
+Una riga sola in `disegna()`:
+
+```js
+const bande = D.fasce.filter(f => f[2] === o.k && f[1] > b0 && f[0] < b1);
+if (!bande.length) return "";          // <- la corsia sparisce
+```
+
+La corsia di un proprietario esisteva solo se aveva fasce **dentro la vista**.
+Ma `ORDINE` viene da `own`, cioè dal bilancio di **tutta la corsa**: chi è in
+elenco gira da qualche parte, sempre. Quel `return ""` non era una selezione,
+era una vista che si mangiava la struttura.
+
+#### La parte che vale la pena ricordare: la regola c'era già, scritta al contrario
+
+Venti righe più sotto, per le sotto-righe degli istanti, stava scritto:
+
+> *Le righe ci sono se quella corsia produce quel marker IN TUTTA LA CORSA, non
+> solo in vista: altrimenti zoomando in una zona senza quell'evento la riga
+> sparirebbe e il diagramma salterebbe sotto il puntatore.*
+
+Cioè: **il difetto era già stato capito e risolto — per le sotto-righe — e la
+riga sopra continuava a farlo.** Due regole opposte a venti righe di distanza,
+tutte e due commentate bene. È la stessa specie di §3.41 e del `.symmap`: non un
+errore di distrazione, ma una correzione applicata dove faceva male invece che
+dove valeva.
+
+#### E una corsia vuota dice una cosa
+
+Non è solo stabilità del disegno. Su un diagramma di **possesso della CPU**, la
+riga di un task senza fasce in quel tratto significa «qui non ha avuto la CPU»,
+che è esattamente ciò che si va a guardare zoomando su una preemption.
+Nascondendola, «non gira» diventava «non esiste» — l'unica lettura sbagliata
+possibile su questo diagramma.
+
+#### Il prezzo, in asserzioni
+
+Tre, in `trace_cursori_test.js`, e **verificate fallire** rimettendo il difetto:
+3 test su 4 in rosso (`multi` no — ha un proprietario solo, e da 1 non si scende).
+La terza asserzione è nata sbagliata e va detto: era comparativa («le fasce in
+vista sono *meno*»), e su `multi` — 95 cicli, una fascia sola — falliva su un
+programma sano. Riscritta in forma **esatta**: le fasce disegnate sono
+precisamente quelle che toccano la finestra. È la stessa lezione dei tre cursori
+saltati su `multi`, ripetuta: un'asserzione comparativa su un programma corto
+misura la forma del programma, non quella del codice.
+
+`ctest` **39/39**. Il template non entra in nessun `.vx`: impronte ferme per
+costruzione.
+
+---
+
+### 3.57 LA LATENZA DI PREEMPTION ESISTE (14/09/2026, seconda parte)
+
+Il numero che `scheduler-facts.md` dichiarava mancante **per primo** — quello
+che un lettore realtime cerca prima di ogni altro — adesso si misura:
+
+```
+latenza di preemption     11       169       169       169         0      1859
+@ 100 MHz                      1,69 µs   1,69 µs   1,69 µs   0,00 µs   18,6 µs
+```
+
+**Undici finestre chiuse, una per ognuna delle undici preemption.** Che i due
+conti tornino non è una coincidenza da notare: è il controllo che rende la
+misura credibile, e va rifatto ogni volta.
+
+#### Il controllo va fatto sulle CHIUSURE, perché le aperture sono dodici
+
+Ed è la cosa che ho dovuto correggere rileggendo il lavoro: l'ultima riga che
+`marks.py read` stampa su `test_tmgr_marks` è
+
+```
+--- ERRORI ---
+  canale 7 (latenza di preemption) aperto al ciclo 49705 e MAI CHIUSO: quella misura non c'e'
+```
+
+e per una sessione questa riga non stava scritta da nessuna parte — mentre §3.57
+dichiarava «undici per undici, i conti tornano». Due cose vere che insieme
+facevano una cosa falsa: il controllo tornava, ma sul numero sbagliato.
+
+**Non è un difetto del tag.** Al dodicesimo tick `tmgr_tick` sveglia il gestore,
+quindi apre la finestra, e l'ISR di `test_tmgr` arriva a `halt`
+([`test_tmgr.vasm:316`](../rtos/test/test_tmgr.vasm)) **senza passare da
+`sched_isr_exit`**: la corsa finisce con qualcuno pronto e mai messo a girare, e
+quella latenza un secondo estremo non ce l'ha. Il lettore dice che la misura
+*non c'è* ed è l'unica cosa vera da dire — una dodicesima finestra chiusa a fine
+registrazione sarebbe un numero inventato, cioè la regola 3 violata.
+
+Quindi: **eventi `preemption` 11, chiusure 11, aperture 12**, e la terza riga non
+si conta. La forma per esteso sta in §6.1 di `scheduler-facts.md`, che è il posto
+dei numeri; qui c'è perché è anche una lezione sul metodo. Un `ERRORI` che il
+nucleo fattuale non spiega insegna al lettore a ignorare la sezione `ERRORI`, ed
+è il modo più rapido per rendere inutile un controllo che funziona.
+
+#### I due estremi, e perché stanno lì
+
+Apre **`task_ready_preempt`**: l'unico punto in cui il kernel constata «questo
+batte chi gira», una riga sotto la `blt` sui puntatori che l'invariante di §7.3
+rende possibile. Chiude il **`dispatcher`**, dopo il commit di `current`, perché
+il dispatcher è per costruzione l'unico punto da cui un task entra in esecuzione
+— lo dichiara la sua intestazione, ed è ciò che rende «gira» un istante e non
+un'opinione.
+
+È la **prima finestra del progetto che nasce in una routine e muore in
+un'altra**, e attraversa la commutazione: il lettore la marca `ATTRAVERSA` e la
+decompone in **149 cicli ancora della vittima** e **20 già del gestore**.
+
+#### Perché serve una parola di stato, e la scorciatoia che NON funziona
+
+Il dispatcher gira a **ogni** uscita da trap, anche senza switch, mentre la
+finestra si apre solo sulle preemption: chiudere incondizionatamente vorrebbe
+dire chiudere un canale mai aperto, che il lettore dichiara errore — a ragione.
+Da cui `g_lat_open`, una parola dentro `.ifdef MARKS`: nella build pulita non
+esiste.
+
+Sta in `scheduler.vasm` e **non** nel TCB, per la ragione di §3.54: un campo
+sotto `.ifdef` dentro una struttura condivisa farebbe valere `TCB.size` 24 in
+una configurazione e 28 nell'altra, e il linker non se ne accorgerebbe.
+
+La strada che sembrava più economica — chiudere sul ramo di `g_resched` in
+`sched_isr_exit`, che è **già** condizionale e non costerebbe né la parola né il
+test — è **sbagliata**, ed è un fatto verificabile invece che un'impressione:
+`request_preempt` è `.global` e la chiamano anche `mutex_unlock` e due test
+**senza passare da `task_ready`**. Lì `g_resched` si arma senza che nessuna
+finestra sia aperta, e ogni chiusura cadrebbe su un canale chiuso.
+
+#### Il jitter è zero, e non è una virtù
+
+Undici campioni identici dicono che **quel percorso** è deterministico, il che è
+vero e utile. Ma **non è il caso peggiore**, ed è una proprietà del test: in
+`test_tmgr` la preemption ha sempre la stessa forma — l'idle (`pcb7`) perde la
+CPU a favore del gestore (`pcb0`) — quindi la scansione di `sched_preempt` trova
+al **primo livello**, ogni volta. Il caso peggiore vuole una vittima in basso e
+il vincitore trovato dopo più livelli vuoti, e quel programma non esiste: è la
+voce che ho messo al posto di quella cancellata in «Cosa manca».
+
+Da cui anche una cosa che non sapevo prima di guardare: questa finestra **non**
+contiene la scansione che §6 misura. Quel tag sta in `scheduler`, la scansione
+*nuda* di `task_block` e `task_yield`; il percorso preemptivo passa da
+`sched_preempt`, che ha una scansione sua. Due routine, due misure, e le
+finestre delle due categorie non si sovrappongono mai.
+
+#### Il confine escluso, dichiarato
+
+La finestra chiude all'ultima istruzione di kernel prima di `call ctx_restore`,
+quindi **esclude il ripristino dei registri dell'HAL** (203 cicli su tutta la
+corsa, secondo `trace.py`). Portare la chiusura più in là vuol dire un tag del
+kernel dentro l'HAL: decisione di strato, non rifinitura. Un numero di latenza
+senza il suo confine è mezzo numero.
+
+#### Il prezzo, che è il più alto finora
+
+`tmgr_marks` passa da `5 0 2530` a **`5 0 2491`**: trentanove giri d'idle, più
+di ogni altro tag. La ragione è strutturale — è l'unica categoria il cui estremo
+di **chiusura sta su un percorso che gira sempre**, quindi il dispatcher paga la
+domanda «c'è una finestra aperta?» anche quando la risposta è no. Aprire e
+chiudere costa quanto le altre: è la domanda a costare.
+
+`ctest` **39/39**, `scheduler_facts --check` verde. Impronte: mosso **solo**
+`test_tmgr_marks.vx`, gli altri 14 byte per byte. Di quello si muovono sia il
+`TEXT+DATA` sia i valori del `.symmap` — le 65 voci restano 65, ma la parola in
+più sposta gli indirizzi dei dati che la seguono.
+
+---
+
 ### 3.56 IL CLOCK: I CICLI SI LEGGONO ANCHE COME TEMPO (14/09/2026)
 
 Idea dell'utente, discussa il 13/09 a fine giornata e fatta il 14. **100 MHz
@@ -3219,6 +4006,12 @@ click              A
 shift+click        B
 shift+ctrl+click   C
 ```
+
+> **Questa tabella è STORICA: il 14/09 la mappatura è cambiata (§3.61).** Il
+> principio — un gesto per cursore, niente modo da ricordare — è rimasto e non è
+> in discussione; quello che era sbagliato è il click **nudo** su A, perché lo
+> stesso gesto voleva dire anche «scorri». Oggi: `shift` A, `ctrl` B,
+> `ctrl+shift` C, e a mani nude si naviga soltanto.
 
 **«È possibile una misura a tre marker?»** Sì, e le misure interessanti
 diventano **tre**: `A…B`, `B…C` e il totale. Sono cose diverse — le prime due
@@ -4019,7 +4812,10 @@ Sul programma strumentato, diciotto scansioni misurate:
 
 | | n | min | max | media | **jitter** |
 |---|---:|---:|---:|---:|---:|
-| la scelta di chi gira | 18 | 51 | 177 | 118 | **126** |
+| scheduler: cessione volontaria | 18 | 51 | 177 | 118 | **126** |
+
+*(la categoria si chiamava «la scelta di chi gira»; rinominata il 14/09, §3.62 —
+il numero è lo stesso, il nome dice quale delle due strade misura.)*
 
 Il jitter è più del doppio del minimo, ed è esattamente il genere di numero che
 una media nasconde. Si vede anche disegnato (§3.46), nella sovrapposizione al
@@ -7038,24 +7834,37 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 > al posto dell'utente, e muore appena l'utente decide. Scriverla è servito lo
 > stesso — a porre la domanda invece di risolverla di propria iniziativa.
 
-**IL PROSSIMO PASSO — la latenza di preemption:**
+> **E tolta il 14/09, appena scaduta:** la formula «il prossimo passo — la
+> latenza di preemption», che §3.57 ha reso lavoro **fatto** nella stessa
+> sessione in cui era stata scritta. Il suo criterio di fine ha funzionato alla
+> lettera — «la nuova categoria compare in `marks.py read` e nella pagina, e §6
+> la riporta dicendo che è strumentata» — e in più ha retto una cosa che la
+> formula non prevedeva: che il numero uscisse con **jitter zero**, cioè
+> apparentemente perfetto. Il criterio non diceva «esulta», diceva «riportalo
+> dicendo cos'è», e cos'è lo dice §6.1: il caso peggiore non è misurato.
+
+**IL PROSSIMO PASSO — la latenza nel CASO PEGGIORE:**
 ```
-Leggi docs/stato-lavori.md e riprendi da li'.
+Leggi docs/stato-lavori.md e riprendi da li', poi §6.1 di
+docs/scheduler-facts.md, che e' la meta' fatta di questo lavoro.
 
-Il numero da fare e' quello che docs/scheduler-facts.md dichiara
-mancante per primo, in «Cosa manca ancora qui dentro»: la LATENZA di
-preemption, cioe' il ritardo fra "qualcuno di piu' prioritario e'
-pronto" e "gira". Non e' il tempo fuori CPU che §6 gia' misura --
-quello e' la conseguenza sulla vittima, non il ritardo del kernel.
+La latenza di preemption si misura dal 14/09: 169 cicli, undici
+finestre, jitter ZERO. Quello zero e' il punto: in test_tmgr la
+preemption ha sempre la stessa forma -- l'idle perde la CPU a favore
+del gestore, e la scansione di sched_preempt trova al PRIMO livello --
+quindi non e' il caso peggiore, e' l'unico caso.
 
-Vuole un tag in task_ready e uno nel dispatcher, ed e' lavoro, non una
-decisione: il vocabolario del build c'e' (vasm_config, §3.47), il
-disegno pure (§3.46), e dal 14/09 il risultato si legge anche in
-microsecondi (§3.56).
+Serve un programma con PIU' LIVELLI POPOLATI, in cui la vittima stia
+in basso e il vincitore si trovi dopo aver attraversato livelli vuoti.
+Il tag c'e' gia' e non va toccato: manca il programma che lo eserciti.
 
-Alla fine ctest 39/39, la nuova categoria compare in
-`marks.py read` e nella pagina, e scheduler-facts.md §6 la riporta
-dicendo CHE E' STRUMENTATA -- e' la regola di quella sezione.
+Attenzione a non trasformarlo in un test di qualcos'altro: l'oggetto
+e' la SCANSIONE di sched_preempt, non la mailbox ne' i timeout.
+
+Alla fine ctest 40/40 (o piu'), la categoria «latenza di preemption»
+con jitter != 0, e §6.1 che riporta min e max dicendo su quale
+programma -- perche' i due programmi misureranno cose diverse, e
+sommarli sarebbe la solita seconda verita'.
 ```
 
 **Poi: scrivere il primo dei quattro documenti (il didattico,
@@ -7137,10 +7946,18 @@ conto (§3.34). Funziona su qualunque `.vx`; il disegno sta in
 termina, e lo strumento ora lo dice invece di restare appeso.
 
 **Dal 13/09 la stessa pagina disegna anche il MARCATORE** (§3.46), quando il
-programma emette dei tag — oggi solo `test_events`: una corsia per categoria, le
-barre rigate dai tratti di chi possedeva la CPU dentro la finestra, e la
-sovrapposizione allineata al trigger dove si vede il jitter. Le stesse misure
-nel terminale, senza pagina:
+programma emette dei tag: una corsia per categoria, le barre rigate dai tratti di
+chi possedeva la CPU dentro la finestra, e la sovrapposizione allineata al
+trigger dove si vede il jitter.
+
+**Dal 14/09 quelle corsie stanno NEL DIAGRAMMA PRINCIPALE** (§3.59), in fondo,
+sullo **stesso righello** delle fasce: zoomano con loro e si misurano con gli
+stessi cursori, perché la cosa che si va a leggere è verticale — sotto quale
+fascia cade una latenza, e di chi era la CPU dentro di essa. Una barra col
+**bordo tratteggiato** continua fuori vista e non è una finestra corta. In fondo
+resta solo la sovrapposizione al trigger, che è un'altra scala per costruzione.
+
+Le stesse misure nel terminale, senza pagina:
 ```
 python3 tools/marks.py read marks.conf <registrazione> --vx <prog.vx>
 ```
@@ -7152,12 +7969,14 @@ cursori si **agganciano all'istante vero più vicino** — un bordo di fascia, u
 tick, una preemption — quindi il numero è esatto invece che a occhio: a tutto
 raggio un pixel vale ~55 cicli, su misure che valgono 909.
 
-**Un gesto per cursore** (§3.55): `click` pianta **A**, `shift+click` **B**,
-`shift+ctrl+click` **C** — così spostarne uno non cancella gli altri. Con tre si
+**Un gesto per cursore** (§3.55), e **dal 14/09 a mani nude si naviga, col
+modificatore si misura** (§3.61): `shift+click` pianta **A**, `ctrl+click`
+**B**, `ctrl+shift+click` **C** — così spostarne uno non cancella gli altri, e
+nessuno si sposta mentre scorri. Il **click nudo non pianta niente**. Con tre si
 leggono **le due metà e il totale**, e il segmento sotto il puntatore si marca.
 
 **Rotella** per avvicinare dove punti (il ciclo sotto il puntatore non si
-muove), **trascinamento** per scorrere, e i bottoni sopra il diagramma —
+muove), **trascinamento** (a mani nude) per scorrere, e i bottoni sopra il diagramma —
 fra cui **«fra i cursori»**, che inquadra esattamente ciò che hai misurato.
 `Esc` toglie i cursori, `0` torna a tutta la corsa.
 

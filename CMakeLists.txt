@@ -57,8 +57,24 @@ enable_testing()
 #
 #  L'ordine e' un ordine topologico del DAG e non e' negoziabile: in CMake un
 #  target dev'essere definito prima di essere nominato.
+#
+#  E DAL 14/09/2026 L'HAL ENTRA IN DUE TEMPI (§3.63), perche' il DAG lo impone:
+#
+#      hal/interface   il porto del marcatore (marker.vinc)
+#          |                  il catalogo generato lo include
+#      vinc_marks  ->  vasm_config(marks)
+#          |                  ...e da li' prende il -D MARKS
+#      hal/impl        ctx_restore, che ora porta un tag sotto .ifdef
+#
+#  Non e' un ciclo: l'INTERFACCIA dell'HAL sta sotto al catalogo,
+#  l'IMPLEMENTAZIONE sopra. Finche' l'HAL non aveva tag le due meta' potevano
+#  entrare insieme, e infatti `add_subdirectory(hal)` le aggiungeva tutte e
+#  due. Adesso no, e scriverlo qui e' l'unico modo di far vedere che sono due
+#  posizioni diverse dello stesso ordine topologico -- la regola che
+#  hal/CMakeLists.txt gia' dichiarava per conto suo: «l'interfaccia viene
+#  prima, sempre».
 # ---------------------------------------------------------------------------
-add_subdirectory(hal)
+add_subdirectory(hal/interface)
 
 # ---------------------------------------------------------------------------
 #  Il catalogo delle misure: marks.conf -> un .vinc GENERATO.
@@ -108,6 +124,11 @@ vasm_interface(vinc_marks
 # ---------------------------------------------------------------------------
 vasm_config(marks DEFINES MARKS INTERFACES vinc_marks)
 
+# L'altra meta' dell'HAL: qui e non prima, perche' lib_hal dichiara
+# `CONFIGS marks` e quel target nasce nella riga sopra. Vedi il riquadro in
+# testa a `add_subdirectory(hal/interface)`.
+add_subdirectory(hal/impl)
+
 add_subdirectory(generic)
 add_subdirectory(rtos)
 
@@ -139,6 +160,14 @@ vasm_check(multi      MODE STATS EXPECT "18 40 95"  PROGRAM multi)
 
 vasm_check(proc       MODE DUMPS EXPECT "100 200 300"
            SOURCE ${CMAKE_SOURCE_DIR}/tests/test_proc.vasm)
+
+# .macro/.endmacro (14/09/2026, §3.65). Cinque numeri tutti DERIVABILI a mano, e
+# non e' pignoleria: un test del linguaggio che dipendesse dai cicli
+# misurerebbe la macchina invece dell'assembler. Il quinto (42) e' quello che
+# conta di piu' -- dice che una macro dal corpo VUOTO si espande in zero
+# istruzioni, che e' la ragione per cui il marcatore usa macro e non procedure.
+vasm_check(macro      MODE DUMPS EXPECT "15 25 75 35 42"
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_macro.vasm)
 # test_include gira in modalita' legacy a file singolo (non ha oggetti ne'
 # link), quindi i suoi -I se li scrive a mano invece di riceverli da
 # INTERFACES. La lista cresce di uno a ogni libreria che si sposta, ed e' il
@@ -220,12 +249,23 @@ endforeach()
 #  invarianti prima che diventassero ctest.
 #
 #  SU PIU' PROGRAMMI, e non e' zelo: i difetti di quella pagina sono tutti
-#  della forma "funziona su quello per cui e' stata scritta". I quattro qui
+#  della forma "funziona su quello per cui e' stata scritta". I cinque qui
 #  sotto sono scelti per FORMA, non per copertura:
 #     tmgr_marks  strumentato: marcatore, finestre e preemption
 #     coop        nessun interrupt, IE = 0 per tutta la vita: niente tick
 #     vectors     il piu' lungo, e con due task vettoriali
 #     multi       nessun kernel: niente task, niente ISR, solo il boot
+#     events      l'unico con gli EVENTI PUNTUALI della macchina (14/09/2026)
+#
+#  L'ULTIMO E' ARRIVATO TARDI, e vale la pena dire perche'. Il 14/09 le corsie
+#  del marcatore sono entrate nel diagramma principale (§3.59), e fra queste
+#  quella della macchina -- che nessuno dei quattro programmi di sopra produce.
+#  Cioe': una corsia nuova, disegnata da codice nuovo, e nessun test che la
+#  vedesse. Esattamente la forma di difetto che questa serie esiste per
+#  prendere, ricreata mentre la si correggeva.
+#
+#  Vuole il suo ALIMENTATORE: test_events e' guidato dalla tastiera e senza i
+#  tasti non termina (§3.39). Le opzioni della macchina vanno dopo un `--`.
 #
 #  OPZIONALE: senza gjs questi test non esistono, e ctest resta verde. Meglio
 #  un test che manca di un test che fallisce per l'ambiente.
@@ -239,6 +279,9 @@ if(GJS_EXE)
   endforeach()
   add_test(NAME trace_multi
            COMMAND ${_tc} ${CMAKE_BINARY_DIR} ${VASM_BINARY_DIR}/multi.vx)
+  add_test(NAME trace_events
+           COMMAND ${_tc} ${CMAKE_BINARY_DIR} ${VASM_BINARY_DIR}/test_events.vx
+                   -- --kbd "2000:a,6000:b,10000:c,14000:d,18000:e")
 else()
   message(STATUS "gjs non trovato: i test della pagina di traccia non ci sono")
 endif()

@@ -68,6 +68,12 @@
 .include "timeout_manager/timeout_manager.vinc"
 .ifdef MARKS
 .include "marks/marks.vinc"
+
+; LE MACRO DEL MARCATORE, e SENZA .ifdef: la definizione dev'essere visibile
+; anche quando e' VUOTA, o il punto d'uso non assemblerebbe. E' il prezzo della
+; forma macro, e si paga qui invece che a ogni tag -- e' un file FOGLIA di sole
+; .equ e .macro, che nella build pulita non emette un byte.
+.include "hal/marker.vinc"
 .endif
 
 .equ COD_EXPIRY  77     ; il messageCode che A si fa recapitare. Opaco per
@@ -234,11 +240,8 @@ a_armed:
   ; serve subito sotto, r4 e r5 pure).
 .ifdef MARKS
   lw r6, PAYLOAD.messageCode(r3)
-  li r7, MARKD_RECV
-  sw r6, 0(r7)             ; ARMA: il prossimo tag su questo canale se lo porta
-  li r7, MARK_RECV
-  li r6, M_RECV_GOT
-  sw r6, 0(r7)
+  DBG_DATA MARKD_RECV, r6, r7   ; ARMA: il prossimo tag se lo porta dietro
+  DBG_EVENT MARK_RECV, M_RECV_GOT, r7, r6
 .endif
 
   lw r4, PAYLOAD.clientTag(r3)
