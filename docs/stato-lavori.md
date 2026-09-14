@@ -62,7 +62,23 @@
 > `ctest` **39/39**, `scheduler_facts --check` verde, e le impronte si sono
 > mosse **solo su `test_tmgr_marks.vx`** — solo il `TEXT+DATA`, `.symmap` e le
 > 65 voci identici, perché le due etichette nuove sono locali. Gli altri 14
-> programmi byte per byte come prima. **Non committato e non pushato.**
+> programmi byte per byte come prima.
+>
+> **DUE COMMIT, e la divisione è il punto:**
+>
+> | | |
+> |---|---|
+> | `39a58d3` | **il clock** — macchina, i quattro strumenti, manuale §6.1, nucleo fattuale, §7 di `scheduler-facts.md`. Impronte dei 15 programmi **invariate** |
+> | `1d86ac6` | **il rientro sotto il tag** — i due `.vasm`, l'`EXPECT`, §6. Muove **solo** `test_tmgr_marks.vx` |
+>
+> Sono separati perché il secondo cambia il bersaglio e il primo no, e perché
+> così si legge quale dei due ha mosso quell'impronta. Il primo è stato
+> **costruito e provato da solo** in un worktree (39/39), e per farlo stare in
+> piedi i due documenti condivisi ci stanno dentro nello stato di *allora*: §6
+> che dice «915 e 2120, trovato e **non** corretto», e la formula che pone la
+> domanda invece di darla per risposta. Mettere i documenti finali in entrambi
+> avrebbe fatto descrivere al primo commit una correzione che a quel punto non
+> esisteva.
 >
 > ---
 >
@@ -129,9 +145,11 @@
 > è misurata: **una sola istruzione in più** su un ramo mai eseguito muove
 > l'impronta di **dieci programmi su quindici** mentre `ctest` resta 32/32.
 >
-> **PUSHATO** il 13/09 a fine giornata, su richiesta: `origin/master` è a
-> **`2a3d7c1`**, cioè i **quattro commit** del marcatore sopra i quindici del
-> mattino (`7c2bacb`→`2a3d7c1`):
+> **PUSHATO** il 13/09, su richiesta, in due riprese: prima fino a `2a3d7c1` —
+> i **quattro commit** del marcatore sopra i quindici del mattino
+> (`7c2bacb`→`2a3d7c1`) — e poi i tre di fine giornata (§3.55 e i due di
+> handoff), quindi `origin/master` ha chiuso la giornata a **`6d2f5f1`**. I
+> quattro:
 >
 > | | |
 > |---|---|
@@ -144,8 +162,13 @@
 > **nasce** da quella verifica: costruire in una cartella chiamata `b` ha stanato
 > due difetti che in `build/` non si vedono. Il tag **`italiano-pre-rename`** è
 > fuori dal mattino (`6bb3383`), mandato a parte perché i tag non viaggiano da
-> soli. Fuori non resta niente, salvo il commit che aggiorna questo paragrafo: un
-> commit non può nominare il proprio hash.
+> soli.
+>
+> **Il 14/09 si aggiungono `39a58d3` (il clock) e `1d86ac6` (il rientro sotto il
+> tag)**, pushati su richiesta a fine giornata. Fuori da `origin/master` non
+> resta niente **salvo il commit che aggiorna questo paragrafo**: un commit non
+> può nominare il proprio hash, ed è la ragione per cui questa frase è scritta
+> ogni volta invece di essere sostituita da un numero.
 >
 > **Resta da cancellare il ramo `mutex-cede-solo-se-serve`**, locale e remoto: è
 > fuso per intero in `master` e non serve più. Non l'ho fatto di mia iniziativa
@@ -970,9 +993,11 @@ push senza prompt).
 > versione italiana esiste, è raggiungibile con un `git checkout`, e non può
 > andare alla deriva perché nessuno ci scrive dentro.
 >
-> **Da pushare**: il merge, il tag (`git push origin italiano-pre-rename`, che i
-> tag non viaggiano da soli) e i commit del rename che seguiranno. Come sempre,
-> **il push lo chiede l'utente**.
+> **Pushati tutti e tre** entro il 13/09: il merge, il tag
+> (`git push origin italiano-pre-rename`, che i tag non viaggiano da soli) e i
+> commit del rename. Come sempre, **il push l'ha chiesto l'utente** — e vale
+> ancora: lo stato aggiornato sta nel riquadro in cima, questo paragrafo è del
+> 13/09 e resta com'era.
 >
 > *(I due paragrafi qui sotto sono fermi al 07/09 e vanno letti come storia: lo
 > stato del push aggiornato sta nel riquadro in cima.)*
