@@ -43,7 +43,7 @@
 | `mutex` | 3434 | 0 | 7143 | 71,4 µs |
 | `tmgr` | 21925 | 0 | 49729 | 497,3 µs |
 | `coop` | 4866 | 0 | 10531 | 105,3 µs |
-| `events` | 9259 | 0 | 18785 | 187,9 µs |
+| `events` | 9265 | 0 | 18767 | 187,7 µs |
 | `vectors` | 92628 | 43712 | 159568 | 1,60 ms |
 
 Misurati così, uno per riga:
@@ -81,7 +81,7 @@ silenzio.
 | `mutex` | DUMPS | `0 0 1 1 1` | — |
 | `tmgr` | DUMPS | `5 0 2566` | — |
 | `coop` | DUMPS | `0 5 5 5 0` | — |
-| `events` | DUMPS | `0 5 495 5 714` | `--kbd 2000:a,6000:b,10000:c,14000:d,18000:e` |
+| `events` | DUMPS | `0 5 495 5 718` | `--kbd 2000:a,6000:b,10000:c,14000:d,18000:e` |
 | `vectors` | DUMPS | `0 0 20 19 39` | — |
 
 ## 3. Chi gira, e per quanto
@@ -175,8 +175,8 @@ Un programma che non compare non ha prodotto una traccia leggibile.
 
 | proprietario | cicli | quota |
 |---|---:|---:|
-| idle | 16236 | 86.4% |
-| E | 2239 | 11.9% |
+| idle | 16238 | 86.5% |
+| E | 2219 | 11.8% |
 | boot | 310 | 1.7% |
 
 **`vectors`**

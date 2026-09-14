@@ -281,7 +281,7 @@ ti_round:
 
   ; APRE: da qui il sistema non ha niente da fare. Fuori dal ciclo di polling
   ; e non dentro: un tag per carattere, non uno per giro a vuoto.
-  MARK_OPEN MARK_WAIT, M_WAIT_POLLING, r1, r2
+  MARK_OPEN MARK_WAIT, M_WAIT_POLLING
 
 ti_poll:
   li r1, KBD_STATUS
@@ -308,8 +308,8 @@ ti_poll:
   sw r3, CHAR.ch(r1)  ; il payload: il kernel non lo leggera' mai
 
   ; --- da qui in poi non c'e' piu' fretta: il device e' stato servito ---
-  MARK_CLOSE MARK_WAIT, r1          ; CHIUDE: il lavoro e' arrivato
-  MARK_OPEN MARK_RESPONSE, M_RESPONSE_DELIVERY, r1, r2   ; la chiudera' E
+  MARK_CLOSE MARK_WAIT          ; CHIUDE: il lavoro e' arrivato
+  MARK_OPEN MARK_RESPONSE, M_RESPONSE_DELIVERY   ; la chiudera' E
 
   beq r6, r0, ti_now    ; il carattere c'era gia': non ho aspettato niente
   li r1, waited
@@ -384,7 +384,7 @@ te_ch_ok:
   sw r3, 0(r1)
 
   ; CHIUDE una finestra aperta DALL'IDLE: e' il punto
-  MARK_CLOSE MARK_RESPONSE, r1   ; di tutto l'esercizio -- la misura attraversa il
+  MARK_CLOSE MARK_RESPONSE   ; di tutto l'esercizio -- la misura attraversa il
                            ; di tutto l'esercizio -- la misura attraversa il
                            ; cambio di proprietario, e nessuno strumento che
                            ; guardi il pc puo' farlo

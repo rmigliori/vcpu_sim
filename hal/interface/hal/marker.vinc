@@ -25,7 +25,21 @@
 ;     ...
 ;     sw  r0, 0(r1)              ; 0 CHIUDE, e r0 e' gia' zero: UNA istruzione
 ;
-; Aprire costa TRE istruzioni, chiudere UNA. Il costo si conta a mano leggendo
+; DAL 14/09/2026 QUELLA FORMA E' STORICA: la sonda e' UN'ISTRUZIONE, `mark`
+; (§3.66), e le macro qui sotto la usano. Il porto e' lo stesso, il valore ha lo
+; stesso significato -- != 0 apre, 0 chiude -- ma non serve piu' un registro:
+;
+;     mark MARK_RESPONSE, P_CONSEGNA    ; APRE
+;     ...
+;     mark MARK_RESPONSE, 0             ; CHIUDE
+;
+; Il problema che ha risolto non era il costo, erano i REGISTRI: la forma sopra
+; ne vuole uno d'appoggio, scelto guardando chi e' vivo a quel punto, e dove non
+; ce n'e' uno libero il tag NON SI PUO' METTERE. E' il caso della chiusura
+; dentro ctx_restore, che stava sette istruzioni troppo in su e faceva chiudere
+; la finestra 11 cicli prima che il task eseguisse.
+;
+; Aprire costava TRE istruzioni, chiudere UNA. Il costo si conta a mano leggendo
 ; il listato, ed e' voluto: un probe a costo zero sarebbe comodo e insegnerebbe
 ; il falso, perche' sul ferro la strumentazione si paga sempre. Si paga anche
 ; quando la registrazione e' spenta -- la sw viene eseguita lo stesso, e' solo
@@ -157,33 +171,41 @@
 ;  quello che la riga dopo ricarica. Una macro che scegliesse da se' lo
 ;  corromperebbe.
 ;
-;  Aprire costa TRE istruzioni, chiudere DUE. Non una: la chiusura da una sola
-;  vale se il registro con l'indirizzo e' sopravvissuto all'intervallo, e in
-;  questo progetto non succede in nessuno dei cinque siti.
+;  APRIRE COSTA UNA ISTRUZIONE, CHIUDERE UNA. Un ciclo l'una, e non zero: uno
+;  slot occupato lo occupa anche l'hardware di trace, e cosi' il costo della
+;  strumentazione dentro una finestra e' esattamente il numero di marche che
+;  contiene -- il che rende il numero del sistema PULITO deducibile dalla
+;  registrazione invece che da un'analisi del listato.
+;
+;  Solo MARK_DATA resta una store con il suo registro: arma il porto dati con un
+;  valore del PROGRAMMA, che a tempo di assemblaggio non si puo' scrivere.
 ; ===========================================================================
 
 ; --- SEMPRE: la misura e' parte del programma ---
-.macro MARK_OPEN ch, mk, tmp, tmp2
-  li tmp, ch
-  li tmp2, mk
-  sw tmp2, 0(tmp)
+;
+; NESSUN REGISTRO. Dal 14/09/2026 la sonda e' UN'ISTRUZIONE, `mark`, e questa
+; e' la differenza che conta: la forma vecchia (li+li+sw) voleva un registro
+; d'appoggio scelto guardando la liveness a ogni sito, e dove non ce n'era uno
+; libero il tag non si poteva mettere. La chiusura dentro ctx_restore e' quel
+; caso: prima della `reti` ogni registro porta gia' un valore del task, quindi
+; la finestra si chiudeva 11 cicli troppo presto.
+.macro MARK_OPEN ch, mk
+  mark ch, mk
 .endmacro
 
-.macro MARK_CLOSE ch, tmp
-  li tmp, ch
-  sw r0, 0(tmp)
+.macro MARK_CLOSE ch
+  mark ch, 0
 .endmacro
 
-; Un ISTANTE, non una durata: un canale dichiarato `event` in marks.conf. Si
-; scrive e basta, non c'e' niente da chiudere.
-.macro MARK_EVENT ch, mk, tmp, tmp2
-  li tmp, ch
-  li tmp2, mk
-  sw tmp2, 0(tmp)
+; Un ISTANTE, non una durata: un canale dichiarato `event` in marks.conf.
+.macro MARK_EVENT ch, mk
+  mark ch, mk
 .endmacro
 
-; ARMA il porto dati: il valore che la PROSSIMA marca su quel canale si portera'
-; dietro. `val` e' un registro, non una costante.
+; ARMA il porto dati, e resta una STORE: il valore e' un registro -- il codice
+; del messaggio appena ricevuto -- e `mark` porta un immediato. Un valore del
+; programma non si puo' scrivere a tempo di assemblaggio, quindi qui il
+; registro d'appoggio serve ancora, ed e' l'unica macro che lo chiede.
 .macro MARK_DATA chd, val, tmp
   li tmp, chd
   sw val, 0(tmp)
@@ -192,19 +214,14 @@
 .ifdef MARKS
 
 ; --- SOLO STRUMENTATA: in produzione questi non esistono ---
-.macro DBG_OPEN ch, mk, tmp, tmp2
-  li tmp, ch
-  li tmp2, mk
-  sw tmp2, 0(tmp)
+.macro DBG_OPEN ch, mk
+  mark ch, mk
 .endmacro
-.macro DBG_CLOSE ch, tmp
-  li tmp, ch
-  sw r0, 0(tmp)
+.macro DBG_CLOSE ch
+  mark ch, 0
 .endmacro
-.macro DBG_EVENT ch, mk, tmp, tmp2
-  li tmp, ch
-  li tmp2, mk
-  sw tmp2, 0(tmp)
+.macro DBG_EVENT ch, mk
+  mark ch, mk
 .endmacro
 .macro DBG_DATA chd, val, tmp
   li tmp, chd
@@ -214,13 +231,12 @@
 .else
 
 ; LE STESSE QUATTRO, VUOTE: zero istruzioni, zero byte, impronta del programma
-; pulito immutata. Che sia una definizione vuota invece di una libreria vuota e'
-; precisamente cio' che la rende gratuita.
-.macro DBG_OPEN ch, mk, tmp, tmp2
+; pulito immutata.
+.macro DBG_OPEN ch, mk
 .endmacro
-.macro DBG_CLOSE ch, tmp
+.macro DBG_CLOSE ch
 .endmacro
-.macro DBG_EVENT ch, mk, tmp, tmp2
+.macro DBG_EVENT ch, mk
 .endmacro
 .macro DBG_DATA chd, val, tmp
 .endmacro

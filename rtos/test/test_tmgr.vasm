@@ -241,7 +241,7 @@ a_armed:
 .ifdef MARKS
   lw r6, PAYLOAD.messageCode(r3)
   DBG_DATA MARKD_RECV, r6, r7   ; ARMA: il prossimo tag se lo porta dietro
-  DBG_EVENT MARK_RECV, M_RECV_GOT, r7, r6
+  DBG_EVENT MARK_RECV, M_RECV_GOT
 .endif
 
   lw r4, PAYLOAD.clientTag(r3)

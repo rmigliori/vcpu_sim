@@ -305,7 +305,7 @@ task_ready_preempt:
   ;
   ; r1 e r2 sono liberi: request_preempt li sporca entrambi, e lo dichiara la
   ; sua intestazione. Il flag si arma qui e lo consuma il dispatcher.
-  DBG_OPEN MARK_LATENCY, M_LATENCY_READY, r1, r2
+  DBG_OPEN MARK_LATENCY, M_LATENCY_READY
 .ifdef MARKS
   li r1, g_lat_open
   li r2, 1
@@ -567,7 +567,7 @@ sp_preempted:
   ; morto appena la scansione finisce; r3 viene assegnato due istruzioni sotto.
   ; Scritto per esteso perche' sbagliarlo non da' un errore: da' un `current`
   ; che vale l'indirizzo di un canale del marcatore, e il sistema prosegue.
-  DBG_EVENT MARK_PREEMPT, M_PREEMPT_CUT, r7, r3
+  DBG_EVENT MARK_PREEMPT, M_PREEMPT_CUT
   lw r2, 0(r14)          ; l'uscente
   sw r2, PCB.preempted(r8)
   li r3, PREEMPTED
@@ -629,7 +629,7 @@ scheduler:
   ; APRE la finestra: da qui comincia la SCELTA. r1 e r2 sono liberi
   ; all'ingresso (questa routine non prende argomenti e r1 e' il valore di
   ; ritorno, che esiste solo alla fine).
-  DBG_OPEN MARK_SCHED, M_SCHED_SCAN, r1, r2
+  DBG_OPEN MARK_SCHED, M_SCHED_SCAN
 
   ; --- scansione dall'alto: a ogni livello lo slot batte la coda (§4) ---
   ; Il PCB corrente sta in r7 e NON in uno scratch: dequeue_head sporca r2, r4
@@ -660,7 +660,7 @@ sched_scan_done:
   ; del canale va ricaricato -- r1 dall'apertura in poi e' il registro di
   ; lavoro della scansione e adesso porta il TCB scelto, cioe' il valore di
   ; ritorno. Si usa r7, che dopo la scansione e' morto.
-  DBG_CLOSE MARK_SCHED, r7
+  DBG_CLOSE MARK_SCHED
 
   lw r15, 0(r14)
   addi r14, r14, 4
@@ -713,7 +713,7 @@ dispatcher:
   lw r3, 0(r2)
   beq r3, r0, disp_no_lat
   sw r0, 0(r2)
-  DBG_CLOSE MARK_LATENCY, r2
+  DBG_CLOSE MARK_LATENCY
 disp_no_lat:
 .endif
 

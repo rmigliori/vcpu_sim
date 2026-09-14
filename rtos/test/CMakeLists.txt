@@ -226,6 +226,7 @@ vasm_program(test_tmgr_marks OBJECTS t_tmgr
 #    2530  il RIENTRO spostato sotto il blocco .ifdef (14/09/2026)
 #    2491  + la finestra LATENCY, che e' la piu' cara finora (14/09/2026)
 #    2458  + la finestra HALSW, dentro ctx_restore (14/09/2026)
+#    2519  i tag diventano UN'ISTRUZIONE, `mark` (14/09/2026)
 #
 #  L'ULTIMO GRADINO E' UNA CORREZIONE, e vale la pena leggerlo al contrario.
 #  Il commento del 13/09 diceva che quelle tre istruzioni erano "una volta
@@ -259,8 +260,16 @@ vasm_program(test_tmgr_marks OBJECTS t_tmgr
 #  E' anche la misura che dice perche' l'interruttore DEVE essere a
 #  compile-time: con --marks spento quelle istruzioni si eseguirebbero lo
 #  stesso. Ogni tag si paga, e il prezzo finisce qui.
+#  L'ULTIMO GRADINO VA IN SU, ed e' il primo che lo fa. Non e' un tag tolto:
+#  e' la sonda che smette di essere tre istruzioni e diventa una sola, `mark`
+#  (§3.66). Il prezzo di TUTTA la strumentazione passa da 108 giri d'idle a 47,
+#  e il numero si riavvicina al pulito (2566) invece di allontanarsene.
+#
+#  Cio' che si e' comprato con quei 61 giri non e' solo velocita': `mark` non
+#  tocca registri, quindi la chiusura di HALSW e' scesa fino a ridosso della
+#  `reti`. Il confine non misurato della latenza passa da 11 cicli a 1.
 vasm_check(tmgr_marks MODE DUMPS PROGRAM test_tmgr_marks
-           EXPECT "5 0 2458")
+           EXPECT "5 0 2519")
 
 # ---------------------------------------------------------------------------
 #  test_semaphore — il semaforo contatore, e l'INSERIMENTO ORDINATO di §13.6.
@@ -420,7 +429,7 @@ vasm_object(t_events SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_events.vasm
 vasm_program(test_events OBJECTS t_events LINK lib_messaggi lib_kernel)
 
 vasm_check(events MODE DUMPS PROGRAM test_events
-           EXPECT "0 5 495 5 714"
+           EXPECT "0 5 495 5 718"
            ARGS   --kbd "2000:a,6000:b,10000:c,14000:d,18000:e")
 
 # ---------------------------------------------------------------------------

@@ -267,7 +267,7 @@ ctx_restore:
   ;
   ; r1 e' MORTO: e' appena stato copiato in r14 e la riga sotto lo ricarica.
   ; r2 e' del chiamante ed e' sporcato comunque da qui in giu'.
-  DBG_OPEN MARK_HALSW, M_HALSW_LOAD, r1, r2
+  DBG_OPEN MARK_HALSW, M_HALSW_LOAD
 
   lw r1, 0(r14)           ; il flag: c'e' un blocco vettoriale sotto?
   addi r14, r14, 4
@@ -374,23 +374,24 @@ cr_scalar:
   lw r2, 0(r14)
   addi r14, r14, 4
 
-  ; SOLO STRUMENTAZIONE: chiude la finestra del ripristino.
-  ;
-  ; E' QUI E NON PIU' IN LA', ed e' un limite del linguaggio e non una scelta:
-  ; scrivere una marca vuole un registro per l'indirizzo del canale, e da `lw r1`
-  ; in giu' OGNI registro porta gia' un valore del task. Toccarne uno lo
-  ; corromperebbe. r1 e' l'ultimo che sia ancora morto -- la riga sotto lo
-  ; ricarica -- quindi questo e' l'ultimo istante utile.
-  ;
-  ; Restano fuori CINQUE istruzioni: le due lw, i due addi e la reti. Vanno
-  ; dette, perche' una finestra che non arriva fino in fondo e tace e' la
-  ; stessa cosa che il kernel faceva prima.
-  DBG_CLOSE MARK_HALSW, r1
-
   lw r1, 0(r14)
   addi r14, r14, 4
   lw r15, 0(r14)
   addi r14, r14, 4
+
+  ; SOLO STRUMENTAZIONE: chiude la finestra del ripristino, A RIDOSSO DELLA RETI.
+  ;
+  ; Qui NON C'E' UN REGISTRO LIBERO -- r1 e r15 portano gia' i valori del task,
+  ; r14 e' il suo stack -- e con la forma li+li+sw questa chiusura era
+  ; impossibile: stava sette istruzioni piu' su, e la finestra si chiudeva 11
+  ; cicli prima che il task eseguisse. `mark` non tocca registri, ed e'
+  ; esattamente per questo caso che e' stata aggiunta all'ISA (§3.66).
+  ;
+  ; RESTA FUORI UN CICLO: la `reti`. E' irriducibile dal software -- non esiste
+  ; un'istruzione di kernel DOPO la consegna su cui appoggiare una marca --
+  ; quindi si dichiara invece di inseguirlo.
+  DBG_CLOSE MARK_HALSW
+
   reti                    ; pc = epc; psw = quella del frame -> il task riparte
 
 ; ==========================================================================

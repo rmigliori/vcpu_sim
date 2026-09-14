@@ -151,8 +151,8 @@ Dal 13/09 `scheduler` porta un tag, nella sola configurazione strumentata
 
 | | n | min | max | media | **jitter** |
 |---|---:|---:|---:|---:|---:|
-| scheduler: cessione volontaria | 18 | 51 | 177 | 118 | **126** |
-| *gli stessi, @ 100 MHz* | | *0,51 µs* | *1,77 µs* | *1,18 µs* | ***1,26 µs*** |
+| scheduler: cessione volontaria | 18 | 47 | 173 | 114 | **126** |
+| *gli stessi, @ 100 MHz* | | *0,47 µs* | *1,73 µs* | *1,14 µs* | ***1,26 µs*** |
 
 > **Il nome è qualificato, e quella qualificazione è metà del fatto.** Fino al
 > 14/09 la categoria si chiamava «la scelta di chi gira», e rivendicava troppo:
@@ -190,15 +190,15 @@ aspetta**. Sono due numeri diversi sulla stessa commutazione.
 
 | | n | min | max | media | **jitter** |
 |---|---:|---:|---:|---:|---:|
-| latenza di preemption (**misurata dal kernel**) | 11 | 169 | 169 | 169 | **0** |
-| *gli stessi, @ 100 MHz* | | *1,69 µs* | *1,69 µs* | *1,69 µs* | ***0,00 µs*** |
-| `hal: ripristino del contesto` (le 11 su questo cammino) | 11 | 83 | 83 | 83 | **0** |
-| **pronto → ESEGUE DAVVERO** | 11 | **275** | **275** | **275** | **0** |
-| *gli stessi, @ 100 MHz* | | ***2,75 µs*** | ***2,75 µs*** | ***2,75 µs*** | ***0,00 µs*** |
+| latenza di preemption (**misurata dal kernel**) | 11 | 160 | 160 | 160 | **0** |
+| *gli stessi, @ 100 MHz* | | *1,60 µs* | *1,60 µs* | *1,60 µs* | ***0,00 µs*** |
+| `hal: ripristino del contesto` (le 11 su questo cammino) | 11 | 89 | 89 | 89 | **0** |
+| **pronto → ESEGUE DAVVERO** | 11 | **257** | **257** | **257** | **0** |
+| *gli stessi, @ 100 MHz* | | ***2,57 µs*** | ***2,57 µs*** | ***2,57 µs*** | ***0,00 µs*** |
 
 **La riga che conta per un lettore realtime è l'ultima**, e fino al 14/09 questa
-pagina pubblicava la prima. La differenza non è un dettaglio: **169 è il 61% di
-275**.
+pagina pubblicava la prima. La differenza non è un dettaglio: **160 è il 62% di
+257**.
 
 **Undici finestre chiuse, una per ognuna delle undici preemption** della tabella
 precedente: le due misure si contano a vicenda, e il fatto che i conti tornino
@@ -275,13 +275,19 @@ una misura che attraversa un cambio di proprietario.
 > quattro pezzi, **identici su tutte e undici le preemption**:
 >
 > ```
-> latenza di preemption   169      finestra del KERNEL
-> (dispatcher)             12      le ultime istruzioni + call ctx_restore
-> hal: ripristino          83      finestra dell'HAL
-> (coda)                   11      lw, addi, lw, addi, reti
+> latenza di preemption   160      finestra del KERNEL
+> (dispatcher)              7      le ultime istruzioni + call ctx_restore
+> hal: ripristino          89      finestra dell'HAL
+> (reti)                    1      la consegna vera e propria
 > ───────────────────────────
-> pronto → esegue         275      2,75 µs
+> pronto → esegue         257      2,57 µs
 > ```
+>
+> **Un ciclo solo resta fuori**, ed erano undici fino al 14/09. La differenza la
+> fa `mark`, l'istruzione che annota una marca **senza toccare registri**
+> (§3.66): con la forma vecchia — `li`, `li`, `sw` — la chiusura dentro
+> `ctx_restore` voleva un registro d'appoggio, e prima della `reti` non ce n'è
+> uno libero. Stava sette istruzioni più su per forza.
 >
 > `HALSW` conta **29 finestre** su tutta la corsa — una per ogni commutazione,
 > anche quelle volontarie — e sono tutte da 83 cicli. Le undici qui sopra sono
@@ -305,18 +311,20 @@ una misura che attraversa un cambio di proprietario.
 > l'HAL vorrebbe dire che lo strato di sotto conosce cosa misura quello di sopra.
 > Quindi **l'HAL dichiara una categoria sua** e si misura da sé (§3.63).
 >
-> **I 23 cicli che restano fuori, e perché non si possono prendere.** I 12 del
-> dispatcher stanno fra le due finestre. Gli 11 della coda sono il limite del
-> linguaggio: scrivere una marca vuole un registro per l'indirizzo del canale, e
-> da `lw r1` in giù ogni registro porta già un valore del task — toccarne uno lo
-> corromperebbe. La chiusura sta nell'ultimo istante in cui esiste ancora uno
-> scratch. Sono costanti, misurati e nominati: è la differenza fra un confine
-> dichiarato e un confine taciuto.
+> **Gli 8 cicli che restano fuori.** I 7 del dispatcher stanno fra le due
+> finestre: sono kernel, e volendo si prenderebbero. L'ultimo invece **non si
+> può prendere dal software**, ed è la `reti` stessa: non esiste un'istruzione di
+> kernel *dopo* la consegna su cui appoggiare una marca. Per azzerarlo servirebbe
+> che lo dicesse la macchina, come fa per il tasto. Si dichiara invece di
+> inseguirlo — un ciclo su 257.
 >
-> **Una cosa da tenere a mente leggendo 275:** è il cammino nella build
-> **strumentata**, che porta le istruzioni dei tag. Il sistema pulito è più
-> veloce, e di quanto lo dice il gradino in `rtos/test/CMakeLists.txt` — dove
-> ogni tag paga il suo prezzo in giri d'idle.
+> **Una cosa da tenere a mente leggendo 257:** è il cammino nella build
+> **strumentata**. Il sistema pulito è più veloce, e da oggi di quanto si conta
+> invece di stimarlo: `mark` costa **1 ciclo**, quindi la strumentazione dentro
+> una finestra vale esattamente **il numero di marche che contiene**. Su questo
+> cammino sono quattro — apertura e chiusura di ognuna delle due finestre —
+> più le istruzioni con cui il kernel tiene `g_lat_open`, che stanno anch'esse
+> sotto `.ifdef MARKS`.
 
 > **Questi due numeri sono stati per un giorno 915 e 2120, ed è la storia di un
 > difetto che si è visto solo leggendo i cicli come tempo.** `cadb40b` fa

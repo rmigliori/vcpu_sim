@@ -1,6 +1,8 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **14 settembre 2026** (§3.65 **`.macro` nell'assembler**:
+> Ultimo aggiornamento: **14 settembre 2026** (§3.66 **`mark`, la sonda in
+> un'istruzione**: niente registri, e il confine non misurato della latenza
+> passa da 11 cicli a 1; §3.65 **`.macro` nell'assembler**:
 > i tag del marcatore smettono di essere undici copie, e la variante vuota si
 > espande in niente; §3.64 **che cosa è girato fra i
 > cursori**: le etichette fini, e tre numeri sbagliati che si portavano dietro;
@@ -37,6 +39,18 @@
 ## 0. STATO ATTUALE — DA DOVE SI RIPRENDE
 
 > ### ▶ RIPRENDI DA QUI (15/09/2026 o dopo)
+>
+> **`mark`: LA SONDA È UN'ISTRUZIONE (§3.66).** Il problema non era il costo,
+> erano i **registri**: una marca voleva un registro d'appoggio, e prima della
+> `reti` non ce n'è uno libero — per questo la finestra dell'HAL si chiudeva 11
+> cicli troppo presto. Ora `mark <porto>, <valore>` non ne tocca nessuno, la
+> chiusura è a ridosso della `reti` e **fuori resta un ciclo solo**. Latenza vera
+> **257** (era 275, e prima ancora si pubblicava 169). Costa **1 ciclo**, così il
+> costo della strumentazione in una finestra è il numero di marche che contiene.
+> Il gradino va **in su** per la prima volta: `2458 → 2519`, su un pulito di 2566.
+> Nel kernel non cambia una riga — cambiano i corpi delle macro.
+>
+> ---
 >
 > **`.macro` NELL'ASSEMBLER (§3.65).** I tag del marcatore erano **undici copie**
 > a mano delle stesse istruzioni, ognuna col suo `.ifdef` e il suo registro
@@ -3240,6 +3254,75 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.66 `mark`: LA SONDA DIVENTA UN'ISTRUZIONE (14/09/2026, undicesima parte)
+
+Idea dell'utente, alla fine di una discussione che era partita da tutt'altro:
+*«visto che abbiamo basato tutto su ifdef e sonde da usare solo in debug,
+perché non abilitiamo istruzioni specifiche della ISA solo in debug per
+misurare?»*
+
+#### Il problema non era il costo, erano i REGISTRI
+
+Una marca era `li` + `li` + `sw` su un porto MMIO. Tre istruzioni, e **un
+registro d'appoggio da scegliere guardando chi è vivo a quel punto**. Dove non
+ce n'è uno libero, il tag non si può mettere.
+
+È il caso della chiusura dentro `ctx_restore`: prima della `reti` r1 e r15
+portano già i valori del task e r14 è il suo stack. La chiusura stava **sette
+istruzioni più su**, e la latenza pubblicata era corta di **11 cicli** — §6.1 lo
+dichiarava come confine mancante, e avevamo passato mezz'ora a discutere se
+spostare il tag (recuperandone 5) o far marcare la `reti` alla macchina.
+
+`mark <porto>, <valore>` non tocca registri. La chiusura è scesa a ridosso della
+`reti`, e il confine non misurato è passato da **11 cicli a 1**.
+
+```
+prima                          adesso
+  LATENCY        169             LATENCY        160
+  (dispatcher)    12             (dispatcher)     7
+  HALSW           83             HALSW           89
+  (coda)          11             (reti)           1
+  ---------------------          ---------------------
+  pronto → esegue 275            pronto → esegue 257
+```
+
+L'ultimo ciclo è irriducibile dal software: non esiste un'istruzione di kernel
+*dopo* la consegna. Per azzerarlo servirebbe che lo dicesse la macchina, come fa
+per il tasto — resta possibile, non è più urgente.
+
+#### Costa UNO, non zero, e in cambio dà una proprietà
+
+Uno slot occupato lo occupa anche l'hardware di trace, quindi il principio di
+`marker.vinc` — *la strumentazione si paga* — resta in piedi, a un quarto del
+prezzo. E si guadagna una cosa che a zero non si avrebbe: **il costo della
+strumentazione dentro una finestra è esattamente il numero di marche che
+contiene.** Il numero del sistema pulito diventa deducibile dalla registrazione
+invece che da un'analisi del listato.
+
+#### L'opcode va in FONDO all'enum, e l'ho imparato sbagliando
+
+Messo in mezzo, ha **rinumerato tutti gli opcode successivi** — e le impronte si
+sono mosse tutte e quindici, *compresi i tredici programmi puliti che `mark` non
+la contengono nemmeno*. Non era strumentazione che filtrava in produzione: era
+il formato degli oggetti che cambiava sotto. Spostato in coda, si muovono solo i
+due programmi che i tag li hanno davvero.
+
+#### Il gradino va IN SU, ed è il primo che lo fa
+
+`5 0 2458` → **`5 0 2519`**, contro un pulito di 2566: il prezzo di tutta la
+strumentazione passa da 108 giri d'idle a **47**. Un `EXPECT` che sale è un tag
+che costa meno, non un tag tolto.
+
+E nel kernel non è cambiata una riga: sono cambiati i **corpi delle macro** in
+`marker.vinc`. È il secondo dividendo di §3.65 nello spazio di un giorno — la
+prima volta furono le impronte identiche byte per byte, adesso è un cambio
+dell'ISA che non tocca un sorgente.
+
+`ctest` **41/41**. Impronte: si muovono `test_tmgr_marks.vx` e `test_events.vx`,
+cioè i due che contengono marche; gli altri tredici byte per byte.
 
 ---
 
