@@ -191,6 +191,35 @@ vasm_check(include    MODE DUMPS EXPECT "24 16 16 512 1"
 vasm_check(epsw       MODE DUMPS EXPECT "1 0 0 7"
            SOURCE ${CMAKE_SOURCE_DIR}/tests/test_epsw.vasm)
 
+# test_due_irq — LA SECONDA SORGENTE DI INTERRUZIONE (14/09/2026, §3.67).
+#
+# Fino a oggi la macchina ne aveva UNA, il timer, e la tastiera si interrogava.
+# Adesso anche il tasto interrompe, e il vettore scopre chi e' stato leggendo la
+# CAUSA -- come mcause su RISC-V, non un vettore per sorgente.
+#
+# I tre numeri sono derivabili a mano e dicono quattro cose:
+#   65  'A' preso col POLLING, perche' arriva a 200 cicli quando la tastiera
+#       non e' ancora armata: NASCE SPENTA, ed e' cio' che impedisce a
+#       test_events -- che la interroga senza installare un vettore -- di
+#       finire su un handler che non c'e';
+#   66  'B' preso dall'ISR: l'interrupt scatta davvero, e la causa lo distingue
+#       dal timer che nel frattempo batte;
+#    1  una sola trap del tasto, cioe' l'ISR ha LETTO KBD_DATA. Il flag lo
+#       abbassa la lettura e non la trap: un'ISR che non legge se la ritrova
+#       subito, e il contatore sarebbe esploso.
+#
+# Ed e' il primo programma del progetto la cui ISR torna con una `reti` SECCA,
+# senza commutare niente: una delle tre uscite che §12.4 prevede, e che fino a
+# ieri esisteva solo nella documentazione.
+#
+# A file singolo e senza HAL ne' kernel, di proposito: qui si prova la MACCHINA,
+# e metterci in mezzo il kernel vorrebbe dire provare due cose insieme senza
+# sapere quale ha ceduto.
+vasm_check(due_irq    MODE DUMPS EXPECT "65 66 1"
+           IFLAGS -I$<TARGET_PROPERTY:vinc_hal,INTERFACE_INCLUDE_DIRECTORIES>
+           ARGS --kbd "200:A,600:B"
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_due_irq.vasm)
+
 # test_ifdef — l'assemblaggio condizionale (13/09/2026, §3.44).
 #
 # DUE RIGHE, UN SORGENTE SOLO, ed e' il punto: un test solo proverebbe che il

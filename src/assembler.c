@@ -58,6 +58,21 @@ static int add_symbol(const char* name, int64_t value, int is_code, char* err, s
   return 0;
 }
 
+// Vedi la dichiarazione in vcpu.h. Solo simboli di DATO: `current` e' una
+// parola in memoria, e un'etichetta di codice con lo stesso nome sarebbe un
+// indice d'istruzione -- un indirizzo che non vuol dire niente per chi osserva
+// le scritture.
+int assemble_symbol(const char* name, int64_t* out)
+{
+  for (int i = 0; i < g_symbol_count; ++i)
+    if (!g_symbols[i].is_code && strcmp(g_symbols[i].name, name) == 0)
+    {
+      *out = g_symbols[i].value;
+      return 1;
+    }
+  return 0;
+}
+
 static int find_symbol_idx(const char* name)
 {
   for (int i = 0; i < g_symbol_count; ++i)
@@ -575,6 +590,13 @@ static int encode(char** toks, int n, Instr* out, char* err, size_t errsz)
     if (need(ARGS, 1, mn, err, errsz)) return -1;
     R('r', NUM_SCALAR); out->b = reg;
     out->op = OP_SETTIMER;
+  }
+  // mfcause rd -- CHI ha interrotto. Sola lettura: la scrive la macchina.
+  else if (strcmp(mn, "mfcause") == 0)
+  {
+    if (need(ARGS, 1, mn, err, errsz)) return -1;
+    R('r', NUM_SCALAR); out->a = reg;
+    out->op = OP_MFCAUSE;
   }
   else if (strcmp(mn, "mfpsw") == 0)
   {

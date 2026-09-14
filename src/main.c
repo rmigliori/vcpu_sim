@@ -121,6 +121,22 @@ static void marks_prepare(VCpu* cpu, const VImage* img)
           MARK_EXEC);
 }
 
+// La stessa cosa per il percorso a file singolo, che una VImage non ce l'ha: il
+// simbolo lo chiede all'assembler, che l'ha appena visto passare.
+static void marks_prepare_legacy(VCpu* cpu)
+{
+  if (!g_marche_out) return;
+  cpu->mark_on = 1;
+  int64_t addr;
+  if (assemble_symbol("current", &addr))
+  {
+    cpu->mark_current_addr = addr;
+    return;
+  }
+  fprintf(stderr, "marche: nessun simbolo 'current': il canale %d resta vuoto\n",
+          MARK_EXEC);
+}
+
 static void marks_dump(const VCpu* cpu)
 {
   if (!g_marche_out) return;
@@ -188,7 +204,17 @@ static int cmd_legacy(const char* path, RunMode mode)
   int len = assemble(path, &cpu, prog, err, sizeof err);
   if (len < 0) { fprintf(stderr, "assemble error: %s\n", err); return 1; }
 
+  // --marks VALE ANCHE QUI (14/09/2026, §3.68). Fino a oggi la registrazione
+  // esisteva solo nel percorso `run <prog.vx>`, e su un .vasm l'opzione veniva
+  // accettata e non faceva NIENTE: nessun file, nessun messaggio, exit 0. Chi
+  // la usava concludeva che il suo programma non emetteva marche e andava a
+  // cercare il difetto nel posto sbagliato.
+  //
+  // Dev'essere DOPO assemble(): il canale 0 vuole l'indirizzo di `current`, e
+  // quel simbolo esiste solo a assemblaggio fatto.
+  marks_prepare_legacy(&cpu);
   vcpu_run_ex(&cpu, prog, len, mode);
+  marks_dump(&cpu);
   print_stats(&cpu);
   return 0;
 }
@@ -547,15 +573,27 @@ int main(int argc, char** argv)
     if (strcmp(argv[i], "--trace") == 0)      mode = RUN_TRACE;
     else if (strcmp(argv[i], "--debug") == 0) mode = RUN_DEBUG;
     else if (strcmp(argv[i], "--kbd") == 0 && i + 1 < argc) g_kbd_spec = argv[++i];
+    else if (strcmp(argv[i], "--marks") == 0 && i + 1 < argc) g_marche_out = argv[++i];
+    // UN'OPZIONE SCONOSCIUTA E' UN ERRORE, non il nome del programma
+    // (14/09/2026, §3.68). Qui c'era un `else path = argv[i]` che prendeva
+    // QUALUNQUE argomento come il sorgente: `--marks rec.txt prog.vasm`
+    // assegnava path tre volte e vinceva l'ultimo, quindi il programma girava
+    // e l'opzione spariva senza un messaggio. Un flag scritto male si comporta
+    // allo stesso modo -- e sbagliare a scrivere un flag e' la norma.
+    else if (argv[i][0] == '-')
+    {
+      fprintf(stderr, "opzione sconosciuta: %s\n", argv[i]);
+      return 2;
+    }
     else                                      path = argv[i];
   }
   if (!path)
   {
     fprintf(stderr,
-            "usage: %s [--trace|--debug] [--kbd <ciclo:car,...>] [-I <dir>]... [-D <name>]... <program.vasm>\n"
+            "usage: %s [--trace|--debug] [--kbd <ciclo:car,...>] [--marks <file>] [-I <dir>]... [-D <name>]... <program.vasm>\n"
             "       %s asm <in.vasm> -o <out.vo> [-I <dir>]... [-D <name>]...\n"
             "       %s ld  <a.vo|lib.va> ... [-e <sym>] -o <out.vx>\n"
-            "       %s run <prog.vx> [--trace|--debug] [--kbd <ciclo:car,...>]\n"
+            "       %s run <prog.vx> [--trace|--debug] [--kbd <ciclo:car,...>] [--marks <file>]\n"
             "       %s nm  [-n|-p] [-r] <file.vo|file.vx>\n"
             "       %s ar  <lib.va> <o1.vo> ...\n",
             argv[0], argv[0], argv[0], argv[0], argv[0], argv[0]);

@@ -1,0 +1,122 @@
+; test_due_irq.vasm — DUE SORGENTI DI INTERRUZIONE (docs/stato-lavori.md §3.67).
+;
+; Fino al 14/09/2026 la macchina ne aveva una sola, il timer, e la tastiera si
+; interrogava. Adesso anche il tasto puo' interrompere, e il vettore scopre chi
+; e' stato leggendo la CAUSA -- come mcause su RISC-V, non un vettore per
+; sorgente come il NVIC di un Cortex-M.
+;
+; Questo test non usa ne' l'RTOS ne' l'HAL: e' un programma a file singolo che
+; installa il proprio vettore e fa `reti` per conto suo. E' voluto -- cio' che
+; si prova qui e' la MACCHINA, e mettere in mezzo il kernel vorrebbe dire
+; provare due cose insieme e non sapere quale ha ceduto.
+;
+; Prova quattro cose, e ognuna e' un numero che si conta a mano:
+;
+;   1. il tasto interrompe DAVVERO, e non si arriva al carattere col polling;
+;   2. la CAUSA distingue le due sorgenti;
+;   3. l'ISR del tasto torna con una `reti` SECCA -- serve il device e torna
+;      dov'era, senza commutare niente. E' il caso che fino a ieri non esisteva
+;      in nessun programma, e su cui si era discusso solo in teoria;
+;   4. la tastiera NASCE SPENTA: prima di armarla i caratteri si accumulano
+;      senza che nessuna trap scatti.
+;
+; I caratteri arrivano a 200 e 600 cicli (--kbd), il timer batte ogni 1000.
+; Il primo carattere cade quindi PRIMA che la tastiera sia armata, ed e' il
+; punto 4: lo si legge col polling, e nessun interrupt e' scattato.
+
+  .text
+.include "hal/hal.vinc"
+.include "hal/kbd.vinc"
+
+  .global main
+
+  .data
+n_kbd:   .word 0          ; quante trap del tasto
+n_tick:  .word 0          ; quante trap del timer
+primo:   .word 0          ; il carattere preso col POLLING, a interrupt spento
+secondo: .word 0          ; quello preso dall'ISR
+
+  .text
+main:
+  li r14, 4096
+  sethandler isr
+
+  ; --- 4. LA TASTIERA NASCE SPENTA ---------------------------------------
+  ; Gli interrupt sono gia' abilitati e il vettore installato, ma KBD_CTRL non
+  ; e' stato scritto: il carattere che arriva a 200 cicli NON deve interrompere.
+  ; Lo si aspetta col polling, come si faceva prima che l'interrupt esistesse.
+  sti
+attesa:
+  li r1, KBD_STATUS
+  lw r2, 0(r1)
+  li r3, KBD_READY
+  and r2, r2, r3
+  beq r2, r0, attesa
+  li r1, KBD_DATA
+  lw r4, 0(r1)             ; il carattere, e il flag si abbassa
+  li r1, primo
+  sw r4, 0(r1)
+
+  ; --- ora si arma, e il SECONDO carattere arrivera' per interruzione -----
+  li r1, KBD_CTRL
+  li r2, KBD_IE
+  sw r2, 0(r1)
+  li r1, 1000
+  settimer r1              ; e il timer, per avere due sorgenti vive insieme
+
+  ; il ciclo di sfondo: gira finche' non ha visto sia il tasto sia due tick
+  li r5, 0
+sfondo:
+  addi r5, r5, 1
+  li r1, n_kbd
+  lw r2, 0(r1)
+  beq r2, r0, sfondo
+  li r1, n_tick
+  lw r2, 0(r1)
+  li r3, 2
+  blt r2, r3, sfondo
+
+  li r1, primo
+  lw r5, 0(r1)
+  dumps r5                 ; atteso 65 ('A'), preso col POLLING
+  li r1, secondo
+  lw r5, 0(r1)
+  dumps r5                 ; atteso 66 ('B'), preso dall'INTERRUPT
+  li r1, n_kbd
+  lw r5, 0(r1)
+  dumps r5                 ; atteso 1: una sola trap del tasto
+  halt
+
+; ==========================================================================
+;  Il vettore. Una sorgente sola non basta piu': si legge la CAUSA e ci si
+;  dirama. r1..r5 sono sporcati, e il ciclo di sfondo non ci tiene niente di
+;  vivo attraverso la trap -- rilegge tutto dalla memoria a ogni giro.
+;
+;  ENTRAMBI I RAMI FINISCONO IN UNA `reti` SECCA: nessuno dei due commuta
+;  niente, perche' qui non c'e' uno scheduler. E' esattamente la forma che
+;  §12.4 prevede come una delle tre uscite possibili di un'ISR.
+; ==========================================================================
+isr:
+  mfcause r1
+  li r2, CAUSE_KBD
+  beq r1, r2, isr_kbd
+
+  ; --- il timer: conta e basta ---
+  li r1, n_tick
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  reti
+
+isr_kbd:
+  ; IL CARATTERE VA LETTO, o la trap si ripresenta subito: il flag lo abbassa
+  ; la lettura di KBD_DATA, non la trap. E' il protocollo del device.
+  li r1, KBD_DATA
+  lw r3, 0(r1)
+  li r1, secondo
+  sw r3, 0(r1)
+  li r1, n_kbd
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  reti

@@ -49,6 +49,40 @@
 #define KBD_READY    1   // bit 0 di KBD_STATUS
 #define KBD_OVERRUN  2   // bit 1: ne e' arrivato un altro prima della lettura
 
+//  KBD_CTRL    lettura/scrittura   bit 0 = l'interrupt della tastiera e' armato
+//
+//  LA SECONDA SORGENTE DI INTERRUZIONE (14/09/2026, §3.67). Fino a oggi ce n'era
+//  una sola, il timer, e la tastiera si interrogava -- ed e' per questo che il
+//  marcatore ha un canale riservato al tasto: fra "il carattere e' arrivato" e
+//  "il programma se n'e' accorto" c'e' il ritardo del polling, che il programma
+//  non puo' vedere.
+//
+//  NASCE SPENTA, e non e' prudenza: `test_events` interroga la tastiera senza
+//  installare nessun vettore, e un interrupt acceso di default lo manderebbe a
+//  saltare su un handler che non esiste. Chi la vuole la arma, come si arma il
+//  timer con settimer.
+//
+//  A LIVELLO e non a fronte: la condizione e' `kbd_ready`, che resta alzato
+//  finche' qualcuno non legge KBD_DATA. Un carattere arrivato mentre IE e' 0
+//  non si perde -- la trap scatta appena gli interrupt riaprono -- e non serve
+//  nessun bit di pending separato.
+#define KBD_CTRL    (MMIO_BASE + 8)
+#define KBD_IE       1   // bit 0 di KBD_CTRL
+
+//  LA CAUSA: chi ha interrotto. Con due sorgenti il vettore deve saperlo, e
+//  questa macchina somiglia a RISC-V (epc, epsw, reti), dove la causa e' un CSR
+//  letto dal gestore -- non un vettore per sorgente come il NVIC di un
+//  Cortex-M. La differenza si paga in latenza: leggere la causa e diramarsi
+//  costa, ed e' esattamente la grandezza che questo progetto misura -- quindi
+//  il numero che direbbe quanto varrebbe il vettoriamento si potra' misurare
+//  invece che stimare.
+//
+//  Se le due sorgenti sono pronte insieme vince il TIMER: e' il battito dello
+//  scheduler e non deve derivare, mentre un carattere aspetta un tick senza
+//  che nessuno se ne accorga.
+#define CAUSE_TIMER  0
+#define CAUSE_KBD    1
+
 // Un evento della traccia: "al ciclo N arriva il carattere c".
 typedef struct
 {
@@ -431,7 +465,8 @@ typedef enum
   // anche quelli puliti, che `mark` non la contengono nemmeno. Non era
   // strumentazione che filtrava in produzione, era il formato che cambiava
   // sotto. In coda invece non tocca niente di esistente.
-  OP_MARK    // a=porto, imm=valore           -> annota una marca (strumentazione)
+  OP_MARK,   // a=porto, imm=valore           -> annota una marca (strumentazione)
+  OP_MFCAUSE // a=rd                          -> r[rd] = cause (chi ha interrotto)
 } OpCode;
 
 typedef struct
@@ -463,6 +498,11 @@ typedef struct
   uint64_t psw;          // program status word: bit 0 = IE (interrupt enable)
   int64_t  epc;          // PC saved on trap
   uint64_t epsw;         // PSW saved on trap (the shadow copy)
+  int32_t  cause;        // CHI ha interrotto: CAUSE_TIMER o CAUSE_KBD. La
+                         // scrive la macchina prima di saltare al vettore, e
+                         // resta valida finche' non arriva la trap successiva
+                         // -- come mcause, e come mcause va letta SUBITO se
+                         // l'ISR riabilita gli interrupt.
   int64_t  handler;      // trap vector (instruction index)
   int64_t  timer_period; // cycles between timer interrupts (0 = disabled)
   uint64_t timer_next;   // cycle count at which the next timer interrupt is due
@@ -476,6 +516,7 @@ typedef struct
   unsigned char kbd_data;      // l'ultimo carattere arrivato
   unsigned char kbd_ready;     // 1 = non ancora letto
   unsigned char kbd_overrun;   // 1 = ne e' arrivato un altro prima della lettura
+  unsigned char kbd_ie;        // 1 = la tastiera puo' interrompere (KBD_CTRL)
 
   // L'alimentatore deterministico: eventi ordinati per ciclo, consumati dal
   // loop mentre il tempo SIMULATO avanza. Niente tempo di parete qui dentro.
@@ -534,6 +575,15 @@ void vcpu_marca(VCpu* cpu, int canale, int32_t valore);
 // Assemble a .vasm file into 'prog'. Returns number of instructions, or -1 on
 // error (message written to 'err'). Data directives are written into cpu->mem.
 int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz);
+
+// Un simbolo DI DATO dell'ultimo assemble(), per nome. Torna 1 se c'e'.
+//
+// Serve al percorso a file singolo, che non produce una VImage e quindi non ha
+// una tabella dei simboli da consegnare a chi gli serve. Oggi lo chiama uno
+// solo: il registratore delle marche, che per il canale 0 deve sapere dove sta
+// `current` -- senza, quel canale resterebbe vuoto anche su un programma che
+// uno scheduler ce l'ha.
+int assemble_symbol(const char* name, int64_t* out);
 
 // Execute the program until HALT or end of program.
 void vcpu_run(VCpu* cpu, const Instr* prog, int prog_len);

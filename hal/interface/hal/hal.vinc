@@ -72,3 +72,23 @@
 ; scalare, ~2,2 KB per uno vettoriale. E' la ragione per cui gli stack smettono
 ; di essere un numero che si copia da un test all'altro.
 .equ CTX_FRAME_SIZE  68
+
+; --- CHI HA INTERROTTO (14/09/2026, §3.67) ---
+; Con due sorgenti il vettore deve saperlo, e questa macchina segue RISC-V: una
+; CAUSA che il gestore legge, non un vettore per sorgente come il NVIC di un
+; Cortex-M. La differenza si paga in latenza -- leggere la causa e diramarsi
+; costa -- ed e' proprio la grandezza che questo progetto misura, quindi quanto
+; varrebbe il vettoriamento si potra' misurare invece che stimare.
+;
+;     mfcause r1
+;     li   r2, CAUSE_KBD
+;     beq  r1, r2, era_il_tasto
+;
+; La causa vale fino alla trap successiva. Un'ISR che riabilita gli interrupt
+; deve leggerla SUBITO, esattamente come mcause.
+;
+; Se le due sorgenti sono pronte insieme vince il TIMER: e' il battito dello
+; scheduler e non deve derivare, mentre un carattere aspetta un tick senza che
+; se ne accorga nessuno.
+.equ CAUSE_TIMER  0
+.equ CAUSE_KBD    1

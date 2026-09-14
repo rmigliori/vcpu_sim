@@ -503,6 +503,7 @@ indirizzi che non sono né RAM né device.
 |---|---|---|---|
 | `KBD_STATUS` | `0x100000` | lettura | bit 0 `KBD_READY` = c'è un carattere; bit 1 `KBD_OVERRUN` = ne è arrivato un altro prima che leggessi |
 | `KBD_DATA` | `0x100004` | lettura | il carattere — **e la lettura abbassa il flag** |
+| `KBD_CTRL` | `0x100008` | lettura/scrittura | bit 0 `KBD_IE` = l'interrupt della tastiera è armato. **Nasce spento** |
 
 Che leggere `KBD_DATA` abbia un **effetto** è la differenza fra memoria e MMIO,
 e il protocollo sta tutto lì: non serve nessun handshake, e un carattere perso
@@ -519,6 +520,23 @@ flag*:
   li   r1, KBD_DATA
   lw   r3, 0(r1)             ; r3 = il carattere, e il flag si abbassa qui
 ```
+
+**Dal 14/09/2026 il polling non è più l'unica strada**: la tastiera può
+**interrompere**, e si arma scrivendo `KBD_IE` in `KBD_CTRL`. Nasce spenta, e
+non è prudenza — un programma che la interroga senza installare un vettore
+(`test_events` fa esattamente così) finirebbe a saltare su un gestore che non
+c'è. Chi la vuole la arma, come si arma il timer con `settimer`.
+
+L'interrupt è **a livello** e non a fronte: la condizione è il flag `ready`, che
+si abbassa leggendo `KBD_DATA`. Ne seguono due cose che vanno sapute. Un
+carattere arrivato mentre `IE` è 0 **non si perde**, perché la trap scatta appena
+gli interrupt riaprono — non serve nessun bit di *pending*. E un'ISR che torna
+**senza aver letto** `KBD_DATA` si ritrova la trap subito: il flag lo abbassa la
+lettura, non la trap.
+
+Con due sorgenti il gestore scopre chi è stato con [`mfcause`](#43-manuale-delle-istruzioni).
+`tests/test_due_irq.vasm` le esercita entrambe, ed è anche il primo programma
+del progetto la cui ISR torna con una **`reti` secca**, senza commutare niente.
 
 **Chi alimenta il device** è separato dal device stesso. Oggi c'è un
 alimentatore solo, una traccia a cicli passata al simulatore:
@@ -1035,6 +1053,25 @@ interrupt gira esattamente come prima.
 | `mfvmask` | `rd` | `rd = vmask` (64 bit) | 1 |
 | `mtvmask` | `rs1` | `vmask = rs1` | 1 |
 | `mark` | `porto, valore` | annota una marca sul canale del marcatore: valore ≠ 0 **apre** una finestra, 0 la **chiude**. Due immediati, **nessun registro** | 1 |
+| `mfcause` | `rd` | `rd = cause` — **chi** ha interrotto: `CAUSE_TIMER` o `CAUSE_KBD` | 1 |
+
+> **`mfcause` esiste perché le sorgenti sono due** (14/09/2026). Fino a quel
+> giorno la macchina aveva solo il timer e la tastiera si interrogava; da allora
+> anche il tasto può interrompere, e con un vettore solo il gestore deve poter
+> chiedere chi è stato. È il modello di **RISC-V** — una causa che il gestore
+> legge — e non quello del NVIC di un Cortex-M, che ha un vettore per sorgente.
+>
+> La differenza fra i due si paga in **latenza**: leggere la causa e diramarsi
+> costa istruzioni, e quelle istruzioni stanno sul cammino fra l'interruzione e
+> il codice che la serve. È esattamente la grandezza che il marcatore misura,
+> quindi quanto varrebbe il vettoriamento su questa macchina si potrà **misurare
+> invece che stimare**.
+>
+> La causa vale **fino alla trap successiva**: un'ISR che riabilita gli
+> interrupt deve leggerla subito, come si fa con `mcause`. E se le due sorgenti
+> sono pronte insieme **vince il timer** — è il battito dello scheduler e non
+> deve derivare, mentre un carattere può aspettare un tick senza che nessuno se
+> ne accorga.
 
 > **`mark` esiste per un motivo solo: non toccare registri** (14/09/2026).
 > La stessa marca si scriveva già con `li`/`li`/`sw` su un porto MMIO, e continua

@@ -34,6 +34,9 @@ static int32_t mmio_load(VCpu* cpu, int64_t addr)
   if (addr == KBD_STATUS)
     return (cpu->kbd_ready ? KBD_READY : 0) | (cpu->kbd_overrun ? KBD_OVERRUN : 0);
 
+  if (addr == KBD_CTRL)
+    return cpu->kbd_ie ? KBD_IE : 0;
+
   if (addr == KBD_DATA)
   {
     int32_t ch = cpu->kbd_data;
@@ -119,11 +122,17 @@ static void vcpu_nome(VCpu* cpu, int canale, int32_t id)
   n->canale = canale; n->valore = valore; n->id = id;
 }
 
-// L'unico registro scrivibile e' il marcatore. L'abilitazione dell'interrupt
-// della tastiera continua a non esistere finche' non esiste l'interrupt: il
-// messaggio dice la verita' invece di lasciar passare la scrittura in silenzio.
+// I registri scrivibili sono il marcatore e, dal 14/09/2026, KBD_CTRL -- che
+// arma l'interrupt della tastiera. Fino a quel giorno qui c'era scritto che
+// quell'abilitazione "continua a non esistere finche' non esiste l'interrupt":
+// adesso esiste (§3.67).
 static void mmio_store(VCpu* cpu, int64_t addr, int32_t value)
 {
+  if (addr == KBD_CTRL)
+  {
+    cpu->kbd_ie = (value & KBD_IE) ? 1 : 0;
+    return;
+  }
   if (is_marca(addr))
   {
     int canale = (int) ((addr - MARK_BASE) / 4);
@@ -363,6 +372,7 @@ static uint64_t instr_cost(const Instr* in, int vl)
     case OP_AND: case OP_OR: case OP_XOR:
     case OP_SETVL: case OP_FLI:
     case OP_STI: case OP_CLI: case OP_SETHANDLER: case OP_SETTIMER: case OP_MARK:
+    case OP_MFCAUSE:
     case OP_MFPSW: case OP_MTPSW: case OP_MFEPC: case OP_MTEPC:
     case OP_MFEPSW: case OP_MTEPSW:
     case OP_MFVL: case OP_MTVL: case OP_MFVMASK: case OP_MTVMASK:
@@ -520,6 +530,7 @@ static void execute(VCpu* cpu, const Instr* in)
         cpu->timer_next   = cpu->cycles + (uint64_t) (p > 0 ? p : 0);
         break;
       }
+      case OP_MFCAUSE: set_scalar(cpu, in->a, (int64_t) cpu->cause); break;
       case OP_MFPSW: set_scalar(cpu, in->a, (int64_t) cpu->psw); break;
       case OP_MTPSW: cpu->psw = (uint64_t) cpu->r[in->b];        break;
       case OP_MFEPC: set_scalar(cpu, in->a, cpu->epc);           break;
@@ -810,6 +821,7 @@ const char* vcpu_disasm(const Instr* in, char* buf, size_t bufsz)
     case OP_STI:        snprintf(buf, bufsz, "sti"); break;
     case OP_CLI:        snprintf(buf, bufsz, "cli"); break;
     case OP_RETI:       snprintf(buf, bufsz, "reti"); break;
+    case OP_MFCAUSE:    snprintf(buf, bufsz, "mfcause r%d", in->a); break;
     case OP_MARK:       snprintf(buf, bufsz, "mark %d, %lld", in->a,
                                   (long long) in->imm); break;
     case OP_SETHANDLER: snprintf(buf, bufsz, "sethandler %d", in->target); break;
@@ -1090,9 +1102,35 @@ void vcpu_run_from(VCpu* cpu, const Instr* prog, int prog_len, RunMode mode, int
       cpu->epsw = cpu->psw;
       cpu->psw &= ~PSW_IE;
       cpu->trap_depth += 1;
+      cpu->cause = CAUSE_TIMER;
       cpu->timer_next = cpu->cycles + (uint64_t) cpu->timer_period;
       if (mode == RUN_TRACE)
         printf("[pc=%3lld cyc=%6llu] -- timer trap -> handler %lld\n",
+               (long long) cpu->pc, (unsigned long long) cpu->cycles,
+               (long long) cpu->handler);
+      cpu->pc = cpu->handler;
+      continue;
+    }
+
+    // LA TASTIERA, seconda sorgente (14/09/2026, §3.67). DOPO il timer e non
+    // prima: se sono pronte insieme vince il battito dello scheduler, che non
+    // deve derivare -- un carattere aspetta un tick senza che se ne accorga
+    // nessuno, un tick perso si vede su ogni scadenza.
+    //
+    // A LIVELLO: la condizione e' kbd_ready, che resta alzato finche' qualcuno
+    // non legge KBD_DATA. Quindi un carattere arrivato con IE=0 non si perde, e
+    // non serve un bit di pending. Ma vuol dire anche che un'ISR che torna
+    // SENZA aver letto KBD_DATA ritrova la trap subito: il flag lo abbassa la
+    // lettura, non la trap. E' il protocollo del device, non un caso limite.
+    if ((cpu->psw & PSW_IE) && cpu->kbd_ie && cpu->kbd_ready)
+    {
+      cpu->epc  = cpu->pc;
+      cpu->epsw = cpu->psw;
+      cpu->psw &= ~PSW_IE;
+      cpu->trap_depth += 1;
+      cpu->cause = CAUSE_KBD;
+      if (mode == RUN_TRACE)
+        printf("[pc=%3lld cyc=%6llu] -- kbd trap -> handler %lld\n",
                (long long) cpu->pc, (unsigned long long) cpu->cycles,
                (long long) cpu->handler);
       cpu->pc = cpu->handler;

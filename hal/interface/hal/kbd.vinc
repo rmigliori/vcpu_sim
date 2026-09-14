@@ -55,3 +55,24 @@
 
 .equ KBD_READY    1              ; bit 0: c'e' un carattere da leggere
 .equ KBD_OVERRUN  2              ; bit 1: ne e' arrivato un altro prima
+
+; --- DAL 14/09/2026 LA TASTIERA PUO' INTERROMPERE (§3.67) ---
+; Fino a oggi si poteva solo interrogare, ed e' il motivo per cui il marcatore
+; ha un canale riservato al tasto: fra "il carattere e' arrivato" e "il
+; programma se n'e' accorto" c'e' il ritardo del polling, che il programma non
+; puo' vedere. Con l'interrupt quel ritardo si puo' confrontare con l'altro.
+;
+; NASCE SPENTA: chi la vuole la arma, come si arma il timer con settimer.
+; test_events la interroga senza installare un vettore, e un interrupt acceso
+; di default lo manderebbe a saltare su un handler che non c'e'.
+;
+;     li r1, KBD_CTRL
+;     li r2, KBD_IE
+;     sw r2, 0(r1)                 ; da qui in poi il tasto interrompe
+;
+; A LIVELLO e non a fronte: la condizione e' il flag `ready`, che si abbassa
+; leggendo KBD_DATA. Un carattere arrivato mentre IE e' 0 non si perde. Ma
+; un'ISR che torna SENZA aver letto KBD_DATA ritrova la trap subito -- il flag
+; lo abbassa la lettura, non la trap.
+.equ KBD_CTRL    0x100008        ; lettura/scrittura: bit 0 = interrupt armato
+.equ KBD_IE       1              ; bit 0 di KBD_CTRL
