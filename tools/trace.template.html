@@ -238,6 +238,36 @@
   .win.cross { box-shadow: inset 0 0 0 1px var(--accent); }
   .win:hover, .win:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+  /* UNA FINESTRA TAGLIATA DAL BORDO DELLA VISTA non e' una finestra corta, e
+     deve dirlo: zoomando dentro una latenza lunga si vedrebbe una barra che
+     finisce, e il numero che uno crede di leggere sarebbe sbagliato. Il bordo
+     tratteggiato dice "continua fuori". E' su ::before/::after e non su un
+     border perche' i tratti dentro la barra sono in percentuale del suo box:
+     un bordo vero li farebbe scivolare tutti. */
+  .win.tglio-sx::before, .win.tglio-dx::after {
+    content: ""; position: absolute; top: 0; bottom: 0; width: 3px; z-index: 2;
+    background: repeating-linear-gradient(
+      to bottom, var(--ink-3) 0 2px, transparent 2px 4px);
+  }
+  .win.tglio-sx::before { left: 0; }
+  .win.tglio-dx::after  { right: 0; }
+
+  /* Le corsie del MARCATORE dentro il diagramma principale (14/09/2026): stesso
+     righello delle fasce -- e' tutto il punto -- ma un blocco riconoscibile,
+     perche' misurano una cosa diversa dal possesso della CPU. */
+  .lane.marca .track { background: var(--surface); min-height: 30px; }
+  .lane:not(.marca) + .lane.marca { border-top: 2px solid var(--rule); }
+  /* IL NOME INTERO, mandato a capo. La sezione in fondo mostrava la prima
+     parola sola -- e i nomi delle categorie cominciano per "la" o per
+     "scheduler:", cioe' proprio con la parte che non distingue niente. Li'
+     passava; qui la corsia sta accanto a ISR e tmgr, e una chiave che non
+     nomina la sua riga e' peggio di una riga in piu'.
+     La LARGHEZZA resta 74px come le altre: l'asse si allinea su quella, e
+     allargarla solo per queste sfaserebbe il diagramma. Cresce la riga. */
+  .lane.marca .lane-key .n {
+    font-size: 10px; line-height: 1.14; white-space: normal; text-wrap: balance;
+  }
+
   /* Gli eventi PUNTUALI non hanno durata: un tratto, non una barra. Disegnarli
      come barre larghe un pixel li farebbe sembrare finestre cortissime. */
   .evt {
@@ -321,6 +351,13 @@
     display: flex; flex-wrap: wrap; gap: 4px 18px; align-items: baseline;
   }
   .misura .hint { color: var(--ink-3); font-size: 12px; }
+  /* CHE COSA E' GIRATO fra i cursori: su una riga sua e in monospazio, perche'
+     sono NOMI DI CODICE e vanno letti come tali -- e perche' e' l'unica voce
+     della misura che puo' diventare lunga, quindi non deve spingere le altre. */
+  .misura .rout, .misura .seg .rout {
+    width: 100%; font-family: "IBM Plex Mono", monospace; font-size: 11px;
+    color: var(--ink-3); line-height: 1.5;
+  }
   .misura b { color: var(--ink); }
   .misura .delta {
     font-family: "IBM Plex Mono", monospace; font-size: 15px;
@@ -405,6 +442,13 @@
       <p class="lede">Dall'alto verso il basso, in ordine di precedenza. Una preemption si
       legge come un salto verso l'alto: al tick l'ISR prende la macchina, sveglia il gestore,
       e il controllo scende di corsia in corsia solo quando chi sta sopra si blocca.</p>
+      <p class="lede" style="margin-top:10px">In fondo, sullo <strong>stesso righello</strong>,
+      le <strong>finestre del marcatore</strong>: quanto è durata una richiesta del kernel —
+      una latenza, una scansione — aperta magari in un task e chiusa in un altro. Stanno qui
+      e non in una sezione a parte perché la cosa che si va a leggere è <em>verticale</em>:
+      sotto quale fascia cade quella finestra, e di chi era la CPU dentro di essa. Zoomano,
+      si misurano con gli stessi cursori, e una barra col <strong>bordo tratteggiato</strong>
+      continua fuori vista — non è una finestra corta.</p>
     </div>
     <div class="legend" id="legend"></div>
     <div class="zoomctl" id="zoomctl"></div>
@@ -419,19 +463,19 @@
         </div>
       </div>
     </div>
-    <div class="readout" id="readout"><span>Passa sopra una fascia per vedere le routine che ci girano dentro.</span></div>
+    <div class="readout" id="readout"><span>Passa sopra una fascia per vedere le routine che ci girano dentro, o sopra una finestra per la sua durata e chi se l'è presa.</span></div>
     <div class="misura" id="misura">
-      <span class="hint">Clicca sul diagramma per piantare il cursore <b>A</b>, poi
-      di nuovo per <b>B</b>: fra i due leggi la durata e chi ha avuto la CPU. I
-      cursori si <b>agganciano all'istante vero</b> più vicino — un bordo di fascia,
-      un tick, una preemption — quindi il numero è esatto e non a occhio.
-      <b>click</b> pianta <b>A</b>, <b>shift+click</b> pianta <b>B</b>,
-      <b>shift+ctrl+click</b> pianta <b>C</b> — un gesto per cursore, così
-      spostarne uno non cancella gli altri. Con tre si leggono le due metà
-      <em>e</em> il totale; passa il puntatore fra due cursori per marcarne il
-      segmento. <b>Rotella</b> per zoomare dove punti, <b>trascina</b> per
-      scorrere, <kbd>Esc</kbd> toglie i cursori e <kbd>0</kbd> torna a tutta la
-      corsa.</span>
+      <span class="hint"><b>A mani nude si naviga, col modificatore si misura.</b>
+      <kbd>shift</kbd>+click pianta <b>A</b>, <kbd>ctrl</kbd>+click pianta
+      <b>B</b>, <kbd>ctrl</kbd>+<kbd>shift</kbd>+click pianta <b>C</b> — un gesto
+      per cursore, così spostarne uno non cancella gli altri, e nessuno si sposta
+      mentre scorri. Fra due cursori leggi la durata e chi ha avuto la CPU; con
+      tre, le due metà <em>e</em> il totale — passa il puntatore fra due per
+      marcarne il segmento. I cursori si <b>agganciano all'istante vero</b> più
+      vicino — un bordo di fascia, un tick, una preemption — quindi il numero è
+      esatto e non a occhio. Il <b>click nudo</b> non pianta niente:
+      <b>trascina</b> per scorrere, <b>rotella</b> per zoomare dove punti,
+      <kbd>Esc</kbd> toglie i cursori e <kbd>0</kbd> torna a tutta la corsa.</span>
     </div>
   </section>
 
@@ -458,27 +502,19 @@
   <section id="sec-marche" hidden>
     <div class="sec-head">
       <div class="eyebrow">Il marcatore</div>
-      <h2>Le finestre, e chi se le è prese</h2>
-      <p class="lede">Il diagramma qui sopra dice <em>chi</em> possedeva la CPU. Questo dice
-      quanto è durata una <strong>richiesta</strong> — una finestra aperta in un task e chiusa
-      magari in un altro — e come quel tempo si è spartito. La differenza fra i due è
+      <h2>Il jitter, visto come sfrangiamento</h2>
+      <p class="lede">Le <strong>finestre</strong> — quanto è durata una richiesta, aperta in un
+      task e chiusa magari in un altro — stanno nel <strong>diagramma qui sopra</strong>, in fondo,
+      sullo stesso righello delle fasce: è lì che si legge in verticale <em>sotto quale fascia</em>
+      cade una latenza e <em>di chi</em> era la CPU dentro di essa. Quella differenza è
       l'<strong>interferenza</strong>: quanto ti è costato il resto del sistema.</p>
-      <p class="lede" style="margin-top:10px">I nomi dei proprietari qui sono quelli dei
-      <strong>TCB</strong>, <em>letti</em> dal canale che la macchina riempie da sola; quelli
-      del diagramma sopra sono i corpi dei task, <em>dedotti</em> dal
-      <span class="mono">pc</span>. Sono due viste della stessa cosa, e quando i nomi non
-      combaciano è perché arrivano da due strade diverse.</p>
+      <p class="lede" style="margin-top:10px">Qui c'è l'unica vista che <em>non</em> può stare su
+      quel righello, e non per ripiego: allineare ogni finestra al proprio inizio vuol dire
+      cambiare l'origine di ognuna. È l'unico modo di vedere il jitter come una forma invece che
+      come un numero.</p>
     </div>
-    <div class="legend" id="m-legend"></div>
-    <div class="scope">
-      <div class="scope-in">
-        <div class="axis" id="maxis"></div>
-        <div class="lanes" id="mlanes"></div>
-      </div>
-    </div>
-    <div class="readout" id="mreadout"><span>Passa sopra una finestra per vedere quanto è durata e chi se l'è presa.</span></div>
 
-    <div class="sec-head" style="margin-top:34px">
+    <div class="sec-head" style="margin-top:4px">
       <h3 style="margin:0 0 6px">Sovrapposte al trigger</h3>
       <p class="lede">Le stesse finestre ridisegnate da zero, ognuna allineata al proprio
       inizio. Il bordo destro sfrangia, e quello sfrangiamento <strong>è</strong> il jitter:
@@ -531,10 +567,19 @@
     </div>
     <div class="note">
       <p><span class="kicker">Il costo del cambio di contesto è misurabile a colpo d'occhio.</span>
-      <code>ctx_save</code> e <code>ctx_restore</code> insieme fanno <b id="n-ctx"></b> cicli
+      Il salvataggio e il ripristino insieme fanno <b id="n-ctx"></b> cicli
       su <b id="n-tot"></b>, cioè il <b id="q-ctx"></b> della corsa, su <b id="n-sw"></b>
-      commutazioni. È il numero che §3.28 stimava a ~120 cicli l'una per giustificare gli otto
-      livelli di priorità: la stima regge.</p>
+      commutazioni — <b id="q-sw"></b> cicli l'una.</p>
+
+      <p><span class="kicker">E fino al 14/09 questa riga diceva la metà.</span>
+      Contava <code>ctx_save</code> e <code>ctx_restore</code>, che sono i <em>preamboli</em>:
+      il lavoro sta in <code>cs_clean</code> e soprattutto in <code>cr_scalar</code>, che da
+      solo vale più di tutti gli altri tre. Quei due nomi erano gli unici che la pagina
+      tenesse, perché le etichette interne venivano calcolate e buttate via. Conseguenza da
+      dire ad alta voce: <strong>la stima di ~120 cicli l'una di §3.28</strong> — quella con
+      cui si giustificavano gli otto livelli di priorità — <strong>NON regge</strong>, e la
+      differenza non è marginale. Sembrava reggere perché il numero contro cui la si
+      confrontava era dimezzato.</p>
 
       <p><span class="kicker">L'idle non «conta il doppio»: ha fasce più lunghe.</span>
       L'anomalia annotata in §3.29 — l'idle che conta più degli altri per tick — qui si vede
@@ -637,8 +682,12 @@ const ORDINE = [
 
 /* ---------- masthead ---------- */
 const rtMap = Object.fromEntries(D.rt);
-const ctx = D.ctx.ctx_save + D.ctx.ctx_restore;
-const nsw = Math.round((rtMap["ctx_restore"] || 0) / 84);
+// Il contesto per INTERO: i due preamboli piu' i due corpi. Erano solo i primi
+// due, e la pagina dichiarava meta' del costo -- vedi il commento in trace.py.
+const ctx = Object.values(D.ctx).reduce((s, v) => s + v, 0);
+// Le commutazioni si CONTANO in trace.py (ingressi in ctx_restore), invece di
+// dividere un totale per un costo medio scritto a mano.
+const nsw = D.nsw;
 
 /* ---------- le linee di riferimento ----------
    In un sistema preemptivo sono i TICK: e' li' che il kernel riprende la
@@ -705,6 +754,39 @@ const TRACCE = tracceDa(PRE);
 const PRE_COL = Object.fromEntries(PRE_CAT.map((c, i) =>
   [c, ["28,100,112", "146,112,186", "196,112,140", "140,150,90"][i % 4]]));
 
+/* ---------- IL MARCATORE, QUI E NON PIU' IN FONDO (14/09/2026) ----------
+   Fino a oggi le finestre si disegnavano in una sezione a parte, su una scala
+   FISSA di tutta la corsa, mentre le fasce dei task stavano nel diagramma
+   principale su [b0,b1]. Due righelli diversi per la stessa corsa: la domanda
+   che questi dati esistono per rispondere -- QUESTA finestra di latenza cade
+   dentro quale fascia, e di chi -- non era leggibile in verticale, perche' i
+   due disegni non si allineavano mai.
+
+   Adesso le corsie delle finestre stanno dentro disegna(), quindi zoomano con
+   le fasce, portano le stesse linee dei tick e stanno sotto gli stessi cursori.
+   La sezione in fondo tiene cio' che NON si puo' co-scalare: la sovrapposizione
+   al trigger (ogni finestra da zero, che e' un'altra scala per costruzione) e la
+   tabella. Disegnarle anche li' vorrebbe dire le stesse finestre due volte su
+   due righelli, che e' la seconda verita' che questa pagina toglie altrove.
+
+   I proprietari QUI sono nomi di TCB LETTI dal canale 0, non i corpi dedotti
+   dal pc: due strade, due spazi di nomi, quindi una scaletta di colori propria
+   invece di far finta che combacino. */
+const M = D.marche;
+const MRIS = ["88,155,140", "146,112,186", "196,112,140",
+              "140,150,90", "110,130,160", "186,140,80"];
+const MCHI = M ? [...new Set(M.finestre.flatMap(f => f.tratti.map(t => t[2])))] : [];
+const MCOL = Object.fromEntries(MCHI.map((c, i) => [c, MRIS[i % MRIS.length]]));
+
+/* Un tratto in percentuale della SUA finestra intera. Lo usa la sovrapposizione
+   al trigger, dove la finestra non e' mai ritagliata perche' ognuna parte da
+   zero. Nel diagramma principale il conto e' un altro -- li' la barra puo'
+   essere tagliata dal bordo della vista, e i tratti vanno rifatti sulla parte
+   visibile -- e le due cose stanno separate apposta. */
+const segIn = (f, t) =>
+  `<span class="seg" style="--sc:${MCOL[t[2]]};left:${100 * (t[0] - f.a) / f.d}%;` +
+  `width:${100 * (t[1] - t[0]) / f.d}%"></span>`;
+
 // Senza tick la pagina racconta un'altra storia, e i titoli scritti per un
 // sistema preemptivo direbbero il falso.
 if (!D.tick.length) {
@@ -745,7 +827,22 @@ document.getElementById("legend").innerHTML =
       cosa</em>, la corsia dice <em>a chi</em>.</span>` +
       PRE_CAT.map(c => `<span class="item" style="margin-left:14px">
          <span class="swatch" style="background:rgb(${PRE_COL[c]});width:3px"></span>
-         <span>${c}</span></span>`).join("") + `</span>` : "");
+         <span>${c}</span></span>`).join("") + `</span>` : "") +
+  // I proprietari delle FINESTRE, che da oggi si rigano nel diagramma qui sotto.
+  // Scaletta di colori PROPRIA: questi nomi sono TCB letti dal canale 0, quelli
+  // delle fasce sono corpi dedotti dal pc. Due strade, due spazi di nomi, e
+  // fingere che combacino sarebbe la solita etichetta plausibile su un dato vero.
+  (MCHI.length ? `<span class="item" style="width:100%;margin-top:2px">
+      <span>le barre in fondo sono <b>finestre</b> del marcatore, sullo stesso
+      righello: rigate da chi possedeva la CPU <em>dentro</em> di esse — e i nomi
+      qui sono <b>TCB letti</b>, non corpi dedotti dal <span class="mono">pc</span>.</span>` +
+      MCHI.map(c => `<span class="item" style="margin-left:14px">
+         <span class="swatch" style="background:rgb(${MCOL[c]})"></span>
+         <span>${c}</span></span>`).join("") +
+      `<span class="item" style="margin-left:14px;color:var(--accent)">
+         bordo acceso = la finestra ATTRAVERSA una commutazione</span>
+       <span class="item" style="margin-left:14px">bordo tratteggiato = continua fuori vista</span>
+      </span>` : "");
 
 /* ---------- diagramma ---------- */
 function disegna(axisEl, lanesEl, b0, b1, tickLabel) {
@@ -779,9 +876,20 @@ function disegna(axisEl, lanesEl, b0, b1, tickLabel) {
         data-dato="${e.dato || ""}"></span>`).join("");
 
   // --- le corsie dei PROPRIETARI: chi possedeva la CPU, e cosa ha prodotto ---
+  //
+  // LA CORSIA C'E' SEMPRE, anche se in questa vista non ha fasce. E' la stessa
+  // regola delle sotto-righe qui sotto, e per la stessa ragione: ORDINE viene da
+  // `own`, cioe' dal bilancio di TUTTA la corsa, quindi ogni proprietario
+  // elencato gira da qualche parte. Toglierlo quando la finestra non lo
+  // contiene faceva sparire delle righe mano a mano che si zoomava, e il
+  // diagramma si riassestava sotto il puntatore -- proprio mentre stai mirando
+  // un istante, che e' il momento peggiore per muovere le corsie.
+  //
+  // E una corsia VUOTA dice una cosa, non niente: che in quel tratto quel task
+  // non ha avuto la CPU. Nasconderla trasformava "non gira" in "non esiste", che
+  // e' l'unica lettura sbagliata possibile su un diagramma di possesso.
   const corsie = ORDINE.map(o => {
     const bande = D.fasce.filter(f => f[2] === o.k && f[1] > b0 && f[0] < b1);
-    if (!bande.length) return "";
     const bb = bande.map(f => {
       const a = Math.max(f[0], b0), z = Math.min(f[1], b1);
       const dett = f[4].map(([r, c]) => `${r} ${c}`).join(" · ");
@@ -814,7 +922,68 @@ function disegna(axisEl, lanesEl, b0, b1, tickLabel) {
       </div>${righe}`;
   });
 
-  lanesEl.innerHTML = corsie.join("");
+  // --- le corsie delle FINESTRE, sulla STESSA scala delle fasce ---
+  //
+  // E' la ragione per cui questo blocco esiste: una finestra di latenza e la
+  // fascia sotto cui cade vanno lette IN VERTICALE, e per farlo devono stare
+  // sullo stesso righello. Prima stavano in due sezioni con due scale diverse.
+  //
+  // Una corsia per CATEGORIA, e c'e' sempre -- anche se in questa vista non
+  // cade nessuna finestra: e' la regola di §3.58, e qui vale anche di piu',
+  // perche' una corsia di latenza vuota dice "in questo tratto il kernel non
+  // ha fatto aspettare nessuno", che e' esattamente cio' che si va a cercare.
+  const finestre = (M && M.finestre.length ? M.categorie : []).map(cat => {
+    const ww = M.finestre
+      .filter(f => f.ch === cat.ch && f.z > b0 && f.a < b1)
+      .map(f => {
+        // RITAGLIATA sulla vista, come le fasce. I tratti pero' sono in
+        // percentuale della finestra, quindi vanno rifatti sulla parte VISIBILE:
+        // riusare le percentuali intere farebbe scivolare le righe dentro la
+        // barra appena un bordo esce dallo schermo -- un disegno che mente di
+        // poco mentre stai misurando, che e' il difetto peggiore di tutti.
+        const a = Math.max(f.a, b0), z = Math.min(f.z, b1), d = z - a;
+        const segs = d <= 0 ? "" : f.tratti.map(t => {
+          const lo = Math.max(t[0], a), hi = Math.min(t[1], z);
+          return hi <= lo ? "" :
+            `<span class="seg" style="--sc:${MCOL[t[2]]};` +
+            `left:${100 * (lo - a) / d}%;width:${100 * (hi - lo) / d}%"></span>`;
+        }).join("");
+        // `tagliata` dice che la barra continua fuori vista: senza, una finestra
+        // troncata dal bordo si legge come una finestra CORTA, e il numero che
+        // uno crede di vedere e' sbagliato.
+        const tag = (f.a < b0 ? " tglio-sx" : "") + (f.z > b1 ? " tglio-dx" : "");
+        return `<span class="win${f.cross ? " cross" : ""}${tag}" tabindex="0"
+            style="left:${pc(a)}%;width:${Math.max(pc(z) - pc(a), 0.15)}%"
+            data-c="${f.canale}" data-m="${f.marker}" data-a="${f.a}" data-z="${f.z}"
+            data-d="${f.d}" data-x="${f.cross ? 1 : 0}" data-dato="${f.dato || ""}"
+            data-p="${f.poss.map(p => p[0] + " " + p[1]).join(" · ").replace(/"/g, "&quot;")}"
+            >${segs}</span>`;
+      }).join("");
+    // Il nome INTERO: lo manda a capo il foglio di stile. Vedi li' perche' non
+    // e' piu' la prima parola sola.
+    return `<div class="lane marca">
+        <div class="lane-key" title="${cat.nome}">
+          <span class="n">${cat.nome}</span>
+          <span class="p">${cat.n}&times;</span></div>
+        <div class="track finestre">${rules}${ww}</div>
+      </div>`;
+  });
+
+  // Gli eventi PUNTUALI della macchina (il tasto): una corsia sola, in fondo,
+  // perche' sono il TRIGGER di cio' che sta sopra e vanno letti sulla stessa
+  // scala -- che da oggi e' davvero la stessa.
+  const punt = (M && M.puntuali.length) ? (() => {
+    const ee = M.puntuali.filter(p => p.c >= b0 && p.c <= b1)
+      .map(p => `<span class="evt" style="left:${pc(p.c)}%"
+          title="${p.canale} ${p.v} @${p.c} (girava ${p.cur})"></span>`).join("");
+    return `<div class="lane marca">
+        <div class="lane-key"><span class="n">${M.puntuali[0].canale}</span>
+          <span class="p">macchina</span></div>
+        <div class="track">${rules}${ee}</div>
+      </div>`;
+  })() : "";
+
+  lanesEl.innerHTML = corsie.join("") + finestre.join("") + punt;
 }
 
 disegna(document.getElementById("axis"), document.getElementById("lanes"),
@@ -868,6 +1037,27 @@ function aggancia(x) {
 /* Cosa c'e' fra due istanti. I proprietari vengono dalle FASCE, cioe' dalla
    deduzione sul pc -- non dal canale 0, che esiste solo se il programma e'
    strumentato. Va saputo leggendo il numero, ed e' detto nel riquadro. */
+/* CHE COSA E' GIRATO fra due cicli (14/09/2026, §3.64), per nome e per cicli.
+   D.proc e' la linea temporale delle etichette fini: nomi una volta sola, e
+   coppie [ciclo, indice]. Un tratto dura fino al ciclo del tratto successivo.
+
+   Puro come il resto di questo blocco, e l'asserzione che conta e' la stessa
+   dei proprietari: i cicli devono sommare ESATTAMENTE alla durata. Un profilo
+   che non torna non e' un profilo, e' un'impressione. */
+function routineFra(a, b) {
+  if (!D.proc || !D.proc.t.length) return [];
+  const T = D.proc.t, N = D.proc.nomi, per = {};
+  // il primo tratto che tocca [a,b): quello che CONTIENE a, non quello dopo
+  let i = 0, lo = 0, hi = T.length - 1;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (T[m][0] <= a) { i = m; lo = m + 1; } else hi = m - 1; }
+  for (; i < T.length && T[i][0] < b; ++i) {
+    const z = (i + 1 < T.length ? T[i + 1][0] : D.fine);
+    const da = Math.max(T[i][0], a), aa = Math.min(z, b);
+    if (aa > da) per[N[T[i][1]]] = (per[N[T[i][1]]] || 0) + (aa - da);
+  }
+  return Object.entries(per).sort((x, y) => y[1] - x[1]);
+}
+
 function fraICursori(a, b) {
   if (b < a) { const t = a; a = b; b = t; }
   const per = {};
@@ -879,6 +1069,7 @@ function fraICursori(a, b) {
     a, b,
     durata: b - a,
     proprietari: Object.entries(per).sort((x, y) => y[1] - x[1]),
+    routine: routineFra(a, b),
     tick: MARK.filter(t => t > a && t <= b).length,
     eventi: PRE.filter(e => e.c > a && e.c <= b).length,
     finestre: D.marche ? D.marche.finestre.filter(f => f.z > a && f.a < b).length : 0
@@ -905,6 +1096,56 @@ function segmentiFra(curs) {
                m: fraICursori(p[i].v, p[i + 1].v) });
   return out;
 }
+
+/* ---------- QUALE CURSORE DICE UN GESTO (14/09/2026, §3.61) ----------
+   Puro: prende due booleani, torna un nome o niente. Non e' pignoleria — e'
+   la riga che decideva il gesto, e stava nella COLLA, dove il DOM finto non
+   arriva. Da qui e' provabile esattamente come il resto.
+
+   LA REGOLA E' UNA SOLA: nudo = navigazione, modificato = misura.
+
+     (niente)        null   il click nudo non pianta niente: e' per scorrere
+     shift           A
+     ctrl            B
+     ctrl+shift      C
+
+   Prima il click NUDO piantava A, e lo stesso gesto voleva dire anche "scorri":
+   la convivenza stava in piedi su una soglia di quattro pixel che indovinava
+   l'intenzione. Sotto, un nudge da 1-3 px mentre scorrevi SPOSTAVA A; sopra, un
+   trascinamento da 5 px che volevi fosse un click non piantava niente. Due gesti
+   che dichiarano l'intenzione valgono piu' di una soglia che la indovina, e la
+   soglia se n'e' andata con l'ambiguita' che copriva.
+
+   PERCHE' NON IL TASTO DESTRO PER B, che sarebbe stato piu' mnemonico (A e B
+   sono una coppia, e il mouse ha due tasti): il tasto destro non emette `click`
+   -- emette `contextmenu` -- e soprattutto FIREFOX RISERVA shift+destro per
+   scavalcare il menu contestuale della pagina, cioe' e' l'unica combinazione col
+   destro che un handler di pagina per progetto non deve ricevere. Tre
+   combinazioni sul tasto sinistro non dipendono da niente di tutto questo.
+   Alt e' escluso a monte: sotto GNOME se lo prende il window manager.
+
+   `ctrl` qui vuol dire ctrl OPPURE meta, come prima: chi legge l'evento
+   fonde i due, e questa funzione riceve gia' il risultato. */
+function cursoreDi(shift, ctrl) {
+  if (!shift && !ctrl) return null;
+  if (shift && ctrl)   return "C";
+  return shift ? "A" : "B";
+}
+
+/* Come si chiama a parole il gesto di ogni cursore. Non e' un secondo elenco:
+   CHI va con COSA lo decide cursoreDi(), qui c'e' solo come si scrive. Cambiare
+   la mappatura la' aggiorna anche questi suggerimenti, senza toccarli — e i due
+   elenchi da tenere d'accordo a mano non esistono. */
+const GESTI = (() => {
+  const g = {};
+  for (const [s, c, testo] of [[true, false, "shift+click"],
+                               [false, true, "ctrl+click"],
+                               [true, true, "ctrl+shift+click"]]) {
+    const n = cursoreDi(s, c);
+    if (n) g[n] = testo;
+  }
+  return g;
+})();
 
 /* Quale segmento contiene il ciclo x. Il primo che lo bracketa: i segmenti non
    si sovrappongono per costruzione, essendo fra adiacenti. */
@@ -984,11 +1225,27 @@ function mostraPre(el) {
              : `<span>non riprende piu'</span>`) +
     (d.dato ? `<span><b>${d.dato}</b></span>` : "");
 }
+// Una FINESTRA, adesso che ne cadono anche nel diagramma principale. Legge i
+// dati della marca -- gli estremi VERI, non quelli ritagliati dalla vista: e'
+// l'altra meta' del bordo tratteggiato, e insieme dicono "questa barra e'
+// troncata, e la sua durata e' questa".
+function mostraWin(el) {
+  const d = el.dataset;
+  readout.innerHTML =
+    `<span><b>${d.c}</b> · ${d.m}</span>` +
+    `<span>cicli <b>${N.format(d.a)} → ${N.format(d.z)}</b> ` +
+      `(${N.format(d.d)}${conT(+d.d)})</span>` +
+    (d.x === "1" ? `<span style="color:var(--accent)">ATTRAVERSA una commutazione</span>` : "") +
+    (d.dato ? `<span><b>${d.dato}</b></span>` : "") +
+    `<span>${d.p}</span>`;
+}
 document.addEventListener("mouseover", e => {
+  const w = e.target.closest(".win"); if (w) { mostraWin(w); return; }
   const p = e.target.closest(".ev"); if (p) { mostraPre(p); return; }
   const b = e.target.closest(".band"); if (b) mostra(b);
 });
 document.addEventListener("focusin", e => {
+  const w = e.target.closest(".win"); if (w) { mostraWin(w); return; }
   const p = e.target.closest(".ev"); if (p) { mostraPre(p); return; }
   const b = e.target.closest(".band"); if (b) mostra(b);
 });
@@ -1079,10 +1336,9 @@ document.getElementById("rt").innerHTML = rtVis.map(([n, c]) =>
   const raf    = globalThis.requestAnimationFrame || (f => f());
 
   // UN GESTO PER CURSORE, e non un modo che si ricorda di chi tocca adesso:
-  //   click               A
-  //   shift+click         B
-  //   shift+ctrl+click    C
-  // Cosi' si sposta A senza perdere B, che con l'alternanza non si poteva.
+  // cosi' si sposta A senza perdere B, che con l'alternanza non si poteva.
+  // Quale gesto sia quale lo dice cursoreDi(), che e' pura: qui non si ripete,
+  // o sarebbero due elenchi da tenere d'accordo.
   let CUR = { A: null, B: null, C: null };
   let attivo = -1;               // il segmento sotto il puntatore
   let V = [0, D.fine];           // la vista corrente
@@ -1112,24 +1368,38 @@ document.getElementById("rt").innerHTML = rtVis.map(([n, c]) =>
     scriviMisura();
   }
 
+  // QUANTE ROUTINE MOSTRARE. Sei, piu' il conto di quelle che restano: un
+  // intervallo di 463 cicli ne tocca ventitre', e stamparle tutte farebbe del
+  // righello un muro di testo. Il numero delle omesse c'e' perche' «le prime
+  // sei» senza dire di quante e' una classifica senza denominatore.
+  const N_ROUT = 6;
   const dettaglio = r => {
     const chi = r.proprietari
       .map(([o, c]) => `${o} ${N.format(c)} (${Math.round(100 * c / r.durata)}%)`)
       .join(" · ");
+    const rout = r.routine.slice(0, N_ROUT)
+      .map(([n, c]) => `${n} ${N.format(c)}`).join(" · ") +
+      (r.routine.length > N_ROUT ? ` · +${r.routine.length - N_ROUT} altre` : "");
     return `<span>${N.format(r.a)} → ${N.format(r.b)}</span>` +
       (r.tick ? `<span>${r.tick} tick</span>` : "") +
       (r.eventi ? `<span style="color:var(--accent)">${r.eventi} eventi</span>` : "") +
       (r.finestre ? `<span>${r.finestre} finestre</span>` : "") +
-      `<span>${chi}</span>`;
+      `<span>${chi}</span>` +
+      (r.routine.length ? `<span class="rout">${rout}</span>` : "");
   };
 
   function scriviMisura() {
     const posti = ["A", "B", "C"].filter(n => CUR[n] !== null);
     if (!posti.length) { misura.innerHTML = hint; return; }
     if (posti.length === 1) {
+      // I gesti che MANCANO, non "gli altri due": con un gesto per cursore il
+      // primo piantato puo' essere B o C, e un suggerimento che dicesse sempre
+      // "shift+click per B" direbbe il falso meta' delle volte.
       const n = posti[0];
+      const restano = ["A", "B", "C"].filter(m => CUR[m] === null);
       misura.innerHTML = `<span>cursore <b>${n}</b> a <b>${N.format(CUR[n])}</b></span>`
-        + `<span class="hint">shift+click per <b>B</b>, shift+ctrl+click per <b>C</b></span>`;
+        + `<span class="hint">`
+        + restano.map(m => `${GESTI[m]} per <b>${m}</b>`).join(", ") + `</span>`;
       return;
     }
     const segs = segmentiFra(CUR);
@@ -1160,10 +1430,17 @@ document.getElementById("rt").innerHTML = rtVis.map(([n, c]) =>
       `<span class="hint">${N.format(span)} cicli${conTC(span)}` +
         (tutto ? "" : ` · ${(D.fine / span).toFixed(1)}×`) + `</span>` +
       `<span class="sp"></span>` +
-      `<button data-z="out"${tutto ? " disabled" : ""}>− lontano</button>` +
-      `<button data-z="in">+ vicino</button>` +
-      `<button data-z="cur"${segmentiFra(CUR).length ? "" : " disabled"}>fra i cursori</button>` +
-      `<button data-z="all"${tutto ? " disabled" : ""}>tutto</button>`;
+      // `data-zoom` e non `data-z`: il click cerca il COMANDO con closest(), e
+      // un attributo chiamato come un DATO se lo prende chiunque lo porti. Il
+      // 14/09/2026 le finestre sono entrate nel diagramma con `data-z` = il loro
+      // ciclo di fine, e ogni click su una barra e' diventato un comando di
+      // zoom: il cursore non si piantava piu' (§3.60). Il dato e' la coppia
+      // `data-a`/`data-z` della marca; il comando e' l'intruso, e si chiama
+      // come un comando.
+      `<button data-zoom="out"${tutto ? " disabled" : ""}>− lontano</button>` +
+      `<button data-zoom="in">+ vicino</button>` +
+      `<button data-zoom="cur"${segmentiFra(CUR).length ? "" : " disabled"}>fra i cursori</button>` +
+      `<button data-zoom="all"${tutto ? " disabled" : ""}>tutto</button>`;
   }
 
   // Ridisegna tutto: il diagramma con la vista nuova, poi i cursori sopra.
@@ -1196,9 +1473,9 @@ document.getElementById("rt").innerHTML = rtVis.map(([n, c]) =>
   // addEventListener li' e non sugli elementi. Il .track filtra, cosi' si
   // misura cliccando sul diagramma e non sulla legenda.
   document.addEventListener("click", ev => {
-    const b = ev.target.closest && ev.target.closest("[data-z]");
+    const b = ev.target.closest && ev.target.closest("[data-zoom]");
     if (b) {
-      const z = b.dataset.z;
+      const z = b.dataset.zoom;
       if (z === "all") vista(0, D.fine);
       else if (z === "cur") {
         const sg = segmentiFra(CUR);
@@ -1214,15 +1491,13 @@ document.getElementById("rt").innerHTML = rtVis.map(([n, c]) =>
       }
       return;
     }
-    // Dopo un trascinamento il click scatta lo stesso: se piantasse un cursore,
-    // ogni scorrimento ne lascerebbe uno per strada.
-    if (trascinato) { trascinato = false; return; }
     if (!ev.target.closest || !ev.target.closest(".track")) return;
+    // Un gesto per cursore, e il gesto NUDO non e' un cursore: la regola sta in
+    // cursoreDi(), che e' pura e provata. Qui si legge l'evento e basta.
+    const q = cursoreDi(ev.shiftKey, ev.ctrlKey || ev.metaKey);
+    if (!q) return;
     const c = ciclo(ev, true);
     if (c === null) return;
-    // Un gesto per cursore: nessun modo da ricordare, e spostarne uno non
-    // cancella gli altri.
-    const q = ev.shiftKey ? (ev.ctrlKey || ev.metaKey ? "C" : "B") : "A";
     CUR[q] = c;
     ridisegnaCursori();
     scriviZoom();
@@ -1239,14 +1514,19 @@ document.getElementById("rt").innerHTML = rtVis.map(([n, c]) =>
     vista(f[0], f[1]);
   }, { passive: false });
 
-  // Trascinare fa scorrere. Sotto la soglia e' un click, non un trascinamento:
-  // senza, piantare un cursore diventerebbe impossibile con un mouse vero.
-  let giu = null, trascinato = false;
+  // Trascinare fa scorrere, e SOLO A MANI NUDE: con un modificatore premuto il
+  // gesto e' una misura, e uno scorrimento sotto lo stesso dito farebbe le due
+  // cose insieme. E' l'altra meta' della regola di cursoreDi().
+  //
+  // La soglia non decide piu' "click o trascinamento" -- quella domanda non
+  // esiste piu', perche' il click nudo non pianta niente. Resta solo come zona
+  // morta contro il tremolio: senza, un mousedown con un pixel di scarto
+  // scorrerebbe il diagramma di un pixel.
+  let giu = null;
   document.addEventListener("mousedown", ev => {
-    if (ev.target.closest && ev.target.closest(".track")) {
+    if (ev.shiftKey || ev.ctrlKey || ev.metaKey) return;
+    if (ev.target.closest && ev.target.closest(".track"))
       giu = { x: ev.clientX, V: V.slice() };
-      trascinato = false;
-    }
   });
   document.addEventListener("mousemove", ev => {
     // Fuori dal trascinamento: quale segmento e' sotto il puntatore. Si
@@ -1257,10 +1537,9 @@ document.getElementById("rt").innerHTML = rtVis.map(([n, c]) =>
       if (i !== attivo) { attivo = i; ridisegnaCursori(); }
     }
     if (!giu) return;
-    if (Math.abs(ev.clientX - giu.x) < 4) return;   // sotto soglia: e' un click
+    if (Math.abs(ev.clientX - giu.x) < 4) return;   // zona morta, contro il tremolio
     const r = strato.getBoundingClientRect();
     if (r.width <= 0) return;
-    trascinato = true;
     const d = ((ev.clientX - giu.x) / r.width) * (giu.V[1] - giu.V[0]);
     vista(giu.V[0] - d, giu.V[1] - d);
   });
@@ -1281,6 +1560,7 @@ document.getElementById("n-ctx").textContent = N.format(ctx);
 document.getElementById("n-tot").textContent = N.format(D.fine);
 document.getElementById("q-ctx").textContent = (100 * ctx / D.fine).toFixed(1) + "%";
 document.getElementById("n-sw").textContent = nsw;
+document.getElementById("q-sw").textContent = nsw ? Math.round(ctx / nsw) : "—";
 
 /* ---------- IL MARCATORE ----------
    Questo blocco NON fa aritmetica sui dati: i tratti di possesso, le durate e
@@ -1292,90 +1572,20 @@ document.getElementById("n-sw").textContent = nsw;
 
    Sta in fondo per la ragione scritta piu' su: un errore a meta' script uccide
    tutto cio' che segue, e in fondo non segue niente. */
-const M = D.marche;
 if (M && (M.finestre.length || M.puntuali.length)) {
   document.getElementById("sec-marche").hidden = false;
 
-  // I proprietari qui sono nomi di TCB LETTI dal canale 0, non i corpi dedotti
-  // dal pc del diagramma sopra: due strade, due spazi di nomi, quindi una
-  // scaletta di colori propria invece di far finta che combacino.
-  const MRIS = ["88,155,140", "146,112,186", "196,112,140",
-                "140,150,90", "110,130,160", "186,140,80"];
-  const chi = [...new Set(M.finestre.flatMap(f => f.tratti.map(t => t[2])))];
-  const col = Object.fromEntries(chi.map((c, i) => [c, MRIS[i % MRIS.length]]));
-
-  document.getElementById("m-legend").innerHTML =
-    chi.map(c => `<span class="item" style="--c:${col[c]}">
-        <span class="swatch task"></span><span>${c}</span></span>`).join("") +
-    `<span class="item" style="margin-left:auto;color:var(--accent)">
-       bordo acceso = la finestra ATTRAVERSA una commutazione</span>`;
-
-  const segIn = (f, t) =>       // un tratto, in percentuale della sua finestra
-    `<span class="seg" style="--sc:${col[t[2]]};left:${100*(t[0]-f.a)/f.d}%;` +
-    `width:${100*(t[1]-t[0])/f.d}%"></span>`;
-
-  /* --- le corsie: una per categoria, piu' una per gli eventi puntuali --- */
-  const pc = x => (x / D.fine) * 100;
-  const canali = M.categorie.map(c => c.ch);
-
-  document.getElementById("maxis").innerHTML = MARK
-    .map(t => `<span class="t" style="left:${pc(t)}%">${N.format(t)}</span>`).join("");
-
-  let corsie = canali.map(ch => {
-    const cat = M.categorie.find(c => c.ch === ch);
-    const ff = M.finestre.filter(f => f.ch === ch);
-    const rules = MARK.map(t => `<span class="tickline" style="left:${pc(t)}%"></span>`).join("");
-    const ww = ff.map(f => `<span class="win${f.cross ? " cross" : ""}" tabindex="0"
-        style="left:${pc(f.a)}%;width:${Math.max(pc(f.d), 0.15)}%"
-        data-c="${f.canale}" data-m="${f.marker}" data-a="${f.a}" data-z="${f.z}"
-        data-d="${f.d}" data-x="${f.cross ? 1 : 0}"
-        data-dato="${f.dato || ""}"
-        data-p="${f.poss.map(p => p[0] + " " + p[1]).join(" · ").replace(/"/g, "&quot;")}"
-        >${f.tratti.map(t => segIn(f, t)).join("")}</span>`).join("");
-    // La chiave e' larga 74px: ci sta la prima parola. Il nome intero sta nel
-    // title, nel readout e nella tabella in fondo, quindi non si perde.
-    return `<div class="lane">
-        <div class="lane-key" title="${cat.nome}"><span class="n">${cat.nome.split(" ")[0]}</span>
-          <span class="p">${cat.n}&times;</span></div>
-        <div class="track">${rules}${ww}</div>
-      </div>`;
-  });
-
-  // Gli eventi puntuali della macchina (il tasto): una corsia sola, perche'
-  // sono il TRIGGER di cio' che sta sopra e vanno letti sulla stessa scala.
-  if (M.puntuali.length) {
-    const ee = M.puntuali.map(p => `<span class="evt" style="left:${pc(p.c)}%"
-        title="${p.canale} ${p.v} @${p.c} (girava ${p.cur})"></span>`).join("");
-    corsie.push(`<div class="lane">
-        <div class="lane-key"><span class="n">${M.puntuali[0].canale}</span>
-          <span class="p">macchina</span></div>
-        <div class="track">${ee}</div>
-      </div>`);
-  }
-  document.getElementById("mlanes").innerHTML = corsie.join("");
-
-  /* --- il readout --- */
-  const mread = document.getElementById("mreadout");
-  function mostraWin(el) {
-    const d = el.dataset;
-    mread.innerHTML =
-      `<span><b>${d.c}</b> · ${d.m}</span>` +
-      `<span>cicli <b>${N.format(d.a)} → ${N.format(d.z)}</b> ` +
-        `(${N.format(d.d)}${conT(+d.d)})</span>` +
-      (d.x === "1" ? `<span style="color:var(--accent)">ATTRAVERSA una commutazione</span>` : "") +
-      (d.dato ? `<span><b>${d.dato}</b></span>` : "") +
-      `<span>${d.p}</span>`;
-  }
-  // Sul DOCUMENTO, come gli altri due qui sopra: il DOM finto di
-  // tools/trace_dom.js stubba addEventListener li' e non sugli elementi, e
-  // allargare il finto per una comodita' vorrebbe dire che la verifica gira su
-  // un DOM diverso da quello per cui e' stata scritta.
-  document.addEventListener("mouseover", e => {
-    const w = e.target.closest(".win"); if (w) mostraWin(w);
-  });
-  document.addEventListener("focusin", e => {
-    const w = e.target.closest(".win"); if (w) mostraWin(w);
-  });
+  // LE CORSIE NON SONO PIU' QUI (14/09/2026). Stavano su una scala fissa di
+  // tutta la corsa, mentre le fasce dei task stavano sul diagramma zoomabile:
+  // due righelli, e la correlazione fra una finestra e la fascia sotto cui cade
+  // non si poteva leggere in verticale. Adesso le disegna disegna(), insieme
+  // alle fasce e sulla stessa [b0,b1] -- vedi il blocco "le corsie delle
+  // FINESTRE" li' dentro, e la legenda, che ha preso i colori dei tratti.
+  //
+  // Qui resta cio' che NON si puo' co-scalare, e non e' un ripiego: la
+  // sovrapposizione allinea ogni finestra al PROPRIO trigger, cioe' cambia
+  // l'origine di ognuna. E' un'altra scala per costruzione, ed e' l'unico modo
+  // di vedere il jitter come sfrangiamento invece che come numero.
 
   /* --- la sovrapposizione al trigger ---
      Ogni finestra da zero, sulla scala della piu' lunga della SUA categoria:

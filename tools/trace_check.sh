@@ -53,7 +53,17 @@ if not m:
 print(m.group(1))
 FINE
 
-OUT=$(cat "$QUI/trace_dom.js" "$TMP/p.js" "$QUI/trace_cursori_test.js" | gjs -c "$(cat)" 2>&1) || {
+# I tre pezzi in un FILE, e gjs lo esegue da li'.
+#
+# Prima si passavano a `gjs -c "$(cat)"`, cioe' dentro UN argomento, e il
+# 14/09/2026 la pagina ha sfondato il tetto: Linux limita un singolo argomento a
+# 128 KB (MAX_ARG_STRLEN, 32 pagine) e la linea temporale delle routine ha
+# portato la pagina da ~120 a ~155. L'errore era "Elenco degli argomenti troppo
+# lungo", che non dice niente su cosa sia cresciuto.
+#
+# Un file non ha quel tetto, e la pagina continuera' a crescere.
+cat "$QUI/trace_dom.js" "$TMP/p.js" "$QUI/trace_cursori_test.js" > "$TMP/tutto.js"
+OUT=$(gjs "$TMP/tutto.js" 2>&1) || {
   echo "$OUT" >&2
   echo "trace_check: gjs e' uscito in errore su $(basename "$VX")" >&2
   exit 1

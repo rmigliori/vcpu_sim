@@ -65,6 +65,73 @@ const s1 = fraICursori(0,m).proprietari.reduce((s,[,c])=>s+c,0);
 const s2 = fraICursori(m,D.fine).proprietari.reduce((s,[,c])=>s+c,0);
 ok(s1 + s2 === D.fine, "e tornano anche sommando i proprietari dei due pezzi");
 
+print("--- CHE COSA E' GIRATO FRA I CURSORI ---");
+// Chiesto dall'utente il 14/09/2026 (§3.64): fra due cursori, i NOMI di cio'
+// che ha girato. Il dato e' la linea temporale delle etichette fini, che
+// trace.py calcolava gia' a ogni corsa e buttava via tenendone due cablate.
+//
+// L'asserzione che conta e' la stessa dei proprietari: i cicli devono sommare
+// ESATTAMENTE alla durata. Un profilo che non torna non e' un profilo.
+{
+  ok(!!D.proc && D.proc.nomi.length > 0,
+     "la linea temporale c'e' (" + (D.proc ? D.proc.t.length : 0) + " tratti, " +
+     (D.proc ? D.proc.nomi.length : 0) + " nomi)");
+  ok(D.proc.t.every((p, i, a) => i === 0 || a[i-1][0] < p[0]),
+     "i tratti sono ordinati e non si sovrappongono");
+  ok(D.proc.t.every(p => p[1] >= 0 && p[1] < D.proc.nomi.length),
+     "ogni tratto punta a un nome che esiste");
+  ok(D.proc.t[0][0] === 0, "il primo tratto comincia a zero: non c'e' tempo orfano");
+
+  const tutto = routineFra(0, D.fine);
+  const somma = tutto.reduce((s, [, c]) => s + c, 0);
+  ok(somma === D.fine,
+     "su tutta la corsa i cicli sommano ESATTAMENTE alla durata (" + somma + ")");
+  ok(tutto.every((r, i, a) => i === 0 || a[i-1][1] >= r[1]),
+     "e l'elenco e' ordinato per cicli, il piu' caro per primo");
+
+  // Additivita': spezzare l'intervallo non crea ne' perde cicli. E' lo stesso
+  // controllo dei proprietari, sulla stessa proprieta'.
+  const m2 = Math.floor(D.fine / 2);
+  const s1 = routineFra(0, m2).reduce((s, [, c]) => s + c, 0);
+  const s2 = routineFra(m2, D.fine).reduce((s, [, c]) => s + c, 0);
+  ok(s1 + s2 === D.fine, "spezzando a meta', i cicli tornano (" + s1 + " + " + s2 + ")");
+
+  // Un intervallo dentro UN SOLO tratto: il caso che una ricerca binaria
+  // sbagliata sbaglia in silenzio, restituendo il tratto successivo o niente.
+  if (D.proc.t.length > 2) {
+    const a = D.proc.t[1][0], z = D.proc.t[2][0];
+    if (z - a > 2) {
+      const dentro = routineFra(a + 1, z - 1);
+      ok(dentro.length === 1 && dentro[0][1] === (z - 1) - (a + 1),
+         "un intervallo interno a un solo tratto da' quel tratto e basta");
+    }
+  }
+  ok(routineFra(100, 100).length === 0, "due cursori sullo stesso punto: niente");
+  ok(routineFra(D.fine, D.fine + 500).length === 0, "e oltre la fine: niente");
+
+  // fraICursori la espone, o il righello non la vedrebbe.
+  ok(Array.isArray(fraICursori(0, D.fine).routine),
+     "e fraICursori la porta con se'");
+}
+
+print("--- il contesto e' contato per INTERO ---");
+// Erano due nomi, ctx_save e ctx_restore, e la pagina ne faceva "il costo del
+// contesto". Ma quelli sono i PREAMBOLI: il lavoro sta in cs_clean e cr_scalar.
+// Su test_tmgr_marks la pagina diceva 2633 dove la verita' e' il doppio.
+{
+  const nomi = Object.keys(D.ctx);
+  ok(nomi.length === 4, "quattro voci, non due (" + nomi.join(", ") + ")");
+  ok(typeof D.nsw === "number" && D.nsw >= 0,
+     "le commutazioni si contano invece di dividere un totale (" + D.nsw + ")");
+  // Se il programma commuta, il contesto deve costare qualcosa: il contrario
+  // vorrebbe dire che uno di quei quattro nomi non esiste piu'.
+  if (D.nsw > 0)
+    ok(Object.values(D.ctx).reduce((s, v) => s + v, 0) > 0,
+       "e con delle commutazioni il contesto costa cicli veri");
+  else
+    print("  saltato: questo programma non commuta");
+}
+
 print("--- gli eventi non si confondono fra loro ---");
 // Fino al 13/09 il readout diceva "PREEMPTION" su qualunque evento: appena il
 // marcatore ne ha avuto un secondo, una ricezione veniva etichettata come una
@@ -180,6 +247,196 @@ ok(limitaFinestra(0, D.fine).every(Number.isInteger), "gli estremi sono interi")
   ok(f0 <= a && f1 >= b, "la finestra fra i cursori li CONTIENE entrambi");
   ok(dentro([f0, f1]), "ed e' una finestra valida");
   ok(finestraFra(b, a)[0] === f0, "i cursori invertiti danno la stessa finestra");
+}
+
+print("--- LE RIGHE NON SPARISCONO ZOOMANDO ---");
+// Il difetto, segnalato dall'utente il 14/09/2026: la corsia di un proprietario
+// si disegnava solo se aveva fasce DENTRO la vista, quindi mano a mano che si
+// zoomava le righe sparivano una per una e il diagramma si riassestava sotto il
+// puntatore -- proprio mentre stai mirando un istante.
+//
+// La regola era gia' scritta venti righe piu' sotto, per le sotto-righe degli
+// istanti, e diceva l'opposto: le righe ci sono se la corsia produce IN TUTTA
+// LA CORSA. Qui si prova che ora vale anche per le corsie dei proprietari.
+//
+// E' un'asserzione sul CONTEGGIO, non sui pixel: il DOM finto non ha layout, ma
+// l'HTML che disegna() produce lo vede tutto, ed e' li' che la riga spariva.
+{
+  const corsieIn = (b0, b1) => {
+    const ln = document.getElementById("_prova_lanes");
+    disegna(document.getElementById("_prova_axis"), ln, b0, b1, t => String(t));
+    return (ln.innerHTML.match(/class="lane[ "]/g) || []).length;
+  };
+  // Una per proprietario, una per traccia, una per CATEGORIA di finestre e una
+  // per gli eventi puntuali della macchina: sono tutti elenchi di TUTTA la
+  // corsa, quindi il numero non dipende dalla vista.
+  const nCat  = (M && M.finestre.length) ? M.categorie.length : 0;
+  const nPunt = (M && M.puntuali.length) ? 1 : 0;
+  const attese = ORDINE.length + TRACCE.length + nCat + nPunt;
+  ok(corsieIn(0, D.fine) === attese,
+     "a tutta la corsa le righe sono " + attese +
+     " (" + ORDINE.length + " proprietari + " + TRACCE.length + " istanti + " +
+     nCat + " finestre + " + nPunt + " macchina)");
+
+  // Al FONDO SCALA, cioe' dove il difetto si vedeva peggio: una finestra di
+  // MIN_SPAN cicli contiene quasi sempre un proprietario solo.
+  let variate = 0, minimo = attese;
+  for (const q of [0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1]) {
+    const [a, z] = limitaFinestra(D.fine * q, D.fine * q + MIN_SPAN);
+    const n = corsieIn(a, z);
+    if (n !== attese) variate++;
+    if (n < minimo) minimo = n;
+  }
+  ok(variate === 0,
+     "e restano " + attese + " al fondo scala in otto punti della corsa" +
+     (variate ? " -- scese a " + minimo : ""));
+
+  // La prova che il conteggio non e' vacuo: le FASCE, a differenza delle righe,
+  // devono continuare a dipendere dalla vista. Senza questa, un disegna() che
+  // ignorasse [b0,b1] passerebbe le due asserzioni qui sopra.
+  //
+  // Il confronto e' con il numero ESATTO -- quante fasce toccano la finestra --
+  // e non con "meno di prima": su multi, che e' 95 cicli con una fascia sola,
+  // non c'e' niente da escludere e un confronto comparativo fallirebbe su un
+  // programma sano. E' lo stesso motivo per cui i tre cursori sono saltati li'.
+  const bandeIn = (b0, b1) => {
+    const ln = document.getElementById("_prova_lanes2");
+    disegna(document.getElementById("_prova_axis2"), ln, b0, b1, t => String(t));
+    return (ln.innerHTML.match(/class="band /g) || []).length;
+  };
+  let sbagliate = 0;
+  for (const q of [0, 0.25, 0.5, 0.75, 1]) {
+    const [a, z] = limitaFinestra(D.fine * q, D.fine * q + MIN_SPAN);
+    if (bandeIn(a, z) !== D.fasce.filter(f => f[1] > a && f[0] < z).length) sbagliate++;
+  }
+  ok(sbagliate === 0,
+     "mentre le FASCE disegnate sono esattamente quelle che toccano la finestra");
+}
+
+print("--- LE FINESTRE STANNO SULLO STESSO RIGHELLO DELLE FASCE ---");
+// Il difetto, segnalato dall'utente il 14/09/2026: le finestre del marcatore si
+// disegnavano in una sezione a parte, su una scala FISSA di tutta la corsa,
+// mentre le fasce stavano sul diagramma zoomabile. Due righelli per la stessa
+// corsa, quindi la correlazione che questi dati esistono per dare -- QUESTA
+// latenza cade sotto quale fascia, e di chi era la CPU dentro -- non si poteva
+// leggere in verticale.
+//
+// Qui si prova che ora le finestre passano da disegna(), cioe' sono funzione
+// della stessa [b0,b1] delle fasce.
+if (!M || !M.finestre.length) {
+  print("  saltato: questo programma non emette finestre");
+} else {
+  const reso = (b0, b1) => {
+    const ln = document.getElementById("_prova_lanes3");
+    disegna(document.getElementById("_prova_axis3"), ln, b0, b1, t => String(t));
+    return ln.innerHTML;
+  };
+  const quante = h => (h.match(/class="win[ "]/g) || []).length;
+
+  ok(quante(reso(0, D.fine)) === M.finestre.length,
+     "a tutta la corsa ci sono tutte (" + M.finestre.length + ")");
+
+  // ESATTAMENTE quelle che toccano la vista: ne' una in piu' (disegnata fuori
+  // schermo) ne' una in meno (persa perche' comincia prima del bordo).
+  let sbagliate = 0, tagliate = 0;
+  for (const q of [0, 0.2, 0.4, 0.6, 0.8, 1]) {
+    const [a, z] = limitaFinestra(D.fine * q, D.fine * q + MIN_SPAN);
+    const h = reso(a, z);
+    if (quante(h) !== M.finestre.filter(f => f.z > a && f.a < z).length) sbagliate++;
+    tagliate += (h.match(/tglio-(sx|dx)/g) || []).length;
+  }
+  ok(sbagliate === 0, "e in vista ci sono esattamente quelle che la toccano");
+
+  // Una finestra troncata dal bordo DEVE dirlo, o si legge come una finestra
+  // corta e il numero che uno crede di vedere e' sbagliato. Al fondo scala
+  // (40 cicli) qualcosa di troncato c'e' per forza, se ci sono finestre.
+  ok(tagliate > 0,
+     "e chi esce dalla vista porta il bordo tratteggiato (" + tagliate + " bordi)");
+
+  // I tratti dentro una finestra tagliata vanno rifatti sulla parte VISIBILE:
+  // riusare le percentuali della finestra intera li farebbe scivolare fuori
+  // dalla barra -- un disegno che mente di poco mentre stai misurando.
+  {
+    const f = M.finestre.reduce((p, c) => c.d > p.d ? c : p, M.finestre[0]);
+    // una vista che taglia la piu' lunga a meta', da entrambi i lati
+    const [a, z] = limitaFinestra(f.a + f.d / 4, f.a + f.d / 4 + Math.max(MIN_SPAN, f.d / 2));
+    const h = reso(a, z);
+    const perc = [...h.matchAll(/class="seg" style="--sc:[^;]+;left:([-\d.]+)%;width:([\d.]+)%/g)]
+      .map(m => [parseFloat(m[1]), parseFloat(m[2])]);
+    ok(perc.length > 0, "la finestra piu' lunga tagliata mostra comunque i suoi tratti");
+    ok(perc.every(([l, w]) => l >= -0.001 && l + w <= 100.001),
+       "e ogni tratto sta DENTRO la barra ritagliata (0..100%)");
+  }
+
+  // La prova che non e' rimasta una seconda copia su un'altra scala: la
+  // sezione in fondo non disegna piu' corsie, solo la sovrapposizione.
+  ok(document.getElementById("mlanes").innerHTML === "",
+     "e la vecchia copia a scala fissa non si disegna piu'");
+}
+
+print("--- A MANI NUDE SI NAVIGA, COL MODIFICATORE SI MISURA ---");
+// Deciso con l'utente il 14/09/2026 (§3.61). Prima il click NUDO piantava A, e
+// lo stesso gesto voleva dire anche "scorri": la convivenza stava su una soglia
+// di quattro pixel che INDOVINAVA l'intenzione -- sotto, un nudge da 1-3 px
+// mentre scorrevi spostava A; sopra, un trascinamento da 5 px che volevi fosse
+// un click non piantava niente.
+//
+// La riga che decideva il gesto stava nella colla, dove il DOM finto non
+// arriva. Ora e' cursoreDi(): due booleani, un nome o niente, e si prova.
+{
+  ok(cursoreDi(false, false) === null,
+     "il click NUDO non pianta niente: e' navigazione");
+  ok(cursoreDi(true,  false) === "A", "shift -> A");
+  ok(cursoreDi(false, true)  === "B", "ctrl -> B");
+  ok(cursoreDi(true,  true)  === "C", "ctrl+shift -> C");
+
+  // Ogni cursore raggiungibile, e da un gesto SOLO: se due combinazioni dessero
+  // lo stesso nome, uno dei tre sarebbe irraggiungibile senza che niente lo dica.
+  const resi = [[false,false],[true,false],[false,true],[true,true]]
+    .map(([s,c]) => cursoreDi(s,c)).filter(n => n !== null);
+  ok(resi.length === 3, "tre gesti piantano, uno no (" + resi.join(", ") + ")");
+  ok(new Set(resi).size === 3, "e sono tre cursori DIVERSI");
+  ok(["A","B","C"].every(n => resi.includes(n)), "A, B e C sono tutti raggiungibili");
+
+  // I suggerimenti a schermo si derivano da cursoreDi, non da un secondo elenco:
+  // e' la stessa mossa di marks.conf, un posto solo dove la cosa e' scritta.
+  ok(["A","B","C"].every(n => GESTI[n]),
+     "ogni cursore sa come si chiama il suo gesto (" +
+     ["A","B","C"].map(n => n + "=" + GESTI[n]).join(", ") + ")");
+  ok(new Set(["A","B","C"].map(n => GESTI[n])).size === 3,
+     "e due cursori non annunciano lo stesso gesto");
+}
+
+print("--- IL COMANDO E IL DATO NON SI CHIAMANO ALLO STESSO MODO ---");
+// Segnalato dall'utente il 14/09/2026: shift+click non piantava piu' il cursore
+// B. Il gestore del click trova i bottoni dello zoom con
+//
+//     ev.target.closest("[data-z]")      ... e se lo trova, ZOOMA e ritorna
+//
+// e le finestre appena entrate nel diagramma portavano `data-z` = il loro ciclo
+// di fine. Ogni click su una barra diventava un comando di zoom, e il cursore
+// non si piantava mai: due significati per lo stesso nome, che e' la specie di
+// difetto che questo progetto toglie dappertutto tranne, quel giorno, qui.
+//
+// La colla del click non e' provabile nel DOM finto -- addEventListener e'
+// no-op, closest() ritorna null -- ma la COLLISIONE si': e' una proprieta' del
+// markup, non degli eventi. E la forma generale e' migliore di "non c'e'
+// data-zoom nelle corsie": qualunque nome condiviso fra i due insiemi rende un
+// pezzo di diagramma cliccabile come un bottone.
+{
+  const nomi = h => new Set(
+    [...String(h).matchAll(/\sdata-([a-z0-9-]+)\s*=/g)].map(m => m[1]));
+  const comandi = nomi(document.getElementById("zoomctl").innerHTML);
+  const dati    = nomi(document.getElementById("lanes").innerHTML);
+  const comuni  = [...comandi].filter(n => dati.has(n));
+  ok(comandi.size > 0,
+     "i controlli dello zoom portano un attributo di comando (data-" +
+     [...comandi].join(", data-") + ")");
+  ok(dati.size > 0,
+     "e il diagramma porta i suoi dati (data-" + [...dati].join(", data-") + ")");
+  ok(comuni.length === 0,
+     comuni.length ? "MA UN NOME E' CONDIVISO: data-" + comuni.join(", data-")
+                   : "e nessuno dei due nomi finisce nell'altro insieme");
 }
 
 print(ko === 0 ? "\nTUTTO VERDE" : "\n" + ko + " FALLITI");

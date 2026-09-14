@@ -409,12 +409,31 @@ def analizza(vx, tmp, argomenti=(), hz=None):
         if not m:
             continue
         pc, cyc = int(m.group(1)), int(m.group(2))
-        own, fine_l, glob_l = dove(pc)
-        if own:
-            cur, strato, nome = own, "task", fine_l
-        else:
-            strato, nome = "kernel", glob_l
-        ev.append((cyc, cur, strato, nome, fine_l))
+        own, fine_l, _glob = dove(pc)
+        # L'ETICHETTA FINE ANCHE PER IL KERNEL (14/09/2026, §3.64).
+        #
+        # Fino a oggi il codice di un task era attribuito all'etichetta fine e
+        # quello di kernel a quella GLOBALE, e la seconda meta' diceva il falso:
+        # `scheduler`, `dispatcher`, `sched_scan` e `sched_preempt` non sono
+        # .global, quindi i loro cicli finivano sotto `sched_isr_exit`, che e'
+        # solo il simbolo che li precede. Su test_tmgr_marks erano 3088 cicli
+        # sotto un nome che ne vale 231.
+        #
+        # Il commento in testa a questo file lo dichiarava gia' -- «con quelli
+        # soli, i rami dello scheduler finiscono dentro il simbolo che li
+        # precede» -- ed e' la ragione per cui ogni modulo si ri-assembla con
+        # --emit-expanded. Le etichette c'erano, pagate a ogni corsa, e venivano
+        # buttate via tranne due nomi cablati.
+        #
+        # NIENTE RAGGRUPPAMENTO: queste etichette sono piu' fini di una
+        # procedura (sched_scan_queue, deq_empty, cr_scalar sono rami interni), e
+        # il linguaggio non dichiara quali etichette SIANO procedure -- .proc sta
+        # su 26 etichette di 283. Dedurlo dai bersagli di `call` non funziona:
+        # a `dispatcher` ci si arriva con `j`, e finirebbe assorbito da
+        # `scheduler`, cioe' la stessa bugia in piccolo. Si mostrano come sono.
+        cur = own or cur
+        strato = "task" if own else "kernel"
+        ev.append((cyc, cur, strato, fine_l, fine_l))
     if not ev:
         sys.exit("nessuna istruzione tracciata: il programma gira?")
 
@@ -424,6 +443,31 @@ def analizza(vx, tmp, argomenti=(), hz=None):
     loc_rt = collections.Counter()            # per etichetta fine: ctx_save & C.
     for i, e in enumerate(ev):
         loc_rt[e[4]] += durata(i)
+
+    # LA LINEA TEMPORALE DELLE ROUTINE (14/09/2026, §3.64): i tratti di etichetta
+    # fine, compressi. Serve ai CURSORI -- «fra A e B che cosa e' girato» -- e
+    # non si puo' ricavare dalle fasce, che sono per proprietario e dentro
+    # portano solo le prime sei voci di un totale.
+    #
+    # Compressa in due pezzi: i nomi una volta sola, e la linea come coppie
+    # [ciclo, indice]. Su test_tmgr_marks fa 2710 tratti e 85 nomi, cioe' ~35 KB
+    # invece degli ~62 della forma con i nomi ripetuti. La pagina intera ne pesa
+    # 120, quindi e' un terzo in piu' per una misura che prima non esisteva.
+    proc_n, proc_i, proc_t = [], {}, []
+    for i, e in enumerate(ev):
+        if proc_t and proc_t[-1][1] == proc_i.get(e[3]):
+            continue
+        if e[3] not in proc_i:
+            proc_i[e[3]] = len(proc_n)
+            proc_n.append(e[3])
+        proc_t.append([e[0], proc_i[e[3]]])
+
+    # LE COMMUTAZIONI, contate invece che divise. La pagina le ricavava da
+    # `rt["ctx_restore"] / 84`, cioe' da un totale diviso per un costo medio
+    # scritto a mano -- e con l'etichetta fine quel totale e' cambiato, perche'
+    # `ctx_restore` adesso e' il solo preambolo. Un ingresso in ctx_restore E'
+    # una commutazione: si contano gli ingressi.
+    nsw = sum(1 for c, i in proc_t if proc_n[i] == "ctx_restore")
 
     fasce = []
     for i, (cyc, o, l, n, _) in enumerate(ev):
@@ -455,7 +499,23 @@ def analizza(vx, tmp, argomenti=(), hz=None):
                    sorted(f["r"].items(), key=lambda x: -x[1])[:6]] for f in fasce],
         "own": [[o, l, c] for (o, l), c in own.items()],
         "rt": rt.most_common(18),
-        "ctx": {"ctx_save": loc_rt["ctx_save"], "ctx_restore": loc_rt["ctx_restore"]},
+        # IL CONTESTO, per intero e non per meta'. Erano due nomi, `ctx_save` e
+        # `ctx_restore`, e la pagina ne faceva la somma dichiarandola «il costo
+        # del contesto». Ma quei due sono solo i PREAMBOLI: il lavoro vero sta
+        # in `cs_clean` e soprattutto in `cr_scalar`, che da solo vale 2407 cicli
+        # su test_tmgr_marks contro i 203 di `ctx_restore`. La pagina diceva 2633
+        # dove la verita' e' il doppio abbondante.
+        #
+        # L'ELENCO E' SCRITTO A MANO, e va detto perche' e' il genere di cosa che
+        # questo progetto cancella di solito. Non si puo' dedurre: vorrebbe dire
+        # sapere quali etichette appartengono a quale procedura, e il linguaggio
+        # non lo dichiara (vedi il commento su .proc piu' su). Quattro nomi in un
+        # posto solo, e il giorno che l'HAL cresce vanno rivisti -- il test che
+        # se ne accorge e' il gradino dei cicli in rtos/test/CMakeLists.txt.
+        "ctx": {n: loc_rt[n] for n in ("ctx_save", "cs_clean",
+                                       "ctx_restore", "cr_scalar")},
+        "nsw": nsw,
+        "proc": {"nomi": proc_n, "t": proc_t},
         "marche": m,
     }
 
