@@ -101,13 +101,23 @@ msg_tick:     .space 2
 ;  dice TMO_NONE: e' la condizione di uscita, non un errore.
 ; ==========================================================================
 tmgr_task:
-  ; Si presenta, come i task del test: tre istruzioni una volta sola, e da qui
+  ; Si presenta, come i task del test: tre istruzioni UNA VOLTA SOLA, e da qui
   ; lo strumento lo chiama "gestore" invece che con l'indirizzo del suo TCB.
+  ;
+  ; "Una volta sola" e' garantito da tmgr_loop, e non dal fatto che queste righe
+  ; stiano in cima: e' il punto di RIENTRO che decide quante volte si eseguono.
+  ; Fino al 14/09/2026 le due frecce di ritorno puntavano a tmgr_task, cioe'
+  ; QUI SOPRA, e il gestore si ripresentava a ogni giro -- innocuo nell'effetto
+  ; (lo stesso id sullo stesso canale) ma 6 cicli per giro dentro la misura, su
+  ; un programma che esiste per misurare. Stesso disegno di taskI, che lo faceva
+  ; gia' giusto con loopI.
 .ifdef MARKS
   li r1, MARKN_EXEC
   li r2, N_EXEC_TMGR
   sw r2, 0(r1)
 .endif
+
+tmgr_loop:
   li r1, mbox_tmgr
   call receive             ; r2 = il messaggio di tick. Non si legge e non si
                            ; libera: e' lo statico qui sopra, non un buffer
@@ -120,7 +130,7 @@ tmgr_drain:
                            ; costante, non un'espressione: la derivazione resta
                            ; un commento invece di essere verificata
   call buf_alloc           ; r1 = esito, r2 = buffer
-  bne r1, r0, tmgr_task ; niente buffer: tutto resta armato, si riprova al
+  bne r1, r0, tmgr_loop ; niente buffer: tutto resta armato, si riprova al
                            ; tick prossimo (§9.2). Vale sia per POOL_EMPTY sia
                            ; per POOL_HUGE -- il secondo non succedera' mai,
                            ; ma trattarlo come "riprova" non costa una riga
@@ -150,7 +160,7 @@ tmgr_drain:
 tmgr_none:
   mov r2, r3
   call buf_free
-  j tmgr_task
+  j tmgr_loop
 
 ; ==========================================================================
 ;  tmgr_tick(): il pezzo che gira DENTRO l'ISR del tick, e che deve restare

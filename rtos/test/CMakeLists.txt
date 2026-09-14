@@ -196,7 +196,7 @@ vasm_check(tmgr MODE DUMPS PROGRAM test_tmgr
 #  altre non hanno tag, quindi restano quelle di sempre e sono le STESSE.
 #
 #  PERCHE' QUESTO TEST ESISTE, e non e' un doppione: il terzo numero dei due e'
-#  DIVERSO -- 2566 pulito, 2519 strumentato -- ed e' cntI, i giri dell'idle.
+#  DIVERSO -- 2566 pulito, 2530 strumentato -- ed e' cntI, i giri dell'idle.
 #  Cioe' la strumentazione COSTA, e il costo si vede in un valore dichiarato
 #  invece che in un commento. Se un giorno i due numeri coincidessero vorrebbe
 #  dire che i tag non sono piu' nel kernel, e uno dei due test lo direbbe.
@@ -222,14 +222,26 @@ vasm_program(test_tmgr_marks OBJECTS t_tmgr
 #    2548  + la finestra SCHED
 #    2539  + l'evento PREEMPT
 #    2532  + l'evento RECV, col codice sul porto dati
-#    2519  + i tre task che REGISTRANO IL PROPRIO NOME (3 istruzioni ognuno,
-#          una volta sola, ma il boot le paga e l'idle gira di meno)
+#    2519  + i tre task che REGISTRANO IL PROPRIO NOME (3 istruzioni ognuno)
+#    2530  il RIENTRO spostato sotto il blocco .ifdef (14/09/2026)
 #
-#  E' la misura che dice perche' l'interruttore DEVE essere a compile-time: con
-#  --marks spento quelle istruzioni si eseguirebbero lo stesso. Ogni tag si
-#  paga, e il prezzo finisce qui invece che in un commento.
+#  L'ULTIMO GRADINO E' UNA CORREZIONE, e vale la pena leggerlo al contrario.
+#  Il commento del 13/09 diceva che quelle tre istruzioni erano "una volta
+#  sola": lo erano per l'idle, che rientrava in loopI, ma non per taskA e
+#  tmgr_task, che rientravano con `j` sulla propria etichetta -- cioe' SOPRA il
+#  blocco -- e quindi si ripresentavano a ogni giro, 6 cicli ogni volta. Il
+#  difetto e' venuto fuori il 14/09 leggendo i cicli come tempo (§3.56), da due
+#  numeri di scheduler-facts.md che non tornavano piu'.
+#
+#  Undici giri d'idle e' il prezzo che quel difetto costava, ed e' qui invece
+#  che in un commento per la stessa ragione per cui ci sono gli altri quattro
+#  gradini: un costo dichiarato e' un costo che qualcuno rivede.
+#
+#  E' anche la misura che dice perche' l'interruttore DEVE essere a
+#  compile-time: con --marks spento quelle istruzioni si eseguirebbero lo
+#  stesso. Ogni tag si paga, e il prezzo finisce qui.
 vasm_check(tmgr_marks MODE DUMPS PROGRAM test_tmgr_marks
-           EXPECT "5 0 2519")
+           EXPECT "5 0 2530")
 
 # ---------------------------------------------------------------------------
 #  test_semaphore — il semaforo contatore, e l'INSERIMENTO ORDINATO di §13.6.

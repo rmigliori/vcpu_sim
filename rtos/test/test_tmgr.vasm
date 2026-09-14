@@ -193,15 +193,23 @@ main:
 ;  risveglio e' una scadenza.
 ; ==========================================================================
 taskA:
-  ; Il task si PRESENTA: tre istruzioni, una volta sola, e da qui in poi lo
+  ; Il task si PRESENTA: tre istruzioni, UNA VOLTA SOLA, e da qui in poi lo
   ; strumento lo chiama "A" invece che con l'indirizzo del suo TCB. Il nome
   ; vero sta in marks.conf, che e' l'unico posto in cui vivono i nomi da
   ; mostrare; qui viaggia solo l'id.
+  ;
+  ; A garantire "una volta sola" e' loopA, non la posizione di queste righe: e'
+  ; il punto di RIENTRO che decide quante volte si eseguono. Fino al 14/09/2026
+  ; il giro si chiudeva su taskA, cioe' QUI SOPRA, e A si ripresentava a ogni
+  ; giro -- 6 cicli ogni volta, dentro la misura. Vedi taskI, che rientrando in
+  ; loopI lo faceva gia' giusto.
 .ifdef MARKS
   li r1, MARKN_EXEC
   li r2, N_EXEC_A
   sw r2, 0(r1)
 .endif
+
+loopA:
   li r5, tagA
   lw r2, 0(r5)             ; r2 = clientTag: l'attesa corrente
   li r1, 2                 ; fra due tick
@@ -260,7 +268,7 @@ a_freed:
   lw r2, 0(r1)
   addi r2, r2, 1
   sw r2, 0(r1)             ; il tag cresce: l'attesa successiva e' un'altra cosa
-  j taskA
+  j loopA
 
 taskI:
 .ifdef MARKS

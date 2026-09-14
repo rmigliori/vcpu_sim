@@ -21,8 +21,9 @@
 
 > ### ▶ RIPRENDI DA QUI (15/09/2026 o dopo)
 >
-> **Il 14/09 ha fatto una cosa sola: il CLOCK (§3.56).** I cicli si leggono
-> anche come tempo, **100 MHz confermati dall'utente**, e la forma è quella:
+> **Il 14/09: il CLOCK (§3.56), e il difetto che il clock ha stanato.** I cicli
+> si leggono anche come tempo, **100 MHz confermati dall'utente**, e la forma è
+> quella:
 >
 > ```
 > Δ 13.430 cicli · 134,3 µs @ 100 MHz
@@ -46,16 +47,22 @@
 > | | |
 > |---|---|
 > | §7 nuova | **il tick della suite è compresso di 25–2000 volte**: 500, 2000 e 4000 cicli sono 5, 20 e 40 µs, contro gli 1–10 ms di un tick vero. È deliberato, ma «40 µs» somiglia a una specifica e va detto |
-> | §6 | **due numeri erano stale**: il fuori CPU è **915 e 2120**, non 909 e 2093. Li ha mossi `cadb40b` — `taskA` e `tmgr_task` **ri-registrano il nome a ogni giro** perché rientrano *sopra* il blocco `.ifdef`, mentre il commento dice «una volta sola» |
+> | §6 | **un difetto, trovato e CORRETTO**: `taskA` e `tmgr_task` ri-registravano il proprio nome **a ogni giro** — rientravano *sopra* il blocco `.ifdef`, mentre il commento diceva «una volta sola» — e pagavano 6 cicli ogni volta, dentro la misura |
 >
-> Il secondo è un difetto **trovato e non corretto**, ed è la prima cosa da
-> decidere: spostare quelle tre istruzioni sotto l'etichetta di rientro costa
-> due righe in due file, ma **rimuove 6 cicli per giro** e quindi rimuove
-> anche i numeri appena documentati. È una decisione, non una pulizia.
+> Il secondo l'ha deciso l'utente nella stessa sessione: **spostare le
+> istruzioni**. Adesso il rientro è sotto il blocco (`loopA`, `tmgr_loop`, tre
+> frecce in due file — il gestore ne aveva **due**), e il fuori CPU è **909 e
+> 2108**, cioè **esattamente** i valori di `6314e19`, il commit prima che la
+> registrazione esistesse. Verificato eseguendo quel commit in un worktree.
 >
-> `ctest` **39/39**, `scheduler_facts --check` verde, **impronte dei 15
-> programmi identiche** (verificate contro `HEAD` in un worktree): il clock non
-> tocca il bersaglio.
+> Il prezzo l'ha pagato un valore atteso, che è il posto giusto: `tmgr_marks`
+> passa da `5 0 2519` a **`5 0 2530`**, undici giri d'idle recuperati. La scala
+> dei gradini in `rtos/test/CMakeLists.txt` ne ha uno in più.
+>
+> `ctest` **39/39**, `scheduler_facts --check` verde, e le impronte si sono
+> mosse **solo su `test_tmgr_marks.vx`** — solo il `TEXT+DATA`, `.symmap` e le
+> 65 voci identici, perché le due etichette nuove sono locali. Gli altri 14
+> programmi byte per byte come prima. **Non committato e non pushato.**
 >
 > ---
 >
@@ -83,7 +90,7 @@
 > Il risultato di quella giornata in una riga: esistono due numeri realtime che
 > il 12/09 non c'erano — **18 scansioni dello scheduler** (min 51, max 177,
 > **jitter 126**, cioè 0,51–1,77 µs con jitter 1,26 µs) e **11 preemption** con
-> il tempo fuori CPU (915 e 2120 alternati, 9,15 e 21,2 µs) — e la catena che li
+> il tempo fuori CPU (909 e 2108 alternati, 9,09 e 21,1 µs) — e la catena che li
 > produce è provata da capo a fondo.
 >
 >
@@ -102,7 +109,7 @@
 > | per riaprirla | `--mhz` su `trace.py` e `marks.py read`: stessa registrazione, altra velocità |
 >
 > A 100 MHz i numeri diventano: scansione dello scheduler **0,51–1,77 µs**,
-> fuori CPU dopo una preemption **9,15 e 21,2 µs**, `test_tmgr` intero
+> fuori CPU dopo una preemption **9,09 e 21,1 µs**, `test_tmgr` intero
 > **497,3 µs**, `test_vectors` **1,60 ms**.
 >
 > **Da guardare**, se si vuole vedere il sistema invece che leggerlo:
@@ -3134,23 +3141,42 @@ in fretta, e quei numeri sono scelti come **soglie** rispetto al costo del giro
 da interrompere, non come frequenze — ma finché erano cicli non ci faceva caso
 nessuno, e «40 µs» somiglia a una specifica.
 
-**Due numeri di §6 erano stale, e il perché è istruttivo.** Il tempo fuori CPU
-dopo una preemption è **915 e 2120**, non 909 e 2093. In mezzo c'è solo
-`cadb40b`, la registrazione dei nomi, che il commento accanto dichiara «tre
-istruzioni **una volta sola**». Per l'idle lo sono: `taskI` rientra in `loopI`,
-sotto il blocco. Per **`taskA` e `tmgr_task` no** — rientrano con `j` sulla
-propria etichetta, che sta *sopra* il blocco, quindi si ripresentano a ogni giro
-e pagano 6 cicli ogni volta. Innocuo nell'effetto (riscrivono lo stesso id sullo
-stesso canale), ma **dentro la misura**, ed è la regola «i cicli di un programma
-strumentato sono di un altro programma» arrivata dal lato dello strumento invece
-che da quello del kernel. **Non l'ho corretto**: spostare quelle tre istruzioni
-sotto l'etichetta di rientro muove di nuovo i numeri appena documentati, ed è
-una decisione, non una pulizia.
+**E un difetto trovato dal tempo a schermo, poi CORRETTO** (su decisione
+dell'utente, nella stessa sessione). Due numeri di §6 non tornavano: il fuori
+CPU risultava **915 e 2120** dove i documenti dicevano 909 e 2093. La causa è
+`cadb40b`, la registrazione dei nomi, che il commento accanto dichiarava «tre
+istruzioni **una volta sola**». Per l'idle lo erano — `taskI` rientra in
+`loopI`, **sotto** il blocco `.ifdef`. Per **`taskA` e `tmgr_task` no**:
+rientravano con `j` sulla propria etichetta, che sta *sopra*, quindi si
+ripresentavano a ogni giro e pagavano **6 cicli ogni volta**. Innocuo
+nell'effetto — lo stesso id sullo stesso canale — ma dentro la misura, su un
+programma che esiste per misurare.
 
-`ctest` **39/39**, `scheduler_facts --check` verde, e le **impronte dei 15
-programmi sono identiche** — verificate contro un `HEAD` costruito in un
-worktree a parte, non dedotte dal fatto che il diff in C è due `printf` e una
-`#define`.
+Il rimedio è la forma che `taskI` aveva già: un'etichetta di rientro **sotto** il
+blocco, `loopA` e `tmgr_loop`. Tre frecce di ritorno spostate — `taskA` ne aveva
+una, il gestore **due**, e la seconda (`bne` su «niente buffer, si riprova»)
+era facile da non vedere.
+
+**La prova che è tornato esatto non è un argomento**: 909 e 2108 sono i valori
+misurati a **`6314e19`**, il commit *prima* che la registrazione esistesse,
+eseguito in un worktree apposta. La finestra corta conteneva una
+ri-registrazione (6 cicli), quella lunga due (12). Il **2093** dei documenti è
+più vecchio ancora, ed è il tag RECV col porto dati (§3.51): in quella finestra
+ci sta per progetto.
+
+Il prezzo l'ha pagato **un valore atteso**, ed è il modo giusto: `tmgr_marks`
+passa da `5 0 2519` a **`5 0 2530`** — undici giri d'idle in più, che sono
+esattamente ciò che il difetto costava. La scala dei cinque gradini in
+`rtos/test/CMakeLists.txt` ha un sesto gradino, e il commento sbagliato è
+corretto lì dove stava.
+
+`ctest` **39/39**, `scheduler_facts --check` verde (il `test_tmgr` pulito non è
+toccato), e le impronte si sono mosse **esattamente dove dovevano**: su
+**`test_tmgr_marks.vx` e su nessun altro dei 15**, e solo il `TEXT+DATA` — il
+`.symmap` e le sue 65 voci sono identici, perché `loopA` e `tmgr_loop` sono
+etichette locali. Prima della correzione le impronte erano identiche su tutti e
+15, verificate contro `HEAD` in un worktree: il clock da solo non tocca il
+bersaglio.
 
 ---
 
@@ -3281,10 +3307,16 @@ invece di tacere.
 2539  + l'evento PREEMPT
 2532  + l'evento RECV, col codice sul porto dati
 2519  + i tre task che registrano il proprio nome
+2530  il rientro spostato sotto il blocco .ifdef  (14/09, §3.56)
 ```
 
 Cinque misure, una per aggiunta, tutte in un `EXPECT` dichiarato. È il punto per
 cui l'assemblaggio condizionale è stato il primo pezzo della giornata.
+
+L'ultimo gradino è del giorno dopo ed è una **correzione**: due dei tre task
+rientravano *sopra* il proprio blocco `.ifdef` e si ripresentavano a ogni giro,
+quindi «una volta sola» era vero solo per l'idle. Undici giri d'idle è quello
+che costava — e si è visto solo leggendo i cicli come tempo (§3.56).
 
 ---
 
@@ -6971,26 +7003,15 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 > che l'aveva scritta. Ha funzionato esattamente come il riquadro qui sopra
 > prescrive — puntava a §0 invece di ricopiarlo, e il criterio di fine («39/39 e
 > impronte invariate») è stato il modo in cui si è saputo di aver finito. Al suo
-> posto ci sono le due che seguono, che sono ciò che il clock ha aperto.
+> posto c'è quella che segue, che è ciò che il clock ha aperto.
 
-**LA DECISIONE APERTA — le tre istruzioni che si ripetono a ogni giro:**
-```
-Leggi docs/stato-lavori.md, il riquadro di ripresa in §0: c'e' il
-difetto per intero, e docs/scheduler-facts.md §6 lo misura.
-
-In due parole: taskA e tmgr_task rientrano con `j` SOPRA il loro
-blocco .ifdef MARKS, quindi ri-registrano il nome a ogni giro invece
-che una volta sola come dice il commento. Costa 6 cicli per giro, solo
-nella configurazione strumentata.
-
-Non l'ho corretto di mia iniziativa perche' correggerlo MUOVE i numeri
-appena documentati (915 e 2120 tornerebbero verso 909 e 2093). Quindi
-la domanda per l'utente e' se correggerlo, e la risposta decide anche
-se §6 di scheduler-facts.md va rimisurata.
-
-Se si': due righe in due file, poi ctest 39/39 e scheduler_facts
---check RIGENERATO, non solo verificato.
-```
+> **E tolta la stessa sera, senza mai essere usata:** la formula «la decisione
+> aperta — le tre istruzioni che si ripetono a ogni giro». L'utente ha risposto
+> subito («sposta le istruzioni»), quindi la decisione è stata presa e il lavoro
+> fatto **nella stessa sessione che aveva scritto la formula**. È il caso
+> migliore in cui una formula può finire: nasce perché non si voleva decidere
+> al posto dell'utente, e muore appena l'utente decide. Scriverla è servito lo
+> stesso — a porre la domanda invece di risolverla di propria iniziativa.
 
 **IL PROSSIMO PASSO — la latenza di preemption:**
 ```
@@ -7059,8 +7080,15 @@ Guarda quali registri sono vivi PRIMA di scegliere, o si corrompe un
 valore di ritorno.
 
 OGNI TAG SI PAGA IN UN EXPECT DICHIARATO. tmgr_marks si e' gia' mosso
-quattro volte -- 2566 pulito, poi 2548, 2539, 2532, 2519 a ogni aggiunta.
+cinque volte -- 2566 pulito, poi 2548, 2539, 2532, 2519 a ogni aggiunta,
+e 2530 quando una di quelle aggiunte e' stata corretta (§3.56).
 Il numero nuovo va MISURATO e scritto nel vasm_check, non stimato.
+
+E IL RIENTRO DEL CICLO VA GUARDATO. Un tag messo in cima a un task si
+esegue "una volta sola" solo se la freccia di ritorno cade SOTTO di lui:
+taskA e tmgr_task rientravano sopra, e pagavano a ogni giro senza che
+nessuno se ne accorgesse per un giorno (§3.56). Le frecce possono essere
+piu' di una -- il gestore ne aveva due, e la seconda era un `bne`.
 
 Alla fine: ctest 39/39 (o piu'), e tools/fingerprint.sh con le impronte dei
 programmi PULITI INVARIATE -- e' quella la prova che .ifdef si compila via.

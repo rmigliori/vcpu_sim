@@ -164,30 +164,33 @@ E **undici preemption**, che sono un fatto *letto* dal kernel e non dedotto —
 
 | | n | fuori CPU | @ 100 MHz |
 |---|---:|---|---|
-| preemption | 11 | **915** (×6) e **2120** (×5) cicli, alternati | **9,15 µs** e **21,2 µs** |
+| preemption | 11 | **909** (×6) e **2108** (×5) cicli, alternati | **9,09 µs** e **21,1 µs** |
 
 L'alternanza non è rumore: sono le due quantità di lavoro diverse che il tick
 innesca. È il tempo in cui un task è stato tolto dalla CPU **involontariamente**,
 e va detto così — non è latenza di preemption (quella è il ritardo fra «qualcuno
 di più prioritario è pronto» e «gira»), è la sua conseguenza sulla vittima.
 
-> **Questi due numeri erano 909 e 2093 fino al 14/09, e sono cambiati senza che
-> il kernel cambiasse.** In mezzo c'è `cadb40b`, la **registrazione dei nomi**:
-> tre istruzioni sotto `.ifdef MARKS`, che il commento accanto dichiara «una
-> volta sola». Per l'idle lo sono — `taskI` rientra in `loopI`, cioè **sotto**
-> il blocco. Per `taskA` e per `tmgr_task` **no**: tutti e due rientrano con `j`
-> sulla propria etichetta, che sta **sopra** il blocco, quindi si ripresentano a
-> ogni giro e pagano 6 cicli ogni volta. L'effetto è innocuo — riscrivono lo
-> stesso id sullo stesso canale — ma il costo è dentro la misura, non fuori.
+> **Questi due numeri sono stati per un giorno 915 e 2120, ed è la storia di un
+> difetto che si è visto solo leggendo i cicli come tempo.** `cadb40b` fa
+> **registrare il proprio nome** a ogni task: tre istruzioni sotto
+> `.ifdef MARKS`, che il commento dichiarava «una volta sola». Per l'idle lo
+> erano — `taskI` rientra in `loopI`, cioè **sotto** il blocco. Per `taskA` e
+> `tmgr_task` **no**: rientravano con `j` sulla propria etichetta, che sta
+> *sopra*, quindi si ripresentavano a ogni giro e pagavano **6 cicli ogni
+> volta**. Innocuo nell'effetto — riscrivevano lo stesso id sullo stesso canale
+> — ma dentro la misura, su un programma che esiste per misurare.
 >
-> **Trovato e non corretto**: spostare il rientro sotto il blocco rimuove quei
-> cicli, ma muove di nuovo questi numeri, ed è una decisione da prendere invece
-> che una pulizia da fare.
+> Il 14/09 il rientro è stato spostato sotto il blocco (`loopA`, `tmgr_loop`), e
+> i due numeri sono **tornati esatti**: 909 e 2108 sono i valori misurati a
+> `6314e19`, cioè al commit **prima** che la registrazione esistesse. Verificato
+> eseguendo quel commit in un worktree, non dedotto. La finestra corta conteneva
+> una ri-registrazione (6 cicli), quella lunga due (12).
 >
-> È la regola che questa sezione enuncia due paragrafi più giù — **i cicli di un
-> programma strumentato sono di un altro programma** — arrivata dal lato da cui
-> fa più impressione: non dal kernel, ma dallo strumento con cui lo si guarda.
-> I 18 numeri della scansione qui sopra invece non si sono mossi di un ciclo.
+> Resta una differenza con il **2093** che i documenti riportavano il 13/09: è
+> più vecchia di tutto questo, ed è il tag **RECV col porto dati** (§3.51), che
+> in quella finestra ci sta per progetto. I 18 numeri della scansione non si
+> sono mai mossi, in nessuno dei tre stati.
 
 **Questi numeri non stanno nel file generato, e la ragione è una regola.** Il
 nucleo fattuale misurato è per definizione l'albero **pulito**: un programma
