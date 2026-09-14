@@ -1,6 +1,14 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **14 settembre 2026** (§3.66 **`mark`, la sonda in
+> Ultimo aggiornamento: **14 settembre 2026** (§3.70 **ogni messaggio viene dal
+> pool**, anche il risveglio del gestore: il coalescing schiacciava a uno la
+> profondità della coda; §3.69 **tutto insieme**: quattro
+> task, due sorgenti, e il jitter della latenza smette di essere zero — un
+> livello di scansione costa 7 cicli; §3.68 **`--marks` mentiva per
+> omissione**, e sotto c'era un parser che prendeva ogni flag ignoto per il nome
+> del programma; §3.67 **la seconda sorgente di
+> interruzione**: il tasto interrompe, e `mfcause` dice chi e' stato;
+> §3.66 **`mark`, la sonda in
 > un'istruzione**: niente registri, e il confine non misurato della latenza
 > passa da 11 cicli a 1; §3.65 **`.macro` nell'assembler**:
 > i tag del marcatore smettono di essere undici copie, e la variante vuota si
@@ -39,6 +47,51 @@
 ## 0. STATO ATTUALE — DA DOVE SI RIPRENDE
 
 > ### ▶ RIPRENDI DA QUI (15/09/2026 o dopo)
+>
+> **OGNI MESSAGGIO VIENE DAL POOL (§3.70).** L'ultimo statico era il messaggio di
+> **tick** nella libreria, coalescato. Funzionava — `tmo_now` è assoluto, un
+> risveglio basta — ma **distruggeva un'informazione**: «il gestore è indietro di
+> tre tick» e «ha tenuto il passo» davano lo stesso stato. Ora la profondità
+> della coda si legge. Prezzo: **245 giri d'idle**, `5 0 2566 → 5 0 2324`, ed è
+> il primo gradino di quell'elenco che non è un tag ma una scelta di disegno.
+> I numeri **derivabili non si sono mossi**, ed è quello il controllo.
+>
+> ---
+>
+> **TUTTO INSIEME, E IL JITTER SMETTE DI ESSERE ZERO (§3.69).** `test_mondo`:
+> quattro task su quattro livelli, due sorgenti di interruzione, timeout e
+> mailbox. Le preemption diventano di due specie — dal tick (livello 0, **160
+> cicli**) e dal tasto (livello 1, **167**) — quindi **un livello di scansione
+> costa 7 cicli**, e il caso peggiore si deduce: `160 + 6×7 = 202`, **299** col
+> ripristino dell'HAL. È l'ultima voce cancellata da «Cosa manca ancora qui
+> dentro». Al primo tentativo avevo sbagliato i tempi dei caratteri assumendo che
+> i tick stessero a multipli di 4000: non ci stanno, e il jitter era di nuovo
+> zero. `ctest` **43/43**.
+>
+> ---
+>
+> **`--marks` MENTIVA PER OMISSIONE (§3.68).** La registrazione esisteva solo nel
+> percorso `run <prog.vx>`: su un `.vasm` l'opzione veniva accettata e non faceva
+> niente — nessun file, nessun messaggio, exit 0. La causa era più grossa del
+> sintomo: il parser degli argomenti prendeva **ogni flag ignoto per il nome del
+> programma**, quindi anche un flag scritto male spariva in silenzio. Adesso
+> `--marks` funziona anche lì (col canale 0, via `assemble_symbol()`) e un'opzione
+> sconosciuta è un errore detto.
+>
+> ---
+>
+> **LA SECONDA SORGENTE DI INTERRUZIONE (§3.67).** La tastiera non interrompeva,
+> si interrogava. Adesso può interrompere, e con un vettore solo il gestore
+> chiede chi è stato con **`mfcause`** — il modello di RISC-V, non il vettore per
+> sorgente del NVIC. Scelto così perché ora c'è `mark`: **quanto varrebbe il
+> vettoriamento si potrà misurare invece che stimare.** Nasce **spenta** (si arma
+> con `KBD_IE` in `KBD_CTRL`), è **a livello**, e se le due sorgenti sono pronte
+> insieme vince il timer. `tests/test_due_irq.vasm` le esercita entrambe ed è il
+> primo programma la cui ISR torna con una **`reti` secca**. Sblocca il **caso
+> peggiore della latenza**, che è la voce rimasta in «Cosa manca». `ctest`
+> **42/42**, impronte tutte ferme.
+>
+> ---
 >
 > **`mark`: LA SONDA È UN'ISTRUZIONE (§3.66).** Il problema non era il costo,
 > erano i **registri**: una marca voleva un registro d'appoggio, e prima della
@@ -3254,6 +3307,361 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.70 ANCHE IL RISVEGLIO DEL GESTORE VIENE DAL POOL (14/09/2026, quindicesima parte)
+
+Detto dall'utente in due tempi, e il secondo ha tirato dentro la libreria:
+*«tutti i messaggi devono provenire dal pool, in questo modo il sistema respira e
+non è asfittico come con messaggi statici»*.
+
+L'ultimo statico rimasto era il **messaggio di tick** dentro
+`timeout_manager.vasm`: due parole, i soli link, mandato dall'ISR al gestore e
+**coalescato** — se ce n'era già uno in lista, `tmgr_tick` non ne mandava un
+altro.
+
+#### Funzionava, e va detto perché
+
+Il tempo non sta nel messaggio: sta in `tmo_now`, un contatore **assoluto**.
+Quindi un risveglio solo basta a recuperare tutte le scadenze maturate, e
+coalescare non perdeva un dato.
+
+#### Ma distruggeva un'informazione
+
+«Il gestore è rimasto indietro di tre tick» e «ha tenuto il passo» producevano
+lo **stesso identico stato**. La profondità della coda — che è precisamente la
+misura di quanto il sistema stia reggendo — non era leggibile, perché il
+coalescing la schiacciava a uno.
+
+Con un buffer per tick quella profondità è un numero. Ed è la stessa specie di
+correzione di tutta la giornata: non rendere il sistema più veloce, renderlo
+**misurabile** dove prima assorbiva in silenzio.
+
+E il tetto smette di essere scritto nel `.data`: quanti tick possano essere in
+volo lo decide il pool, non una dichiarazione.
+
+#### Il pool vuoto non è una perdita
+
+Se `buf_alloc` fallisce dentro l'ISR il risveglio si perde — ma `tmo_now` è già
+stato incrementato, quindi il primo tick che trova un buffer trova **più
+scadenze maturate** e le drena tutte. È lo stesso *«arriva tardi invece di non
+arrivare»* che §9.2 accetta già per il buffer della scadenza, e il ciclo interno
+del gestore lo gestiva già senza saperlo.
+
+#### Una correzione trovata guardando la registrazione, e che era lì da sei sezioni
+
+Generata la registrazione di `test_mondo` per guardarla, in fondo c'era questo:
+
+```
+--- ERRORI ---
+  hal: ripristino del contesto dichiara `owner task` ma questa marca e' stata
+  prodotta DENTRO una trap: il tag non e' dove la dichiarazione dice
+```
+
+Ventidue volte per corsa, **anche su `test_tmgr_marks`**, da quando `HALSW`
+esiste (§3.63). Avevo dichiarato la categoria `owner task` e non avevo mai
+riletto la sezione `ERRORI` dopo averla aggiunta: guardavo la tabella delle
+categorie e mi fermavo lì.
+
+L'owner giusto è **`kernel`**: il ripristino lo esegue l'HAL, e `current` è
+quello *per conto del quale* gira — cioè l'entrante, già committato dal
+dispatcher. Che è la definizione di `owner kernel` scritta in `marks.conf`.
+
+E `kernel` non vincola il contesto di trap, che è necessario: il ripristino gira
+**dentro** una trap quando la commutazione viene da un interrupt e **fuori**
+quando viene da un blocco volontario. Stesso codice, due situazioni, e non è
+un'incoerenza — è una proprietà del dispatcher.
+
+Non falsava nessun numero: le finestre restano quelle. Rendeva rumorosa la
+sezione `ERRORI`, che è il modo più rapido per insegnare a qualcuno a non
+leggerla — e l'ironia è che l'avevo scritto io in §6.1 poche ore prima, e poi
+l'ho fatto. Adesso in entrambi i programmi resta **una riga sola**, ed è quella
+documentata: la finestra aperta all'halt.
+
+#### Il prezzo, che è il più alto mai pagato per una decisione sola
+
+```
+5 0 2566  ->  5 0 2324      test_tmgr, il pulito
+```
+
+**245 giri d'idle**: un `alloc` + un `free` per ogni tick, sul percorso
+dell'ISR. È il primo gradino di quell'elenco che **non è un tag** — tutti gli
+altri erano strumentazione, questo è una scelta di disegno del kernel.
+
+#### Il controllo che rende credibile il cambio
+
+**I numeri derivabili non si sono mossi.** `test_tmgr` fa ancora `5 0` — cinque
+scadenze consegnate, zero errori — e `test_mondo` ancora
+`75 97 71 75 98 71 24 0`. Si muove solo la CPU libera, che è l'unico numero che
+dipende dai cicli. Il sistema fa le stesse cose e costa di più, ed è esattamente
+quello che una decisione del genere deve produrre.
+
+Le finestre di misura non si muovono di un ciclo: 160/167 e 89. La
+`buf_alloc` sta **prima** che la finestra si apra — `LATENCY` nasce in
+`task_ready_preempt`, cioè dentro la `send` — quindi allunga il cammino
+*interruzione → fine ISR*, che è un'altra grandezza e oggi non ha una finestra
+sua.
+
+`ctest` **43/43**.
+
+---
+
+### 3.69 TUTTO INSIEME, E IL JITTER SMETTE DI ESSERE ZERO (14/09/2026, quattordicesima parte)
+
+Programma disegnato dall'utente: *«un timeout che sveglia un task che incrementa
+un contatore, ogni 10 conteggi manda un messaggio a un altro task che stampa;
+l'ISR del tasto che sveglia un altro task che manda un messaggio al task che
+stampa; tutto diviso sulle priorità»*.
+
+È il primo programma del progetto con **due origini di lavoro indipendenti** — il
+tempo e il mondo — e quattro task su quattro livelli. Non era scrivibile fino a
+poche ore prima: la tastiera non interrompeva (§3.67).
+
+```
+G  livello 0   il gestore dei timeout
+K  livello 1   il task del tasto: dorme, lo sveglia l'ISR, gira un messaggio a P
+C  livello 2   il contatore: si riarma a ogni tick, ogni dieci manda a P
+P  livello 3   lo stampatore: sta SOTTO entrambi i produttori
+I  livello 7   l'idle
+```
+
+#### Il risultato, che è la voce cancellata da «Cosa manca»
+
+| chi preempta | livello | n | cicli |
+|---|---:|---:|---:|
+| il gestore, svegliato dal tick | 0 | 24 | **160** |
+| il task del tasto, svegliato dall'ISR | 1 | 2 | **167** |
+
+**Un livello di scansione costa 7 cicli**, e questo numero non esisteva. Da qui
+il caso peggiore si deduce invece di costruirlo: vincitore a livello 6 →
+`160 + 6×7 = 202`, che con il ripristino dell'HAL fa **299 cicli**. Sta in §6.2
+di `scheduler-facts.md`, dichiarato come deduzione.
+
+#### La misura sbagliata che ho fatto per prima, e perché
+
+Al primo tentativo: **24 finestre tutte da 160, jitter zero di nuovo**. Avevo
+messo i caratteri a 22000 e 62000 credendo di piazzarli a metà fra due tick,
+perché avevo assunto che i tick stessero a multipli di 4000.
+
+Non ci stanno. `timer_init` parte a boot inoltrato, quindi il primo tick è a
+**~5884** e gli altri ogni ~4002. Il carattere a 22000 cadeva **sopra** il tick
+di 21892: interrupt chiusi, trap differita, e quando partiva stava girando G a
+livello 0 — K non lo batte, non preempta, e il caso interessante non succedeva.
+
+Spostati a 24000 e 64000, cioè a metà degli intervalli **veri**, K trova sotto di
+sé un task in esecuzione e lo preempta. È un promemoria che vale più del numero:
+**un tempo assoluto in un test è un'ipotesi sul comportamento del sistema**, e va
+verificata invece che assunta.
+
+#### Le scelte di disegno che il programma ha imposto
+
+**L'ISR del tasto manda un messaggio, non sveglia il TCB.** K dorme dentro
+`receive`, quindi il suo TCB è accodato nella mailbox: un `task_ready` diretto lo
+metterebbe in due liste insieme. La `send` raw è la strada giusta, ed è la stessa
+che il gestore dei timeout usa da sempre.
+
+**Ogni messaggio è un buffer del pool: lo prende il produttore, lo rende il
+consumatore.** Li avevo scritti statici, e l'utente ha corretto in due passaggi.
+Prima: *«non usiamo un pool di buffer?»* — e l'argomento è più forte del
+realismo, perché **uno statico ha la semantica del coalescing**: giusta per il
+tick, dieci tick prima che il gestore giri devono fare un risveglio solo;
+sbagliata per un carattere, dove due tasti devono fare due stampe.
+
+Poi, quando avevo lasciato un risveglio statico più una variabile `ultimo` per
+il carattere: *«tutti i messaggi devono essere buffer di pool, il codice del
+tasto deve essere un campo del messaggio: non voglio global che non servono»*.
+Aveva ragione di nuovo — `ultimo` era **stato mutabile condiviso fra ISR e
+task**, cioè una corsa che aspetta solo che qualcosa cambi.
+
+```
+ISR tasto   buf_alloc, dentro il codice e IL CARATTERE, send a K
+K           inoltra LO STESSO buffer: non alloca e non libera. Quello che
+            aggiunge e' il LIVELLO, non il messaggio
+C           buf_alloc, codice, send a P
+P           stampa e buf_free: e' lui il consumatore
+```
+
+Il carattere arriva fino a P, che lo stampa: il test prova il **dato**, non solo
+il fatto. E sparisce anche `decine`, il contatore modulo dieci di C — era
+derivabile da `cntC` con un `rem`, cioè uno stato in più da tenere d'accordo con
+un altro.
+
+`cntErr` conta adesso tutte e quattro le strade in cui si rompe — arm rifiutato,
+`buf_alloc` fallita, `send` rifiutata, `buf_free` rifiutata — quindi la
+**saturazione è un numero da entrambe le parti**: pool esaurito e coda che non
+drena.
+
+> **Allocare dentro l'ISR non allunga la latenza misurata, e va saputo.** La
+> finestra `LATENCY` si apre in `task_ready_preempt`, cioè *dentro* la `send`: la
+> `buf_alloc` sta prima, quindi il suo costo non entra in quel numero — e infatti
+> i 160/167 non si sono mossi di un ciclo. Allunga il cammino *interruzione →
+> fine ISR*, che è un'altra grandezza e oggi non ha una finestra sua.
+
+**«Stampa» è `dumps`.** La macchina non ha un device di uscita, quindi P emette
+due codici distinti. Non è un ripiego: `vasm_check MODE DUMPS` confronta
+esattamente la sequenza dei dumps, quindi la stampa **è** l'asserzione.
+
+#### I numeri, cinque su sei derivati prima di eseguire
+
+```
+75 97         il tasto, e il carattere 'a' arrivato fino in fondo
+71            il timer, al decimo conteggio
+75 98 71      di nuovo, col secondo carattere
+24            i conteggi: C si sveglia ai tick 1..24
+ 0            cntErr: niente rifiutato, da nessuna delle quattro parti
+2989          la CPU libera — l'unico che dipende dai cicli
+```
+
+L'ordine delle stampe è derivabile **perché i tempi sono stati scelti perché lo
+fosse**: i caratteri cadono lontano da una decina, o l'ordine dipenderebbe dalla
+latenza e questo `EXPECT` si sposterebbe a ogni modifica.
+
+La variante strumentata ne fa di meno: i tag si pagano, come ovunque. Tutti gli
+altri numeri coincidono, ed è quello il controllo.
+
+`ctest` **43/43**.
+
+---
+
+### 3.68 `--marks` MENTIVA PER OMISSIONE (14/09/2026, tredicesima parte)
+
+Domanda dell'utente sul programma appena scritto: *«abbiamo un recording?»* No —
+e il perché era peggio della risposta.
+
+La registrazione delle marche esisteva **solo** nel percorso `run <prog.vx>`. Su
+un `.vasm` a file singolo l'opzione veniva accettata e non faceva niente:
+nessun file, nessun messaggio, **exit 0**. Chi la usava concludeva che il proprio
+programma non emettesse marche, e andava a cercare il difetto nel posto
+sbagliato.
+
+#### La causa vera, che era più grossa
+
+Il ciclo degli argomenti del percorso legacy conosceva `--trace`, `--debug` e
+`--kbd`, e poi:
+
+```c
+else path = argv[i];      // QUALUNQUE altra cosa e' il nome del programma
+```
+
+Quindi `--marks rec.txt prog.vasm` assegnava `path` **tre volte** e vinceva
+l'ultima: il programma girava, l'opzione spariva, e nessuno diceva niente. E la
+stessa sorte toccava a **ogni flag scritto male** — che è la norma, non
+l'eccezione. Adesso un argomento che comincia per `-` e non è riconosciuto è un
+errore detto.
+
+#### Il canale 0 anche a file singolo
+
+Per sapere chi possiede la CPU il registratore deve osservare le scritture a
+`current`, e quell'indirizzo lo prendeva dalla tabella dei simboli del `.vx`. A
+file singolo quella tabella non c'è — ma i simboli sì, nell'assembler, che li ha
+appena visti passare. Da cui `assemble_symbol()`, tre righe, e il canale 0
+funziona anche lì. Dove `current` non esiste — un programma senza scheduler — il
+messaggio che già c'era lo dice invece di lasciare il canale vuoto in silenzio.
+
+#### E adesso si vede
+
+```
+# riservato 0 esecuzione
+# riservato 1 tasto
+# frequenza 100000000
+200 1 65 0 0 0 0
+600 1 66 0 0 0 0
+```
+
+Le due marche del canale 1 di `test_due_irq`: **gli istanti in cui il carattere
+è arrivato davvero**, che è precisamente ciò che il programma non può sapere. Da
+qui si arriva al numero per cui quel canale è stato inventato — quanto ci mette
+il programma ad accorgersene **col polling** contro **con l'interrupt**, sulla
+stessa corsa — che finora non aveva un termine di paragone.
+
+`ctest` **42/42**, impronte ferme.
+
+---
+
+### 3.67 LA SECONDA SORGENTE DI INTERRUZIONE (14/09/2026, dodicesima parte)
+
+Domanda dell'utente a fine giornata: *«abbiamo la possibilità di due ISR, timer
+e tasto, o sbaglio?»* Sbagliava, e la ragione valeva la pena saperla: **la
+tastiera non interrompeva, si interrogava** — lo dichiarava il simulatore stesso,
+*«NON è una trap: aggiorna solo lo stato visibile in MMIO»*.
+
+Ed è precisamente per questo che il marcatore ha un canale riservato al tasto:
+fra «il carattere è arrivato» e «il programma se n'è accorto» c'è il ritardo del
+polling, che il programma non può vedere. Adesso quel ritardo ha un termine di
+paragone.
+
+#### La decisione: causa, non vettori
+
+Con due sorgenti il vettore deve sapere chi è stato. Due modelli:
+
+- **una causa che il gestore legge** — è RISC-V (`mcause`), ed è la famiglia a
+  cui questa macchina già somiglia: ha `epc`, `epsw`, `reti`, `mfpsw`;
+- **un vettore per sorgente** — è il NVIC di un Cortex-M, che esiste *proprio
+  perché* leggere la causa e diramarsi costa latenza.
+
+Scelta la prima, e non perché sia migliore: perché adesso c'è `mark`. Si
+implementa la causa, si misura il tratto fra la trap e l'ingresso nel ramo
+giusto, e **quanto varrebbe il vettoriamento diventa un numero misurato invece
+che un'opinione**. L'utente ha confermato: *«è qualcosa che veniva usato anche 41
+anni fa»*.
+
+#### Quello che il codice impone, e che quasi si scrive da solo
+
+**Nasce spenta.** `test_events` interroga la tastiera senza installare nessun
+vettore: un interrupt acceso di default lo manderebbe a saltare su un gestore
+che non esiste. Si arma scrivendo `KBD_IE` in `KBD_CTRL`, come il timer si arma
+con `settimer`. Il registro è **MMIO** e non un'istruzione, perché la tastiera è
+un device; la **causa** invece è un'istruzione (`mfcause`), perché è stato del
+core e sta con `epc` ed `epsw`.
+
+**A livello, non a fronte.** La condizione è `kbd_ready`, che si abbassa
+leggendo `KBD_DATA`. Ne seguono due cose: un carattere arrivato con `IE = 0` non
+si perde — la trap scatta appena gli interrupt riaprono, e non serve nessun bit
+di *pending* — e un'ISR che torna **senza aver letto** si ritrova la trap
+subito. È il protocollo del device, non un caso limite.
+
+**Vince il timer.** Se le due sorgenti sono pronte insieme: è il battito dello
+scheduler e non deve derivare, mentre un carattere può aspettare un tick senza
+che nessuno se ne accorga.
+
+**Niente annidamento**, per ora: la trap azzera `IE` e l'ISR non lo rialza. È il
+default sano, ed è già il comportamento della macchina — `trap_depth` conta di
+suo, quindi il giorno che servirà la strumentazione c'è già.
+
+#### La prova
+
+`tests/test_due_irq.vasm`, tre numeri derivabili a mano e quattro fatti:
+
+```
+65   'A' preso col POLLING — arriva a 200 cicli, la tastiera non e' ancora
+     armata, e nessuna trap scatta: NASCE SPENTA
+66   'B' preso dall'ISR — l'interrupt funziona, e la causa lo distingue dal
+     timer che nel frattempo batte
+ 1   una sola trap del tasto — l'ISR ha LETTO KBD_DATA. Se non avesse letto,
+     il contatore sarebbe esploso
+```
+
+Ed è **il primo programma del progetto la cui ISR torna con una `reti` secca**,
+senza commutare niente — una delle tre uscite che §12.4 prevede, e che fino a
+ieri esisteva solo nella documentazione. È anche il caso che aveva demolito la
+mia affermazione «per costruzione ogni `reti` è quella del dispatcher».
+
+A file singolo e senza HAL né kernel, di proposito: qui si prova la macchina, e
+metterci in mezzo il kernel vorrebbe dire provare due cose insieme senza sapere
+quale ha ceduto.
+
+#### Cosa sblocca
+
+- **il caso peggiore della latenza**, che è la voce rimasta in «Cosa manca
+  ancora qui dentro»: con una sorgente sola i livelli popolati non si
+  costruiscono;
+- **il costo del vettoriamento**, misurabile invece che stimato;
+- **l'annidamento**, che la macchina conta e nessuno esercita.
+
+`ctest` **42/42**. Impronte: **tutte e quindici ferme** — l'opcode va in fondo
+all'enum (§3.66 l'ha imparato sbagliando) e la sorgente nasce spenta, quindi per
+chi non la usa non cambia niente.
 
 ---
 
