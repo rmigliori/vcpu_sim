@@ -1034,6 +1034,34 @@ interrupt gira esattamente come prima.
 | `mtvl` | `rs1` | `vl = min(rs1, VLMAX)` — **ripristino**, non richiesta | 1 |
 | `mfvmask` | `rd` | `rd = vmask` (64 bit) | 1 |
 | `mtvmask` | `rs1` | `vmask = rs1` | 1 |
+| `mark` | `porto, valore` | annota una marca sul canale del marcatore: valore ≠ 0 **apre** una finestra, 0 la **chiude**. Due immediati, **nessun registro** | 1 |
+
+> **`mark` esiste per un motivo solo: non toccare registri** (14/09/2026).
+> La stessa marca si scriveva già con `li`/`li`/`sw` su un porto MMIO, e continua
+> a funzionare. Il problema di quella forma non era il costo — erano i registri:
+> ne serve uno d'appoggio, e va scelto guardando chi è vivo a quel punto. **Dove
+> non ce n'è uno libero, il tag non si può mettere.** È il caso della chiusura
+> dentro `ctx_restore`: prima della `reti` ogni registro porta già un valore del
+> task, quindi la finestra si chiudeva sette istruzioni troppo presto e il numero
+> pubblicato in `scheduler-facts.md` §6.1 era corto di 11 cicli.
+>
+> **Costa 1 ciclo, non 0.** Uno slot occupato lo occupa anche l'hardware di
+> trace, e in cambio si ottiene una proprietà utile: il costo della
+> strumentazione dentro una finestra è **esattamente il numero di marche che
+> contiene**, quindi il numero del sistema non strumentato si deduce dalla
+> registrazione invece che da un'analisi del listato.
+>
+> Il porto è un **indirizzo**, lo stesso che la `sw` usava (`MARK_SCHED` e
+> compagnia, generati da `marks.conf`): il porto ha già un nome, e dargliene un
+> secondo sarebbe la seconda verità che quel file esiste per togliere. Fuori dai
+> porti del marcatore, o su un canale riservato alla macchina, la macchina si
+> ferma e lo dice — una marca persa in silenzio è una misura che manca senza che
+> nessuno lo sappia.
+>
+> L'opcode sta **in fondo** all'enum, e non è un dettaglio: gli opcode sono
+> numerati per posizione e finiscono così negli oggetti. Inserirlo in mezzo ha
+> mosso l'impronta di tutti e quindici i programmi, compresi quelli che `mark`
+> non la contengono nemmeno.
 
 > **I quattro accessori vettoriali esistono per una cosa sola: rendere
 > salvabile il contesto** (12/09/2026). Prima di loro `vmask` era leggibile solo

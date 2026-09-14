@@ -539,6 +539,30 @@ static int encode(char** toks, int n, Instr* out, char* err, size_t errsz)
     if (need(ARGS, 0, mn, err, errsz)) return -1;
     out->op = OP_RETI;
   }
+  // mark <porto>, <valore> -- LA SONDA, in UNA istruzione.
+  //
+  // Esisteva gia' come `li`+`li`+`sw` su un porto MMIO, ed e' cosi' che il
+  // marcatore ha sempre funzionato. Il problema di quella forma non era il
+  // costo ma i REGISTRI: ogni sito di tag voleva un registro d'appoggio scelto
+  // guardando la liveness, e dove non ce n'e' uno libero il tag non si puo'
+  // mettere. E' il caso della chiusura dentro ctx_restore: prima della `reti`
+  // ogni registro porta gia' un valore del task, quindi la finestra si chiudeva
+  // 11 cicli troppo presto e §6.1 lo dichiarava come confine mancante.
+  //
+  // Questa non tocca registri. Il porto e' lo STESSO indirizzo di prima
+  // (MARK_SCHED & C.), non un numero di canale nuovo: il porto ha gia' un nome
+  // in marks.conf e averne due sarebbe la seconda verita' che quel file esiste
+  // per togliere. La macchina ricava il canale dall'indirizzo e si lamenta a
+  // voce alta se e' fuori dai porti del marcatore.
+  else if (strcmp(mn, "mark") == 0)
+  {
+    if (need(ARGS, 2, mn, err, errsz)) return -1;
+    if (parse_int(toks[k++], &imm, err, errsz)) return -1;
+    out->a = (int) imm;                       // il porto, per esteso
+    if (parse_int(toks[k++], &imm, err, errsz)) return -1;
+    out->imm = imm;                           // il valore: 0 CHIUDE
+    out->op = OP_MARK;
+  }
   else if (strcmp(mn, "sethandler") == 0)
   {
     if (need(ARGS, 1, mn, err, errsz)) return -1;

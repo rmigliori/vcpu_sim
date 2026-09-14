@@ -362,7 +362,7 @@ static uint64_t instr_cost(const Instr* in, int vl)
     case OP_ADDI: case OP_SLLI: case OP_SRLI:
     case OP_AND: case OP_OR: case OP_XOR:
     case OP_SETVL: case OP_FLI:
-    case OP_STI: case OP_CLI: case OP_SETHANDLER: case OP_SETTIMER:
+    case OP_STI: case OP_CLI: case OP_SETHANDLER: case OP_SETTIMER: case OP_MARK:
     case OP_MFPSW: case OP_MTPSW: case OP_MFEPC: case OP_MTEPC:
     case OP_MFEPSW: case OP_MTEPSW:
     case OP_MFVL: case OP_MTVL: case OP_MFVMASK: case OP_MTVMASK:
@@ -484,6 +484,34 @@ static void execute(VCpu* cpu, const Instr* in)
         cpu->pc = cpu->epc; cpu->psw = cpu->epsw;
         if (cpu->trap_depth > 0) cpu->trap_depth -= 1;
         break;
+      case OP_MARK:
+      {
+        // LA SONDA. Niente registri: e' tutto il punto -- si puo' mettere dove
+        // non ce n'e' uno libero, cioe' subito prima della `reti`, che con la
+        // forma li+li+sw era impossibile.
+        //
+        // Il porto e' un indirizzo, lo stesso che la sw usava. Fuori dai porti
+        // del marcatore e' un errore di costruzione del programma e va detto,
+        // non ignorato: una marca persa in silenzio e' una misura che manca
+        // senza che nessuno lo sappia.
+        int64_t addr = in->a;
+        if (!is_marca(addr))
+        {
+          fprintf(stderr, "mark: il porto %lld non e' un canale del marcatore\n",
+                  (long long) addr);
+          cpu->halted = 1;
+          break;
+        }
+        int canale = (int) ((addr - MARK_BASE) / 4);
+        if (canale == MARK_EXEC || canale == MARK_KEY)
+        {
+          fprintf(stderr, "mark: il canale %d e' RISERVATO alla macchina\n", canale);
+          cpu->halted = 1;
+          break;
+        }
+        vcpu_marca(cpu, canale, (int32_t) in->imm);
+        break;
+      }
       case OP_SETHANDLER: cpu->handler = in->target; break;
       case OP_SETTIMER:
       {
@@ -782,6 +810,8 @@ const char* vcpu_disasm(const Instr* in, char* buf, size_t bufsz)
     case OP_STI:        snprintf(buf, bufsz, "sti"); break;
     case OP_CLI:        snprintf(buf, bufsz, "cli"); break;
     case OP_RETI:       snprintf(buf, bufsz, "reti"); break;
+    case OP_MARK:       snprintf(buf, bufsz, "mark %d, %lld", in->a,
+                                  (long long) in->imm); break;
     case OP_SETHANDLER: snprintf(buf, bufsz, "sethandler %d", in->target); break;
     case OP_SETTIMER:   snprintf(buf, bufsz, "settimer r%d", in->b); break;
     case OP_MFPSW:      snprintf(buf, bufsz, "mfpsw r%d", in->a); break;

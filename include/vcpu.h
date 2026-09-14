@@ -423,7 +423,15 @@ typedef enum
   OP_MFVL,    // a=rd                          -> r[rd] = vl (NON distruttivo)
   OP_MTVL,    // b=rs1                         -> vl = min(r[rs1], VLMAX)
   OP_MFVMASK, // a=rd                          -> r[rd] = vmask (64 bit)
-  OP_MTVMASK  // b=rs1                         -> vmask = r[rs1]
+  OP_MTVMASK, // b=rs1                         -> vmask = r[rs1]
+
+  // IN FONDO, E NON IN MEZZO. Gli opcode sono numerati per posizione e finiscono
+  // cosi' negli oggetti: inserirne uno nel mezzo rinumera tutti quelli dopo, e
+  // il 14/09/2026 questo ha mosso l'impronta di TUTTI E QUINDICI i programmi --
+  // anche quelli puliti, che `mark` non la contengono nemmeno. Non era
+  // strumentazione che filtrava in produzione, era il formato che cambiava
+  // sotto. In coda invece non tocca niente di esistente.
+  OP_MARK    // a=porto, imm=valore           -> annota una marca (strumentazione)
 } OpCode;
 
 typedef struct
