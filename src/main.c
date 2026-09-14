@@ -84,6 +84,10 @@ static void print_stats(const VCpu* cpu)
   printf("instructions executed : %llu\n", (unsigned long long) cpu->instr_count);
   printf("vector element ops     : %llu\n", (unsigned long long) cpu->vec_elem_ops);
   printf("cycles (timing model)  : %llu\n", (unsigned long long) cpu->cycles);
+  // La frequenza accanto ai cicli, e non altrove: chi legge questi numeri per
+  // farne un tempo (tools/scheduler_facts.py) la trova qui, invece di tenerne
+  // una copia. E' lo stesso modello dei canali riservati nella registrazione.
+  printf("clock (Hz)             : %llu\n", (unsigned long long) CPU_HZ);
 }
 
 // --- legacy path: assemble a .vasm and run it in memory --------------------
@@ -140,6 +144,12 @@ static void marks_dump(const VCpu* cpu)
   fprintf(f, "# ciclo canale valore current dato ha_dato in_trap\n");
   fprintf(f, "# riservato %d esecuzione\n", MARK_EXEC);
   fprintf(f, "# riservato %d tasto\n", MARK_KEY);
+  // La FREQUENZA viaggia con la registrazione, per la stessa ragione dei
+  // canali: e' la macchina che sa a che velocita' gira, e un lettore che la
+  // tenesse per conto suo leggerebbe in microsecondi sbagliati una traccia
+  // prodotta da un'altra macchina -- senza accorgersene, perche' i cicli
+  // sarebbero comunque giusti.
+  fprintf(f, "# frequenza %llu\n", (unsigned long long) CPU_HZ);
   for (int i = 0; i < cpu->marks_len; ++i)
   {
     const Marca* m = &cpu->marche[i];

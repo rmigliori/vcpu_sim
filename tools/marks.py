@@ -2,7 +2,7 @@
 """marks.py — il catalogue delle misure: lo GENERA per l'assembler, lo LEGGE per te.
 
     python3 tools/marks.py generate marks.conf -o out/vasm/marche/marche.vinc
-    python3 tools/marks.py read  marks.conf recording.txt [--vx prog.vx]
+    python3 tools/marks.py read  marks.conf recording.txt [--vx prog.vx] [--mhz 250]
 
 --- PERCHE' UN FILE SOLO CON DUE MODI ---
 
@@ -18,6 +18,12 @@ I canali 0 e 1 sono della MACCHINA (esecuzione e device) e questo programma NON
 li ha scritti da nessuna parte: li legge dall'intestazione della recording,
 che il simulatore emette. Un elenco qui dentro sarebbe esattamente la seconda
 verita' che il catalogue esiste per evitare.
+
+Dalla stessa intestazione viene la FREQUENZA ("# frequenza <hz>"), ed e' per la
+stessa ragione: e' la macchina che sa a che velocita' gira. Da li' i cicli si
+leggono anche come tempo -- mai al posto loro, sempre accanto, e sempre con la
+frequenza a vista. Con --mhz si rilegge la stessa registrazione a un'altra
+velocita': i cicli non cambiano, cambia la loro lettura.
 
 I proprietari sono indirizzi di TCB. Per dargli un nome serve la tabella dei
 simboli del programma (--vx), e ci finiscono solo i .global: un TCB che il test
@@ -203,6 +209,83 @@ def generate(path, cat, out_path, nomi=None):
           f"{sum(len(c.marker) for c in cat.values())} marker")
 
 
+# --- il CLOCK: i cicli letti anche come tempo --------------------------
+# La frequenza NON e' scritta qui: la dichiara la macchina in testa alla
+# registrazione ("# frequenza <hz>"), come gia' fa per i canali riservati. Un
+# numero tenuto qui sarebbe una seconda verita', e leggerebbe in microsecondi
+# sbagliati una registrazione prodotta da un'altra macchina -- in silenzio,
+# perche' i cicli resterebbero giusti.
+#
+# E QUESTE FUNZIONI STANNO QUI perche' i consumatori sono tre (`read`,
+# tools/trace.py, tools/scheduler_facts.py) e la regola di scrittura e' una
+# sola. Vedi l'avvertimento in include/vcpu.h: il tempo non va MAI da solo,
+# perche' "1,18 us" si legge come una misura mentre "118 cicli" si legge per
+# quello che e', l'uscita di un modello senza sistema di memoria.
+RE_FREQUENZA = re.compile(r"#\s*frequenza\s+(\d+)")
+
+
+def frequenza(recording):
+    """Gli Hz dichiarati dalla registrazione, o None se non ne dichiara.
+
+    Sta separata da analizza() perche' ha un chiamante in piu': tools/trace.py
+    la vuole anche quando le marche non ci sono. Un programma senza tag non
+    produce finestre -- e oggi e' la norma -- ma i suoi cicli la pagina li
+    mostra lo stesso, e senza questa il tempo sparirebbe proprio dai programmi
+    piu' comuni.
+    """
+    try:
+        with open(recording) as f:
+            for linea in f:
+                if not linea.startswith("#"):
+                    return None       # l'intestazione e' finita
+                m = RE_FREQUENZA.match(linea)
+                if m:
+                    return int(m.group(1))
+    except OSError:
+        pass
+    return None
+
+
+UNITA = ((1e9, "ns"), (1e6, "µs"), (1e3, "ms"), (1, "s"))
+
+
+def unita_per(cicli, hz):
+    """L'unita' in cui leggere questi cicli: la piu' grande che li tiene sopra 1."""
+    for scala, u in UNITA:
+        if abs(cicli / hz) * scala < 1000 or u == "s":
+            return u
+    return "s"
+
+
+def tempo(cicli, hz, unita=None):
+    """I cicli come TEMPO: '134,3 µs'. Stringa vuota senza una frequenza.
+
+    Mai da solo -- chi chiama lo mette ACCANTO ai cicli, che restano la cosa
+    misurata -- e mai senza dire a quale frequenza: vedi clock().
+
+    `unita` forza la scala, e serve ai GRUPPI. Una riga di cinque numeri in cui
+    il primo e' in ns e gli altri in µs e' leggibile numero per numero ma non si
+    confronta a colpo d'occhio, che e' l'unica ragione per cui quei cinque
+    numeri stanno sulla stessa riga: chi legge deve poter scorrere min e max
+    senza convertire in testa. L'unita' la sceglie il valore piu' GRANDE del
+    gruppo -- unita_per() -- cosi' nessuno finisce sotto lo zero virgola.
+    """
+    if not hz or cicli is None:
+        return ""
+    unita = unita or unita_per(cicli, hz)
+    scala = dict((u, s) for s, u in UNITA)[unita]
+    x = cicli / hz * scala
+    return f"{x:.{2 if abs(x) < 10 else 1}f}".replace(".", ",") + " " + unita
+
+
+def clock(hz):
+    """'@ 100 MHz', l'ipotesi dichiarata accanto a ogni conversione."""
+    if not hz:
+        return ""
+    mhz = hz / 1e6
+    return "@ %s MHz" % (("%g" % mhz).replace(".", ","))
+
+
 # --- read: la recording, con i nomi ------------------------------------
 def simboli_dati(vx):
     """indirizzo -> nome, per i soli simboli DATI globali del programma."""
@@ -222,7 +305,7 @@ def simboli_dati(vx):
             for m in (re.match(r"\s*(\d+)\s+D\s+(\S+)", l) for l in out.splitlines()) if m}
 
 
-def analizza(cat, by_channel, recording, vx, nomi=None):
+def analizza(cat, by_channel, recording, vx, nomi=None, hz=None):
     """La registrazione, letta e decomposta. Ritorna DATI, non testo.
 
     E' separata dalla stampa perche' ha due consumatori: `read` qui sotto, che
@@ -232,8 +315,15 @@ def analizza(cat, by_channel, recording, vx, nomi=None):
     direbbe un numero diverso dal testo sugli stessi dati.
     """
     riservati, registrati, ev = {}, {}, []
+    # hz: quella DICHIARATA dalla registrazione, salvo che il chiamante ne
+    # imponga un'altra (--mhz) per rileggere la STESSA corsa a un'altra
+    # velocita'. I cicli non cambiano, e sono loro la cosa misurata.
+    hz_reg = None
     for linea in open(recording):
         if linea.startswith("#"):
+            m = RE_FREQUENZA.match(linea)
+            if m:
+                hz_reg = int(m.group(1))
             # I canali della macchina li dichiara LA REGISTRAZIONE, non questo
             # programma: "# riservato <n> <nome>".
             m = re.match(r"#\s*riservato\s+(\d+)\s+(\S+)", linea)
@@ -454,6 +544,10 @@ def analizza(cat, by_channel, recording, vx, nomi=None):
         "recording": recording,
         "nmarche":   len(ev),
         "fine":      fine,
+        # La frequenza viaggia CON l'analisi, non accanto: chi disegna questi
+        # numeri deve poterli convertire senza andare a ricercarla, e senza la
+        # possibilita' di prenderne un'altra.
+        "hz":        hz or hz_reg,
         "puntuali":  [{"c": c, "ch": ch, "canale": riservati[ch], "v": v, "cur": chi(cur)}
                       for c, ch, v, cur in puntuali],
         "eventi":    evs,
@@ -469,7 +563,10 @@ def analizza(cat, by_channel, recording, vx, nomi=None):
 
 def report(a):
     """La stessa analisi, nel terminale."""
-    print(f"\n=== {a['recording']}: {a['nmarche']} marche, {a['fine']} cicli ===")
+    hz = a.get("hz")
+    t = lambda c: (" · " + tempo(c, hz)) if hz else ""
+    print(f"\n=== {a['recording']}: {a['nmarche']} marche, "
+          f"{a['fine']} cicli{t(a['fine'])} {clock(hz)} ===")
 
     print("\n--- eventi puntuali (la macchina) ---")
     for p in a["puntuali"]:
@@ -479,11 +576,19 @@ def report(a):
         print("  nessuno")
 
     print("\n--- per categoria ---")
-    print(f"  {'categoria':<24} {'n':>3} {'min':>7} {'max':>7} {'media':>7} "
-          f"{'jitter':>7} {'totale':>8}")
+    print(f"  {'categoria':<24} {'n':>3} {'min':>9} {'max':>9} {'media':>9} "
+          f"{'jitter':>9} {'totale':>9}")
     for c in a["categorie"]:
-        print(f"  {c['nome']:<24} {c['n']:>3} {c['min']:>7} {c['max']:>7} "
-              f"{c['media']:>7} {c['jitter']:>7} {c['totale']:>8}")
+        print(f"  {c['nome']:<24} {c['n']:>3} {c['min']:>9} {c['max']:>9} "
+              f"{c['media']:>9} {c['jitter']:>9} {c['totale']:>9}")
+        # La riga del tempo sotto quella dei cicli, e non al posto suo: i cicli
+        # restano la misura, il tempo e' la lettura. La frequenza sta in testa
+        # alla riga che converte, cosi' si legge come l'ipotesi che e'.
+        if hz:
+            campi = ("min", "max", "media", "jitter", "totale")
+            u = unita_per(max(c[k] for k in campi), hz)
+            print(f"  {clock(hz):<24} {'':>3} "
+                  + " ".join(f"{tempo(c[k], hz, u):>9}" for k in campi))
 
     if a["eventi"]:
         print("\n--- eventi (il programma) ---")
@@ -493,8 +598,8 @@ def report(a):
             # qualunque -- una ricezione -- chi girava non e' stato messo fuori
             # da nessuno, e chiamarlo cosi' direbbe una cosa falsa su un numero
             # vero.
-            fuori = ("riprende dopo %d" % e["fuori"]) if e["fuori"] is not None \
-                    else "non riprende piu'"
+            fuori = ("riprende dopo %d%s" % (e["fuori"], t(e["fuori"]))) \
+                    if e["fuori"] is not None else "non riprende piu'"
             d = ("  [" + e["dato"] + "]") if e.get("dato") else ""
             print(f"  ciclo {e['c']:>7}  {e['canale']:<20} {e['marker']:<26} "
                   f"{e['frase']:<44} {fuori}{d}")
@@ -505,7 +610,7 @@ def report(a):
         cross = " ATTRAVERSA" if f["cross"] else ""
         dd = ("  " + f["dato"]) if f.get("dato") else ""
         print(f"  {f['canale']:<20} {f['marker']:<30} "
-              f"@{f['a']:<7} {f['d']:>6} cicli{cross}{dd}   [{dett}]")
+              f"@{f['a']:<7} {f['d']:>6} cicli{t(f['d'])}{cross}{dd}   [{dett}]")
 
     if a["errori"]:
         print("\n--- ERRORI ---")
@@ -524,13 +629,20 @@ def main():
     l.add_argument("recording")
     l.add_argument("--vx", help="il programma, per dare un nome ai proprietari")
     l.add_argument("--json", help="scrive l'analisi qui invece di stamparla")
+    # Rileggere la STESSA registrazione a un'altra frequenza: i cicli non
+    # cambiano -- sono la cosa misurata -- cambia solo la loro lettura in
+    # tempo. Serve a chiedersi "e a 250 MHz?" senza rieseguire niente.
+    l.add_argument("--mhz", type=float,
+                   help="rilegge questa registrazione a un'altra frequenza "
+                        "(default: quella che la registrazione dichiara)")
     a = ap.parse_args()
 
     cat, by_channel, nomi = read_catalogue(a.catalogue)
     if a.mode == "generate":
         generate(a.catalogue, cat, a.out, nomi)
         return
-    dati = analizza(cat, by_channel, a.recording, a.vx, nomi)
+    dati = analizza(cat, by_channel, a.recording, a.vx, nomi,
+                    hz=int(a.mhz * 1e6) if a.mhz else None)
     if a.json:
         import json
         json.dump(dati, open(a.json, "w"))

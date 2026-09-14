@@ -88,6 +88,13 @@ RADICE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 QUI    = os.path.dirname(os.path.abspath(__file__))
 TIMEOUT = 60      # secondi: un programma di questo progetto ne impiega meno di uno
 
+# L'analisi delle marche e la lettura dei cicli in tempo stanno in marks.py, e
+# si importano invece di rifarle: due implementazioni della stessa aritmetica
+# direbbero due numeri diversi sugli stessi dati -- la forma precisa del difetto
+# che marks.conf esiste per togliere.
+sys.path.insert(0, QUI)
+import marks
+
 
 G_SIM = None      # --sim: lo dice il chiamante invece di farlo indovinare
 
@@ -360,7 +367,7 @@ def raccogli(vx, tmp):
     return fini, corpi, sorted((a, n) for n, a in G.items())
 
 
-def analizza(vx, tmp, argomenti=()):
+def analizza(vx, tmp, argomenti=(), hz=None):
     fini, corpi, glob_ = raccogli(vx, tmp)
     af, ac, ag = [a for a, _ in fini], [a for a, _, _ in corpi], [a for a, _ in glob_]
 
@@ -433,11 +440,16 @@ def analizza(vx, tmp, argomenti=()):
         for k, v in f["r"].items():
             rt[k] += v
 
-    m = marche(rec, vx)
+    m = marche(rec, vx, hz)
     if m:
         assegna_corsia(m, fasce)
 
+    # La frequenza la dichiara la REGISTRAZIONE, e va letta anche quando le
+    # marche non ci sono: un programma senza tag non produce finestre -- ed e'
+    # la norma -- ma i suoi cicli la pagina li mostra lo stesso. Presa da
+    # marche() soltanto, il tempo sparirebbe proprio dai casi piu' comuni.
     return {
+        "hz": hz or marks.frequenza(rec),
         "fine": fine, "tick": tick,
         "fasce": [[f["b"], f["e"], f["o"], f["l"],
                    sorted(f["r"].items(), key=lambda x: -x[1])[:6]] for f in fasce],
@@ -473,7 +485,7 @@ def assegna_corsia(m, fasce):
         e["corsia"] = fasce[i]["o"] if i >= 0 else None
 
 
-def marche(rec, vx):
+def marche(rec, vx, hz=None):
     """L'analisi della registrazione, se ce n'e' una da leggere.
 
     Il calcolo NON e' qui: si importa da tools/marks.py, che e' anche cio' che
@@ -489,11 +501,9 @@ def marche(rec, vx):
     cat = os.path.join(RADICE, "marks.conf")
     if not os.path.exists(cat):
         return None
-    sys.path.insert(0, QUI)
-    import marks
     catalogue, by_channel, nomi = marks.read_catalogue(cat)
     try:
-        return marks.analizza(catalogue, by_channel, rec, vx, nomi)
+        return marks.analizza(catalogue, by_channel, rec, vx, nomi, hz=hz)
     except SystemExit:
         return None      # «nessuna marca»: un programma che non ne emette
 
@@ -504,6 +514,12 @@ def main():
     ap.add_argument("-o", "--out", help="la pagina da scrivere (default: out/trace.html)")
     ap.add_argument("--json", help="scrive anche i dati grezzi qui")
     ap.add_argument("--sim", help="il vcpu_sim da usare (default: out/ o build/)")
+    # I cicli si leggono anche come TEMPO, e la frequenza la dichiara la
+    # macchina. Questa opzione rilegge la STESSA corsa a un'altra velocita':
+    # i cicli non cambiano -- sono la cosa misurata -- cambia la loro lettura.
+    ap.add_argument("--mhz", type=float,
+                    help="legge i cicli a un'altra frequenza (default: quella "
+                         "che la macchina dichiara)")
     ap.add_argument("argomenti", nargs="*", metavar="-- OPZIONI",
                     help="dopo un --: opzioni per la MACCHINA, non per questo "
                          "strumento (es. -- --kbd \"2000:a,6000:b\"). Servono ai "
@@ -529,7 +545,7 @@ def main():
     tmp = os.path.dirname(os.path.abspath(out_path)) or "."
     os.makedirs(tmp, exist_ok=True)
 
-    dati = analizza(vx, tmp, a.argomenti)
+    dati = analizza(vx, tmp, a.argomenti, hz=int(a.mhz * 1e6) if a.mhz else None)
     if a.json:
         json.dump(dati, open(a.json, "w"))
 
@@ -547,8 +563,13 @@ def main():
     open(out_path, "w").write(pagina)
 
     gran = sum(c for _, _, c in dati["own"])
+    # Il tempo ACCANTO ai cicli e con la frequenza a vista, che e' la regola di
+    # tutti gli strumenti: "497,0 µs" si legge come una misura, e questa e'
+    # l'uscita di un modello senza sistema di memoria. Vedi include/vcpu.h.
+    hz = dati.get("hz")
+    durata = (f" · {marks.tempo(dati['fine'], hz)} {marks.clock(hz)}") if hz else ""
     print(f"{out_path}: {len(dati['fasce'])} fasce, {len(dati['tick'])} tick, "
-          f"{dati['fine']} cicli")
+          f"{dati['fine']} cicli{durata}")
     print(f"  la pagina deve dire «generata {stamp}»: se ne dice un'altra, "
           f"il browser mostra una copia in cache (ctrl-shift-R)")
     per = collections.Counter()

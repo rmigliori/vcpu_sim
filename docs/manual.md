@@ -22,6 +22,7 @@ per confrontare esecuzione scalare e vettoriale.
    - [4.3 Manuale delle istruzioni](#43-manuale-delle-istruzioni)
 5. [L'assembler](#5-lassembler)
 6. [Il modello di timing](#6-il-modello-di-timing)
+   - [6.1 La frequenza](#61-la-frequenza-e-perché-i-cicli-si-possono-leggere-come-tempo)
 7. [Esempi completi](#7-esempi-completi)
 8. [Tutorial: il tuo primo programma](#8-tutorial-il-tuo-primo-programma)
 
@@ -134,15 +135,17 @@ mem[r6=0x28] = 12.5 25 37.5 50 62.5 75 87.5 100 112.5 125
 instructions executed : 17
 vector element ops     : 40
 cycles (timing model)  : 94
+clock (Hz)             : 100000000
 ```
 
-Le tre statistiche finali:
+Le quattro statistiche finali:
 
 | Statistica | Significato |
 |---|---|
 | `instructions executed` | numero totale di istruzioni eseguite |
 | `vector element ops` | somma degli elementi processati da tutte le op vettoriali (misura del lavoro SIMD) |
 | `cycles (timing model)` | cicli stimati dal modello di timing (vedi §6) |
+| `clock (Hz)` | la frequenza della macchina, **dichiarata accanto ai cicli** perché è ciò che li rende leggibili come tempo (§6.1). Qui: 94 cicli = 0,94 µs |
 
 **Codici di uscita:**
 
@@ -1179,6 +1182,7 @@ Costanti (in `include/vcpu.h`):
 | `VEC_LANES` | 1 | corsie parallele dell'unità vettoriale |
 | `VEC_ARITH_STARTUP` | 6 | riempimento pipeline per op aritmetiche vettoriali |
 | `VEC_MEM_STARTUP` | 12 | riempimento pipeline per op di memoria vettoriali |
+| `CPU_HZ` | 100 000 000 | la frequenza: **100 MHz**, cioè un ciclo = 10 ns |
 
 Costo di un'operazione vettoriale su `VL` elementi:
 
@@ -1205,6 +1209,43 @@ da ~2,2× a ~4,2×.
 > (`VEC_LANES > 1`) e latenze di memoria variabili. Gather/scatter esistono
 > (`vloadx`/`vstorex`) ma con un modello di costo semplificato (`12 + 2P`, senza
 > penalità per conflitti di banco).
+
+### 6.1 La frequenza, e perché i cicli si possono leggere come tempo
+
+`CPU_HZ` è la metà mancante del modello: senza di essa un ciclo è un numero
+puro, con essa è **10 ns**. Sta in `include/vcpu.h` accanto alle altre costanti
+perché è una proprietà della **macchina**, e da lì **viaggia**: la simulazione
+la stampa accanto ai cicli (`clock (Hz)`) e la scrive in testa alla
+registrazione delle marche (`# frequenza`). Gli strumenti la leggono da lì, e
+nessuno ne tiene una copia — `tools/trace.py` e `tools/marks.py read`
+accettano `--mhz` per rileggere la **stessa** registrazione a un'altra
+frequenza, senza rieseguire niente.
+
+**100 MHz** perché è il **GR712RC**, il LEON3-FT doppio che l'ESA ha volato di
+più, e questa è una macchina di quella famiglia: `VEC_LANES 1` con startup 6 —
+cioè una **pipeline vettoriale alla Cray**, un elemento per ciclo, non una SIMD
+larga — 1 MiB on-chip e nessuna cache. È il profilo di un core embedded
+single-issue in-order con coprocessore vettoriale, del tipo che sta in FPGA o in
+un ASIC rad-hard.
+
+| | |
+|---|---|
+| LEON3 rad-hard (il cavallo da lavoro ESA) | 50–100 MHz |
+| **GR712RC** (LEON3-FT doppio, molto volato) | **100 MHz** |
+| GR740 (LEON4-FT quad, NGMP) | 250 MHz |
+| soft core / coprocessore in fabric | 50–200 MHz |
+
+> **ATTENZIONE, e conta più del numero.** I cicli di questo progetto **non sono
+> una misura: sono l'uscita di un modello**. Li decide `vcpu.c`, e qui non c'è
+> un sistema di memoria — niente cache miss, niente contesa DMA, niente
+> conflitti di banco. Moltiplicarli per una frequenza dà un tempo che *sembra
+> più reale dei cicli da cui viene*: «118 cicli» si legge come un numero di
+> modello, «1,18 µs» si legge come una misura.
+>
+> Da cui la regola che tutti gli strumenti seguono: **mai il tempo da solo** —
+> sempre accanto ai cicli, che restano la cosa misurata (`Δ 13.430 cicli ·
+> 134,3 µs`) — e **la frequenza sempre visibile** accanto alla conversione
+> (`@ 100 MHz`), così si legge per l'ipotesi che è.
 
 ---
 

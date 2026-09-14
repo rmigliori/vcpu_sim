@@ -53,6 +53,12 @@ CONF  = os.path.join(ROOT, "scheduler-facts.conf")
 OUT   = os.path.join(ROOT, "docs", "generated", "scheduler-measures.md")
 TRACE = os.path.join(ROOT, "tools", "trace.py")
 
+# La lettura dei cicli in tempo si importa da marks.py invece di rifarla: la
+# regola di scrittura e' una sola, e due implementazioni darebbero due numeri
+# diversi sugli stessi cicli -- fra una pagina e l'altra dello stesso progetto.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from marks import tempo, clock
+
 
 def die(msg):
     print("scheduler_facts: " + msg, file=sys.stderr)
@@ -143,6 +149,10 @@ STATS = {
     "instructions executed": "instr",
     "vector element ops":    "vecops",
     "cycles (timing model)": "cycles",
+    # La frequenza la stampa la MACCHINA accanto ai cicli, e si legge da li':
+    # scritta qui sarebbe una seconda copia, e questa pagina direbbe i
+    # microsecondi di una macchina diversa da quella che ha prodotto i cicli.
+    "clock (Hz)":            "hz",
 }
 
 
@@ -217,8 +227,19 @@ HEAD = """<!-- GENERATO DA tools/scheduler_facts.py — NON MODIFICARE A MANO. -
 
 `cicli` è il modello di timing (§6 del manuale), non un tempo reale.
 
-| programma | istruzioni | vec-elem-ops | cicli |
-|---|---:|---:|---:|
+> **Il tempo della colonna accanto è una LETTURA dei cicli, non una misura in
+> più.** I cicli li decide `vcpu.c`, e questa macchina non ha un sistema di
+> memoria: niente cache miss, niente contesa DMA, niente conflitti di banco.
+> Moltiplicarli per una frequenza dà un numero che *sembra* più reale di quello
+> da cui viene — «118 cicli» si legge come un numero di modello, «1,18 µs» si
+> legge come una misura. Per questo il tempo non compare mai da solo, e la
+> frequenza è sempre scritta accanto: è un'ipotesi dichiarata.
+>
+> La frequenza è quella che la macchina dichiara in `include/vcpu.h` e stampa
+> accanto ai cicli — qui non ce n'è una copia.
+
+| programma | istruzioni | vec-elem-ops | cicli | tempo {clock} |
+|---|---:|---:|---:|---:|
 """
 
 MID = """
@@ -259,11 +280,20 @@ Un programma che non compare non ha prodotto una traccia leggibile.
 
 
 def render(names, tests):
-    out = [HEAD]
+    # Si misura PRIMA di scrivere, perche' l'intestazione della tabella porta la
+    # frequenza e la frequenza viene dalla misura -- e' la macchina a
+    # dichiararla. Se le macchine dicessero frequenze diverse la colonna
+    # mentirebbe su meta' delle righe, quindi in quel caso non si scrive un
+    # numero solo: si dice che non ce n'e' uno.
+    misure = {n: measure(tests[n]) for n in names}
+    hz = {m["hz"] for m in misure.values()}
+    clk = clock(hz.pop()) if len(hz) == 1 else "(frequenze diverse)"
+
+    out = [HEAD.format(clock=clk)]
     cmds = []
     for n in names:
         t = tests[n]
-        m = measure(t)
+        m = misure[n]
         # <build> e non il nome vero della cartella: `cmake -B <dir>` non impone
         # un nome, quindi incorporarlo farebbe dipendere il CONTENUTO di questa
         # pagina da come ha costruito chi l'ha rigenerata, e --check fallirebbe
@@ -271,7 +301,9 @@ def render(names, tests):
         # file che lo e'. Trovato cosi', da un worktree con la build in 'b'.
         # Tutti i .vx stanno in <build>/vasm/ (VASM_BINARY_DIR), sempre.
         vx = "<build>/vasm/" + os.path.basename(t["vx"])
-        out.append("| `%s` | %d | %d | %d |\n" % (n, m["instr"], m["vecops"], m["cycles"]))
+        out.append("| `%s` | %d | %d | %d | %s |\n" %
+                   (n, m["instr"], m["vecops"], m["cycles"],
+                    tempo(m["cycles"], m["hz"]) or "—"))
         cmds.append("vcpu_sim run %s%s" %
                     (vx, (" " + " ".join(t["args"])) if t["args"] else ""))
     out.append(MID.format(cmds="\n".join(cmds)))

@@ -130,6 +130,9 @@
     font-variant-numeric: tabular-nums;
   }
   .stat .k { font-size: 11.5px; color: var(--ink-3); letter-spacing: .03em; }
+  /* Il tempo sotto i cicli: leggibile, ma tipograficamente subordinato al
+     numero grande -- che e' la cosa misurata, mentre questo e' una lettura. */
+  .stat .k .t { font-family: "IBM Plex Mono", ui-monospace, monospace; color: var(--ink-2); }
 
   /* ---------- sezioni ---------- */
   section { display: flex; flex-direction: column; gap: 18px; }
@@ -384,7 +387,7 @@
          "la vedo corretta" non sono distinguibili a occhio -- ed e' costata una
          diagnosi sbagliata il 12/09/2026. -->
     <div class="eyebrow">vcpu_sim · __PROGRAMMA__ · <span id="ntick"></span> tick ·
-      generata __GENERATA__</div>
+      generata __GENERATA__<span id="clock"></span></div>
     <h1>Chi gira, e da quando a quando</h1>
     <div class="head-rule"></div>
     <p class="lede">La traccia ciclo per ciclo della simulazione completa: il gestore dei
@@ -554,6 +557,47 @@ const D = /*__DATI__*/{};
 
 const N = new Intl.NumberFormat("it-IT");
 
+/* ---------- IL CLOCK: i cicli letti anche come TEMPO ----------
+   La frequenza la DICHIARA la macchina e viaggia nei dati (D.hz), come i canali
+   riservati: questa pagina non ne tiene una copia, e su una traccia prodotta da
+   una macchina piu' lenta i microsecondi cambiano da soli.
+
+   DUE REGOLE, e valgono ovunque qui sotto (l'avvertimento sta in include/vcpu.h):
+
+     - IL TEMPO NON VA MAI DA SOLO. Sempre accanto ai cicli, che restano la cosa
+       misurata. I cicli di questo progetto non sono una misura, sono l'uscita
+       di un modello -- li decide vcpu.c, e non c'e' un sistema di memoria:
+       niente cache miss, niente contesa DMA, niente conflitti di banco.
+       "1,18 µs" si legge come una misura, "118 cicli" per quello che e'.
+     - LA FREQUENZA SEMPRE VISIBILE accanto alla conversione, cosi' il tempo si
+       legge come l'ipotesi che e' e non come un fatto.
+
+   Senza frequenza (una registrazione vecchia) tutto questo sparisce e la pagina
+   resta quella di prima: le funzioni tornano stringa vuota. */
+const HZ = D.hz || 0;
+const UNITA = [[1e9, "ns"], [1e6, "µs"], [1e3, "ms"], [1, "s"]];
+const CLOCK = HZ ? "@ " + N.format(Math.round(HZ / 1e4) / 100) + " MHz" : "";
+
+/* L'unita' la sceglie il valore piu' GRANDE del gruppo: una riga in cui il
+   primo numero e' in ns e il secondo in µs si legge uno per uno ma non si
+   confronta a colpo d'occhio, che e' l'unica ragione per cui stanno insieme. */
+function unitaPer(cicli) {
+  for (const [s, u] of UNITA) if (Math.abs(cicli / HZ) * s < 1000) return u;
+  return "s";
+}
+function T(cicli, unita) {
+  if (!HZ || cicli == null) return "";
+  const u = unita || unitaPer(cicli);
+  const x = cicli / HZ * UNITA.find(([, n]) => n === u)[0];
+  return x.toFixed(Math.abs(x) < 10 ? 2 : 1).replace(".", ",") + " " + u;
+}
+/* Le due forme in cui il tempo compare: attaccato ai cicli che lo precedono
+   (`· 134,3 µs`), e con la frequenza dove quel tempo e' il numero in testa a un
+   blocco -- una casella, il Δ fra i cursori, la vista. Ripeterla su ogni riga
+   fitta sarebbe rumore, e in quei blocchi e' gia' due centimetri piu' su. */
+const conT  = c => HZ ? " · " + T(c) : "";
+const conTC = c => HZ ? " · " + T(c) + " " + CLOCK : "";
+
 const own = {};
 for (const [o, l, c] of D.own) { (own[o] ||= {task:0, kernel:0})[l] += c; }
 const gran = D.own.reduce((s, r) => s + r[2], 0);
@@ -671,8 +715,11 @@ if (!D.tick.length) {
 }
 
 document.getElementById("ntick").textContent = D.tick.length;
+document.getElementById("clock").textContent = CLOCK ? " · " + CLOCK : "";
 document.getElementById("stats").innerHTML = [
-  ["cicli simulati", N.format(D.fine)],
+  // Il tempo nella riga PICCOLA, sotto i cicli: la gerarchia tipografica dice
+  // gia' quale dei due e' la misura e quale la lettura.
+  ["cicli simulati", N.format(D.fine), HZ ? T(D.fine) + " " + CLOCK : ""],
   ["tick di timer", D.tick.length],
   ["fasce di esecuzione", D.fasce.length],
   ["commutazioni", nsw],
@@ -682,7 +729,8 @@ document.getElementById("stats").innerHTML = [
   // Una casella per CATEGORIA di evento, e solo se sono misurate: vedi il
   // commento sopra PRE. Una sola casella "eventi" sommerebbe cose diverse.
   ...PRE_CAT.map(c => [c, PRE.filter(e => e.canale === c).length])
-].map(([k, v]) => `<div class="stat"><span class="v">${v}</span><span class="k">${k}</span></div>`).join("");
+].map(([k, v, t]) => `<div class="stat"><span class="v">${v}</span>` +
+      `<span class="k">${k}${t ? ` · <span class="t">${t}</span>` : ""}</span></div>`).join("");
 
 /* ---------- legenda ---------- */
 document.getElementById("legend").innerHTML =
@@ -909,7 +957,8 @@ function mostra(el) {
   const d = el.dataset;
   readout.innerHTML =
     `<span><b>${d.o}</b> · ${d.l === "task" ? "codice del task" : "kernel per suo conto"}</span>` +
-    `<span>cicli <b>${N.format(d.b)} → ${N.format(d.e)}</b> (${N.format(d.e - d.b)})</span>` +
+    `<span>cicli <b>${N.format(d.b)} → ${N.format(d.e)}</b> ` +
+      `(${N.format(d.e - d.b)}${conT(d.e - d.b)})</span>` +
     `<span>${d.r}</span>`;
 }
 // La linea di un evento ha la precedenza sulla fascia che sta sotto: ci si
@@ -931,7 +980,7 @@ function mostraPre(el) {
     // quale, per un `owner isr` chi e' stato interrotto. Una frase buona per
     // tutti direbbe il possesso della CPU invece della paternita'.
     `<span>${d.fr || ("girava " + d.chi)}</span>` +
-    (d.fuori ? `<span>riprende dopo <b>${N.format(d.fuori)}</b> cicli</span>`
+    (d.fuori ? `<span>riprende dopo <b>${N.format(d.fuori)}</b> cicli${conT(+d.fuori)}</span>`
              : `<span>non riprende piu'</span>`) +
     (d.dato ? `<span><b>${d.dato}</b></span>` : "");
 }
@@ -1087,14 +1136,14 @@ document.getElementById("rt").innerHTML = rtVis.map(([n, c]) =>
     // IL TOTALE PER PRIMO: con tre cursori le due meta' si leggono per conto
     // loro, ma la cosa che si sta misurando e' l'intero.
     const tot = fraICursori(segs[0].x0, segs[segs.length - 1].x1);
-    let h = `<span class="delta">Δ ${N.format(tot.durata)} cicli</span>`
+    let h = `<span class="delta">Δ ${N.format(tot.durata)} cicli${conTC(tot.durata)}</span>`
           + `<span class="hint">${segs[0].da}…${segs[segs.length - 1].a}</span>`
           + dettaglio(tot);
     // ...e poi ogni segmento, con quello sotto il puntatore marcato.
     if (segs.length > 1)
       h += segs.map((sg, i) =>
         `<span class="seg${i === attivo ? " attivo" : ""}" style="width:100%">
-           <b>${sg.da}…${sg.a}</b> <span class="delta-s">Δ ${N.format(sg.m.durata)}</span>
+           <b>${sg.da}…${sg.a}</b> <span class="delta-s">Δ ${N.format(sg.m.durata)}${conT(sg.m.durata)}</span>
            ${dettaglio(sg.m)}</span>`).join("");
     h += `<span class="hint" style="width:100%">I proprietari sono DEDOTTI dal
        <span class="mono">pc</span>, come le fasce. Passa il puntatore fra due
@@ -1108,7 +1157,7 @@ document.getElementById("rt").innerHTML = rtVis.map(([n, c]) =>
     zoomEl.innerHTML =
       `<span class="vista">${tutto ? "tutta la corsa" :
         `${N.format(b0)} → ${N.format(b1)}`}</span>` +
-      `<span class="hint">${N.format(span)} cicli` +
+      `<span class="hint">${N.format(span)} cicli${conTC(span)}` +
         (tutto ? "" : ` · ${(D.fine / span).toFixed(1)}×`) + `</span>` +
       `<span class="sp"></span>` +
       `<button data-z="out"${tutto ? " disabled" : ""}>− lontano</button>` +
@@ -1311,7 +1360,8 @@ if (M && (M.finestre.length || M.puntuali.length)) {
     const d = el.dataset;
     mread.innerHTML =
       `<span><b>${d.c}</b> · ${d.m}</span>` +
-      `<span>cicli <b>${N.format(d.a)} → ${N.format(d.z)}</b> (${N.format(d.d)})</span>` +
+      `<span>cicli <b>${N.format(d.a)} → ${N.format(d.z)}</b> ` +
+        `(${N.format(d.d)}${conT(+d.d)})</span>` +
       (d.x === "1" ? `<span style="color:var(--accent)">ATTRAVERSA una commutazione</span>` : "") +
       (d.dato ? `<span><b>${d.dato}</b></span>` : "") +
       `<span>${d.p}</span>`;
@@ -1334,14 +1384,18 @@ if (M && (M.finestre.length || M.puntuali.length)) {
   document.getElementById("msuper").innerHTML = M.categorie.map(cat => {
     const ff = M.finestre.filter(f => f.ch === cat.ch);
     const s = x => (x / cat.max) * 100;
+    // Un'unita' sola per tutta la categoria, scelta sulla finestra piu' lunga:
+    // qui jitter e minimo si leggono UNO CONTRO L'ALTRO, ed e' l'unica ragione
+    // per cui stanno nella stessa frase.
+    const u = unitaPer(cat.max);
     const righe = ff.map(f =>
       `<div class="row"><span class="w" style="width:${s(f.d)}%">
          ${f.tratti.map(t => segIn(f, t)).join("")}</span></div>`).join("");
     return `<div style="margin-bottom:30px">
         <div style="font-size:13px;color:var(--ink-2);margin-bottom:6px">
           <b style="color:var(--ink)">${cat.nome}</b> — ${cat.n} finestre,
-          jitter <b style="color:var(--ink)">${N.format(cat.jitter)}</b> cicli
-          su un minimo di ${N.format(cat.min)}</div>
+          jitter <b style="color:var(--ink)">${N.format(cat.jitter)}</b> cicli${HZ ? ` (${T(cat.jitter, u)})` : ""}
+          su un minimo di ${N.format(cat.min)}${HZ ? ` (${T(cat.min, u)}) ${CLOCK}` : ""}</div>
         <div class="super" style="padding-bottom:22px">
           ${righe}
           <span class="vline" style="left:${s(cat.min)}%"></span>

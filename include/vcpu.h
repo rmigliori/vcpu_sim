@@ -273,6 +273,32 @@ typedef struct
 #define VEC_MEM_STARTUP    12  // pipeline fill for a vector memory op
 
 // ---------------------------------------------------------------------------
+//  LA FREQUENZA: la meta' mancante del modello, ed e' quella che trasforma un
+//  ciclo in un TEMPO. Sta qui e non nel catalogo delle marche perche' col
+//  marcatore non c'entra -- e' una proprieta' della macchina, come VEC_LANES --
+//  e perche' chi mostra dei cicli e' molto piu' di chi legge marks.conf.
+//  Da qui VIAGGIA NELLA REGISTRAZIONE ("# frequenza") e nelle statistiche di
+//  fine corsa, come gia' fanno i canali riservati: chi produce dichiara, chi
+//  legge legge, e nessuno tiene una seconda copia.
+//
+//  100 MHz e' il GR712RC, il LEON3-FT doppio che l'ESA ha volato di piu': il
+//  numero piu' rappresentativo per una macchina come questa -- VEC_LANES 1 con
+//  startup 6, cioe' una pipeline vettoriale alla Cray e non una SIMD larga,
+//  1 MiB on-chip e nessuna cache. E un ciclo e' 10 ns tondi, quindi cicli -> us
+//  e' una divisione per cento.
+//
+//  ATTENZIONE, E CONTA PIU' DEL NUMERO: i cicli di questo progetto non sono una
+//  misura, sono l'USCITA DI UN MODELLO -- li decide vcpu.c, e non c'e' un
+//  sistema di memoria (niente cache miss, niente contesa DMA, niente conflitti
+//  di banco). Moltiplicarli per una frequenza da' un tempo che SEMBRA piu' reale
+//  dei cicli da cui viene: "118 cicli" si legge come un numero di modello,
+//  "1,18 us" si legge come una misura. Da cui la regola in tutti gli strumenti:
+//  mai il tempo da solo -- sempre accanto ai cicli, che restano la cosa
+//  misurata -- e la frequenza sempre visibile accanto alla conversione.
+// ---------------------------------------------------------------------------
+#define CPU_HZ    100000000ULL   // 100 MHz: un ciclo = 10 ns
+
+// ---------------------------------------------------------------------------
 //  Instruction set
 // ---------------------------------------------------------------------------
 typedef enum

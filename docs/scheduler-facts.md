@@ -152,6 +152,7 @@ Dal 13/09 `scheduler` porta un tag, nella sola configurazione strumentata
 | | n | min | max | media | **jitter** |
 |---|---:|---:|---:|---:|---:|
 | la scelta di chi gira | 18 | 51 | 177 | 118 | **126** |
+| *gli stessi, @ 100 MHz* | | *0,51 µs* | *1,77 µs* | *1,18 µs* | ***1,26 µs*** |
 
 ```bash
 vcpu_sim run build/vasm/test_tmgr_marks.vx --marks rec.txt
@@ -161,14 +162,32 @@ python3 tools/marks.py read marks.conf rec.txt --vx build/vasm/test_tmgr_marks.v
 E **undici preemption**, che sono un fatto *letto* dal kernel e non dedotto —
 `sp_preempted` è l'unico ramo che riempie uno slot `PCB.preempted` (§3.48):
 
-| | n | fuori CPU |
-|---|---:|---|
-| preemption | 11 | **909** e **2093** cicli, alternati |
+| | n | fuori CPU | @ 100 MHz |
+|---|---:|---|---|
+| preemption | 11 | **915** (×6) e **2120** (×5) cicli, alternati | **9,15 µs** e **21,2 µs** |
 
 L'alternanza non è rumore: sono le due quantità di lavoro diverse che il tick
 innesca. È il tempo in cui un task è stato tolto dalla CPU **involontariamente**,
 e va detto così — non è latenza di preemption (quella è il ritardo fra «qualcuno
 di più prioritario è pronto» e «gira»), è la sua conseguenza sulla vittima.
+
+> **Questi due numeri erano 909 e 2093 fino al 14/09, e sono cambiati senza che
+> il kernel cambiasse.** In mezzo c'è `cadb40b`, la **registrazione dei nomi**:
+> tre istruzioni sotto `.ifdef MARKS`, che il commento accanto dichiara «una
+> volta sola». Per l'idle lo sono — `taskI` rientra in `loopI`, cioè **sotto**
+> il blocco. Per `taskA` e per `tmgr_task` **no**: tutti e due rientrano con `j`
+> sulla propria etichetta, che sta **sopra** il blocco, quindi si ripresentano a
+> ogni giro e pagano 6 cicli ogni volta. L'effetto è innocuo — riscrivono lo
+> stesso id sullo stesso canale — ma il costo è dentro la misura, non fuori.
+>
+> **Trovato e non corretto**: spostare il rientro sotto il blocco rimuove quei
+> cicli, ma muove di nuovo questi numeri, ed è una decisione da prendere invece
+> che una pulizia da fare.
+>
+> È la regola che questa sezione enuncia due paragrafi più giù — **i cicli di un
+> programma strumentato sono di un altro programma** — arrivata dal lato da cui
+> fa più impressione: non dal kernel, ma dallo strumento con cui lo si guarda.
+> I 18 numeri della scansione qui sopra invece non si sono mossi di un ciclo.
 
 **Questi numeri non stanno nel file generato, e la ragione è una regola.** Il
 nucleo fattuale misurato è per definizione l'albero **pulito**: un programma
@@ -180,6 +199,36 @@ lo chiede al manifesto che scrive il build.
 Quindi la riga qui sopra va citata **dicendo che è strumentata**. Il jitter è
 più del doppio del minimo, ed è il genere di numero che una media nasconde: 118
 di media su un massimo di 177 racconta un sistema diverso da quello vero.
+
+## 7. Il periodo del tick è COMPRESSO, e col tempo a schermo qualcuno lo leggerà come una scelta di progetto
+
+Dal 14/09 gli strumenti leggono i cicli **anche come tempo** (§6.1 del manuale:
+`CPU_HZ` = 100 MHz, un ciclo = 10 ns). Questo rende visibile una cosa che finché
+i numeri erano cicli non guardava nessuno: **i tick di questa suite sono
+lontanissimi da un tick realtime vero.**
+
+| periodo armato | programmi | @ 100 MHz |
+|---:|---|---:|
+| 500 cicli | `scheduler`, `block`, `mutex`, `semaphore` | **5 µs** |
+| 2000 cicli | `chain` | **20 µs** |
+| 4000 cicli | `tmgr`, `vectors` | **40 µs** |
+
+Un tick realtime vero sta fra **1 e 10 ms**. Questi stanno fra 5 e 40 µs, cioè
+**da 25 a 2000 volte più veloci**.
+
+**È una compressione deliberata, e la ragione è che i test devono finire in
+fretta**: `ctest` intero gira in cinque secondi perché il più lungo dei
+programmi simula 1,60 ms di tempo-macchina e tutti gli altri stanno sotto i
+200 µs. I periodi non sono nemmeno scelti
+come frequenze — sono scelti come **soglie**, cioè in rapporto al costo del giro
+che devono interrompere (§4 qui sopra, e la tabella in §3.32 dell'handoff). A
+`800` cicli `test_chain` misura la saturazione invece della propagazione: è un
+numero rispetto al *lavoro*, non rispetto al *tempo*.
+
+Il rischio è nuovo e nasce proprio dal tempo a schermo: finché la pagina diceva
+«4000 cicli» nessuno ci leggeva una scelta di sistema, mentre «40 µs» somiglia a
+una specifica. **Non lo è.** Un documento che mostri questi tempi deve dire che
+il periodo è compresso, o racconta un RTOS che gira a 25 kHz di tick.
 
 ## Cosa manca ancora qui dentro
 

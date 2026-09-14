@@ -22,18 +22,29 @@
 
 `cicli` è il modello di timing (§6 del manuale), non un tempo reale.
 
-| programma | istruzioni | vec-elem-ops | cicli |
-|---|---:|---:|---:|
-| `scheduler` | 2032 | 0 | 4458 |
-| `block` | 2543 | 0 | 5488 |
-| `chain` | 7298 | 0 | 16646 |
-| `mailbox` | 288 | 0 | 639 |
-| `semaphore` | 3516 | 0 | 7288 |
-| `mutex` | 3434 | 0 | 7143 |
-| `tmgr` | 21925 | 0 | 49729 |
-| `coop` | 4866 | 0 | 10531 |
-| `events` | 9259 | 0 | 18785 |
-| `vectors` | 92628 | 43712 | 159568 |
+> **Il tempo della colonna accanto è una LETTURA dei cicli, non una misura in
+> più.** I cicli li decide `vcpu.c`, e questa macchina non ha un sistema di
+> memoria: niente cache miss, niente contesa DMA, niente conflitti di banco.
+> Moltiplicarli per una frequenza dà un numero che *sembra* più reale di quello
+> da cui viene — «118 cicli» si legge come un numero di modello, «1,18 µs» si
+> legge come una misura. Per questo il tempo non compare mai da solo, e la
+> frequenza è sempre scritta accanto: è un'ipotesi dichiarata.
+>
+> La frequenza è quella che la macchina dichiara in `include/vcpu.h` e stampa
+> accanto ai cicli — qui non ce n'è una copia.
+
+| programma | istruzioni | vec-elem-ops | cicli | tempo @ 100 MHz |
+|---|---:|---:|---:|---:|
+| `scheduler` | 2032 | 0 | 4458 | 44,6 µs |
+| `block` | 2543 | 0 | 5488 | 54,9 µs |
+| `chain` | 7298 | 0 | 16646 | 166,5 µs |
+| `mailbox` | 288 | 0 | 639 | 6,39 µs |
+| `semaphore` | 3516 | 0 | 7288 | 72,9 µs |
+| `mutex` | 3434 | 0 | 7143 | 71,4 µs |
+| `tmgr` | 21925 | 0 | 49729 | 497,3 µs |
+| `coop` | 4866 | 0 | 10531 | 105,3 µs |
+| `events` | 9259 | 0 | 18785 | 187,9 µs |
+| `vectors` | 92628 | 43712 | 159568 | 1,60 ms |
 
 Misurati così, uno per riga:
 
