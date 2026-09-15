@@ -160,6 +160,7 @@ static void marks_dump(const VCpu* cpu)
   fprintf(f, "# ciclo canale valore current dato ha_dato in_trap\n");
   fprintf(f, "# riservato %d esecuzione\n", MARK_EXEC);
   fprintf(f, "# riservato %d tasto\n", MARK_KEY);
+  fprintf(f, "# riservato %d timer\n", MARK_TIMER);
   // La FREQUENZA viaggia con la registrazione, per la stessa ragione dei
   // canali: e' la macchina che sa a che velocita' gira, e un lettore che la
   // tenesse per conto suo leggerebbe in microsecondi sbagliati una traccia

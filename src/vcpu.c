@@ -136,9 +136,12 @@ static void mmio_store(VCpu* cpu, int64_t addr, int32_t value)
   if (is_marca(addr))
   {
     int canale = (int) ((addr - MARK_BASE) / 4);
-    // I canali 0 e 1 li scrive la macchina. Che un programma ci scriva non e'
-    // uno stato da gestire: e' un errore di costruzione, e va detto.
-    if (canale == MARK_EXEC || canale == MARK_KEY)
+    // I primi MARK_RISERVATI canali li scrive la MACCHINA (esecuzione, tasto,
+    // timer). Che un programma ci scriva non e' uno stato da gestire: e' un
+    // errore di costruzione, e va detto. La soglia invece dell'elenco perche'
+    // l'elenco si dimentica: il terzo canale e' arrivato il 15/09/2026 e questi
+    // guard erano tre, in tre punti diversi del file.
+    if (canale < MARK_RISERVATI)
       fprintf(stderr, "runtime error: il canale %d e' riservato alla macchina\n",
               canale);
     else
@@ -157,7 +160,7 @@ static void mmio_store(VCpu* cpu, int64_t addr, int32_t value)
     // resta li' e il lettore lo dice (un armamento che nessuno consuma e' un
     // tag scritto a meta').
     int canale = (int) ((addr - MARKD_BASE) / 4);
-    if (canale == MARK_EXEC || canale == MARK_KEY)
+    if (canale < MARK_RISERVATI)
       fprintf(stderr, "runtime error: il canale %d e' riservato alla macchina\n",
               canale);
     else
@@ -513,7 +516,7 @@ static void execute(VCpu* cpu, const Instr* in)
           break;
         }
         int canale = (int) ((addr - MARK_BASE) / 4);
-        if (canale == MARK_EXEC || canale == MARK_KEY)
+        if (canale < MARK_RISERVATI)
         {
           fprintf(stderr, "mark: il canale %d e' RISERVATO alla macchina\n", canale);
           cpu->halted = 1;
@@ -1094,10 +1097,39 @@ void vcpu_run_from(VCpu* cpu, const Instr* prog, int prog_len, RunMode mode, int
     // abilita mai -- che e' precisamente il caso del polling.
     kbd_pump(cpu);
 
+    // LA RICHIESTA, PRIMA DELLA CONSEGNA (15/09/2026). Il timer matura quando
+    // il conto dei cicli raggiunge la scadenza, e questo non ha niente a che
+    // vedere con PSW_IE: a interrupt chiusi la richiesta resta alzata e la trap
+    // arriva quando puo'. Finche' la condizione di consegna qui sotto era una
+    // sola -- con PSW_IE per primo -- quell'istante non veniva valutato
+    // affatto, e la latenza di consegna non era una grandezza osservabile.
+    //
+    // Si marca UNA VOLTA per richiesta (timer_pending), o si rimarcherebbe a
+    // ogni istruzione per tutto il tempo che la trap aspetta. Stesso modello di
+    // kbd_pump, che marca una volta per carattere avanzando nella traccia.
+    //
+    // L'istante osservabile e' il confine d'istruzione, non il ciclo esatto
+    // della scadenza: una richiesta che matura DENTRO un'istruzione lunga si
+    // vede quando quella finisce. Vale per la tastiera allo stesso modo (un
+    // carattere dato per 24000 si marca a 24001), ed e' una proprieta' della
+    // macchina, non dello strumento: qui non esiste un osservatore piu' fine
+    // del confine d'istruzione.
+    if (cpu->timer_period > 0 && cpu->cycles >= cpu->timer_next && !cpu->timer_pending)
+    {
+      cpu->timer_pending = 1;
+      cpu->timer_seq += 1;
+      // IL VALORE E' IL NUMERO DELLA RICHIESTA, non l'istante: l'istante e' gia'
+      // la marca. Serve a dire se una richiesta e' andata PERSA -- due marche
+      // consecutive che saltano un numero -- che con la sola sequenza di
+      // istanti si potrebbe solo sospettare guardando le distanze.
+      vcpu_marca(cpu, MARK_TIMER, (int32_t) cpu->timer_seq);
+    }
+
     // Timer interrupt: delivered at an instruction boundary. Saving the
     // whole status word (epsw) mirrors the exchange-package / mstatus model.
     if ((cpu->psw & PSW_IE) && cpu->timer_period > 0 && cpu->cycles >= cpu->timer_next)
     {
+      cpu->timer_pending = 0;
       cpu->epc  = cpu->pc;
       cpu->epsw = cpu->psw;
       cpu->psw &= ~PSW_IE;

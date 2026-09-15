@@ -279,6 +279,14 @@
     width: 8px; height: 8px; background: rgb(var(--c-ISR));
     clip-path: polygon(50% 100%, 0 0, 100% 0);
   }
+  /* LA CONSEGNA, accanto alla richiesta: stesso segno, ma vuoto. La forma dice
+     che è lo stesso genere di fatto — un istante di quella sorgente — e il
+     riempimento dice QUALE dei due, così la distanza si legge come una coppia
+     invece che come due eventi da mettere in relazione a mente. Tratteggiato
+     perché a interrupt aperti i due cadono sullo stesso confine d'istruzione e
+     si sovrappongono: lì il segno pieno deve restare leggibile sopra. */
+  .evt.vuoto { border-left-style: dashed; opacity: .75; }
+  .evt.vuoto::after { background: none; border: 1.5px solid rgb(var(--c-ISR)); clip-path: none; }
 
   /* La sovrapposizione: ogni finestra ridisegnata da zero, allineata al proprio
      trigger. Le barre partono tutte dallo stesso bordo e il bordo destro
@@ -972,16 +980,34 @@ function disegna(axisEl, lanesEl, b0, b1, tickLabel) {
   // Gli eventi PUNTUALI della macchina (il tasto): una corsia sola, in fondo,
   // perche' sono il TRIGGER di cio' che sta sopra e vanno letti sulla stessa
   // scala -- che da oggi e' davvero la stessa.
-  const punt = (M && M.puntuali.length) ? (() => {
-    const ee = M.puntuali.filter(p => p.c >= b0 && p.c <= b1)
+  // UNA CORSIA PER CANALE, e non una sola per tutti (15/09/2026). Era
+  // `M.puntuali[0].canale`: l'etichetta veniva dal PRIMO evento e gli altri
+  // canali finivano sotto quel nome. Con la sola tastiera non si vedeva --
+  // c'era un canale riservato solo -- e dal giorno che la macchina ha marcato
+  // anche la richiesta del timer la corsia avrebbe detto "tasto" su una riga
+  // che conteneva i tick. E' la specie di difetto che questa pagina paga da
+  // sempre: funziona su quello per cui e' stata scritta.
+  //
+  // E accanto alla richiesta ci va la CONSEGNA, che e' l'altro estremo della
+  // stessa misura: il triangolo pieno e' «la sorgente ha bussato», quello vuoto
+  // «la trap e' partita», e la distanza fra i due e' la latenza di consegna --
+  // che dipende da PSW_IE, cioe' da quanto il kernel tiene chiuse le porte.
+  // Separati non dicono niente: e' la coppia il dato.
+  const CANALI = [...new Set([...(M ? M.puntuali.map(p => p.canale) : []),
+                              ...(D.consegne || []).map(c => c[1])])];
+  const punt = CANALI.map(k => {
+    const rich = (M ? M.puntuali : []).filter(p => p.canale === k && p.c >= b0 && p.c <= b1)
       .map(p => `<span class="evt" style="left:${pc(p.c)}%"
-          title="${p.canale} ${p.v} @${p.c} (girava ${p.cur})"></span>`).join("");
+          title="${k}: RICHIESTA ${p.v} @${p.c} (girava ${p.cur})"></span>`).join("");
+    const cons = (D.consegne || []).filter(c => c[1] === k && c[0] >= b0 && c[0] <= b1)
+      .map(c => `<span class="evt vuoto" style="left:${pc(c[0])}%"
+          title="${k}: trap CONSEGNATA @${c[0]}"></span>`).join("");
     return `<div class="lane marca">
-        <div class="lane-key"><span class="n">${M.puntuali[0].canale}</span>
+        <div class="lane-key"><span class="n">${k}</span>
           <span class="p">macchina</span></div>
-        <div class="track">${rules}${ee}</div>
+        <div class="track">${rules}${rich}${cons}</div>
       </div>`;
-  })() : "";
+  }).join("");
 
   lanesEl.innerHTML = corsie.join("") + finestre.join("") + punt;
 }
@@ -1014,6 +1040,10 @@ const NOTEVOLI = (() => {
   for (const f of D.fasce) { s.add(f[0]); s.add(f[1]); }
   for (const t of MARK) s.add(t);
   for (const e of PRE) s.add(e.c);
+  // Le consegne delle trap: sono la meta' della latenza che si va a misurare
+  // col cursore, e un estremo su cui non ci si puo' fermare rende inutile
+  // l'altro. (I tick sono gia' in MARK, ma le consegne del TASTO no.)
+  for (const c of (D.consegne || [])) s.add(c[0]);
   if (D.marche) {
     for (const f of D.marche.finestre) { s.add(f.a); s.add(f.z); }
     for (const p of D.marche.puntuali) s.add(p.c);

@@ -128,7 +128,7 @@ typedef struct
 //  ANCHE quando la registrazione e' spenta: la sw viene eseguita lo stesso, e'
 //  solo la macchina che non annota. Il costo sta nel programma, non nell'opzione.
 //
-//  --- DUE CANALI LI SCRIVE LA MACCHINA, E COSTANO ZERO ---
+//  --- TRE CANALI LI SCRIVE LA MACCHINA, E COSTANO ZERO ---
 //    MARK_EXEC   chi possiede la CPU. Il registratore osserva le scritture a
 //                 `current` -- l'indirizzo glielo dice il loader, che ha la
 //                 tabella dei simboli -- e annota i CAMBI. Zero istruzioni nel
@@ -140,6 +140,25 @@ typedef struct
 //                 i due c'e' il ritardo del polling, che e' proprio una delle
 //                 cose da misurare. Senza questo canale il tempo di risposta
 //                 non e' scrivibile con i soli tag applicativi.
+//    MARK_TIMER  quando il TIMER alza la richiesta di interruzione, che non e'
+//                 quando la trap viene consegnata (15/09/2026). E' il gemello
+//                 esatto di MARK_KEY -- tutti e due dicono «questa sorgente ha
+//                 bussato» -- e vale per la stessa ragione: la consegna aspetta
+//                 PSW_IE, quindi il programma vede il secondo istante e non il
+//                 primo. La distanza fra i due E' la latenza di consegna, e
+//                 prima di questo canale non era una grandezza scrivibile: di
+//                 ogni sorgente si osservava un estremo solo, e per giunta
+//                 estremi INCROCIATI (del timer la consegna, del tasto
+//                 l'arrivo).
+//
+//  IL BATTITO SLITTA, E NON E' UN DIFETTO DA CORREGGERE. `timer_next` si
+//  riarma dalla CONSEGNA (`cycles + period`) e non dalla scadenza, quindi ogni
+//  ritardo si somma e non viene mai recuperato -- misurato su test_mondo: 276
+//  cicli persi in 24 battiti, tutti presi nei due tick in cui la tastiera ha
+//  interrotto. E' la semantica di un timeout SOFTWARE, che slitta per
+//  definizione, e il canale serve a renderla VISIBILE invece che a nasconderla:
+//  un timeout espresso in tick non e' un timeout espresso in tempo, e sbaglia
+//  di piu' proprio quando il sistema ha piu' eventi da servire.
 //
 //  Quello che il canale MARK_EXEC NON dice e' il PERCHE' della commutazione
 //  (preemption, blocco, cessione, fine turno): lo sa solo il dispatcher, e per
@@ -150,7 +169,9 @@ typedef struct
 #define MARK_BASE     (MMIO_BASE + 0x100)
 #define MARK_CHANNELS   32
 #define MARK_EXEC     0        // riservato: lo scrive la macchina (current)
-#define MARK_KEY    1        // riservato: lo scrive il device
+#define MARK_KEY      1        // riservato: lo scrive il device
+#define MARK_TIMER    2        // riservato: lo scrive il timer (la RICHIESTA)
+#define MARK_RISERVATI 3       // i canali dell'applicazione partono da qui
 
 // ---------------------------------------------------------------------------
 //  IL PORTO DATI: una marca puo' portarsi dietro un VALORE DEL PROGRAMMA.
@@ -506,6 +527,17 @@ typedef struct
   int64_t  handler;      // trap vector (instruction index)
   int64_t  timer_period; // cycles between timer interrupts (0 = disabled)
   uint64_t timer_next;   // cycle count at which the next timer interrupt is due
+
+  // LA RICHIESTA ALZATA, che non e' la consegna. Il timer matura quando
+  // `cycles >= timer_next`, e questo NON dipende da PSW_IE: a interrupt chiusi
+  // la richiesta resta alzata e la trap arriva dopo. Fra i due istanti c'e' la
+  // latenza di consegna, che dal 15/09/2026 si misura sul canale MARK_TIMER --
+  // e che senza questo campo non sarebbe osservabile, perche' la condizione di
+  // consegna metteva PSW_IE per primo e quindi a interrupt chiusi non valutava
+  // niente. Serve a marcare la richiesta UNA VOLTA: senza, si rimarcherebbe a
+  // ogni istruzione per tutto il tempo che la trap aspetta.
+  unsigned char timer_pending;  // 1 = scaduto e non ancora consegnato
+  int64_t  timer_seq;           // quante richieste ha alzato, dalla prima
 
   // Tastiera (MMIO, vedi KBD_STATUS/KBD_DATA). Lo STATO del device e CHI LO
   // RIEMPIE sono separati di proposito: questi tre campi sono cio' che il

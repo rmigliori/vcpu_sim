@@ -39,8 +39,8 @@ MARK_BASE   = 0x100100          # deve coincidere con include/vcpu.h
 MARK_CHANNELS = 32
 MARKD_BASE  = MARK_BASE + MARK_CHANNELS * 4
 MARKN_BASE  = MARKD_BASE + MARK_CHANNELS * 4
-RISERVATI    = 2
-MARK_EXEC_CH = 0                 # il canale dell'esecuzione, come in vcpu.h                 # i canali 0 e 1 li scrive la macchina
+RISERVATI    = 3                 # esecuzione, tasto, timer: li scrive la macchina
+MARK_EXEC_CH = 0                 # il canale dell'esecuzione, come in vcpu.h
 
 
 class Categoria:

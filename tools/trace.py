@@ -36,9 +36,18 @@ Un elenco scritto a mano sarebbe una seconda verita' da tenere allineata ai test
 Valgono invece i nomi che i programmi di questo progetto usano gia':
 
     main            il boot
-    timer_isr       l'ISR del tick
+    isr, <x>_isr    un gestore di interruzione (timer_isr, kbd_isr, o `isr` sola)
     task<X>         il task X   (taskI e' l'idle per convenzione)
     <nome>_task     il task di sistema <nome> (tmgr_task -> "gestore")
+
+La forma senza prefisso non e' un vezzo: dal 14/09/2026 un programma puo' avere
+PIU' SORGENTI su una sola ISR che si chiede `mfcause` chi e' stato (test_mondo,
+timer + tastiera), e li' `timer_isr` direbbe il falso. Finche' la convenzione
+conosceva quel nome solo, quel corpo non veniva riconosciuto e il suo tempo
+restava a carico di chi era stato interrotto -- 15718 cicli, il 15,4% della
+macchina, tutti attribuiti all'idle, che passava da 26,7% a 42,1%. Un respiro
+gonfio di quindici punti e dall'aria giusta: la stessa specie del «boot 100%»
+qui sotto, e per la stessa causa -- un corpo che c'e' e che nessuna regola nomina.
 
 Un corpo si estende dalla sua etichetta a quella del corpo successivo dentro lo
 STESSO modulo: cosi' le etichette interne (loopI, tmgr_drain, isr_manda) non
@@ -299,7 +308,13 @@ def proprietario(etichetta):
     """La convenzione dei nomi -> il proprietario, o None se non e' un corpo."""
     if etichetta == "main":
         return "boot"
-    if etichetta == "timer_isr":
+    # UN CANALE SOLO per tutte le ISR, anche quando i nomi sono piu' di uno: cio'
+    # che si va a leggere sul diagramma e' "qui la CPU non era di nessun task", e
+    # separare le sorgenti la' dentro e' un'altra domanda. Il giorno che le ISR
+    # fossero due davvero e le si volesse distinguere, questa e' la riga da
+    # cambiare -- e in test_mondo non basterebbe, perche' li' l'ISR e' UNA con
+    # due rami, e i rami sono etichette locali: non sono corpi.
+    if re.fullmatch(r"(\w+_)?isr", etichetta):
         return "ISR"
     if etichetta == "taskI":
         return "idle"
@@ -399,11 +414,32 @@ def analizza(vx, tmp, argomenti=(), hz=None):
                  f"device, il suo alimentatore va passato dopo un --:\n"
                  f"    python3 tools/trace.py {vx} -- --kbd \"2000:a,6000:b\"")
     ev, tick, cur = [], [], "boot"
+    # LE CONSEGNE, PER SORGENTE. Il tick e' la consegna del TIMER e continua a
+    # stare per conto suo: e' il righello del diagramma, e le linee verticali
+    # sono quelle. La consegna del TASTO la macchina la stampa dallo stesso
+    # posto e con lo stesso formato -- e fino al 15/09/2026 questo ciclo la
+    # buttava via, perche' filtrava la stringa "timer trap" e basta.
+    #
+    # Serve perche' una consegna da sola non e' una misura: la latenza e' la
+    # distanza fra la RICHIESTA (i canali riservati della registrazione: tasto
+    # su 1, timer su 2) e la consegna. Di ogni sorgente se ne osservava un
+    # estremo solo, e per giunta estremi incrociati -- del timer la consegna,
+    # del tasto l'arrivo -- quindi nessuna delle due si poteva calcolare.
+    consegne = []
     for line in trace.splitlines():
-        if "timer trap" in line:
-            m = re.search(r"cyc=\s*(\d+)", line)
-            if m:
-                tick.append(int(m.group(1)))
+        m = re.search(r"--\s+(timer|kbd) trap", line)
+        if m:
+            c = re.search(r"cyc=\s*(\d+)", line)
+            if c:
+                if m.group(1) == "timer":
+                    tick.append(int(c.group(1)))
+                # GLI STESSI NOMI dei canali riservati della registrazione
+                # ("tasto", "timer"), non quelli della macchina ("kbd"): cosi'
+                # la pagina appaia richiesta e consegna per NOME, senza tenere
+                # da qualche parte una tabella di corrispondenza fra i due
+                # vocabolari -- che sarebbe la seconda verita' di sempre.
+                consegne.append((int(c.group(1)),
+                                 "timer" if m.group(1) == "timer" else "tasto"))
             continue
         m = re.match(r"^\[pc=\s*(\d+)\s+cyc=\s*(\d+)\]", line)
         if not m:
@@ -495,6 +531,9 @@ def analizza(vx, tmp, argomenti=(), hz=None):
     return {
         "hz": hz or marks.frequenza(rec),
         "fine": fine, "tick": tick,
+        # Le consegne di TUTTE le sorgenti, tick compresi: `tick` resta il
+        # righello e queste sono la meta' che si legge accanto alla richiesta.
+        "consegne": consegne,
         "fasce": [[f["b"], f["e"], f["o"], f["l"],
                    sorted(f["r"].items(), key=lambda x: -x[1])[:6]] for f in fasce],
         "own": [[o, l, c] for (o, l), c in own.items()],

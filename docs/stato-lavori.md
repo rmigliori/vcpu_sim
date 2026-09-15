@@ -1,6 +1,11 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **14 settembre 2026** (§3.70 **ogni messaggio viene dal
+> Ultimo aggiornamento: **15 settembre 2026** (§3.71 **la richiesta non è la
+> consegna**: il canale `MARK_TIMER`, le due latenze di consegna che prima non
+> esistevano — 406 cicli nel caso peggiore, ed è *interrupt disable time* — e il
+> drift del tick, che è la loro somma; più il canale ISR che in `test_mondo` non
+> si vedeva, e gonfiava il respiro di quindici punti;
+> §3.70 **ogni messaggio viene dal
 > pool**, anche il risveglio del gestore: il coalescing schiacciava a uno la
 > profondità della coda; §3.69 **tutto insieme**: quattro
 > task, due sorgenti, e il jitter della latenza smette di essere zero — un
@@ -26,7 +31,8 @@
 > legge in verticale, e `ctest` sale a 40; §3.58 **le righe non spariscono
 > più zoomando**, e il difetto era una regola scritta due volte al contrario;
 > §3.57 **la LATENZA DI PREEMPTION
-> esiste**: 169 cicli, 1,69 µs, undici finestre per undici preemption; §3.56
+> esiste** — 169 cicli allora, e **257** dopo che §3.63 e §3.66 hanno scoperto
+> che quel numero era il 61% del vero; §3.56
 > **il CLOCK**: i cicli si
 > leggono anche come tempo, 100 MHz, e le due cose che il tempo a schermo ha
 > fatto saltare fuori — il tick compresso e due numeri stale in §6; il **13/09**:
@@ -3307,6 +3313,96 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.71 LA RICHIESTA NON È LA CONSEGNA (15/09/2026)
+
+Cominciata per fare il respiro, finita da un'altra parte — e il respiro **non è
+stato fatto**, quindi la sua formula resta valida in fondo, con due cose in più
+che oggi si sanno.
+
+**IL CANALE ISR CHE NON C'ERA.** L'utente ha chiesto il diagramma di
+`test_mondo` e ha guardato: *«non si vede il canale ISR, perché?»*. Perché
+`test_mondo` è l'unico programma che chiama la sua ISR `isr:` — gli altri sette
+`timer_isr:` — e `proprietario()` in `trace.py` conosceva quel nome solo. Il nome
+non è uno sbaglio: quell'ISR serve **due sorgenti** e si chiede `mfcause` chi è
+stato, quindi `timer_isr` direbbe il falso. Era la convenzione a essere rimasta
+indietro rispetto al programma del giorno prima.
+
+Il tempo dell'ISR restava attribuito a chi era stato interrotto — 15718 cicli,
+il **15,4%** della macchina, **tutti** sull'idle, che passava da 26,7% a 42,1%.
+Un respiro gonfio di quindici punti e dall'aria giusta, cioè la stessa specie del
+«boot 100%, plausibile e falso» che §3.34 dichiara di aver già pagato due volte.
+Riparato allargando la convenzione (`isr`, `<x>_isr`), che non ha mosso nessuno
+dei dieci programmi del nucleo fattuale — usano tutti `timer_isr` — quindi
+`--check` è rimasto verde e lo si è **verificato** invece di sperarlo.
+
+**42,1% ERA IL NUMERO DELLA FORMULA.** La formula del respiro usa «non dice se
+42% va bene» come esempio di ciò che la tabella non deve giudicare. Quel 42,1%
+era il respiro di `test_mondo` misurato male. Il vero è **26,7%**.
+
+**MARK_TIMER: LA RICHIESTA, CHE NON È LA CONSEGNA.** L'utente: *«per effettuare
+la misura giusta avremmo bisogno di due canali macchina: tasto e timer»*. Il
+tasto c'era già (`MARK_KEY`, canale 1, lo scrive `kbd_pump`); del timer non
+c'era niente, perché la condizione di consegna metteva `PSW_IE` per primo e
+quindi a interrupt chiusi la maturazione non veniva **valutata affatto**.
+
+Di ogni sorgente si osservava un estremo solo, e per giunta estremi **incrociati**
+— del timer la consegna (la riga `timer trap`), del tasto l'arrivo — quindi
+nessuna delle due latenze era calcolabile. La riga `kbd trap` la macchina la
+stampava già e `trace.py` la buttava via all'ingresso.
+
+Fatto: `MARK_TIMER` sul canale 2 (`timer_pending` per marcare una volta sola per
+richiesta, `timer_seq` per dire se una è andata persa), `MARK_RISERVATI 3`, i tre
+guard dei canali riservati diventati una soglia perché l'elenco ripetuto in tre
+punti si dimentica, e `WAIT` spostato dal canale 2 al 9 — **nessun sorgente
+toccato e nessun `EXPECT` mosso**, perché `test_events` dice `MARK_WAIT`, che è
+un `.equ` generato da `marks.conf`. È il motivo per cui quel file è la sorgente.
+
+**LE DUE LATENZE, CHE PRIMA NON ESISTEVANO.** Nel programma pulito il **tasto**
+aspetta 406 e 127 cicli, il **timer** 162 e 72. Nello strumentato il tasto non
+aspetta e il timer aspetta 144 due volte. Il ritardo non è una proprietà della
+sorgente: è **dove cade l'evento**. I 406 cicli sono un context switch di C in
+corso; i 127 una `timeout_arm`. È *interrupt disable time*, il numero che un RTOS
+pubblica per primo, e messo accanto alla latenza di preemption di §3.69 la
+ridimensiona: quei 167 cicli sono l'ultimo tratto di un cammino che comincia
+molto prima.
+
+**IL DRIFT, E CHE COS'È DAVVERO.** `timer_next = cycles + period` riarma dalla
+**consegna**, quindi ogni ritardo si somma e non si recupera: +276 cicli su 24
+battiti in `test_mondo`. Ma non è una proprietà del timer — `test_vectors` fa
+**38 intervalli da 4000 esatti, scarto zero**. Il drift totale **è la somma delle
+latenze di consegna**: il meccanismo c'è sempre, l'entità dipende da dove cadono
+le scadenze rispetto ai confini d'istruzione.
+
+Il ritardo si trasferisce **intero** al gestore: dalla richiesta del timer al
+momento in cui il gestore ha la CPU sono **514 cicli invariabili**, e 658 ai due
+tick ritardati — cioè 514 + 144, esattamente. Nessuno lo assorbe.
+
+**LO SCENARIO DEI 144 CICLI, guardato fino in fondo.** Il tick non è stato
+ritardato dall'ISR del tasto, che aveva finito 859 cicli prima: è stato ritardato
+dal **lavoro che il tasto ha generato** — K si sveglia, inoltra a P, e torna a
+dormire; il suo ri-blocco è un context switch di 880 cicli. Dentro i 144: 24 di
+scansione, 30 di dispatcher, **89 di ripristino contesto**, 1 per la `reti`. La
+trap parte **un ciclo** dopo la chiusura di HALSW, che è il confine che §3.66 ha
+portato da 11 cicli a 1.
+
+Chi misurasse solo «quanto dura l'ISR della tastiera» concluderebbe che la
+tastiera non disturba il timer: risposta giusta alla domanda sbagliata.
+
+**LA PAGINA, e un difetto che il canale nuovo ha stanato.** Le corsie dei
+puntuali erano **una sola**, etichettata `M.puntuali[0].canale` — col solo tasto
+non si vedeva, con due canali avrebbe detto "tasto" su una riga che conteneva i
+tick. Ora una corsia per canale, con la **consegna** disegnata accanto alla
+richiesta (triangolo vuoto) e i cursori che si agganciano anche a lei: è la
+coppia il dato, separati non dicono niente.
+
+**E `test_mondo` NON È NEL CONF.** Non è mai stato aggiunto a
+`scheduler-facts.conf`: è pulito in `configs.txt`, ctest lo conosce, il criterio
+del conf lo ammette senza forzature (è il programma che esercita **di più** una
+decisione dello scheduler), e il 32,3% del gestore che l'handoff cita viene da un
+programma **fuori tabella**. Da decidere, non deciso.
 
 ---
 
@@ -8334,28 +8430,136 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 > apparentemente perfetto. Il criterio non diceva «esulta», diceva «riportalo
 > dicendo cos'è», e cos'è lo dice §6.1: il caso peggiore non è misurato.
 
-**IL PROSSIMO PASSO — la latenza nel CASO PEGGIORE:**
+> **E tolta il 14/09, appena scaduta:** la formula «il prossimo passo — la
+> latenza nel CASO PEGGIORE», che §3.69 ha reso lavoro **fatto** nella stessa
+> sessione. Il suo criterio ha funzionato alla lettera — «un programma con più
+> livelli popolati», «`ctest` 40/40 o più», «jitter != 0» — e in più ha retto una
+> cosa che non prevedeva: che al **primo tentativo** il jitter restasse zero
+> perché i caratteri cadevano sopra un tick. La formula diceva «serve un
+> programma», non «serve un programma che funzioni al primo colpo», e la
+> differenza l'ha pagata la misura, non il criterio.
+
+**IL PROSSIMO PASSO — l'OROLOGIO DI SISTEMA (la discussione del 15/09, aperta):**
 ```
-Leggi docs/stato-lavori.md e riprendi da li', poi §6.1 di
-docs/scheduler-facts.md, che e' la meta' fatta di questo lavoro.
+Leggi docs/stato-lavori.md, §3.71, e riprendi dalla discussione che
+finisce li'. Poi include/vcpu.h (il riquadro dei canali della macchina) e
+il .vinc di timeout, campo TIMEOUT.expiry.
 
-La latenza di preemption si misura dal 14/09: 169 cicli, undici
-finestre, jitter ZERO. Quello zero e' il punto: in test_tmgr la
-preemption ha sempre la stessa forma -- l'idle perde la CPU a favore
-del gestore, e la scansione di sched_preempt trova al PRIMO livello --
-quindi non e' il caso peggiore, e' l'unico caso.
+IL PUNTO A CUI SIAMO ARRIVATI, e non e' ancora una decisione presa:
+un timeout non deve scattare perche' sono arrivati N risvegli, ma
+perche' IL TEMPO ha superato la soglia -- "ho un timeout di 10 msec, il
+conteggio dice che ne sono passati 10,5, quindi scatto". Serve un
+FREE RUNNING COUNTER hw leggibile dal software, il gestore conserva il
+precedente, e la differenza dice quanto e' vecchio il tick.
 
-Serve un programma con PIU' LIVELLI POPOLATI, in cui la vittima stia
-in basso e il vincitore si trovi dopo aver attraversato livelli vuoti.
-Il tag c'e' gia' e non va toccato: manca il programma che lo eserciti.
+LA FORMA C'E' GIA', ed e' la scoperta che rende il lavoro piccolo:
+TIMEOUT.expiry e' GIA' una scadenza ASSOLUTA, e il .vinc dice gia' che i
+confronti si fanno sulla differenza (scadenza - adesso) e mai sui valori.
+Sbagliata e' solo l'UNITA': tick (un contatore di risvegli) invece di
+tempo. Cambia tmo_now -- da variabile incrementata dall'ISR a lw da un
+registro -- e l'unita' di expiry. Il gestore fa gia' il resto.
 
-Attenzione a non trasformarlo in un test di qualcos'altro: l'oggetto
-e' la SCANSIONE di sched_preempt, non la mailbox ne' i timeout.
+COSA SI GUADAGNA, e oggi non esiste:
+  - il gestore puo' consegnare DI QUANTO e' in ritardo insieme alla
+    scadenza: il client saprebbe di aver dormito 10,5 invece di 10;
+  - il riarmo periodico diventa una SCELTA invece di un destino --
+    "scadenza_precedente + P" (isocrono, recupera) invece di "ora + P"
+    (deriva). E' la stessa differenza che la macchina ha nel suo
+    timer_next = cycles + period, portata dove il client la decide.
 
-Alla fine ctest 40/40 (o piu'), la categoria «latenza di preemption»
-con jitter != 0, e §6.1 che riporta min e max dicendo su quale
-programma -- perche' i due programmi misureranno cose diverse, e
-sommarli sarebbe la solita seconda verita'.
+IL VINCOLO CHE DECIDE L'UNITA', e non si cambia dopo: IL WRAP. La regola
+"confronta le differenze" regge solo finche' nessun timeout supera meta'
+periodo del contatore. A 32 bit in CICLI a 100 MHz il wrap e' ogni ~43
+secondi (nessun timeout oltre i 21); in microsecondi ~71 minuti; in
+MILLISECONDI ~49 giorni. L'esempio dell'utente e' in millisecondi e non
+e' un caso.
+
+CIO' CHE NON SERVE, e che era un mio errore: il registro di COMPARE (la
+scadenza nominale). Con uno stamp ASSOLUTO il tempo e' noto e basta;
+il compare servirebbe solo a separare "la trap e' partita tardi" da
+"l'intervallo era lungo", che e' diagnostica, non tempo.
+
+E UN COROLLARIO DA VALUTARE: con lo stamp nel payload il COALESCING
+tornerebbe quasi innocuo anche per il tick -- l'ISR scrive lo stamp prima
+della send, quindi se la send rifiuta lo stamp resta comunque aggiornato
+(e' lo stesso oggetto, ed e' una parola sola, quindi atomica). Il gestore
+leggerebbe l'ora dell'ULTIMO tick, che e' quella che gli serve. Il che
+rimette in discussione cosa abbiano comprato i 245 giri d'idle di §3.70:
+"ora - stamp" e' la profondita' della coda IN TEMPO invece che in numero
+di messaggi. Non tornare indietro di iniziativa propria: e' da discutere.
+
+PRIMA DI TOCCARE, misurare il costo: quante istruzioni in piu' nell'ISR
+(percorso caldissimo) e nel gestore, e quali EXPECT si muovono. Ogni tag
+si e' sempre pagato in giri d'idle, e tmgr_marks si e' gia' mosso otto
+volte.
+
+Alla fine: ctest 43/43 e scheduler_facts --check verde.
+```
+
+**E PRIMA, O DOPO — il RESPIRO nel nucleo fattuale (non fatto il 15/09):**
+```
+Leggi docs/stato-lavori.md e riprendi da li'. Poi §1 di
+docs/generated/scheduler-measures.md, che e' la tabella a cui si
+aggiunge.
+
+DUE COSE CHE IL 15/09 HA CAMBIATO, e che questa formula non sapeva:
+
+1. IL MINIMO, NON LA MEDIA. Su test_mondo il respiro medio e' 26,7% ma
+   il minimo per intervallo di tick e' ZERO -- due tick interi senza CPU
+   libera, e sono quelli in cui ARRIVA UN TASTO, cioe' l'evento per cui
+   il sistema esiste. Una riga che dice 26,7% e tace lo zero non e'
+   neutrale: sceglie la statistica che rassicura. "Ce la fa?" si decide
+   sul minimo. Il minimo per tick si misura dalla stessa traccia e non
+   costa niente in piu'.
+
+2. IL RESPIRO DI test_mondo ERA SBAGLIATO DI QUINDICI PUNTI, e il numero
+   che questa formula cita come esempio -- "non dice se 42% va bene" --
+   era proprio quello (§3.71). Adesso e' 26,7%.
+
+E test_mondo NON E' NEL CONF: da decidere se entra (vedi in fondo a
+§3.71). Se entra, il 32,3% del gestore smette di venire da fuori tabella.
+
+La CPU libera e' il RESPIRO del sistema: e' l'unico numero che dice
+se ce la fa. Oggi non sta scritto da nessuna parte -- si ottiene
+lanciando tools/trace.py su un programma per volta, e infatti nessuno
+lo guarda. Misurato il 14/09 su tutti: da 2,6% (test_vectors) a 49%
+(test_tmgr), un fattore diciannove.
+
+Va nella tabella dei MISURATI, una riga per programma: cicli di idle
+e percentuale. La calcola gia' trace.py, esatta e in cicli -- NON si
+usa il cntI dei test, che conta giri di un ciclo a quattro istruzioni
+e vale solo fra corse dello stesso programma.
+
+Due casi non sono un buco e vanno DETTI, non riempiti: in test_coop e
+test_mutex l'idle non gira mai, ed e' un'asserzione dichiarata nel
+sorgente -- un sistema cooperativo ben formato non lo fa girare. Una
+riga vuota li' e' il dato.
+
+Alla fine: scheduler_facts --check verde, e la tabella che si rompe
+quando una modifica sposta il margine. Non deve giudicare -- non dice
+se 42% va bene -- deve dire CHE E' CAMBIATO, come fa il gradino dei
+giri d'idle in rtos/test/CMakeLists.txt.
+
+E' mezza giornata, ed e' la ragione per cui viene prima dei quattro
+documenti: quelli citeranno numeri da quella tabella, e conviene che
+la tabella si controlli da sola prima che qualcuno la copi.
+```
+
+**E un numero che adesso si vede e prima no, se vuoi tirarci un filo:**
+```
+Il gestore dei timeout si prende il 32,5% della macchina in test_mondo,
+per amministrare UNA casella armata. Piu' dei tre task applicativi
+messi insieme.
+
+Non e' un difetto: e' il costo del disegno -- un task a priorita' 0
+che si sveglia a ogni tick, alloca, scandisce il vettore, libera. Dal
+14/09 alloca due volte per tick invece di una (§3.70), e quel gradino
+e' dichiarato.
+
+Ma nessuno l'aveva mai guardato, perche' il respiro era un dumps in
+fondo a un test. Prima di ottimizzare qualunque cosa, misurare QUANTO
+di quel 32,5% e' la scansione del vettore e quanto sono le due
+allocazioni: il marcatore ce l'ha gia', basta una categoria.
 ```
 
 **Poi: scrivere il primo dei quattro documenti (il didattico,
