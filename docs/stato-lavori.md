@@ -3699,7 +3699,17 @@ Adesso ce l'ha. E ne seguono due cose:
 Due cose che il salto diretto **non** deve saltare, e vanno dette perché sono
 dentro `sched_isr_exit`: la **contabilità** (registrare il contesto uscente nel
 TCB, il commit di `current`). La divisione non è due pezzi ma tre —
-**contabilità + scelta + dispatch** — e si salta solo quello in mezzo.
+**contabilità + scelta + dispatch** — e si salta solo quello in mezzo. L'ingresso
+nuovo è quindi un **`sched_isr_exit_to(tcb)`**: stessa contabilità, nessuna
+scansione.
+
+> **E il test `current == tcb` dentro di lui governa DUE cose, non una.** Non
+> solo «commuto o no»: anche il **`ctx_save`**. Nel caso «è già lui che gira»
+> — cioè lo sforamento — il contesto **non va salvato**, o si scriverebbe
+> nell'`sp` del TCB della time line, che è una **costante** e non un contesto
+> (vedi «la macchina a stati non ha contesto» più sotto). Il test sta prima di
+> tutti e due, e dimenticarlo non rompe niente subito: rompe la volta che
+> un'attività sfora, cioè l'unica che conta.
 
 E l'asimmetria in uscita è corretta: quando la macchina a stati si sospende la
 CPU deve andare a qualcuno, e *quella* è una decisione vera. Il **risveglio** è
@@ -3719,6 +3729,15 @@ mailbox**. La coppia dedicata evita di forzare quella regola.
 persa.** Se il risveglio arriva *prima* della sospensione — l'ISR spara mentre
 la macchina a stati sta ancora lavorando — non ha dove posarsi, e il task dorme
 per sempre. È precisamente il motivo per cui esistono i semafori.
+
+> **QUESTA È L'ASSERZIONE CHE VALE PIÙ DELLE ALTRE, quando si scriverà il
+> test.** Un `signal` che arriva **prima** della `wait` non deve far sospendere
+> il task. Senza quell'asserzione tutto il resto passa verde — il meccanismo
+> funziona benissimo finché i due non si incrociano — e il sistema si pianta il
+> giorno che un'attività sfora, cioè l'unico giorno per cui esiste. E va
+> **verificata fallire** togliendo il contatore, come §3.58 ha fatto verificare
+> le sue tre asserzioni sul codice vecchio: un'asserzione che non è mai stata
+> vista rossa non è ancora una rete.
 
 Quindi la coppia deve avere **memoria**, e il contatore che gliela dà è lo stesso
 numero che serve alla diagnostica:
@@ -10100,7 +10119,38 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 > programma», non «serve un programma che funzioni al primo colpo», e la
 > differenza l'ha pagata la misura, non il criterio.
 
-**IL PROSSIMO PASSO — la SECONDA BASE DEI TEMPI, e `srai` (15/09, deciso):**
+**IL PROSSIMO PASSO — `.interrupt` e `WAIT` (24/09, sbloccati):**
+```
+Leggi docs/stato-lavori.md: il riquadro RIPRENDI DA QUI, poi §3.74 PER
+INTERO. Non fermarti a §0 -- §3.74 smentisce QUATTRO posizioni di §3.73 e
+ribalta la cornice foreground/background, e il riquadro non basta a
+ricostruire il perche'. Le decisioni di politica sono CHIUSE tutte: si
+scrive.
+
+Il test sta a file singolo come test_clock e test_cmp: il soggetto e' il
+MECCANISMO. L'asserzione che vale piu' delle altre e' la SVEGLIA PERSA, e
+va verificata FALLIRE togliendo il contatore.
+
+Alla fine: ctest 46/46 (o piu'), scheduler_facts --check verde, e le 17
+impronte INVARIATE -- e' la prova che .interrupt non emette niente nei
+programmi che non la usano, come .ifdef (§3.43) e .macro (§3.65).
+```
+
+> **Perché è corta, ed è una prova della regola qui sopra.** La prima stesura
+> aveva quaranta righe: cosa scrive `.interrupt`, cosa fa `sched_isr_exit_to`,
+> come è fatta la `WAIT`, perché il campo non si chiama `owner`. **È tutto in
+> §3.74**, quindi era copia — e copiare è il difetto che questo riquadro mette
+> in guardia dal tenere. È stata l'utente a chiedere «basterebbe solo la prima
+> parte?», e la risposta è sì **più il criterio di fine**, che è l'unica cosa
+> che §3.74 non dice e che una formula deve aggiungere.
+>
+> Il taglio ha però stanato **due cose dette il 24/09 e mai scritte**, che
+> stavano solo nella conversazione: il nome `sched_isr_exit_to` col fatto che il
+> suo test governa **anche il `ctx_save`**, e la **sveglia persa come
+> asserzione da verificare rossa**. Sono state messe in §3.74, non nella
+> formula — perché §3.74 si mantiene e la formula no.
+
+**E IN PARALLELO, senza dipendenze — la SECONDA BASE DEI TEMPI, e `srai` (15/09, deciso):**
 ```
 Leggi docs/stato-lavori.md, §3.73 PRIMA di §3.72 -- la terza corregge la
 seconda su quale sia l'unita' giusta. Poi il riquadro dei COMPARATORI in
