@@ -102,7 +102,23 @@
 > **IL DISEGNO DEL FOREGROUND È FATTO, IL CODICE NO (§3.74).** Sessione di sola
 > discussione. Non esistono `.interrupt`, `WAIT`, il dispatch diretto, le
 > attività come procedure, le code a nodi derivati: il kernel è intatto e i test
-> sono i 45 del 15/09. In sintesi, e ogni voce è argomentata in §3.74:
+> sono i 45 del 15/09.
+>
+> **E FIN DOVE SI SCRIVE, perché non è tutto insieme:**
+>
+> ```
+> ORA     .interrupt, sched_isr_exit_to(tcb), WAIT e la sua coppia.
+>         Sono MECCANISMO: si provano a file singolo, come test_clock e
+>         test_cmp, e non chiedono niente all'applicazione
+>
+> DOPO    la macchina a stati, le attivita' come procedure, le code a
+>         nodi derivati. Sono POLITICA e DATI: vogliono una TABELLA di
+>         time line vera -- istanti, budget, i due modi -- che non
+>         esiste e che nessuno ha ancora scritto. Scriverli prima vuol
+>         dire inventarsi l'applicazione per poterli provare
+> ```
+>
+> In sintesi, e ogni voce è argomentata in §3.74:
 >
 > ```
 > NON CI SONO PIU' DUE AMBIENTI: c'e' un ambiente solo con un SUPER TASK.
