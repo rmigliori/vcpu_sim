@@ -7,11 +7,16 @@
 > **dispatch diretto** (`dispatcher(TCB)` trova il suo primo vero cliente, e il
 > task non ha priorità perché non compete); le **attività sono procedure**, non
 > task, quindi zero commutazioni per slot e niente `task_yield`; la macchina a
-> stati **non ha contesto** e si riavvia a freddo, il che fa coincidere ripresa
-> normale e abort da sforamento; una primitiva **`WAIT`** col titolare fisso e un
-> **contatore** (che dice di quanti slot si è in ritardo); il cambio di modo è
+> stati **non ha contesto** e si riavvia a freddo; **l'attività che sfora NON
+> viene fermata** — il dispatcher non commuta e la trap torna dentro di lei,
+> perché abortire distruggerebbe il dato che serve, cioè *di quanto* ha sforato;
+> a rilevarlo è **`pending` letto alla chiamata di `wait`** (0 / 1 / ≥2, una
+> scala graduata) e non l'ISR, che **disarma e segnala e basta**; una primitiva
+> **`WAIT`** col titolare fisso e quel contatore; il cambio di modo è
 > **interno**; i **nodi delle code si derivano dalla time line**, e il pool
-> sparisce dal foreground. Più il lavoro del 15/09, finalmente **committato**
+> sparisce dal foreground. Più due buchi nuovi della macchina — la corsa sul
+> read-modify-write di `CMP_CTRL`, e le **logiche immediate** che mancano come
+> `srai`. E il lavoro del 15/09, finalmente **committato**
 > (`752b2b6`) dopo averlo verificato: 45/45, `--check` verde, 17 impronte su 17
 > identiche a un build pulito di `HEAD`;
 > il **15/09**: §3.73 **la time line, e un'unità
@@ -109,20 +114,39 @@
 >   §3.64). task_yield NON SERVE: serve una casella d'ESITO
 >
 > la macchina a stati NON HA CONTESTO: allo stop lo stack e' vuoto e lo
->   stato sta in .data. Si riavvia A FREDDO, e ripresa normale e abort da
->   sforamento diventano LA STESSA SEQUENZA
+>   stato sta in .data, quindi non si ripristina -- si riavvia A FREDDO
+>
+> L'ATTIVITA' CHE SFORA NON VIENE FERMATA, e §3.73 diceva il contrario. Il
+>   dispatcher vede che current e' gia' la time line, non commuta, e la
+>   trap torna DENTRO l'attivita', che finisce. Abortire distruggerebbe il
+>   dato che serve: DI QUANTO ha sforato
+>
+> LO RILEVA LA MACCHINA A STATI, non l'ISR, leggendo pending ALLA CHIAMATA
+>   di wait:  0 nominale | 1 lo slot ha sforato | >=2 l'esecutivo e'
+>   indietro di N, e gli N-1 in mezzo non sono mai partiti. Due variabili
+>   di stato (precedente, attuale): pending dice QUANTI, precedente CHI
+>
+> L'ISR NON CONOSCE LA TIME LINE: disarma il canale e fa signal, basta.
+>   Riarmare e' politica ed e' della macchina a stati; disarmare e'
+>   meccanismo -- e serve, o la trap si ripresenta al confine d'istruzione
+>   dopo (clock.vinc, "SPARARE NON DISARMA")
 >
 > WAIT: coppia dedicata, titolare LEGATO ALL'INIT, e un CONTATORE -- senza,
->   la sveglia si perde. Il contatore dice di quanti slot sei in ritardo
+>   la sveglia si perde
 >
 > i NODI DELLE CODE SI DERIVANO DALLA TIME LINE, e il pool sparisce dal
 >   foreground: l'esaurimento non e' da gestire, e' la prova che la time
->   line non gira come disegnata
+>   line non gira come disegnata. Al cambio di modo sono CONDIVISI, bound
+>   = il MASSIMO dei due modi (deciso dall'utente)
 > ```
 >
-> **LA DECISIONE APERTA, ed è dell'utente:** al **cambio di modo** i nodi sono
-> **condivisi** fra i due modi (bound = il massimo) o la transizione **drena**?
-> È l'unico punto dove il conto non si legge dalla tabella di un modo solo.
+> **DUE COSE DA FARE CHE NON ASPETTANO LA TIME LINE:** scrivere in
+> `clock.vinc` che ogni scrittura a `CMP_CTRL` **da contesto di task** va fra
+> `irq_save`/`irq_restore` — è un registro per due canali, e una trap che cade
+> dentro un read-modify-write riarma il canale altrui con la scadenza vecchia,
+> cioè la tempesta, ma **intermittente**. E annotare che mancano le **logiche
+> immediate** (`andi`/`ori`/`xori`): abbassare un bit costa cinque istruzioni a
+> `IE=0` invece di una.
 >
 > ---
 >
@@ -3572,7 +3596,7 @@ Il disegno che ne esce è dell'utente. Di seguito è segnato chi ha detto cosa,
 perché §3.5 porta la cicatrice di un'attribuzione sbagliata e quella lezione
 vale più della sintesi.
 
-#### Tre posizioni di §3.73 che questa discussione ha smentito
+#### Quattro posizioni di §3.73 che questa discussione ha smentito
 
 Vanno lette per prime, perché §3.73 le dichiara ancora nella forma vecchia:
 
@@ -3581,6 +3605,7 @@ Vanno lette per prime, perché §3.73 le dichiara ancora nella forma vecchia:
 | «la macchina a stati sta sul percorso di uscita da trap, **non in un task**» | **sbagliato**. Pesava il costo (un context switch per slot, 192 cicli) e ignorava tre cose che valgono di più: l'*interrupt disable time*, l'osservabilità, e il vincolo del contesto d'ISR. Vedi sotto |
 | «il passaggio di modo è un evento di dominio, **non un'attività che finisce**» | **sviante per metà**. Giusto che il grilletto non sia «lo slot è finito»; sbagliato ciò che la frase lascia intendere, cioè che arrivi da **fuori**. Arriva dall'**esito** di un'attività |
 | «"segnala la sua fine" è una cessione volontaria, **cioè `task_yield`**» | **confonde due cose**: *segnalare* che ho finito è un dato, *cedere* la CPU è un atto. Alla time line serve solo il primo |
+| «è durata troppo → **il gestore la FERMA**» | **rovesciato**. L'attività che sfora **non** viene fermata: il dispatcher non commuta e la trap ritorna dentro di lei. Abortire distruggerebbe il dato che serve — di *quanto* ha sforato. Ha una sezione sua qui sotto, con quel che si perde |
 
 #### La macchina a stati è un task, ed è `.interrupt` a svegliarlo
 
@@ -3827,32 +3852,174 @@ costruzione**. L'attività è ritornata, quindi lo stack è vuoto; lo stato è
 `(modo, slot)` più il cambio pendente, che stanno in memoria perché sono lo stato
 di una macchina a stati.
 
-Quindi non si *ripristina*: si **avvia a freddo**. E le due strade diventano la
-stessa sequenza, il che fa sparire l'uscita non locale come meccanismo a parte:
+Quindi non si *ripristina*: si **avvia a freddo** — `r14 := base`,
+`epc := cima del ciclo`, `epsw := IE=1`, `reti`. Non è un salto, perché serve
+`IE=1`, o girerebbe a interruzioni chiuse, che è ciò che si voleva evitare
+facendone un task. È già la forma con cui `standalone/scheduler.vasm` avvia il
+primo task: *«a freddo, registri 0, stack vuoto»*.
 
-```
-sospensione normale   r14 := base,  epc := cima del ciclo,  epsw := IE=1,  reti
-sforamento            r14 := base,  epc := cima del ciclo,  epsw := IE=1,  reti
-```
+Resta da salvare il contesto di chi è stato **interrotto**, cioè il background.
 
-Non è un salto, perché serve `IE=1`: passa da `epc`/`epsw` e `reti`, o girerebbe
-a interruzioni chiuse — che è ciò che si voleva evitare facendone un task. È già
-la forma con cui `standalone/scheduler.vasm` avvia il primo task: *«a freddo,
-registri 0, stack vuoto»*.
-
-Resta da salvare il contesto di chi è stato **interrotto** (il background, o
-l'attività che sforava): quello serve. Salta solo il lato della macchina a stati.
-
-Tre cose che vanno con questa scelta:
+Due cose che vanno con questa scelta:
 
 | | |
 |---|---|
 | **lo stack è scratch** | quello che ci pushi vale DENTRO un passaggio. Tutto ciò che attraversa una sospensione sta in `.data`. Costa zero, perché coincide con ciò che una macchina a stati è comunque |
-| **la cima del ciclo è sempre valida** | dev'essere un punto d'ingresso corretto anche subito dopo aver abortito un'attività a metà. Se lo è, il recupero dallo sforamento non ha bisogno di nessuna logica |
-| **niente risorse bloccanti nel foreground** | un'attività interrotta non rilascia niente. Nessun mutex, nessun buffer tenuto oltre la propria fine |
+| **niente attese bloccanti nel foreground** | non perché un'attività non rilasci (finisce sempre, vedi sotto), ma perché un'attività **bloccata** ferma la time line e nessuno la può sbloccare in tempo |
 
-E un regalo: **l'`epc` che si sta per riscrivere *è* il «dov'era piantata»** del
-record di diagnostica. È in mano nell'istante in cui serve.
+#### L'ATTIVITÀ CHE SFORA NON VIENE FERMATA — e §3.73 diceva il contrario
+
+**Questa è la quarta posizione di §3.73 che cade**, ed è la più grossa: *«è
+durata troppo → il gestore la FERMA segnalando l'ERRORE»*.
+
+La forma è dell'utente, ed è partita dal dispatcher: *«non ha senso dispatchare
+la CPU a chi già la detiene, quindi torna semplicemente dove la time line, per
+errore, è stata interrotta.»* Il dispatcher vede `current == WAIT.task`, non
+commuta, e la trap ritorna **dentro l'attività**, che prosegue e finisce.
+
+**E il criterio che la sostiene è dell'utente, dato molto prima**: se gli
+sforamenti stanno solo in debug, allora conta la diagnosi, non il recupero — e
+lasciarla finire dà **una diagnosi migliore**:
+
+```
+abortendo al confine   sai solo "ha sforato": piu' del budget, di quanto non si sa
+lasciandola finire     pending dice DI QUANTI SLOT -- il numero con cui si
+                       ri-dimensiona il budget
+```
+
+Abortire distruggerebbe proprio il dato che serve a correggere la time line.
+
+> **L'abort era stato progettato, in questa stessa sessione, e poi scartato.**
+> Resta scritto perché è la cosa che verrà re-inventata per prima da chi legge
+> «l'attività ha sforato e nessuno la ferma». Prevedeva: l'ISR riscrive l'`epc`
+> salvato (`mtepc` esiste) e rimette `r14` alla base, così la `reti` atterra
+> sulla cima del ciclo invece che dove stava — un'uscita non locale, con la
+> disciplina «la cima del ciclo dev'essere un ingresso valido anche subito dopo
+> un abort a metà attività». Tutto questo **non serve più**, e con lui se ne va
+> il sotto-caso «l'attività abortita non rilascia i suoi buffer».
+>
+> **Cosa si perde, ed è reale:** un'attività con un ciclo che non termina si
+> porta via tutta la time line, perché il `ret` non arriva mai e la macchina a
+> stati non riprende più. In debug è probabilmente meglio così — un sistema
+> piantato si vede, uno che arranca no. In volo sarebbe il contrario, e se un
+> giorno quel caso conterà, l'abort è ancora il meccanismo giusto: il contatore
+> lo rileva comunque, cambia solo cosa si fa dopo.
+
+#### Come la macchina a stati SI ACCORGE, e il contatore letto all'istante giusto
+
+L'utente: *«quando non ci sono sforamenti il contatore della struttura di wait
+vale 0; se ci sono sforamenti è maggiore di 0.»* È esatto, e **corregge una mia
+affermazione sbagliata della stessa sessione** — avevo detto che il contatore non
+distingue i due casi, perché lo leggevo nell'istante sbagliato:
+
+```
+alla CHIAMATA di wait      nominale 0    sforamento >0      <- DISCRIMINA
+al RITORNO da wait         1 -> 0 in tutti e due i casi     <- non discrimina
+```
+
+La macchina a stati la domanda ce l'ha quando **chiama** la `wait`. E il
+rilevamento così è migliore di quello che avevo proposto io (un test `current ==
+WAIT.task` nell'ISR) per tre ragioni: lo legge **il task** e non l'ISR, quindi
+esce dal percorso a `IE=0`; è **gratis sul serio**, perché `wait` deve comunque
+testare `pending` per decidere se sospendere, e basta restituirlo; e **unifica in
+una scala** i due rilevatori che avevo tenuto separati:
+
+```
+pending == 0     nominale: l'attivita' ha finito nel budget
+pending == 1     lo SLOT ha sforato
+pending >= 2     l'ESECUTIVO e' indietro di N slot, e gli N-1 in mezzo
+                 NON SONO MAI PARTITI -- che e' l'ALTRO errore di §3.73
+```
+
+E la stessa chiamata fa la cosa giusta nei due casi **senza un ramo**: con
+`pending == 0` si sospende e aspetta, con `pending > 0` torna subito e si mette
+al lavoro, che è ciò che deve fare — ha uno slot da far partire adesso.
+
+**Due variabili di stato, e sono dell'utente:** `precedente` e `attuale`. Servono
+perché la macchina a stati riparte a freddo e non ha nessun registro che le dica
+cosa stava girando; e perché `attuale` viene sovrascritto quando lancia lo slot
+nuovo, quindi il colpevole sarebbe già perso. **`pending` dice quanti,
+`precedente` dice chi.**
+
+#### La traccia, che è il terreno solido
+
+Forma dell'utente, e qui il disegno smette di essere un elenco di principi:
+
+```
+1  la macchina a stati parte, esegue lo slot 1, cambia stato,
+   arma il comparatore per l'istante nominale dello SLOT 2
+
+2  lo slot 1 sfora. All'istante dello slot 2:
+     ISR: DISARMA il canale, poi signal     pending 0 -> 1
+     dispatcher: current e' gia' la time line -> non commuta, torna dentro
+     nessuna seconda trap: il canale e' spento
+
+3  l'attivita' dello slot 1 finisce e ritorna
+
+4  la macchina a stati va in wait: pending == 1, NON si sospende, torna subito
+     sa CHE COSA (precedente) e DI QUANTO (1 slot)
+     scrive il record, lancia lo SLOT 2 IMMEDIATAMENTE,
+     e arma il comparatore per l'istante nominale dello SLOT 3
+```
+
+**Il passo 4 chiude una decisione aperta di §3.73** — «dopo uno sforamento si
+riprende dallo slot dopo o si risincronizza al frame?». Si riprende dallo slot
+dopo, e funziona perché **gli istanti sono assoluti**: il comparatore si arma da
+`base_frame + offset[3]`, letto dalla tabella. Lo slot 2 parte tardi con un
+budget **accorciato**, ma lo slot 3 parte al suo istante giusto. **La time line
+non deriva mai: slitta il lavoro, non la tabella.**
+
+**E i due errori che §3.73 voleva distinti escono da soli**, senza aggiungere
+niente:
+
+```
+pending > 0 alla wait          il PRECEDENTE ha sforato          -> colpevole
+lanciato fuori dal suo         questo slot e' PARTITO IN RITARDO -> vittima
+istante nominale               (budget accorciato)
+```
+
+Lo slot 2 può sforare a sua volta, ma il suo record porta il marchio di vittima:
+la cascata resta leggibile invece di diventare rumore.
+
+#### L'ISR non conosce la time line: disarma e segnala
+
+Regola dell'utente, ed è il confine che tiene separata la politica dal
+meccanismo:
+
+```
+RIARMARE    scegliere il prossimo istante   POLITICA -- e' della macchina a stati
+DISARMARE   zittire la sorgente             MECCANISMO -- l'ISR, che non sa nulla
+```
+
+Il disarmo è **necessario**, e lo dice `clock.vinc` stesso nel riquadro «SPARARE
+NON DISARMA»: *«un'ISR che torna senza riprogrammare ritrova la trap subito»*.
+Con la scadenza rimasta nel passato il confronto è ancora vero al confine
+d'istruzione successivo — l'attività non avanzerebbe di un'istruzione e `pending`
+crescerebbe a ogni ciclo. Non è un ritardo, è una tempesta.
+
+> **Scartata: far disarmare il canale da sé sparando.** Renderebbe letterale il
+> «l'ISR fa solo signal» e costerebbe zero istruzioni, ma è una modifica alla
+> macchina, e l'utente ha scelto di non farla. Va detto che la **finestra per
+> farla gratis è ora** — i comparatori non hanno ancora nessun utente — e che
+> dopo muoverà `EXPECT` e impronte.
+
+**E due cose misurate sul costo reale del disarmo, che non è una `sw`:**
+
+| | |
+|---|---|
+| **cinque istruzioni, non una** | le logiche di questa ISA sono **solo registro-registro**: `and`/`or`/`xor`, senza `andi`/`ori`/`xori`. Abbassare un bit è `li` + `lw` + `li` (la maschera vuole un registro) + `and` + `sw`, a `IE=0` |
+| **e il read-modify-write apre una corsa** | `CMP_CTRL` è **un registro per due canali**. Se un task sta armando il canale 1 e la trap del canale 0 cade fra la sua `lw` e la sua `sw`, il task riscrive il valore stale e **riarma il canale 0 con la scadenza vecchia** — cioè la tempesta, ma solo quando le due cose si incrociano. Intermittente, che è la specie peggiore |
+
+Il rimedio è quello che i servizi usano già: ogni scrittura a `CMP_CTRL` **da
+contesto di task** va fra `irq_save`/`irq_restore`. La ISR non ne ha bisogno.
+**E va scritto in `clock.vinc`**, perché è un vincolo del *registro* e non del
+foreground: chi userà il canale 1 per i timeout lunghi lo deve sapere senza
+leggere la macchina a stati.
+
+> **Un secondo buco dell'ISA, stanato dal dominio come i tre di §3.73:**
+> mancano le **logiche immediate**. Non ha l'urgenza di `srai` — qui costa cinque
+> istruzioni, non venti cicli — ma è la seconda sessione di fila in cui un buco
+> dell'ISA si scopre usando la macchina invece che cercandolo.
 
 #### La diagnostica va in coda, e la fa il background
 
@@ -3922,13 +4089,15 @@ parte. Da cui:
   `scheduler_facts.py --check`: chi tocca la time line senza rigenerare se lo
   sente dire dal build invece di scoprirlo in volo.
 
-E la coda dà all'abort una semantica dicibile in una riga: **il lavoro committato
-resta, quello a metà si perde.** Con un corollario che va chiuso — un'attività
-abortita mentre tiene un nodo lo sottrarrebbe alla rotazione, e dopo N guasti il
-sistema degrada in silenzio. La soluzione viene dal disegno stesso: **il buffer è
-dello slot, non dell'attività**. Lo assegna la macchina a stati prima della
-`call` e se lo riprende al ritorno **o all'abort** — e siccome il proprietario
-non cambia mai, un abort non può perdere niente.
+**E il buffer è dello SLOT, non dell'attività**: lo assegna la macchina a stati
+prima della `call` e se lo riprende al ritorno. Il proprietario non cambia mai.
+
+> Questa riga nasce da un corollario dell'abort — un'attività fermata a metà
+> avrebbe sottratto il suo nodo alla rotazione, e dopo N guasti il sistema
+> sarebbe degradato in silenzio. **Con la decisione di non fermare, quel caso
+> non esiste**: l'attività finisce sempre e il nodo torna sempre. La proprietà
+> allo slot resta comunque, e non per inerzia: è ciò che rende il **reclaim al
+> cambio di modo** una riga invece di una scansione.
 
 > Simmetria che torna: il foreground/background voleva **due basi dei tempi**
 > (§3.73), e vuole anche **due discipline di memoria** — statica e analizzata
@@ -3941,18 +4110,38 @@ non cambia mai, un abort non può perdere niente.
 diretto, le attività come procedure, le code a nodi derivati. Il kernel è intatto
 e i 45 test sono quelli del 15/09.
 
-**E una decisione è rimasta aperta, ed è dell'utente:** al **cambio di modo**, i
-nodi delle code sono **condivisi fra i due modi** (e il bound è il massimo dei
-due) oppure la transizione **drena**? È l'unico punto dove il conto non si legge
-dalla tabella di un modo solo — un dato prodotto in acquisizione e consumato in
-tracking attraversa il confine.
+**DECISO dall'utente: al cambio di modo i nodi sono CONDIVISI, e il bound è il
+MASSIMO dei due modi.** «Drenare» sarebbe peggio proprio per la ragione per cui
+esiste il disegno: farebbe dipendere **l'istante della transizione dal contenuto
+delle code**, cioè da un dato, in un modello a istante fisso. Il massimo resta
+derivabile dalle due tabelle, quindi il criterio regge.
 
-Restano anche le due di §3.73, ma **una si è quasi chiusa da sé**: se la
-diagnostica è differita al background la cascata non si propaga, quindi
-«riprendi dallo slot successivo» diventa sicuro e non serve risincronizzare al
-frame per tenere leggibile il registro. L'altra — back-to-back o slack — ha
-cambiato ragione ma non è decisa: lo slack serve a garantire che il consumatore
-della coda giri.
+> **Due rifiniture che sono MIE e NON confermate dall'utente**, e vanno lette
+> come proposte:
+>
+> - **il massimo non copre tutti i percorsi.** Vale per quelli **intra-modo**
+>   (produttore e consumatore nello stesso modo). Il percorso che **attraversa**
+>   — l'handoff acquisizione → tracking — è vivo per costruzione proprio
+>   nell'istante del cambio, quindi avrebbe un bound **proprio**, fuori dal
+>   massimo;
+> - **e il massimo chiede un reclaim.** I nodi che l'acquisizione lascia in volo
+>   sui suoi percorsi intra-modo non hanno più un consumatore in tracking:
+>   nessuno li rimette in rotazione, e dopo il primo cambio di modo la rotazione
+>   è più corta — in silenzio. Il reclaim è anche semanticamente giusto, perché
+>   quei buffer **non vogliono dire niente nel modo nuovo**: non si drena e non
+>   si porta dietro, si ricicla e si butta. Ed è una riga, perché il buffer è
+>   dello **slot** e il proprietario non è mai cambiato.
+
+**Delle due decisioni di §3.73, una è CHIUSA e una no.** Chiusa: dopo uno
+sforamento si **riprende dallo slot successivo**, ed è la traccia dell'utente qui
+sopra a chiuderla — non serve risincronizzare al frame, perché gli istanti sono
+assoluti e la tabella non deriva. Aperta: **back-to-back o slack dichiarato**, e
+ha cambiato ragione — lo slack non serve più come budget del gestore, serve a
+garantire che il **consumatore della coda di diagnostica giri**.
+
+**E resta da scrivere in `clock.vinc`** il vincolo sul read-modify-write di
+`CMP_CTRL` (scritture da task fra `irq_save`/`irq_restore`): è un vincolo del
+registro, vale già adesso, e non aspetta la time line.
 
 **E `srai` e la seconda base dei tempi non sono state toccate**: restano il
 prossimo passo di macchina, e non dipendono da niente di tutto questo.
