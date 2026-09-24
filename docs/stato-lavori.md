@@ -14,9 +14,17 @@
 > scala graduata) e non l'ISR, che **disarma e segnala e basta**; una primitiva
 > **`WAIT`** col titolare fisso e quel contatore; il cambio di modo è
 > **interno**; i **nodi delle code si derivano dalla time line**, e il pool
-> sparisce dal foreground. Più due buchi nuovi della macchina — la corsa sul
+> sparisce dal foreground. E due cose che rovesciano la cornice: **non ci sono
+> più due ambienti** — uno solo, con un **super task**, ed è l'utente che
+> corregge una cornice sua — e **back-to-back lo decide la fisica**, perché il
+> round trip di un altimetro sono ~530.000 cicli in cui la CPU aspetta la luce,
+> quindi il tempo del background non si dichiara: c'è già. Da cui anche che il
+> **margine aggregato non è un indicatore** (§3.73 diceva di sì) e che il frame
+> ha un **minimo fisico**. Più due buchi nuovi della macchina — la corsa sul
 > read-modify-write di `CMP_CTRL`, e le **logiche immediate** che mancano come
-> `srai`. E il lavoro del 15/09, finalmente **committato**
+> `srai` — e una strada indicata e non presa, il **mascheramento per livello**
+> (no all'NMI, no alla test-and-set, e §3.74 dice perché). E il lavoro del
+> 15/09, finalmente **committato**
 > (`752b2b6`) dopo averlo verificato: 45/45, `--check` verde, 17 impronte su 17
 > identiche a un build pulito di `HEAD`;
 > il **15/09**: §3.73 **la time line, e un'unità
@@ -97,6 +105,13 @@
 > sono i 45 del 15/09. In sintesi, e ogni voce è argomentata in §3.74:
 >
 > ```
+> NON CI SONO PIU' DUE AMBIENTI: c'e' un ambiente solo con un SUPER TASK.
+>   Due REGIMI restano (il foreground ha istanti fissi, il background no),
+>   ma non sono piu' due mondi -- e a permetterlo e' il dispatch diretto,
+>   che da' l'istante esatto SENZA uscire dal task model. E' l'utente che
+>   corregge una cornice sua di §3.73. "Super" e' il percorso di
+>   ATTIVAZIONE, non un rango: priorita' non ne ha
+>
 > la macchina a stati della time line e' un TASK, non codice sul percorso
 >   di uscita da trap -- per l'interrupt disable time (i 406 cicli di §3.71
 >   sono la latenza di TUTTI gli altri interrupt), per l'osservabilita'
@@ -138,7 +153,24 @@
 >   foreground: l'esaurimento non e' da gestire, e' la prova che la time
 >   line non gira come disegnata. Al cambio di modo sono CONDIVISI, bound
 >   = il MASSIMO dei due modi (deciso dall'utente)
+>
+> SLOT BACK-TO-BACK, e a deciderlo e' la FISICA: il round trip di un
+>   altimetro a 800 km e' ~5,3 ms, cioe' ~530.000 cicli in cui la CPU
+>   aspetta la luce (l'INTERA corsa di test_mondo ne dura 102.055). Il
+>   tempo per il background non si dichiara: c'e' gia'. Ne seguono due
+>   cose che §3.73 non sapeva -- il FRAME HA UN MINIMO FISICO (parte
+>   della tabella e' misurata dall'orbita, non scelta), e il MARGINE
+>   AGGREGATO QUI NON E' UN INDICATORE: sta al 90% ed e' dominato da una
+>   costante fisica. Conta il margine PER SLOT DI CALCOLO
 > ```
+>
+> **LA STRADA INDICATA E NON PRESA: il mascheramento per LIVELLO** (il `BASEPRI`
+> del Cortex-M). È l'unica cosa che ancora attacca i **406 cicli** di *interrupt
+> disable time*, cioè il limite dichiarato del modello a istante fisso. **L'NMI
+> dello Z80 no**: questa macchina non ha nessuna istruzione atomica e `IE = 0` è
+> l'unica mutua esclusione del kernel (41 `irq_save`) — un NMI le scavalca tutte.
+> **E la test-and-set nemmeno**: su un monoprocessore `IE = 0` fa già il suo
+> lavoro, e uno spinlock qui sarebbe un deadlock. Argomentato in §3.74.
 >
 > **DUE COSE DA FARE CHE NON ASPETTANO LA TIME LINE:** scrivere in
 > `clock.vinc` che ogni scrittura a `CMP_CTRL` **da contesto di task** va fra
@@ -4052,14 +4084,12 @@ Due punti che il differimento impone:
 > cosa che non gira mai per costruzione. Con un task la profondità della coda si
 > legge e il marcatore la misura.
 >
-> **E c'è un catch che resta:** l'idle gira quando avanza CPU, e il momento in
-> cui si producono record è quello in cui le attività *non* cedono presto. Con
-> slot back-to-back la coda si riempie e non si svuota proprio nello scenario per
-> cui esiste. È la ragione per cui lo **slack dichiarato** non muore: non serve
-> più come budget del gestore (l'accodamento costa pochi cicli), serve a
-> **garantire che il consumatore giri**. Ed è una ragione migliore, perché non è
-> un caso speciale per gli errori: è il pavimento del background, che oggi non
-> esiste — il respiro minimo di `test_mondo` è **zero**.
+> **Un'obiezione che avevo fatto pesante, e che RITIRO** (vedi «il tempo morto
+> non si dichiara» più sotto): sostenevo che con slot back-to-back la coda non
+> drena mai, perché il consumatore gira solo se le attività cedono presto — cioè
+> mai proprio quando si producono record. È un'obiezione valida per una time line
+> **satura di calcolo**, e un altimetro non lo è: aspetta la luce. Il background
+> ha centinaia di migliaia di cicli per costruzione, in ogni ciclo di misura.
 
 #### I nodi si DERIVANO dalla time line, e il pool sparisce dal foreground
 
@@ -4104,6 +4134,183 @@ prima della `call` e se lo riprende al ritorno. Il proprietario non cambia mai.
 > davanti, dinamica e a pool dietro. I telecomandi arrivano quando arrivano: lì
 > non c'è nessuna tabella da cui derivare un bound.
 
+#### IL TEMPO MORTO NON SI DICHIARA: ce lo mette la fisica
+
+Questa è la parte in cui il dominio ha **chiuso una decisione aperta da §3.73**,
+e ha smentito due cose che avevo proposto io nella stessa sessione.
+
+Avevo proposto uno **«slot vuoto»** in tabella come modo di garantire un
+pavimento al background — l'alternativa allo slack dichiarato. L'utente:
+*«una macchina del genere ha bisogno di dati che arrivano da uno sweep in
+trasmissione e un beam in ricezione, questo è tutto tempo che il background ha a
+disposizione.»*
+
+```
+round trip @ ~800 km      2 x 800 km / 3e8 m/s   =  ~5,3 ms
+a 100 MHz                                           ~530.000 CICLI
+per confronto: l'INTERA corsa di test_mondo         102.055 cicli
+```
+
+Durante lo sweep e la ricezione il lavoro lo fanno DMA e FPGA: la CPU vede il
+blocco, non il campione. Il buco **non si crea, c'è già**, ed è la voce dominante
+della time line.
+
+**E non lo si chiude interleavando i chirp.** L'utente: *«potremmo anche
+lavorare con chirp up and down ma comunque avresti un periodo di tempo di
+idle»* — e l'aritmetica gli dà ragione. Con elaborazione per eco `P ≈ 500 µs`,
+che è generoso: un chirp alla volta occupa `P/5,3ms ≈ 9%`, up+down interleaved
+`≈ 19%`; per saturare servirebbero **~10 chirp in volo**. Ne hai due. E la
+coppia up/down si prende comunque per un'altra ragione — **disaccoppia distanza
+e Doppler** (`f_r + f_d` e `f_r − f_d`) — quindi il tempo di CPU non cambia in
+nessuno dei due versi.
+
+> **E perché non si sovrapponevano affatto, nel loro sistema:** senza diversità
+> in frequenza (o in pendenza del chirp) i due echi tornano indistinguibili, ed è
+> **ambiguità in distanza** — su un altimetro, dove la distanza *è* la misura,
+> è il difetto che non puoi permetterti.
+
+**DA CUI: back-to-back è DECISO**, e la seconda decisione aperta di §3.73 si
+chiude. Non serve lo slack dichiarato e non serve il mio slot vuoto: la macchina
+a stati va in `wait` **appena l'attività ritorna**, quindi il background prende
+automaticamente la differenza fra la durata dell'attività e l'intervallo dello
+slot — mezzo milione di cicli. Il pavimento del background è un numero
+**derivato** dalla time line, come il conto dei nodi. Non si dichiara: si
+calcola, e `--check` lo sorveglia.
+
+E il disegno ne esce con una proprietà che vale la pena avere: **è insensibile
+allo schema dei chirp.** Uno, due interleaved, o un sequenziatore hardware — il
+meccanismo non cambia.
+
+**Due conseguenze che non erano scritte da nessuna parte:**
+
+| | |
+|---|---|
+| **il frame ha un minimo fisico** | round trip più elaborazione. Gli `offset[]` non sono tutti parametri di progetto: **una parte della time line è misurata dall'orbita**. È il caso più forte per cui la tabella va generata e sorvegliata invece che scritta a mano — metà dei suoi numeri viene da fuori |
+| **il MARGINE AGGREGATO qui non è un indicatore**, e §3.73 dice il contrario | §3.73: *«la CPU libera è il margine aggregato della time line, ed è il numero che conta»*. In un altimetro sta al 90% ed è dominato da una **costante fisica**: resterebbe al 90% anche con uno slot che sfora a ogni frame. Il numero che conta è il **margine per slot di calcolo**. È lo stesso difetto che §3.71 aveva già trovato — media 26,7%, minimo **zero** |
+
+> **Una biforcazione nominata e non presa: chi possiede il ritmo.** L'utente ha
+> menzionato un *«motore che spara i chirp»*, cioè un sequenziatore hardware.
+> Cambierebbe l'architettura alla radice:
+>
+> ```
+> la CPU possiede il ritmo    il comparatore e' la sorgente, la time line comanda
+>                             -> e' il disegno fatto qui
+> il MOTORE possiede il ritmo la CPU REAGISCE a eventi di completamento, e il
+>                             comparatore non e' piu' la sorgente degli istanti
+> ```
+>
+> Nel loro sistema era il primo (§3.73: *«tutto il meccanismo era basato su una
+> ISR da un msec»*), quindi il disegno è coerente con il sistema da cui parte.
+> Ma adesso la scelta è **scritta** invece che assunta.
+
+#### DUE REGIMI, UN AMBIENTE SOLO: il super task
+
+Osservazione dell'utente, ed è una correzione a una cornice che **aveva portato
+lui** in §3.73 — quindi va segnata come tale: *«un errore concettuale che ho
+fatto io quando ero giovane nel mio scheduler: avevo pensato un'architettura con
+foreground completamente disaccoppiato dal background. Noi abbiamo deviato su una
+cosa molto più semplice e migliore: un task che è attivato a prescindere, il che
+ci porta a non avere due ambienti diversi ma un unico ambiente con un super
+task.»*
+
+La formulazione esatta è **due regimi, un ambiente solo**: il foreground ha
+istanti fissi e il background no — quello resta — ma smettono di essere due
+mondi.
+
+**E ciò che ha permesso il collasso è il dispatch diretto.** Nelle architetture
+vecchie il foreground *doveva* stare fuori dal task model per una ragione
+tecnica: un task normale prende la CPU quando lo scheduler ci arriva, e un
+istante fisso non sopporta «quando ci arriva». Con `dispatcher(TCB)` invocato
+direttamente il super task prende la CPU **all'istante** pur restando un task, e
+la ragione della separazione non esiste più.
+
+```
+due ambienti   il foreground non ha TCB, non ha corsia in trace.py, non ha
+               finestre del marcatore, e non puo' chiamare i servizi del
+               kernel. E' §3.64: 3088 cicli invisibili
+un ambiente    il super task E' un task: si misura con gli strumenti che ci
+               sono, e il confine dove vivevano i bug -- "questa chiamata e'
+               sicura da che lato?" -- non c'e'
+```
+
+**Due cose da non perdere nell'unificazione:**
+
+- **il super task non è «un task come gli altri»**, e la disciplina va
+  dichiarata o l'ambiente unico invita a trattarlo come tale: niente attese
+  bloccanti, niente mutex, stack scratch, nessun contesto. **L'ambiente si
+  unifica, le regole no**;
+- **il nome inganna.** «Super» fa pensare a un **rango**, e la decisione è
+  l'opposto: non ha priorità, `PRIO_MAX` resta al gestore dei timeout. A
+  distinguerlo è il **percorso di attivazione**, non una posizione in classifica.
+
+> **Una mia affermazione sbagliata, corretta dall'utente.** Avevo scritto che
+> l'unificazione crea un accoppiamento «prima strutturalmente impossibile»: il
+> background che tiene `IE=0` troppo a lungo e ritarda l'istante fisso.
+> L'utente: *«su un monoprocessore anche la mia architettura aveva lo stesso
+> problema.»* Esatto — la separazione in due ambienti era di **organizzazione
+> del codice**, non di latenza: il background girava sulla stessa CPU con `IE`
+> in mano e il foreground lo aspettava uguale. Quella garanzia strutturale non è
+> mai esistita, il che toglie all'architettura vecchia l'ultima cosa che le
+> restava.
+
+#### I LIVELLI DI INTERRUZIONE — e perché non l'NMI, e perché non la test-and-set
+
+Resta però il problema vero, che l'architettura vecchia non risolveva e questa
+nemmeno: **l'istante fisso è esatto quanto l'*interrupt disable time***, e §3.71
+l'ha misurato fino a **406 cicli**. §3.73 lo dichiara come il limite del modello.
+
+Proposta dell'utente: il **non-maskable interrupt** dello Z80.
+
+Punta al bersaglio giusto, ma qui non si può prendere così, e il fatto che lo
+decide è misurato: **questa macchina non ha nessuna istruzione atomica** — niente
+test-and-set, niente compare-and-swap — e `IE = 0` è l'**unico** meccanismo di
+mutua esclusione del kernel, con `irq_save` che compare **41 volte** nei
+sorgenti. Un NMI le scavalca tutte e quarantuno, e in particolare scavalca le due
+protezioni decise poche ore prima: l'`irq_save` attorno al RMW di `CMP_CTRL`, e
+qualunque RMW su `pending`.
+
+Quindi l'NMI non è un'aggiunta, è un **cambio di precondizioni**: per renderlo
+sano servirebbero `CMP_CTRL` con **set/clear separati** (il disarmo diventa una
+store) e un **contatore delle sparate in hardware** (il gestore non scrive più
+`pending`). Fatte quelle, il gestore è due store e non condivide più niente — la
+disciplina NMI classica soddisfatta davvero. Senza quelle, è una trappola.
+
+**LA STRADA INDICATA, e non presa: il mascheramento per LIVELLO** — il `BASEPRI`
+del Cortex-M, i livelli di RISC-V. È ciò che l'NMI dello Z80 è diventato: due
+livelli erano quel che stava nel silicio del '76, non il numero giusto.
+
+```
+il comparatore della time line sta SOPRA il livello che irq_save maschera
+  -> nessuna sezione critica del kernel lo ritarda piu'
+le due o tre sequenze che toccano lo stato della time line alzano la
+maschera fino a lui
+  -> restano escludibili, e sono CORTE
+```
+
+La finestra passa da «ogni sezione critica del kernel, fino a 406 cicli» a «una
+manciata di istruzioni, e sono contate». E **non chiede istruzioni atomiche**.
+
+> **E la test-and-set NON entra — l'assenza spiegata insegna più della
+> presenza.** La TAS dà esclusione fra contesti che non possono mascherarsi a
+> vicenda, cioè fra **processori**. Su un monoprocessore `IE = 0` te la dà già, e
+> più a buon mercato. Con i livelli resta il solo buco «N non esclude N+1», che
+> si chiude alzando la maschera per tre istruzioni — e il conto è impietoso:
+> **~5 cicli di mascheramento contro un cammino di consegna di ~270** (§3.63 +
+> §3.66). I livelli danno il 98%; la TAS comprerebbe 50 ns di jitter.
+>
+> **E il suo uso classico qui sarebbe attivamente sbagliato:** una TAS serve a
+> costruire uno *spinlock*, e uno spinlock su monoprocessore è un deadlock col
+> timer acceso — chi gira in attesa impedisce al possessore di girare e quindi di
+> rilasciare. È la ragione per cui questo kernel **blocca** invece di girare a
+> vuoto, e per cui i mutex hanno il ceiling.
+>
+> **E non appartiene alla lista degli altri buchi dell'ISA:**
+>
+> | | |
+> |---|---|
+> | `srai`, le logiche immediate | buchi **aritmetici**, costo **misurato**: 20 cicli invece di 1, cinque istruzioni invece di una. Si pagano a ogni esecuzione |
+> | la test-and-set | un buco di **concorrenza**, costo ~0 su questa macchina. Si pagherebbe solo all'arrivo di un secondo processore |
+
 #### Cosa NON è stato fatto, e cosa resta aperto
 
 **Nessun codice.** Non esistono `.interrupt`, `WAIT`, `wait_init`, il dispatch
@@ -4132,12 +4339,19 @@ derivabile dalle due tabelle, quindi il criterio regge.
 >   si porta dietro, si ricicla e si butta. Ed è una riga, perché il buffer è
 >   dello **slot** e il proprietario non è mai cambiato.
 
-**Delle due decisioni di §3.73, una è CHIUSA e una no.** Chiusa: dopo uno
-sforamento si **riprende dallo slot successivo**, ed è la traccia dell'utente qui
-sopra a chiuderla — non serve risincronizzare al frame, perché gli istanti sono
-assoluti e la tabella non deriva. Aperta: **back-to-back o slack dichiarato**, e
-ha cambiato ragione — lo slack non serve più come budget del gestore, serve a
-garantire che il **consumatore della coda di diagnostica giri**.
+**LE DUE DECISIONI DI §3.73 SONO CHIUSE TUTTE E DUE.**
+
+- dopo uno sforamento si **riprende dallo slot successivo**, e a chiuderla è la
+  traccia dell'utente: non serve risincronizzare al frame, perché gli istanti
+  sono assoluti e la tabella non deriva;
+- **back-to-back**, e a chiuderla è il dominio: il tempo morto del round trip
+  rende superfluo sia lo slack dichiarato sia il mio slot vuoto.
+
+**Resta indicata e non presa** la modifica alla macchina per il mascheramento
+**per livello**, che è l'unica cosa che ancora attacca i 406 cicli di *interrupt
+disable time* — cioè il limite dichiarato del modello a istante fisso. Non
+blocca niente di quanto sopra: il disegno funziona anche senza, solo con un
+istante meno esatto.
 
 **E resta da scrivere in `clock.vinc`** il vincolo sul read-modify-write di
 `CMP_CTRL` (scritture da task fra `irq_save`/`irq_restore`): è un vincolo del
@@ -9897,10 +10111,11 @@ E' ANCORA LAVORO DI MACCHINA, e il kernel non si tocca. Non dipende da
 niente di §3.74, che e' sola discussione: §3.74 lo dice esplicitamente.
 
 La macchina a stati della time line viene dopo, ed e' DISEGNATA ma non
-scritta (§3.74). Prima di lei vanno chiuse le decisioni di POLITICA che
-stanno nel riquadro di §0 -- i nodi al cambio di modo, e se gli slot
-hanno slack: sono dell'utente, e cambiano la forma degli stati. NON
-scrivere .interrupt ne' WAIT prima che siano chiuse.
+scritta (§3.74). Le decisioni di politica che la bloccavano sono CHIUSE
+tutte -- back-to-back, ripresa dallo slot successivo, nodi condivisi col
+bound al massimo dei due modi -- quindi .interrupt e WAIT si possono
+scrivere. Leggi §3.74 per intero prima, perche' smentisce QUATTRO
+posizioni di §3.73 e la cornice foreground/background di §0.
 
 COSA MANCA, ed e' poco:
   - il free running counter in CICLI, che e' la base del foreground. Non
