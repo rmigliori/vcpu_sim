@@ -1,6 +1,20 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **15 settembre 2026** (§3.73 **la time line, e un'unità
+> Ultimo aggiornamento: **24 settembre 2026** (§3.74 **la macchina a stati è un
+> task, e `.interrupt` torna**: sessione di sola discussione — nessun codice — che
+> **smentisce tre posizioni di §3.73** e produce il disegno del foreground. La
+> macchina a stati della time line è un **task** svegliato da `.interrupt` con
+> **dispatch diretto** (`dispatcher(TCB)` trova il suo primo vero cliente, e il
+> task non ha priorità perché non compete); le **attività sono procedure**, non
+> task, quindi zero commutazioni per slot e niente `task_yield`; la macchina a
+> stati **non ha contesto** e si riavvia a freddo, il che fa coincidere ripresa
+> normale e abort da sforamento; una primitiva **`WAIT`** col titolare fisso e un
+> **contatore** (che dice di quanti slot si è in ritardo); il cambio di modo è
+> **interno**; i **nodi delle code si derivano dalla time line**, e il pool
+> sparisce dal foreground. Più il lavoro del 15/09, finalmente **committato**
+> (`752b2b6`) dopo averlo verificato: 45/45, `--check` verde, 17 impronte su 17
+> identiche a un build pulito di `HEAD`;
+> il **15/09**: §3.73 **la time line, e un'unità
 > scelta troppo presto**: i due comparatori sono **fatti** (45/45, impronte
 > ferme), il bersaglio è un cyclic executive **multi-modo** con budget per
 > attività, e la discussione ha stabilito che le basi dei tempi sono **due** —
@@ -66,9 +80,51 @@
 
 ## 0. STATO ATTUALE — DA DOVE SI RIPRENDE
 
-> ### ▶ RIPRENDI DA QUI (15/09/2026 o dopo)
+> ### ▶ RIPRENDI DA QUI (24/09/2026 o dopo)
 >
-> **LEGGI §3.73 PRIMA DI §3.72**, perché §3.73 corregge §3.72 in un punto.
+> **ORDINE DI LETTURA: §3.74, poi §3.73, poi §3.72.** Ognuna corregge la
+> precedente in qualche punto, e leggerle al contrario fa ripartire da posizioni
+> ritirate.
+>
+> **IL DISEGNO DEL FOREGROUND È FATTO, IL CODICE NO (§3.74).** Sessione di sola
+> discussione. Non esistono `.interrupt`, `WAIT`, il dispatch diretto, le
+> attività come procedure, le code a nodi derivati: il kernel è intatto e i test
+> sono i 45 del 15/09. In sintesi, e ogni voce è argomentata in §3.74:
+>
+> ```
+> la macchina a stati della time line e' un TASK, non codice sul percorso
+>   di uscita da trap -- per l'interrupt disable time (i 406 cicli di §3.71
+>   sono la latenza di TUTTI gli altri interrupt), per l'osservabilita'
+>   (§3.64: 3088 cicli invisibili sotto sched_isr_exit), e perche' in un
+>   task la coda di diagnostica e il pool sono chiamate normali
+>
+> lo sveglia .interrupt con DISPATCH DIRETTO: dispatcher(TCB) esiste da
+>   §3.28 e non aveva mai avuto un chiamante che ne avesse bisogno. Il task
+>   NON HA PRIORITA' perche' non compete -- PRIO_MAX resta al gestore
+>   timeout -- e il costo dell'attivazione diventa COSTANTE (salta la
+>   scansione: §3.69, 7 cicli per livello). Cio' che conta e' il JITTER
+>
+> le ATTIVITA' SONO PROCEDURE, non task: una call e una ret invece di un
+>   dispatch e uno yield. Zero commutazioni per slot (192 cicli l'una,
+>   §3.64). task_yield NON SERVE: serve una casella d'ESITO
+>
+> la macchina a stati NON HA CONTESTO: allo stop lo stack e' vuoto e lo
+>   stato sta in .data. Si riavvia A FREDDO, e ripresa normale e abort da
+>   sforamento diventano LA STESSA SEQUENZA
+>
+> WAIT: coppia dedicata, titolare LEGATO ALL'INIT, e un CONTATORE -- senza,
+>   la sveglia si perde. Il contatore dice di quanti slot sei in ritardo
+>
+> i NODI DELLE CODE SI DERIVANO DALLA TIME LINE, e il pool sparisce dal
+>   foreground: l'esaurimento non e' da gestire, e' la prova che la time
+>   line non gira come disegnata
+> ```
+>
+> **LA DECISIONE APERTA, ed è dell'utente:** al **cambio di modo** i nodi sono
+> **condivisi** fra i due modi (bound = il massimo) o la transizione **drena**?
+> È l'unico punto dove il conto non si legge dalla tabella di un modo solo.
+>
+> ---
 >
 > **L'OROLOGIO E I DUE COMPARATORI ESISTONO (§3.72, §3.73).** `CLOCK_MS` free
 > running in ms; `CMP_CTRL`/`CMP0`/`CMP1` con `(adesso - scadenza) >= 0` in
@@ -150,15 +206,21 @@
 >
 > ---
 >
-> **DUE DECISIONI APERTE, e sono POLITICA quindi dell'utente:**
+> **DUE DECISIONI APERTE, e sono POLITICA quindi dell'utente** — ma §3.74 le ha
+> mosse entrambe, quindi vanno lette nella forma nuova:
 >
-> - dopo uno sforamento la time line riprende dallo slot dopo o **risincronizza
->   al frame**? E «sforato» e «mai partito in tempo» vanno segnalati come errori
->   **diversi**, o in debug la cascata rende illeggibile chi è il colpevole;
-> - gli slot sono **back-to-back** o con **slack dichiarato**? Decide se le
->   scadenze vive per slot sono una o due — con slot adiacenti «ha sforato» e
->   «tocca al prossimo» sono lo stesso istante, e a distinguerli è **chi stava
->   girando**.
+> - **quasi chiusa.** Dopo uno sforamento, riprendere dallo slot dopo o
+>   risincronizzare al frame? Se la diagnostica è **differita al background**
+>   (§3.74) la cascata non si propaga, quindi «riprendi dallo slot successivo»
+>   diventa sicuro e non serve risincronizzare per tenere leggibile il registro.
+>   Resta da confermare, e resta vero che «sforato» e «mai partito in tempo»
+>   vanno segnalati come errori **diversi**;
+> - **cambiata di ragione, non decisa.** Slot **back-to-back** o con **slack
+>   dichiarato**? Non serve più come budget del gestore d'errore — accodare un
+>   record costa pochi cicli — ma serve a **garantire che il consumatore della
+>   coda giri**: con slot adiacenti l'idle gira solo se le attività cedono
+>   presto, cioè mai proprio quando si producono record. È il pavimento del
+>   background, che oggi non esiste: il respiro minimo di `test_mondo` è **zero**.
 >
 > ---
 >
@@ -3495,6 +3557,405 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.74 LA MACCHINA A STATI È UN TASK, E `.interrupt` TORNA (24/09/2026)
+
+**Sessione di sola discussione: non è stata scritta una riga di codice.** È
+stata scritta questa sezione, ed è stato committato il lavoro del 15/09, che era
+rimasto scoperto per nove giorni (`752b2b6`, verificato prima di committare:
+`ctest` 45/45, `--check` verde, e **17 impronte su 17 identiche a un build
+pulito di `HEAD`** — non sulla parola del documento, ma confrontando).
+
+Il disegno che ne esce è dell'utente. Di seguito è segnato chi ha detto cosa,
+perché §3.5 porta la cicatrice di un'attribuzione sbagliata e quella lezione
+vale più della sintesi.
+
+#### Tre posizioni di §3.73 che questa discussione ha smentito
+
+Vanno lette per prime, perché §3.73 le dichiara ancora nella forma vecchia:
+
+| | |
+|---|---|
+| «la macchina a stati sta sul percorso di uscita da trap, **non in un task**» | **sbagliato**. Pesava il costo (un context switch per slot, 192 cicli) e ignorava tre cose che valgono di più: l'*interrupt disable time*, l'osservabilità, e il vincolo del contesto d'ISR. Vedi sotto |
+| «il passaggio di modo è un evento di dominio, **non un'attività che finisce**» | **sviante per metà**. Giusto che il grilletto non sia «lo slot è finito»; sbagliato ciò che la frase lascia intendere, cioè che arrivi da **fuori**. Arriva dall'**esito** di un'attività |
+| «"segnala la sua fine" è una cessione volontaria, **cioè `task_yield`**» | **confonde due cose**: *segnalare* che ho finito è un dato, *cedere* la CPU è un atto. Alla time line serve solo il primo |
+
+#### La macchina a stati è un task, ed è `.interrupt` a svegliarlo
+
+L'utente ha ripreso una primitiva che aveva già nominato il 05/09 (§3.5):
+`.interrupt` degli RTOS anni '80/'90, che faceva salvataggio contesto **e** salto
+condizionato allo scheduler. Allora fu scartata perché avrebbe costretto l'HAL a
+leggere `g_resched`, una variabile del kernel.
+
+**Oggi quell'obiezione non si applica più**, ed è il fatto nuovo: quella lettura
+la fa `sched_isr_exit`, che è kernel, e le ISR ci saltano **a mano**. La
+direttiva non deve sapere niente — emette `ctx_save` in testa e un salto a un
+simbolo fisso in coda, cioè esattamente ciò che ogni ISR scrive già da sé. È
+`.proc`/`.endproc` per i gestori di trap.
+
+La forma, dell'utente: **`.interrupt` attiva un task ad altissima priorità che
+esegue la macchina a stati della time line.** Tre ragioni per cui batte il
+percorso di uscita da trap, e la prima da sola chiude la questione:
+
+**1. L'*interrupt disable time*.** Sul percorso di trap si gira con `IE=0`. La
+durata intera della macchina a stati si sommerebbe ai **406 cicli** misurati in
+§3.71 — e quel numero non è suo: è il caso peggiore di latenza di *tutti* gli
+altri interrupt, telecomando compreso. In un satellite la latenza del telecomando
+è un numero di specifica. Come task gira con `IE=1`.
+
+**2. Si vede.** Un task ha un TCB, una corsia in `trace.py`, finestre del
+marcatore. Il codice sul percorso di trap è invisibile, e §3.64 l'ha già
+dimostrato sul campo: **3088 cicli attribuiti a `sched_isr_exit`, che ne vale
+231**. La macchina a stati sarebbe il pezzo più importante del sistema e il meno
+misurabile, proprio mentre §3.73 stabilisce che il numero operativo è il margine.
+
+**3. Sparisce il contesto d'ISR come vincolo.** La coda di diagnostica, il
+prelievo da un pool, una chiamata a un servizio: in ISR ognuna dev'essere
+ISR-safe, in un task sono chiamate normali.
+
+#### Il dispatch è DIRETTO, e `dispatcher(TCB)` trova finalmente il suo cliente
+
+Proposta dell'utente: *«questo task non viene attivato seguendo una politica di
+scheduling ma direttamente da `.interrupt` che salta al dispatcher dando in
+input il TCB del task.»*
+
+Il progetto era già pronto, e da §3.28 — la separazione in cima a
+`scheduler.vasm`:
+
+```
+scheduler    POLITICA      chi e' il prossimo. RESTITUISCE un TCB, non lo esegue
+dispatcher   MECCANISMO    riceve un TCB IN INPUT, fa il commit di 'current'
+```
+
+**Quella firma non aveva mai avuto un chiamante che ne avesse davvero bisogno.**
+Adesso ce l'ha. E ne seguono due cose:
+
+- **il task della time line non ha priorità**, perché non compete. `PRIO_MAX`
+  resta al gestore dei timeout e la collisione che sembrava esserci non esiste;
+- **il costo dell'attivazione diventa costante**, perché salta la scansione —
+  §3.69 l'ha misurata, 7 cicli per livello, caso peggiore `160 + 6×7 = 202`. Ed è
+  il punto vero: sul modello a istante fisso quel che fa danno non è la latenza,
+  è il **jitter**.
+
+Due cose che il salto diretto **non** deve saltare, e vanno dette perché sono
+dentro `sched_isr_exit`: la **contabilità** (registrare il contesto uscente nel
+TCB, il commit di `current`). La divisione non è due pezzi ma tre —
+**contabilità + scelta + dispatch** — e si salta solo quello in mezzo.
+
+E l'asimmetria in uscita è corretta: quando la macchina a stati si sospende la
+CPU deve andare a qualcuno, e *quella* è una decisione vera. Il **risveglio** è
+diretto, il **sonno** passa dallo scheduler normale.
+
+#### `WAIT`: una coppia dedicata, e il contatore che le impedisce di perdere
+
+L'utente ha proposto prima un semaforo, poi — meglio — **una coppia di primitive
+dedicate**: una per sospendere il task, una per risvegliarlo.
+
+Il semaforo non andava, e per una ragione scritta nel progetto:
+`semaphore.vasm` dichiara **SOLO DA TASK, E NESSUNA VARIANTE `_s`**, perché
+quel semaforo è *contabile* e §3.26 ha deciso che **gli eventi passano dalla
+mailbox**. La coppia dedicata evita di forzare quella regola.
+
+**Ma una coppia sospendi/risveglia nuda ha il difetto classico: la sveglia
+persa.** Se il risveglio arriva *prima* della sospensione — l'ISR spara mentre
+la macchina a stati sta ancora lavorando — non ha dove posarsi, e il task dorme
+per sempre. È precisamente il motivo per cui esistono i semafori.
+
+Quindi la coppia deve avere **memoria**, e il contatore che gliela dà è lo stesso
+numero che serve alla diagnostica:
+
+```
+INTERFACCIA   la coppia dedicata: un attendente solo, nessuna coda,
+              nessuna camminata, dispatch diretto
+STATO         un contatore -- e il suo valore alla wait dice DI QUANTI SLOT
+              la macchina a stati e' in ritardo
+```
+
+Binario **no**: perderebbe esattamente l'informazione che §3.70 ha pagato 245
+giri d'idle per non perdere.
+
+#### La struttura, e il campo che NON si chiama `owner`
+
+Precisazione dell'utente: **è la `wait` a gestire una struttura con contatore**,
+non un campo nel TCB. La ragione è più forte della pulizia del tipo: l'ISR ha in
+mano **un handle solo**, e il TCB è ciò che deve *produrre* per il dispatcher,
+non ciò che le viene dato. Dalla struttura ricava tutt'e due.
+
+Ed è la forma di famiglia del progetto — il semaforo *è* una HEAD col terzo
+campo contabile, la mailbox *è* una HEAD col terzo campo descrittivo:
+
+```
+.struct WAIT
+  .field pending       ; attivazioni non ancora consumate
+  .field task          ; il TCB titolare -- ed e' l'input del dispatcher
+.ends
+```
+
+**`WAIT.task`, non `WAIT.owner`, e il nome non è un dettaglio.**
+[`mutex.vinc`](../rtos/services/mutex/interface/mutex/mutex.vinc) ha già
+`MUTEX.owner` = «il TCB che lo tiene, 0 = libero», e lo dichiara una proprietà
+**TEMPORALE**; peggio, dice che `mutex_lock` **deliberatamente NON** lo confronta
+con `current`. Qui è l'opposto su tutt'e due gli assi: proprietà **permanente**,
+da confrontare con `current` **sempre**. Stessa parola, semantica rovesciata, in
+due servizi adiacenti — ed è la collisione che §3.60 ha già pagato una volta.
+
+**Niente link**, ed è la differenza dal semaforo: un attendente solo, noto per
+costruzione. Ma l'utente ha subito messo in guardia sulla conseguenza, ed è
+giusta: *senza coda, nel campo ci sta l'indirizzo di UN SOLO TCB*. Da cui due
+cose che vanno scritte e non assunte:
+
+- **il modello a tre stati acquista un'eccezione.** `SUSPENDED(2)` è documentato
+  come «il TCB è in una coda di semaforo/mailbox». Qui il task è sospeso e
+  **fuori da ogni lista**: ha `fwd == bwd == 0`, che per `queue.vinc` è
+  esattamente la firma di un nodo che *non sta in nessuna lista*. Se qualcuno
+  provasse ad accodarlo altrove, `enqueue` lo **accetterebbe** — nessun
+  `QUEUE_LINKED`. La rete che il progetto ha gratis dappertutto, qui non c'è;
+- **il guardiano va scritto a mano**, ed è la seconda proposta dell'utente:
+  `WAIT.task` si lega **una volta all'init** e non si scrive più (`wait_init`
+  rifiuta se è già legato), e `wait` controlla `current == WAIT.task`.
+
+> **Perché si controlla la `wait` e non la `signal`** — l'asimmetria è la
+> **visibilità del guasto**. Task sbagliato che fa `wait`: si sospende su un
+> canale che nessuno segnalerà per lui, non è `current`, non è il titolare,
+> `fwd == bwd == 0` — **perso senza traccia**. Canale sbagliato segnalato: gira
+> il task sbagliato, grave ma **si vede subito**. Si controlla dove è silenzioso.
+>
+> E questo decide anche che il controllo è **permanente**, non solo nel build
+> strumentato. Il precedente opposto esiste e va guardato: `semaphore.vasm`
+> dichiara che il tetto non c'è perché un post di troppo *«non corrompe niente,
+> quindi non è roba che il kernel debba controllare»*. Qui **corrompe**, ed è per
+> questo che quel precedente non si trasferisce. Costo: una `lw` e una `beq` su
+> un cammino che ne vale ~200. Sul fallimento vale la regola del modulo più basso
+> (`queue.vinc`: *«segnala e basta, non ferma la macchina»*): `wait` restituisce
+> un esito e **non sospende**.
+
+#### Il criterio che separa `WAIT` dalla mailbox, ed è dell'utente
+
+*«La wait sveglia chi ha una macchina a stati che gestisce solo l'evento di
+sveglia dalla ISR.»*
+
+```
+la macchina a stati ha UN SOLO ingresso, ed e' la sveglia da un'ISR   -> WAIT
+deve distinguere fra piu' sorgenti, o ricevere DATI                   -> mailbox
+```
+
+È migliore del criterio che avevo dato io («non è schedulato»), che è una
+proprietà del task invece che dell'evento. E ritira una riserva che avevo messo:
+dicevo che dare al **gestore dei timeout** una primitiva diversa dagli altri
+task lo renderebbe un caso speciale, perché in questo progetto la mailbox è
+l'identità di un task (§8.6). Ma l'identità è quella di un **corrispondente**, e
+la mailbox del gestore è dichiarata **PRIVATA**, con un solo scrittore che sta
+dentro il modulo — cioè esplicitamente *non* un indirizzo.
+
+**Una mailbox privata a un solo scrittore non è una mailbox: è un canale di
+sveglia con un'allocazione attaccata.** Il gestore dei timeout è lo *stesso*
+caso della time line, ed è il secondo cliente che rende `WAIT` un meccanismo
+invece di un caso speciale.
+
+> **Una mia affermazione troppo larga, corretta da una domanda dell'utente**
+> («il gestore dei timeout accetta anche messaggi da chi attiva i timeout, o
+> sbaglio?»). No — `timeout_manager.vinc` dice che la sua mailbox è privata, e
+> `timeout_arm`/`timeout_cancel` scrivono `tmo_vector` direttamente. Ma la
+> domanda ha stanato che il gestore alloca **due volte per tick** (§3.70) e che
+> le due allocazioni non sono la stessa cosa: il **risveglio** non porta niente
+> (il tempo sta in `tmo_now`, che è assoluto) ed è rimpiazzabile da un contatore;
+> la **consegna al cliente** porta dati a un destinatario che cambia, e non lo è.
+> Rimpiazzabile il risveglio, non la consegna.
+>
+> E spiega perché §3.70 ha dovuto pagare: la profondità di una mailbox è portata
+> dai **nodi**, quella di una `WAIT` è **un numero**. Il difetto nasceva
+> dall'aver modellato la sveglia come un messaggio. Non è lavoro di oggi —
+> rifarlo muove EXPECT e impronte — ma adesso la direzione ha un argomento.
+
+#### Il cambio di modo è INTERNO, e non serve un secondo ingresso
+
+Avevo proposto una variabile scritta da chi richiede il cambio e letta al confine
+di frame. L'utente ha corretto, e la correzione elimina il secondo ingresso
+invece di spostarlo:
+
+```
+acquisizione -> tracking     se l'acquisizione ha esito POSITIVO
+tracking -> acquisizione     se si PERDE il tracking
+```
+
+Sono esiti di attività che la macchina a stati ha lanciato lei. Non c'è niente da
+leggere da fuori: il ciclo si chiude su sé stesso, e l'ingresso resta uno solo.
+
+Due conseguenze:
+
+- **`task_yield` non basta**, perché non porta un valore. Serve una casella
+  d'esito per attività, scritta prima della fine e letta al risveglio
+  successivo — e i tempi tornano da soli, perché è il comparatore a svegliare
+  la macchina a stati al confine dello slot, ed è **lì** che l'esito si legge;
+- **decidere e applicare sono due istanti diversi.** L'esito può arrivare a metà
+  frame, ma §3.73 stabilisce che il cambio di modo avviene a un **confine di
+  frame** o non è più verificata nessuna delle due time line. Quindi si
+  **registra** quando l'esito arriva e si **applica** quando `base_frame` avanza.
+  E dentro l'applicazione l'ordine conta: prima la tabella, poi il comparatore,
+  perché `offset[]` è quello del modo nuovo.
+
+E il record di diagnostica cresce di un campo: **`(modo, slot, frame, PC)`**.
+«Slot 3» vuol dire due attività diverse nei due modi, e un registro che non dice
+quale non si legge a freddo.
+
+#### Le attività sono PROCEDURE, non task — e la macchina a stati non ha contesto
+
+Domanda dell'utente: *«sei sicuro che `task_yield` sia necessario? Qui stiamo
+parlando di una macchina a stati che non viene attivata dallo scheduler ma che è
+in grado di prelazionare chiunque.»*
+
+No, non è necessario. La macchina a stati **riprende la CPU comunque**,
+all'istante, qualunque cosa stia facendo l'attività: non ha bisogno che gliela
+diano. E dietro c'è la domanda più grossa — se l'attività non deve cedere la CPU
+e non deve essere scelta da nessuno, **perché è un task?**
+
+```
+la macchina a stati CHIAMA l'attivita'       una call, non un dispatch
+l'attivita' RITORNA                          una ret, non uno yield
+```
+
+Un task solo, una pila sola, **zero commutazioni per slot** nel caso normale: a
+192 cicli l'una (§3.64), una time line da dieci slot ne pagherebbe 3840 per frame
+senza che nessuno le chieda.
+
+**E allora la macchina a stati non ha contesto da salvare** — proposta
+dell'utente, e la ragione è più forte di quella che lui stesso ha dato («farà le
+push necessarie»): al punto di sospensione **non ha niente di vivo, per
+costruzione**. L'attività è ritornata, quindi lo stack è vuoto; lo stato è
+`(modo, slot)` più il cambio pendente, che stanno in memoria perché sono lo stato
+di una macchina a stati.
+
+Quindi non si *ripristina*: si **avvia a freddo**. E le due strade diventano la
+stessa sequenza, il che fa sparire l'uscita non locale come meccanismo a parte:
+
+```
+sospensione normale   r14 := base,  epc := cima del ciclo,  epsw := IE=1,  reti
+sforamento            r14 := base,  epc := cima del ciclo,  epsw := IE=1,  reti
+```
+
+Non è un salto, perché serve `IE=1`: passa da `epc`/`epsw` e `reti`, o girerebbe
+a interruzioni chiuse — che è ciò che si voleva evitare facendone un task. È già
+la forma con cui `standalone/scheduler.vasm` avvia il primo task: *«a freddo,
+registri 0, stack vuoto»*.
+
+Resta da salvare il contesto di chi è stato **interrotto** (il background, o
+l'attività che sforava): quello serve. Salta solo il lato della macchina a stati.
+
+Tre cose che vanno con questa scelta:
+
+| | |
+|---|---|
+| **lo stack è scratch** | quello che ci pushi vale DENTRO un passaggio. Tutto ciò che attraversa una sospensione sta in `.data`. Costa zero, perché coincide con ciò che una macchina a stati è comunque |
+| **la cima del ciclo è sempre valida** | dev'essere un punto d'ingresso corretto anche subito dopo aver abortito un'attività a metà. Se lo è, il recupero dallo sforamento non ha bisogno di nessuna logica |
+| **niente risorse bloccanti nel foreground** | un'attività interrotta non rilascia niente. Nessun mutex, nessun buffer tenuto oltre la propria fine |
+
+E un regalo: **l'`epc` che si sta per riscrivere *è* il «dov'era piantata»** del
+record di diagnostica. È in mano nell'istante in cui serve.
+
+#### La diagnostica va in coda, e la fa il background
+
+Proposta dell'utente, e corregge un errore che avevamo fatto tutti e due: stavamo
+mettendo sotto la stessa scadenza due cose che ne hanno due diverse.
+
+```
+fermare A e lanciare B      scadenza DURA: a quell'istante
+raccontare perche'          nessuna scadenza: deve solo non perdersi
+```
+
+L'ISR (o la macchina a stati) **accoda** il record e riparte; a formattarlo e
+spedirlo è il background. Nel dominio torna: il background sono telecomandi e
+telemetria, quindi il record processato **diventa un pacchetto di telemetria** —
+non si stampa, si scende a terra. La coda non è un meccanismo in più: è
+l'ingresso di un'attività di background che dovrà esistere comunque.
+
+Due punti che il differimento impone:
+
+- **catturare è dell'ISR, formattare è del background.** Quando il background
+  gira, l'attività non esiste più: tutto ciò che servirà dev'essere nel record;
+- **quando è piena si tiene il PIÙ VECCHIO.** §3.73 dice che il primo
+  sforamento è il colpevole e quelli dopo sono vittime: un anello che sovrascrive
+  butterebbe esattamente il record che serve. Si tiene il vecchio e si contano i
+  persi.
+
+> **E il consumatore dev'essere un TASK di background, non l'idle vero.** Se è
+> l'idle, «non ha mai girato» diventa invisibile — l'idle è anche il metro del
+> respiro — e in `test_coop` e `test_mutex` è dichiarato nel sorgente come una
+> cosa che non gira mai per costruzione. Con un task la profondità della coda si
+> legge e il marcatore la misura.
+>
+> **E c'è un catch che resta:** l'idle gira quando avanza CPU, e il momento in
+> cui si producono record è quello in cui le attività *non* cedono presto. Con
+> slot back-to-back la coda si riempie e non si svuota proprio nello scenario per
+> cui esiste. È la ragione per cui lo **slack dichiarato** non muore: non serve
+> più come budget del gestore (l'accodamento costa pochi cicli), serve a
+> **garantire che il consumatore giri**. Ed è una ragione migliore, perché non è
+> un caso speciale per gli errori: è il pavimento del background, che oggi non
+> esiste — il respiro minimo di `test_mondo` è **zero**.
+
+#### I nodi si DERIVANO dalla time line, e il pool sparisce dal foreground
+
+Ultimo passo, dell'utente: per disaccoppiare davvero serve una **coda**, perché
+un dato prodotto in uno slot può servire in uno successivo — e lo stack, che è
+scratch, non può portarlo. Poi: *«se hai una time line definita dovresti essere
+in grado di definire anche di quanti nodi hai bisogno e il loro formato.»*
+
+Sì, e si può dire più forte: **se non ci riesci, la time line non è definita.**
+Il conto dei nodi diventa una verifica della tabella, non un dimensionamento a
+parte. Da cui:
+
+- **il pool sparisce dal foreground.** Il pool esiste perché non sai quanti
+  buffer servono; se la tabella te lo dice, servono N nodi statici per percorso e
+  il ramo «se il pool è vuoto» non esiste. Oggi quel ramo è una degradazione
+  **dichiarata**: *«il timeout arriva tardi invece di non arrivare»*, e in
+  `tmgr_tick` *«se il pool è vuoto il risveglio si perde»*. Sul cammino del
+  foreground non è accettabile, e non è nemmeno necessario;
+- **l'esaurimento cambia di specie**: non è una condizione da gestire, è la
+  **prova che la time line non gira come disegnata** — e specifica, perché dice
+  *quale* consumatore è rimasto indietro;
+- **il formato è esatto.** Oggi il pool ha classi di taglia (`POOL_D16`) e ogni
+  messaggio arrotonda in su; con produttore e consumatore unici il nodo ha la
+  misura del dato che porta;
+- **la tabella diventa una sorgente.** Se numero e formato si derivano, si
+  **generano** invece di scriverli — ed è la forma che il progetto ha già con
+  `scheduler_facts.py --check`: chi tocca la time line senza rigenerare se lo
+  sente dire dal build invece di scoprirlo in volo.
+
+E la coda dà all'abort una semantica dicibile in una riga: **il lavoro committato
+resta, quello a metà si perde.** Con un corollario che va chiuso — un'attività
+abortita mentre tiene un nodo lo sottrarrebbe alla rotazione, e dopo N guasti il
+sistema degrada in silenzio. La soluzione viene dal disegno stesso: **il buffer è
+dello slot, non dell'attività**. Lo assegna la macchina a stati prima della
+`call` e se lo riprende al ritorno **o all'abort** — e siccome il proprietario
+non cambia mai, un abort non può perdere niente.
+
+> Simmetria che torna: il foreground/background voleva **due basi dei tempi**
+> (§3.73), e vuole anche **due discipline di memoria** — statica e analizzata
+> davanti, dinamica e a pool dietro. I telecomandi arrivano quando arrivano: lì
+> non c'è nessuna tabella da cui derivare un bound.
+
+#### Cosa NON è stato fatto, e cosa resta aperto
+
+**Nessun codice.** Non esistono `.interrupt`, `WAIT`, `wait_init`, il dispatch
+diretto, le attività come procedure, le code a nodi derivati. Il kernel è intatto
+e i 45 test sono quelli del 15/09.
+
+**E una decisione è rimasta aperta, ed è dell'utente:** al **cambio di modo**, i
+nodi delle code sono **condivisi fra i due modi** (e il bound è il massimo dei
+due) oppure la transizione **drena**? È l'unico punto dove il conto non si legge
+dalla tabella di un modo solo — un dato prodotto in acquisizione e consumato in
+tracking attraversa il confine.
+
+Restano anche le due di §3.73, ma **una si è quasi chiusa da sé**: se la
+diagnostica è differita al background la cascata non si propaga, quindi
+«riprendi dallo slot successivo» diventa sicuro e non serve risincronizzare al
+frame per tenere leggibile il registro. L'altra — back-to-back o slack — ha
+cambiato ragione ma non è decisa: lo slack serve a garantire che il consumatore
+della coda giri.
+
+**E `srai` e la seconda base dei tempi non sono state toccate**: restano il
+prossimo passo di macchina, e non dipendono da niente di tutto questo.
 
 ---
 
@@ -9243,11 +9704,14 @@ seconda su quale sia l'unita' giusta. Poi il riquadro dei COMPARATORI in
 include/vcpu.h e hal/interface/hal/clock.vinc: il meccanismo c'e' tutto,
 manca la base su cui confronta.
 
-E' ANCORA LAVORO DI MACCHINA, e il kernel non si tocca. La macchina a
-stati della time line viene dopo, e prima di lei vanno chiuse le due
-decisioni di POLITICA che sono in fondo al riquadro di §0 (cosa fare
-dopo uno sforamento, e se gli slot hanno slack): sono dell'utente, e
-cambiano la forma degli stati.
+E' ANCORA LAVORO DI MACCHINA, e il kernel non si tocca. Non dipende da
+niente di §3.74, che e' sola discussione: §3.74 lo dice esplicitamente.
+
+La macchina a stati della time line viene dopo, ed e' DISEGNATA ma non
+scritta (§3.74). Prima di lei vanno chiuse le decisioni di POLITICA che
+stanno nel riquadro di §0 -- i nodi al cambio di modo, e se gli slot
+hanno slack: sono dell'utente, e cambiano la forma degli stati. NON
+scrivere .interrupt ne' WAIT prima che siano chiuse.
 
 COSA MANCA, ed e' poco:
   - il free running counter in CICLI, che e' la base del foreground. Non
