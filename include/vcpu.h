@@ -69,6 +69,136 @@
 #define KBD_CTRL    (MMIO_BASE + 8)
 #define KBD_IE       1   // bit 0 di KBD_CTRL
 
+// ---------------------------------------------------------------------------
+//  L'OROLOGIO DI SISTEMA — un free running counter in MILLISECONDI (15/09/2026)
+//
+//  CLOCK_MS   sola lettura   i millisecondi trascorsi dall'accensione
+//
+//  --- A CHE COSA SERVE, e non e' una comodita' ---
+//  Senza, il tempo che un programma puo' misurare e' il CONTEGGIO DEI RISVEGLI:
+//  "sono arrivati N tick". Un timeout che scatta su quel conteggio scatta
+//  perche' e' arrivato l'N-esimo tick, non perche' il tempo sia passato -- e i
+//  due non sono la stessa cosa, perche' il tick si consegna in ritardo e il
+//  ritardo non si recupera (la latenza di consegna di §3.71, e il drift che ne
+//  e' la somma). Con un orologio, "ho un timeout di 10 ms e ne sono passati
+//  10,5" e' una FRASE SCRIVIBILE, e il ritardo diventa un numero invece che una
+//  cosa che si subisce.
+//
+//  --- PERCHE' NON C'E' UN'ISTRUZIONE NUOVA ---
+//  Stesso argomento della tastiera (hal/kbd.vinc): su una macchina vera un
+//  registro di periferica si legge con una load, e la ISA qui e' la parte che
+//  fa da surrogato del ferro -- si muove il meno possibile. In piu' un opcode
+//  nuovo si numera per POSIZIONE nell'enum e finisce cosi' negli oggetti: il
+//  14/09/2026 inserirne uno in mezzo ha mosso l'impronta di tutti e quindici i
+//  programmi, anche i puliti. Un indirizzo non muove niente.
+//
+//  --- PERCHE' MILLISECONDI, e l'unita' e' la DECISIONE, non un dettaglio ---
+//  L'unita' la fissa il WRAP, perche' la regola con cui si confrontano le
+//  scadenze ("scadenza - adesso", mai i valori) regge solo finche' il contatore
+//  non gira. A 32 bit: in CICLI a 100 MHz il contatore gira ogni ~43 secondi,
+//  in microsecondi ogni ~71 minuti, in MILLISECONDI ogni ~49 giorni. Un timeout
+//  di dieci minuti e' una cosa che un sistema vero chiede; a 43 secondi di giro
+//  non si puo' nemmeno esprimere.
+//
+//  Il prezzo e' la RISOLUZIONE, e va saputo: un millisecondo sono 100.000 cicli,
+//  cioe' 25 tick della suite di test, che gira con un tick compresso di 25-2000
+//  volte (§7 di docs/scheduler-facts.md). Su questa macchina l'intero
+//  test_mondo dura 102.055 cicli, cioe' 1,02 ms: questo contatore, durante
+//  quella corsa, cambia valore UNA VOLTA. Il contatore non e' sbagliato -- e'
+//  la compressione del tick a essere finta -- ma finche' quella compressione
+//  c'e', l'orologio e il tick misurano su due scale che non si parlano.
+//
+//  --- E' UN PRESCALER, non una divisione ---
+//  Il valore e' `cycles / (CPU_HZ / 1000)`: il conto dei cicli e' la sorgente, e
+//  CPU_HZ e' la meta' del modello di timing che gia' viaggia con la macchina
+//  (§3.56). Un solo posto dichiara la frequenza, e l'orologio la segue.
+//
+//  --- FREE RUNNING: non si azzera e non si scrive ---
+//  Non c'e' un registro di controllo e non c'e' un reset. Un contatore che si
+//  puo' azzerare e' un contatore di cui bisogna sapere CHI l'ha azzerato e
+//  quando, e due clienti che lo azzerassero si romperebbero a vicenda. Chi
+//  vuole un intervallo si conserva la lettura precedente e sottrae: e' il
+//  modello di mtime su RISC-V, e la sottrazione e' gia' la regola con cui
+//  timeout.vinc confronta le scadenze. Scriverci cade sul ramo "read-only
+//  register" di mmio_store, che e' esattamente cio' che deve dire.
+// ---------------------------------------------------------------------------
+#define CLOCK_MS    (MMIO_BASE + 0x0C)
+
+// ---------------------------------------------------------------------------
+//  I COMPARATORI — le scadenze sull'orologio (15/09/2026, §3.72)
+//
+//  CMP_CTRL       lettura/scrittura   bit n = il canale n e' armato
+//  CMP_BASE + 4n  lettura/scrittura   la scadenza del canale n, in ms
+//
+//  Un contatore che sale sempre e N registri confrontati con lui: quando la
+//  scadenza e' raggiunta, il canale chiede l'interruzione. E' mtime/mtimecmp di
+//  RISC-V, ed e' il capture/compare di qualunque timer general-purpose.
+//
+//  --- E' UN TIMER, NON UNO SCHEDULER ---
+//  Questo file dichiara un MECCANISMO. Il foreground a slot, la tabella, il
+//  round-robin sono POLITICA e stanno nel software: e' la stessa linea con cui
+//  e' scritto `scheduler` (policy) separato da `dispatcher` (mechanism).
+//
+//  --- PERCHE' DUE, e non uno ---
+//  Il bersaglio e' un ibrido foreground/background (§3.72): il foreground vuole
+//  un battito ESATTO, il background scadenze arbitrarie. Sono due regimi, e con
+//  un comparatore solo il secondo non e' nemmeno ESPRIMIBILE -- quindi non e'
+//  provabile, e un percorso che nessun test esercita marcisce. Indicizzarli da
+//  subito costa quanto farne uno; il terzo, se servira', e' una costante.
+//
+//  --- IL CONFRONTO E' UNA DIFFERENZA, MAI UN ORDINE ---
+//  La condizione e' `(int32_t)(adesso - scadenza) >= 0`, in aritmetica
+//  wrappante a 32 bit. NON `adesso == scadenza`, e non e' un dettaglio:
+//
+//    - con `==` la condizione, su un contatore in millisecondi, sarebbe vera
+//      per 100.000 cicli di fila invece che in un istante;
+//    - e soprattutto un compare scritto NEL PASSATO -- riarmo tardivo, o
+//      periodo piu' corto del tempo di servizio -- non si verificherebbe MAI
+//      PIU', e il timer morirebbe in silenzio. E' il bug classico di mtimecmp,
+//      e capita sotto carico, cioe' quando meno te lo puoi permettere.
+//
+//  Con `>=` una scadenza gia' passata spara SUBITO: "arriva tardi invece di non
+//  arrivare", che e' la stessa scelta che §9.2 e §3.70 hanno gia' fatto due
+//  volte per il pool vuoto. Ed e' la stessa regola che timeout.vinc dichiara
+//  per le scadenze del gestore -- qui e' la prima volta che un hardware la
+//  conferma invece di lasciarla scritta in un posto solo.
+//
+//  --- A LIVELLO, e si abbassa RIPROGRAMMANDO ---
+//  Non c'e' un bit di pending: la condizione si rivaluta a ogni confine
+//  d'istruzione, quindi finche' e' vera la trap si ripresenta. La si abbassa
+//  scrivendo una scadenza nuova, o disarmando il canale -- non la abbassa la
+//  trap. E' esattamente il protocollo della tastiera, dove il flag lo abbassa
+//  la LETTURA di KBD_DATA e non la trap: l'azione utile e' quella che chiude
+//  l'evento, cosi' un'ISR che non fa il suo lavoro se lo ritrova davanti.
+//
+//  Ne segue che il riarmo periodico costa UNA sola `sw`: sparare non disarma.
+//
+//  --- NASCONO SPENTI ---
+//  `CMP_CTRL` vale 0 al reset, come `kbd_ie`. Senza l'armamento esplicito un
+//  canale a zero sarebbe gia' scaduto all'accensione (`0 - 0 >= 0`) e sparerebbe
+//  al primo ciclo.
+//
+//  --- CHI VINCE SE SONO PRONTI INSIEME ---
+//  I canali in ordine (0 prima di 1), poi il timer a periodo, poi la tastiera.
+//  Il canale 0 e' il posto del FOREGROUND, che ha la precedenza per lo stesso
+//  argomento con cui il timer batte la tastiera dal 14/09.
+//
+//  E non e' un "battito", nonostante la prima stesura di questo commento lo
+//  chiamasse cosi' (§3.73): nel modello bersaglio il canale 0 e' il WATCHDOG
+//  DELL'ATTIVITA' CORRENTE. Non batte -- porta la deadline dello slot in corso,
+//  e in un caso su due non scatta affatto, perche' l'attivita' cede prima.
+//
+//  Da cui una proprieta' che vale la pena sapere: UN ARMAMENTO SERVE DUE CASI.
+//  Se l'attivita' cede, il comparatore gia' armato e' cio' che prelazionera' il
+//  background all'istante del prossimo slot; se sfora, lo stesso comparatore
+//  scatta ed e' l'errore. A distinguerli non e' il tempo -- e' CHI STAVA
+//  GIRANDO quando e' scattato.
+// ---------------------------------------------------------------------------
+#define CMP_CHANNELS  2
+#define CMP_CTRL    (MMIO_BASE + 0x10)
+#define CMP_BASE    (MMIO_BASE + 0x20)
+#define CMP_ARM(n)   (1u << (n))
+
 //  LA CAUSA: chi ha interrotto. Con due sorgenti il vettore deve saperlo, e
 //  questa macchina somiglia a RISC-V (epc, epsw, reti), dove la causa e' un CSR
 //  letto dal gestore -- non un vettore per sorgente come il NVIC di un
@@ -82,6 +212,14 @@
 //  che nessuno se ne accorga.
 #define CAUSE_TIMER  0
 #define CAUSE_KBD    1
+
+//  I comparatori prendono una causa per canale: CAUSE_CMP + n. Due cause
+//  distinte invece di una sola piu' un registro di stato, perche' con quattro
+//  sorgenti la catena di `beq` e' gia' la grandezza che §3.67 voleva misurare --
+//  quanto costa chiedere «chi e' stato» invece di avere un vettore per sorgente.
+//  Con una causa condivisa quel costo si pagherebbe due volte, in `mfcause` e
+//  poi in una lettura MMIO.
+#define CAUSE_CMP    2   // .. CAUSE_CMP + CMP_CHANNELS - 1
 
 // Un evento della traccia: "al ciclo N arriva il carattere c".
 typedef struct
@@ -151,14 +289,36 @@ typedef struct
 //                 estremi INCROCIATI (del timer la consegna, del tasto
 //                 l'arrivo).
 //
-//  IL BATTITO SLITTA, E NON E' UN DIFETTO DA CORREGGERE. `timer_next` si
-//  riarma dalla CONSEGNA (`cycles + period`) e non dalla scadenza, quindi ogni
-//  ritardo si somma e non viene mai recuperato -- misurato su test_mondo: 276
-//  cicli persi in 24 battiti, tutti presi nei due tick in cui la tastiera ha
-//  interrotto. E' la semantica di un timeout SOFTWARE, che slitta per
-//  definizione, e il canale serve a renderla VISIBILE invece che a nasconderla:
-//  un timeout espresso in tick non e' un timeout espresso in tempo, e sbaglia
-//  di piu' proprio quando il sistema ha piu' eventi da servire.
+//  IL BATTITO SLITTA, ED E' UN DIFETTO -- corretta il 15/09/2026 (§3.72) una
+//  riga che qui diceva il contrario. `timer_next` si riarma dalla CONSEGNA
+//  (`cycles + period`) e non dalla scadenza, quindi ogni ritardo si somma e non
+//  viene mai recuperato -- misurato su test_mondo: 276 cicli persi in 24
+//  battiti, tutti presi nei due tick in cui la tastiera ha interrotto.
+//
+//  Fino al 15/09 questo commento diceva «e NON e' un difetto da correggere:
+//  e' la semantica di un timeout SOFTWARE, che slitta per definizione». Sbagliato
+//  di categoria: `timer_next` non e' un timeout software, e' il TIMER HARDWARE
+//  di questa macchina. Un auto-reload vero non slitta -- un SysTick, un PIT,
+//  l'ARR di uno STM32 si ricaricano NEL FERRO all'istante del wrap, e il
+//  software non partecipa alla cadenza. La forma giusta e' `timer_next +=
+//  period`, che somma alla scadenza NOMINALE.
+//
+//  Il codice non e' stato corretto, e la scelta e' dichiarata: `settimer` e' il
+//  percorso che i comparatori sul free running counter rendono legacy, e muovere
+//  gli EXPECT di sei test per riparare una cosa in via di dismissione e' lavoro
+//  pagato due volte. E' il COMMENTO a fare danno, perche' istruisce chi legge --
+//  e infatti ha mandato la formula di ripresa a cercare il rimedio giusto per il
+//  problema sbagliato.
+//
+//  DOVE LO SLITTAMENTO E' FATALE, e non e' teoria: in un foreground a slot
+//  (cyclic executive) il frame che riparte dalla consegna sfalda la tabella, e
+//  dopo N frame il sistema e' fuori fase con il mondo -- che in un satellite e'
+//  la finestra di visibilita'.
+//
+//  L'ALTRA META' DI QUEL COMMENTO REGGE, ed e' la diagnosi di `tmo_now` e non di
+//  `timer_next`: un timeout espresso in TICK non e' un timeout espresso in
+//  TEMPO, e sbaglia di piu' proprio quando il sistema ha piu' eventi da servire.
+//  Il canale serve a rendere visibile quella distanza invece che a nasconderla.
 //
 //  Quello che il canale MARK_EXEC NON dice e' il PERCHE' della commutazione
 //  (preemption, blocco, cessione, fine turno): lo sa solo il dispatcher, e per
@@ -538,6 +698,14 @@ typedef struct
   // ogni istruzione per tutto il tempo che la trap aspetta.
   unsigned char timer_pending;  // 1 = scaduto e non ancora consegnato
   int64_t  timer_seq;           // quante richieste ha alzato, dalla prima
+
+  // I COMPARATORI (vedi CMP_CTRL/CMP_BASE). Nessun bit di pending: la richiesta
+  // e' la CONDIZIONE `(int32_t)(ms - cmp_val[n]) >= 0`, rivalutata a ogni
+  // confine d'istruzione, e la si abbassa riprogrammando o disarmando -- come
+  // `kbd_ready`, che lo abbassa la lettura del dato. Uno stato in meno da tenere
+  // d'accordo con un altro.
+  int32_t  cmp_val[CMP_CHANNELS];  // la scadenza, in millisecondi
+  uint32_t cmp_armed;              // bitmask: bit n = canale n armato
 
   // Tastiera (MMIO, vedi KBD_STATUS/KBD_DATA). Lo STATO del device e CHI LO
   // RIEMPIE sono separati di proposito: questi tre campi sono cio' che il

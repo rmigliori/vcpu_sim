@@ -252,6 +252,53 @@ vasm_check(ifdef_on   MODE DUMPS EXPECT "1 11 0 7 111 8"
 # La distanza fra il terzo carattere (300) e la coppia (2000) e' quella che
 # rende osservabile il flag abbassato dalla lettura: senza, il caso interessante
 # potrebbe non capitare mai.
+# test_clock — l'OROLOGIO DI SISTEMA, un free running counter in ms (15/09/2026).
+#
+# Il tempo che un programma poteva misurare era il CONTEGGIO DEI RISVEGLI, e non
+# e' la stessa cosa: il tick si consegna in ritardo (§3.71) e il ritardo non si
+# recupera, quindi N tick valgono N periodi PIU' la somma delle latenze. Con un
+# orologio "sono passati 10,5 ms" diventa una frase scrivibile.
+#
+# I quattro numeri provano tre proprieta' distinte, e la terza non segue dalle
+# prime due: che conti MILLISECONDI (il prescaler e' quello dichiarato), che
+# LEGGERLO NON ABBIA EFFETTO -- al contrario di KBD_DATA, che consuma il dato --
+# e che sia FREE RUNNING, cioe' che fra la prima e l'ultima lettura non riparta.
+# Un contatore che qualcuno azzerasse passerebbe i primi due e non il terzo.
+#
+# Il ritardo e' di 300.000 cicli ESATTI, e l'esattezza serve: il registro vale
+# floor(cicli/100.000), quindi una differenza e' indipendente dalla fase solo se
+# il ritardo e' un multiplo intero del millisecondo. Il conto sta nel sorgente,
+# istruzione per istruzione.
+#
+# A file singolo come test_kbd e test_due_irq: il soggetto e' la MACCHINA.
+vasm_check(clock      MODE DUMPS EXPECT "0 3 3 6"
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_clock.vasm)
+
+# test_cmp — I COMPARATORI sull'orologio (15/09/2026, §3.72).
+#
+# Un contatore che sale sempre e due registri confrontati con lui: e'
+# mtime/mtimecmp di RISC-V. Due canali perche' il bersaglio e' un ibrido
+# foreground/background, e con uno solo il secondo regime non sarebbe nemmeno
+# esprimibile -- quindi non provabile, e un percorso che nessun test esercita
+# marcisce.
+#
+# I quattro numeri provano quattro cose, e la terza e' la piu' importante:
+#   121  l'ORDINE dei tre spari: canale 0, canale 1, canale 0. Il canale 1 e'
+#        armato per PRIMO con la scadenza piu' lontana, quindi se l'ordine
+#        fosse quello di armamento invece che di scadenza si vedrebbe
+#     3  ms fra l'armamento e lo sparo del canale 0: la scadenza e' quella
+#        chiesta, e il confronto e' su millisecondi
+#     6  lo stesso per il canale 1, misurato dallo STESSO riferimento: i due
+#        canali sono indipendenti
+#     0  una scadenza scritta NEL PASSATO spara subito. Con `==` invece di
+#        `>=` non sparerebbe mai piu' -- il bug classico di mtimecmp -- e il
+#        programma non terminerebbe affatto. E' l'asserzione che tiene in piedi
+#        la scelta di confrontare una DIFFERENZA invece di un valore
+#
+# A file singolo come test_clock e test_kbd: il soggetto e' la MACCHINA.
+vasm_check(cmp        MODE DUMPS EXPECT "121 3 6 0"
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_cmp.vasm)
+
 vasm_check(kbd        MODE DUMPS EXPECT "0 294 0 3 121"
            IFLAGS -I$<TARGET_PROPERTY:vinc_hal,INTERFACE_INCLUDE_DIRECTORIES>
            ARGS   --kbd "100:a,200:b,300:c,2000:x,2000:y"

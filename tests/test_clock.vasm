@@ -1,0 +1,104 @@
+; tests/test_clock.vasm — L'OROLOGIO DI SISTEMA, il free running counter in ms.
+;
+; A file singolo e senza HAL ne' kernel, come test_kbd e test_due_irq: qui si
+; prova la MACCHINA, e metterci in mezzo il kernel vorrebbe dire provare due
+; cose insieme senza sapere quale ha ceduto.
+;
+; --- CHE COSA C'E' DA PROVARE, che non e' ovvio ---
+; Che un contatore conti e' poco. Le tre proprieta' che lo rendono un OROLOGIO,
+; e che un contatore qualunque non ha, sono:
+;
+;   1. CONTA MILLISECONDI, non cicli e non risvegli. Il prescaler e' quello
+;      dichiarato (CPU_HZ/1000 = 100.000 cicli per ms) e non un altro;
+;   2. LEGGERLO NON HA EFFETTO. E' l'opposto di KBD_DATA, che e' l'altro
+;      registro leggibile di questa macchina e che CONSUMA il dato: due
+;      intervalli identici devono dare lo stesso numero, o l'orologio sarebbe
+;      un cronometro che si azzera guardandolo;
+;   3. E' FREE RUNNING. Fra la prima e l'ultima lettura non si azzera e non
+;      riparte: l'ultimo intervallo e' la somma dei due precedenti, e questa e'
+;      un'asserzione diversa dalle altre due -- (2) e (3) insieme sono l'unico
+;      modo di distinguere un orologio da un contatore che qualcuno resetta.
+;
+; --- PERCHE' 300.000 CICLI, E PERCHE' ESATTI ---
+; Il registro vale floor(cicli / 100.000), quindi la differenza fra due letture
+; distanti D cicli NON e' in generale D/100.000: dipende da dove cade la prima
+; rispetto al confine del millisecondo. Ma se D e' un MULTIPLO ESATTO di
+; 100.000 la fase si cancella -- floor((C+k*100000)/100000) = floor(C/100000)+k
+; per ogni C -- e la differenza e' esattamente k. Quindi il valore atteso e'
+; derivato, non misurato a posteriori, e non dipende da dove si trova il
+; programma quando comincia a contare.
+;
+; --- IL CONTO DEI CICLI, istruzione per istruzione ---
+; `cycles` viene incrementato PRIMA che l'istruzione esegua, quindi una `lw`
+; legge un orologio che comprende gia' i 4 cicli della `lw` stessa. Fra la
+; lettura di una e quella della successiva passano dunque i cicli delle
+; istruzioni in mezzo, PIU' i 4 della seconda lw:
+;
+;     li  r5, 0            1        \ le due `li` prima del giro
+;     li  r2, RIPETIZIONI  1        /
+;     addi r2, r2, -1      1  \  RIPETIZIONI volte: il corpo costa 2, e
+;     bne  r2, r0, ...     1  /   l'ultimo giro paga il `bne` che non salta
+;     lw  r4, 0(r1)        4        la lettura che chiude
+;
+;     totale = 2 + 2*RIPETIZIONI + 4 = 6 + 2*RIPETIZIONI
+;
+; Perche' faccia 300.000 servono 149.997 ripetizioni. `li r5, 0` non serve al
+; calcolo del ritardo: serve alla PARITA' -- senza, il totale e' dispari e non
+; puo' essere un multiplo di 100.000 -- ed e' dichiarata qui invece di essere
+; un'istruzione che sembra un residuo. I costi sono quelli di include/vcpu.h:
+; CYC_SCALAR_ALU e CYC_SCALAR_BR valgono 1, CYC_SCALAR_MEM vale 4.
+;
+; --- I QUATTRO NUMERI ---
+;   t0   0   all'accensione l'orologio e' a zero. Alla prima lettura sono
+;            passati 5 cicli, cioe' 0 ms: un orologio che nascesse con un
+;            valore qualunque renderebbe la prima differenza inutilizzabile
+;   d1   3   300.000 cicli = 3 ms. E' la proprieta' (1): il prescaler e' quello
+;   d2   3   lo STESSO ritardo da' lo stesso numero. E' la proprieta' (2):
+;            leggere non consuma. Se la lettura avesse un effetto -- come ce
+;            l'ha KBD_DATA -- questo sarebbe diverso dal precedente
+;   d3   6   dalla prima all'ultima lettura, e non 3: l'orologio non e'
+;            ripartito in mezzo. E' la proprieta' (3)
+
+.equ CLOCK_MS      0x10000C     ; lo dichiara anche hal/clock.vinc; qui e'
+                                ; ricopiato perche' questo test gira a file
+                                ; singolo, senza interfacce, di proposito
+
+.equ RIPETIZIONI   149997       ; 6 + 2*149997 = 300.000 cicli = 3 ms esatti
+
+  .text
+
+  li r1, CLOCK_MS
+
+  lw r3, 0(r1)             ; t0
+
+  li r5, 0                 ; la parita': vedi il conto in testa
+  li r2, RIPETIZIONI
+attesa1:
+  addi r2, r2, -1
+  bne r2, r0, attesa1
+  lw r4, 0(r1)             ; t1 = t0 + 3 ms
+
+  li r5, 0
+  li r2, RIPETIZIONI
+attesa2:
+  addi r2, r2, -1
+  bne r2, r0, attesa2
+  lw r6, 0(r1)             ; t2 = t1 + 3 ms
+
+  ; Le differenze si SOTTRAGGONO e non si ordinano: il contatore e' a 32 bit e
+  ; `lw` estende il segno, quindi fra ~24,8 e ~49,7 giorni di accensione il
+  ; valore letto e' negativo e `blt` direbbe il falso. Qui non ci si arriva --
+  ; sono 2^31 millisecondi -- ma la forma giusta e' questa comunque, ed e' la
+  ; stessa di timeout.vinc.
+  dumps r3                 ; t0 = 0
+
+  sub r7, r4, r3
+  dumps r7                 ; 3
+
+  sub r7, r6, r4
+  dumps r7                 ; 3
+
+  sub r7, r6, r3
+  dumps r7                 ; 6
+
+  halt

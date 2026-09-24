@@ -37,6 +37,23 @@ static int32_t mmio_load(VCpu* cpu, int64_t addr)
   if (addr == KBD_CTRL)
     return cpu->kbd_ie ? KBD_IE : 0;
 
+  // L'OROLOGIO DI SISTEMA (15/09/2026). Il conto dei cicli e' la sorgente, il
+  // prescaler e' CPU_HZ/1000: un posto solo dichiara la frequenza e l'orologio
+  // la segue.
+  //
+  // I 32 bit bassi, come qualunque altra lettura: `lw` estende il segno, quindi
+  // dopo 2^31 ms il valore letto diventa negativo e dopo 2^32 il contatore gira.
+  // E' il comportamento del ferro e non un limite del simulatore -- chi
+  // confronta due letture deve sottrarle, mai ordinarle.
+  if (addr == CLOCK_MS)
+    return (int32_t) (uint32_t) (cpu->cycles / (CPU_HZ / 1000ULL));
+
+  if (addr == CMP_CTRL)
+    return (int32_t) cpu->cmp_armed;
+
+  if (addr >= CMP_BASE && addr < CMP_BASE + CMP_CHANNELS * 4)
+    return cpu->cmp_val[(addr - CMP_BASE) / 4];
+
   if (addr == KBD_DATA)
   {
     int32_t ch = cpu->kbd_data;
@@ -131,6 +148,29 @@ static void mmio_store(VCpu* cpu, int64_t addr, int32_t value)
   if (addr == KBD_CTRL)
   {
     cpu->kbd_ie = (value & KBD_IE) ? 1 : 0;
+    return;
+  }
+
+  // I COMPARATORI (15/09/2026, §3.72). Solo i bit dei canali che esistono: un
+  // bit oltre CMP_CHANNELS armerebbe un canale che nessuno confronta, cioe' un
+  // armamento che non succede mai -- e il silenzio e' il modo peggiore di dirlo.
+  if (addr == CMP_CTRL)
+  {
+    uint32_t validi = (CMP_CHANNELS >= 32) ? 0xFFFFFFFFu
+                                           : ((1u << CMP_CHANNELS) - 1u);
+    if ((uint32_t) value & ~validi)
+      fprintf(stderr, "runtime error: CMP_CTRL, nessun canale oltre il %d\n",
+              CMP_CHANNELS - 1);
+    cpu->cmp_armed = (uint32_t) value & validi;
+    return;
+  }
+
+  // Scrivere la scadenza ABBASSA la richiesta di quel canale, perche' la
+  // richiesta E' il confronto: non c'e' un flag da azzerare. Riarmare costa
+  // quindi una `sw` sola, ed e' il percorso caldo del tickless.
+  if (addr >= CMP_BASE && addr < CMP_BASE + CMP_CHANNELS * 4)
+  {
+    cpu->cmp_val[(addr - CMP_BASE) / 4] = value;
     return;
   }
   if (is_marca(addr))
@@ -1123,6 +1163,42 @@ void vcpu_run_from(VCpu* cpu, const Instr* prog, int prog_len, RunMode mode, int
       // consecutive che saltano un numero -- che con la sola sequenza di
       // istanti si potrebbe solo sospettare guardando le distanze.
       vcpu_marca(cpu, MARK_TIMER, (int32_t) cpu->timer_seq);
+    }
+
+    // I COMPARATORI, PRIMI FRA LE SORGENTI (15/09/2026, §3.72). Il canale 0 e'
+    // il posto del battito del foreground, e un battito non deve derivare: e' lo
+    // stesso argomento con cui il timer batte la tastiera.
+    //
+    // LA DIFFERENZA, MAI L'ORDINE. `(int32_t)(ms - scadenza) >= 0` in aritmetica
+    // wrappante: una scadenza gia' passata spara SUBITO invece di non sparare
+    // mai, che e' cio' che succederebbe con `==`. Vedi il riquadro in vcpu.h.
+    //
+    // Nessun bit di pending da azzerare qui: la condizione resta vera finche'
+    // l'ISR non riprograma la scadenza o non disarma il canale. E' il protocollo
+    // della tastiera -- l'azione utile chiude l'evento, non la trap.
+    if (cpu->psw & PSW_IE)
+    {
+      int32_t ms = (int32_t) (uint32_t) (cpu->cycles / (CPU_HZ / 1000ULL));
+      int scattato = -1;
+      for (int n = 0; n < CMP_CHANNELS; n++)
+        if ((cpu->cmp_armed & CMP_ARM(n)) &&
+            (int32_t) ((uint32_t) ms - (uint32_t) cpu->cmp_val[n]) >= 0)
+        { scattato = n; break; }
+
+      if (scattato >= 0)
+      {
+        cpu->epc  = cpu->pc;
+        cpu->epsw = cpu->psw;
+        cpu->psw &= ~PSW_IE;
+        cpu->trap_depth += 1;
+        cpu->cause = CAUSE_CMP + scattato;
+        if (mode == RUN_TRACE)
+          printf("[pc=%3lld cyc=%6llu] -- cmp%d trap -> handler %lld\n",
+                 (long long) cpu->pc, (unsigned long long) cpu->cycles,
+                 scattato, (long long) cpu->handler);
+        cpu->pc = cpu->handler;
+        continue;
+      }
     }
 
     // Timer interrupt: delivered at an instruction boundary. Saving the

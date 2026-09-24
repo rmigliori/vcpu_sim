@@ -1,6 +1,20 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **15 settembre 2026** (§3.71 **la richiesta non è la
+> Ultimo aggiornamento: **15 settembre 2026** (§3.73 **la time line, e un'unità
+> scelta troppo presto**: i due comparatori sono **fatti** (45/45, impronte
+> ferme), il bersaglio è un cyclic executive **multi-modo** con budget per
+> attività, e la discussione ha stabilito che le basi dei tempi sono **due** —
+> cicli per il foreground, ms per il background — più **tre difetti della
+> macchina** stanati dal dominio: manca `srai`, `div`+`rem` costano 40 cicli
+> senza fusione, e la divisione non fallisce mai rumorosamente;
+> §3.72 **l'orologio, e tre scale
+> che non si parlavano**: `CLOCK_MS` esiste — free running, millisecondi, letto
+> con una `lw` — e la discussione che l'ha deciso ha trovato **sbagliate due
+> posizioni dichiarate del progetto**, la formula che respingeva il compare
+> register e il commento di `vcpu.h` che dichiarava deliberato lo slittamento
+> del battito; il bersaglio diventa **foreground/background**, e il disegno un
+> contatore con **due** comparatori;
+> §3.71 **la richiesta non è la
 > consegna**: il canale `MARK_TIMER`, le due latenze di consegna che prima non
 > esistevano — 406 cicli nel caso peggiore, ed è *interrupt disable time* — e il
 > drift del tick, che è la loro somma; più il canale ISR che in `test_mondo` non
@@ -53,6 +67,174 @@
 ## 0. STATO ATTUALE — DA DOVE SI RIPRENDE
 
 > ### ▶ RIPRENDI DA QUI (15/09/2026 o dopo)
+>
+> **LEGGI §3.73 PRIMA DI §3.72**, perché §3.73 corregge §3.72 in un punto.
+>
+> **L'OROLOGIO E I DUE COMPARATORI ESISTONO (§3.72, §3.73).** `CLOCK_MS` free
+> running in ms; `CMP_CTRL`/`CMP0`/`CMP1` con `(adesso - scadenza) >= 0` in
+> aritmetica wrappante, causa per canale, nessun pending — si abbassa
+> riprogrammando, come `KBD_DATA` si abbassa leggendo. `ctest` **45/45**,
+> `--check` verde, **17 impronte su 17 ferme**.
+>
+> **Nessuno li usa**: il kernel è intatto e `settimer` batte come prima.
+>
+> ---
+>
+> **IL BERSAGLIO, detto dall'utente per esperienza diretta** (uno scheduler
+> realtime per un satellite, e un radar altimetro satellitare): un ibrido
+> **foreground/background**, dove il foreground è un cyclic executive
+> **multi-modo**:
+>
+> ```
+> una SEQUENZA di attivita', ognuna con un budget in tick
+> l'attivita' finisce in due modi:
+>   - ha finito nel budget  -> SEGNALA la sua fine   (e' task_yield, esiste)
+>   - e' durata troppo      -> il gestore la FERMA, ed e' un ERRORE
+> modello a ISTANTE FISSO: la time line ha un timing esatto
+> i MODI sono piu' d'uno: acquisizione -> tracking, con time line diverse
+> il background: telecomandi e telemetria, cioe' I/O
+> ```
+>
+> **Non è round-robin**, e a dirlo è la semantica dello sforamento: nel
+> round-robin esaurire il quanto è normale, qui è un **guasto**. Il ramo «fine
+> turno» di `sched_preempt` implementa il primo e in questo modello non serve.
+>
+> **Il budget non si conta: è una deadline.** Un comparatore, una scrittura, un
+> interrupt — e nel caso normale (l'attività cede) le interruzioni sono **zero**.
+> Quindi anche il foreground è tickless, e il tick sparisce dal sistema.
+>
+> **L'ISR riarma PRIMA di eseguire, ancorata a T NOMINALE** — non ad «adesso»,
+> che è già `T + latenza`: sommare lì il budget è lo stesso errore di
+> `timer_next = cycles + period`, riprodotto nel software. Con la time line non
+> si somma affatto: `cmp = base_frame + offset[i]` si **legge** da una tabella,
+> e una tabella di istanti assoluti non accumula nulla per costruzione.
+>
+> ---
+>
+> **LE BASI DEI TEMPI SONO DUE, e §3.72 ne aveva decisa una sola:**
+>
+> ```
+> cicli   0,01 us   wrap 42,9 s     il FOREGROUND: la time line
+> ms      1 ms      wrap 49,7 gg    il BACKGROUND: i timeout lunghi
+> ```
+>
+> I µs sono **superflui**: erano il compromesso, e con le due estreme non serve.
+> Con un comparatore la **risoluzione è disaccoppiata dalla frequenza delle
+> interruzioni** — un tick a 10 ns è assurdo, una scadenza a 10 ns costa quanto
+> qualunque altra — quindi la base pura si può usare per la time line. Ed è
+> l'unica in cui il **jitter è esprimibile nella stessa unità della time line**:
+> in ms lo scarto sarebbe `0` sempre, cioè invisibile.
+>
+> Manca: la seconda base, e il bit per-canale che dice su quale delle due un
+> comparatore confronta (in hardware il prescaler è del canale, non del chip).
+>
+> ---
+>
+> **TRE DIFETTI DELLA MACCHINA, stanati dal dominio e non cercati (§3.73):**
+>
+> | | |
+> |---|---|
+> | manca **`srai`** | la virgola fissa **con segno non è scrivibile**: `(a*b)>>15` con `srli` dà spazzatura sui negativi, e l'alternativa è `div` — 20 cicli invece di 1. Tre usi indipendenti in una sessione. Va **in coda all'enum**, o muove tutte le impronte |
+> | **`div`+`rem` = 40 cicli** | non si fondono, e nessuno dichiara che sia una scelta. x86 li dà entrambi con una `DIV`; la spec RISC-V **raccomanda** di fondere la coppia adiacente. La divisione fixed-point piena costa **63 cicli** |
+> | la divisione **tace** | per zero restituisce `0` invece di trappare, e l'overflow del quoziente non esiste — `sw` tronca a 32 bit in silenzio. Sul ferro lì c'è `#DE` |
+>
+> ---
+>
+> **IL RESPIRO SI CHIUDE DA SÉ, ed è fermo dal 14/09.** In un ibrido
+> foreground/background la CPU libera **è** il tempo che va al background, cioè
+> il **margine aggregato della time line**. E il margine è il numero che conta:
+> se gli sforamenti sono solo di debug (detto dall'utente), quello operativo non
+> è quante volte hai sforato ma **quanto margine è rimasto** — una time line che
+> gira al 99% non è progettata bene, è fortunata. Si misura col marcatore che
+> c'è già: una finestra aperta a inizio slot, chiusa alla cessione.
+>
+> ---
+>
+> **DUE DECISIONI APERTE, e sono POLITICA quindi dell'utente:**
+>
+> - dopo uno sforamento la time line riprende dallo slot dopo o **risincronizza
+>   al frame**? E «sforato» e «mai partito in tempo» vanno segnalati come errori
+>   **diversi**, o in debug la cascata rende illeggibile chi è il colpevole;
+> - gli slot sono **back-to-back** o con **slack dichiarato**? Decide se le
+>   scadenze vive per slot sono una o due — con slot adiacenti «ha sforato» e
+>   «tocca al prossimo» sono lo stesso istante, e a distinguerli è **chi stava
+>   girando**.
+>
+> ---
+>
+> **L'OROLOGIO DI SISTEMA ESISTE (§3.72).** `CLOCK_MS`, free running, in
+> millisecondi, letto con una `lw` come qualunque registro di periferica. Non
+> interrompe: dice **che ora è**. `ctest` **44/44**, `--check` verde, e
+> **17 impronte su 17 identiche** verificate contro un build pulito di `HEAD`.
+>
+> **Il kernel non è stato toccato**: `tmo_now` conta ancora i risvegli, e
+> nessun `EXPECT` si è mosso.
+>
+> **TRE SCALE, e quella in mezzo non è di nessuno.** È la cosa più riusabile
+> uscita dalla discussione:
+>
+> ```
+> ns     il ferro            nessuna interruzione — e' il ciclo, 10 ns
+> us     la latenza          la CONSEGUENZA di un'interruzione, non un evento
+> ms     la base dei tempi   le scadenze — e' CLOCK_MS
+> ```
+>
+> Sotto il microsecondo **nessun evento è servito dal software**: c'è il DMA,
+> l'FPGA, il vettoriale, e il software vede il blocco e non il campione. I
+> microsecondi sono la scala delle **latenze**, che sono conseguenze — quindi
+> non sono l'unità di nessun contatore, e restano quello che §3.56 aveva già
+> deciso che fossero: un modo di leggere i cicli.
+>
+> ---
+>
+> **DUE POSIZIONI DI QUESTO DOCUMENTO ERANO SBAGLIATE**, ed è il motivo per cui
+> §3.72 va letta prima di riprendere:
+>
+> | | |
+> |---|---|
+> | la formula «il compare register NON serve» | **falso**: respingeva il compare come registro di *diagnostica*, ma come **sorgente dell'evento** è ciò che rende possibile il tickless. La formula è stata sostituita |
+> | `vcpu.h` «il battito slitta e non è un difetto» | **falso per metà**: `timer_next` è il timer *hardware*, e un auto-reload vero non slitta. I 276 cicli di §3.71 si tolgono con `+=` invece di `=`. Il **commento** è corretto, il codice no — `settimer` è legacy e muovere sei `EXPECT` per ripararlo è lavoro pagato due volte |
+>
+> E il compare register **non serve a togliere il drift**: serve a ciò che un
+> auto-reload non sa fare, cioè **scadenze non periodiche**.
+>
+> ---
+>
+> **IL BERSAGLIO È UN IBRIDO FOREGROUND/BACKGROUND**, detto dall'utente per
+> esperienza diretta (uno scheduler realtime per un satellite per
+> telecomunicazioni): in foreground il time slicing, in background l'asincrono,
+> con messaggi fra i due. Il foreground è un **cyclic executive** — gli slot
+> sono una tabella — e i due regimi vogliono due meccanismi:
+>
+> ```
+> foreground   un battito ESATTO, che non slitti mai: se il frame riparte dalla
+>              consegna la tabella si sfalda, e in un satellite quello che
+>              scivola e' la finestra di visibilita'
+> background   scadenze arbitrarie e non periodiche: il tickless
+> ```
+>
+> Non sono due pezzi di silicio: **un contatore e due comparatori**. Il compare
+> sussume l'auto-reload (`cmp += frame` non slitta, perché somma alla scadenza
+> nominale) al prezzo di 10 cicli per battito.
+>
+> **La linea che lo tiene onesto è meccanismo ≠ politica**: N comparatori sono
+> un *timer*; il foreground, la tabella e il round-robin sono software e non si
+> toccano finché non sono decisi.
+>
+> ---
+>
+> **DUE COSE DA NON RIFARE**, che sono già state decise oggi:
+>
+> - **il tick della suite NON si decomprime.** Avevo proposto 1 ms con
+>   l'argomento «lo fanno FreeRTOS e Linux»: è un argomento da kernel
+>   general-purpose. In un modem o in un radar il ritmo lo dà il mondo, e 40 µs
+>   è l'ordine di grandezza di un PRI di tracking o di un buffer DMA. Quindi il
+>   respiro di §3.71 (26,7%, minimo zero) resta un numero **vero**;
+> - **`test_vectors` si lascia dov'è.** Avevo proposto di ripensarlo perché usa
+>   la rotazione fra pari come motore (`PRIO_AB 1`, e il tick è il quanto). Ma
+>   se il foreground torna, quella rotazione è precisamente ciò che serve.
+>
+> ---
 >
 > **OGNI MESSAGGIO VIENE DAL POOL (§3.70).** L'ultimo statico era il messaggio di
 > **tick** nella libreria, coalescato. Funzionava — `tmo_now` è assoluto, un
@@ -3313,6 +3495,595 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.73 LA TIME LINE, E UN'UNITÀ SCELTA TROPPO PRESTO (15/09/2026, terza parte)
+
+I comparatori sono **fatti**. Ma la discussione che è seguita ha cambiato il
+bersaglio abbastanza da rendere superata una decisione presa sei ore prima, e da
+far emergere **tre difetti della macchina** che nessuno stava cercando.
+
+#### Fatti: i due comparatori
+
+```
+CMP_CTRL   0x100010   bit n = canale n armato    (nasce a 0)
+CMP0       0x100020   la scadenza del canale 0
+CMP1       0x100024   quella del canale 1
+CAUSE_CMP0 / CAUSE_CMP1 = 2 / 3
+```
+
+`(int32_t)(adesso - scadenza) >= 0` in aritmetica wrappante, causa distinta per
+canale, canale 0 prioritario. **Nessun bit di pending**: la richiesta *è* il
+confronto, rivalutato a ogni confine d'istruzione, e la si abbassa
+riprogrammando — lo stesso protocollo di `KBD_DATA`, dove il flag lo abbassa la
+lettura e non la trap. Ne segue che il riarmo costa **una `sw`**.
+
+`tests/test_cmp.vasm`, `EXPECT "121 3 6 0"`. Il `121` è una sequenza: canale 0,
+canale 1, canale 0. Il canale 1 è armato **per primo** con la scadenza più
+lontana, quindi se l'ordine fosse quello di armamento invece che di scadenza si
+vedrebbe. Lo `0` finale è l'asserzione che regge tutto: una scadenza scritta nel
+passato spara in **zero millisecondi**, e con `==` invece di `>=` quel programma
+non terminerebbe affatto — fallirebbe per stallo, non per numero sbagliato.
+
+`ctest` **45/45**, `--check` verde, **17 impronte su 17 invariate**.
+
+> **Il test è fallito alla prima stesura, e per un difetto suo che vale.** La trap
+> cadeva **fra il `lw` e la `beq`** del ciclo di sfondo, e l'ISR sporcava `r2`:
+> usciva al primo sparo con `seq = 1`, cioè **passava per metà e taceva il
+> resto**. Il commento che avevo scritto — «il ciclo ricarica r1 e r2 a ogni
+> giro» — era falso proprio perché la trap cade *in mezzo*. È la stessa specie
+> di errore di §3.69 (un'ipotesi sul tempo presa per un fatto), ed è scritta nel
+> file perché è esattamente il lavoro per cui esiste un HAL.
+
+#### Il modello del time slicing, detto dall'utente
+
+Non è round-robin, ed è la **semantica dello sforamento** a dirlo:
+
+```
+c'e' una SEQUENZA di attivita'
+a ogni attivita' e' assegnato un numero di TICK
+l'attivita' finisce in due modi:
+  - ha finito nel budget  -> SEGNALA la sua fine
+  - e' durata troppo      -> il gestore la FERMA segnalando l'ERRORE
+```
+
+Nel round-robin esaurire il quanto è **normale** e la risposta è «tocca a un
+altro»; qui è un **guasto**. Stesso evento, significato opposto — e il ramo
+«fine turno» di `sched_preempt` implementa il primo, quindi in questo modello non
+serve. Il percorso *normale* non passa dal tick affatto: «segnala la sua fine» è
+una cessione volontaria, cioè `task_yield`, che esiste già (§3.39).
+
+**E il budget non va contato.** `scheduler.vasm:527` dice «il tick è il quanto,
+perché il timer scandisce già il tempo e non serve un contatore»: con budget
+per-attività quell'argomento cade, e servirebbe un contatore decrementato a ogni
+tick — N interruzioni per misurare una cosa sola. Con un comparatore il budget
+**è una deadline**: una scrittura, un solo interrupt, e due esiti che si
+escludono. Nel caso normale (l'attività cede) le interruzioni sono **zero**.
+
+Quindi **anche il foreground è tickless**, e il tick sparisce dal sistema.
+
+#### Istante fisso, deciso dall'utente
+
+*«La time line descrive dei processi che devono essere eseguiti con un timing
+esatto, questo porta a dire che il modello è a istante fisso.»*
+
+La ragione è più forte di quella che dà lo scheduling: se un'attività campiona o
+attua, **il jitter di attivazione è un errore di campionamento** — la funzione di
+trasferimento discreta assume un passo costante, e un passo irregolare non è il
+sistema verificato. È teoria del controllo.
+
+Tre conseguenze, e la prima corregge una mia affermazione:
+
+| | |
+|---|---|
+| **una scadenza, non due** | avevo detto che l'istante fisso richiede due scadenze vive. Falso con slot back-to-back: «ha sforato» e «tocca al prossimo» sono **lo stesso istante**, e a distinguerli è **chi stava girando**, non il tempo. Due servono solo con **slack dichiarato** fra deadline e slot successivo |
+| **la grana è lo slot** | in ARINC 653 l'istante fisso è la finestra della *partizione*; dentro, i processi vanno a priorità. Chi campiona vuole l'istante, chi impacchetta telemetria vuole solo la deadline |
+| **il limite è la consegna** | l'istante è esatto quanto la latenza: §3.71 ha misurato fino a **406 cicli**, ed è *interrupt disable time*. Programmare al ciclo e consegnare con ±4 µs è precisione che non si trasferisce |
+
+E un regalo: con la timeline il riarmo non è `cmp += P`, è
+`cmp = base_frame + offset[i]` letto da una **tabella**. `+= P` non accumula solo
+se P è esatto; una tabella di istanti assoluti **non accumula nulla per
+costruzione**, e `base_frame` avanza una volta per *frame* invece che per slot.
+
+#### L'ISR del foreground, nella forma dell'utente
+
+*«La ISR deve semplicemente tornare a una macchina a stati che eseguirà la time
+line, ma prima di fare questo deve mettere il suo proprio comparatore al numero
+di tick concessi all'attività che deve essere eseguita a quell'istante T.»*
+
+Riarmare **prima** di eseguire è corretto, e la ragione non è prudenza: il tempo
+che il gestore spende a lanciare l'attività non deve entrare nel budget
+dell'attività. Ma si ottiene solo ancorando a **T nominale**, non ad «adesso» —
+quando l'ISR gira, «adesso» è già `T + latenza`, e sommare lì il budget regala
+all'attività il jitter di consegna. **È lo stesso errore di
+`timer_next = cycles + period`, riprodotto nel software.**
+
+E c'è una proprietà elegante: **un armamento solo serve due casi**. L'attività
+cede → il comparatore già armato è ciò che **prelazionerà il background**
+all'istante del prossimo slot; l'attività sfora → lo stesso comparatore scatta.
+Un meccanismo, non due, e la cessione non riprogramma niente.
+
+La macchina a stati sta sul percorso di uscita da trap (`sched_isr_exit` →
+`dispatcher`, che non ritorna mai), non in un task: farne un task costerebbe un
+context switch per slot, dentro il tempo che si misura.
+
+#### La cascata, e il criterio che l'utente ha dato per risolverla
+
+Avevo sollevato il problema: uno slot che sfora ritarda il successivo, che sfora
+a sua volta e viene fermato **senza colpa** — un registro di errori in cui la
+colpevole è la prima e tutte le altre sono vittime.
+
+*«In una time line progettata bene gli sforamenti ci devono essere solo durante
+il debugging.»*
+
+Il che non elimina la decisione, la **sposta**: la politica non deve recuperare,
+deve essere **diagnostica**. La cascata va impedita non perché sia pericolosa in
+operativo — non ci si arriva — ma perché in debug, l'unico posto dove accade,
+trasforma il dato che serve in rumore.
+
+**E il corollario è la cosa più utile uscita oggi:** se lo sforamento è un evento
+di debug, il numero **operativo** non è quante volte hai sforato, è **quanto
+margine è rimasto**. Una timeline che gira al 99% del budget e non sfora mai non
+è progettata bene, è fortunata, e nessun contatore di errori lo dice.
+
+Il margine è `budget − consumato`, e il progetto lo sa già misurare: una finestra
+del marcatore aperta a inizio slot e chiusa alla cessione. Il che **chiude il
+respiro**, fermo dal 14/09: in un ibrido foreground/background la CPU libera *è*
+il tempo che va al background, cioè il margine aggregato della timeline. Da
+curiosità a numero principale del sistema.
+
+> **E una cosa che questa macchina ha e il ferro no.** Dimensionare i budget vuol
+> dire conoscere il WCET, che su un processore vero è una stima pessimistica —
+> cache, predittore, contese sul bus. Qui il modello dei cicli è
+> **deterministico** (§3.56: i cicli sono l'uscita di un modello, non una
+> misura), quindi il WCET è **calcolabile esattamente**. Per un progetto che
+> insegna a costruire un RTOS realtime è la condizione in cui teoria e misura
+> coincidono, e non capita quasi mai altrove.
+
+#### Il dominio, raccontato dall'utente: un radar altimetro satellitare
+
+*«Tutto il meccanismo era basato su una ISR da un msec e la time line era
+progettata per poter acquisire i dati, fare operazioni matematiche in virgola
+fissa, per poter poi entrare in tracking e fare FFT e la restante matematica in
+virgola mobile. In background gestivo i telecomandi e inviavo telemetrie.»*
+
+Quattro cose per questo progetto:
+
+**Il millisecondo precisa una mia ritrattazione.** Avevo proposto 1 ms come base
+dei tempi, poi ritirato dicendo che in un radar il ritmo lo dà il mondo a decine
+di µs. Non si contraddicono: il PRI e l'acquisizione li serviva **l'hardware**, e
+il software batteva a 1 ms per percorrere la timeline. Sbagliato era
+decomprimere il *tick della suite*, perché quei 40 µs modellano un **evento**.
+
+**I due regimi di calcolo spiegano `PSW_VDIRTY`.** Nella stessa timeline
+convivono attività in fixed (che non toccano i float) e in floating (FFT,
+tracking). Salvare il contesto vettoriale a ogni commutazione quando metà delle
+attività non lo usa è tempo buttato — e il bit che decide esiste già, costava ~9
+istruzioni per commutazione e **finora non aveva un caso d'uso che lo
+giustificasse**. Il radar è quel caso. E `test_vectors`, che avevo proposto di
+ripensare, è la forma minima di quel foreground.
+
+**Mancavano i MODI.** «Acquisire... per poi **entrare in tracking**» dice che la
+timeline non è una: ce n'è una di acquisizione e una di tracking, con attività e
+budget diversi, e il passaggio è un **evento di dominio**, non un'attività che
+finisce. È un cyclic executive **multi-modo**, e il cambio di modo deve avvenire
+a un confine di frame — o non è più verificata nessuna delle due timeline.
+
+**Il background è I/O**, non calcolo: telecomandi in ingresso (asincroni) e
+telemetria in uscita (che consuma il residuo).
+
+#### Tre difetti della macchina, stanati dal dominio
+
+Nessuno li stava cercando: sono usciti chiedendo «si può scrivere la virgola
+fissa?».
+
+**1. Manca lo shift aritmetico a destra.** La ISA ha `slli` e `srli` e **non ha
+`srai`**. La virgola fissa con segno non è scrivibile: il riscalamento
+`(a*b) >> 15` con `srli` infila zeri in cima e su un negativo dà spazzatura, e
+l'unica alternativa è `div` per una potenza di due — **20 cicli invece di 1**. La
+catena tipica «moltiplica, riscala, accumula» costa 22 cicli invece di 3.
+
+Tre usi indipendenti sono emersi nella stessa sessione: il riscalamento
+fixed-point, il troncamento a 32 bit di una differenza di contatori, e l'
+arrotondamento. Se si aggiunge, va **in coda all'enum** come `mark` e `mfcause`,
+o rinumera gli opcode e muove tutte e diciassette le impronte.
+
+**2. `div` e `rem` non si fondono, e nessuno lo dichiara.** Costano 20 cicli
+l'una, quindi quoziente **e** resto costano **40**. Sul ferro escono dalla stessa
+unità: x86 li dà entrambi con una `DIV`, e **la spec RISC-V raccomanda
+esplicitamente** di riconoscere la coppia adiacente e fonderla. Questa macchina
+segue RISC-V *senza* la fusione, cioè il caso peggiore — scelta legittima, ma chi
+legge `CYC_SCALAR_DIV = 20` non può sapere se sia stata decisa o non pensata. È
+la stessa specie di buco del `timer_next`.
+
+E serve davvero: la divisione fixed-point a precisione piena è
+`Q = a/b; R = a%b; F = (R<<n)/b`, **63 cicli**.
+
+> **Il resto serve, e per due ragioni — correzione dell'utente.** Avevo scritto
+> «in fixed point il resto non serve quasi mai»: falso. `a/b = Q + R/b`, quindi la
+> parte frazionaria in Qn è `(R<<n)/b`. E serve anche solo per **arrotondare**
+> invece di troncare: `div` tronca verso zero, e in un accumulatore DSP troncare
+> sempre nella stessa direzione non è un errore che si media, è un **bias
+> sistematico** che si somma campione dopo campione.
+>
+> **E la tecnica è più forte di così:** con `R < b` si ha `R·2ⁿ < b·2ⁿ`, quindi
+> `Q < 2ⁿ` — **la frazione sta in n bit, garantito per costruzione**. È l'unico
+> metodo che non può traboccare il quoziente. La scorciatoia che avevo proposto
+> (`(a<<n)/b`, sfruttando i registri a 64 bit) quella garanzia non ce l'ha: non
+> trabocca il *numeratore*, ma il quoziente può uscire dal formato.
+
+**3. La divisione non fallisce mai rumorosamente.** Due silenzi che si sommano:
+`div`/`rem`/`fdiv` per zero restituiscono **0** invece di trappare; e l'overflow
+del quoziente non esiste come evento — il risultato resta un `int64` grande
+finché `sw` non lo **tronca a 32 bit in silenzio**. Sul ferro vero lì c'è
+un'eccezione: `DIV` su x86 solleva `#DE` **anche** quando il quoziente non ci
+sta, non solo sulla divisione per zero.
+
+Per un progetto che insegna a scrivere un sistema realtime, è la specie di
+silenzio che merita almeno di essere dichiarata.
+
+#### Le basi dei tempi: da una a due, e perché quella di stamattina era metà
+
+L'utente, da progettista hardware: *«dal 100 MHz derivo il clock per il free
+running counter da un msec, e derivo un clock per usec»* — una catena di
+prescaler. Corretto, con una precisazione per chi li legge: **i due contatori non
+sono lo stesso numero a bit diversi**, perché 1000 non è una potenza di due.
+Servono due catene, si incrementano su fronti diversi, e non si mescolano mai in
+un confronto.
+
+Poi: *«e se lo uso puro posso arrivare a 0.01 usec»* — sì, 10 ns, il ciclo
+stesso. La tabella completa, dove risoluzione e portata sono in rapporto fisso:
+
+```
+÷1        10 ns = 0,01 us      wrap  42,9 secondi
+÷100      1 us                 wrap  71,6 minuti
+÷100000   1 ms                 wrap  49,7 giorni
+```
+
+E infine: *«quindi la base pura può essere usata come tick nel time slicing»*.
+Sì, e per una ragione che vale la pena rendere esplicita: **con un comparatore la
+risoluzione è disaccoppiata dalla frequenza delle interruzioni.** Un *tick* a 10
+ns sarebbe assurdo; una *scadenza* a 10 ns costa quanto qualunque altra. Con
+`settimer` le due cose erano la stessa, ed è per questo che «quanto fitto può
+essere il tick» era una domanda sensata e adesso non lo è più.
+
+**Da cui: due basi bastano, e i µs sono superflui.**
+
+```
+cicli   0,01 us   wrap 42,9 s     il FOREGROUND: scadenze vicine, precisione massima
+ms      1 ms      wrap 49,7 gg    il BACKGROUND: scadenze lontane, precisione irrilevante
+```
+
+Un frame dura millisecondi, quindi 43 secondi di portata sono larghi; un timeout
+di guardia dura minuti, e lì 1 ms di quantizzazione non si vede. Il compromesso
+in mezzo non serve.
+
+**E questo dice che la decisione di stamattina era giusta per metà.** Quando è
+stato scelto «millisecondi» il criterio era il wrap, e su quello i ms vincono.
+Poi il criterio è cambiato — l'unità deve corrispondere a qualcosa che esiste — e
+infine è arrivata la timeline, che vuole i cicli. I ms non erano sbagliati: erano
+**una** decisione presa quando i regimi erano già **due**.
+
+C'è anche un argomento che i ms da soli non reggono: la base pura è **l'unica in
+cui il jitter è esprimibile nella stessa unità della timeline**. In millisecondi
+lo scarto fra timeline disegnata e reale sarebbe `0 ms` sempre — invisibile, che
+è il modo peggiore di essere precisi.
+
+#### Cosa NON è stato fatto
+
+Il kernel non è toccato. I comparatori esistono e **nessuno li usa**: `settimer`
+batte come prima, e il `timer_next` che slitta è ancora lì col commento corretto
+e il codice no. Non esiste ancora la seconda base (cicli), non esiste il bit
+per-canale che dice su quale base un comparatore confronta, non esiste `srai`,
+non esiste la macchina a stati della timeline.
+
+E restano aperte due decisioni che sono **politica**, quindi dell'utente: cosa
+fa il gestore dopo uno sforamento (riprendere dallo slot successivo o
+risincronizzare al frame, con «sforato» e «mai partito in tempo» segnalati come
+errori **diversi**), e se gli slot sono back-to-back o con slack dichiarato —
+perché la seconda decide se le scadenze vive per slot sono una o due.
+
+---
+
+### 3.72 L'OROLOGIO, E TRE SCALE CHE NON SI PARLAVANO (15/09/2026, seconda parte)
+
+Cominciata per decidere l'unità del contatore. Finita con l'unità decisa
+dall'utente in una riga, il contatore fatto, e **due posizioni dichiarate di
+questo progetto trovate sbagliate** — una nella formula di ripresa e una in un
+commento di `vcpu.h`, cioè nei due posti che istruiscono chi riapre il progetto.
+
+#### La misura, che è venuta prima e ha cambiato la domanda
+
+La formula chiedeva di misurare due cose prima di toccare il codice: quante
+istruzioni costa nell'ISR, e quali `EXPECT` si muovono. Le due risposte non
+c'entrano l'una con l'altra.
+
+**Il costo è −10 cicli per tick, e vale zero.** L'incremento di `tmo_now` in
+`tmgr_tick` è `li`(1) + `lw`(4) + `addi`(1) + `sw`(4) = **10 cicli**, e con un
+orologio in hardware sparisce. I due lettori non cambiano di un ciclo, perché
+`li r5, tmo_now` + `lw` e `li r5, CLOCK_MS` + `lw` sono le stesse due
+istruzioni. Un giro d'idle vale 10 cicli, quindi il risparmio è **esattamente un
+giro d'idle per tick**. Ma i due test che leggono `tmo_now` come condizione
+d'arresto o si tengono un contatore loro (+10) o confrontano l'orologio con una
+soglia (+0): nel primo caso il conto netto è zero, e il costo si è solo spostato
+da chi non ne aveva bisogno a chi sì.
+
+Il numero che conta non è questo. È che `OP_DIV` costa **20 cicli**
+(`CYC_SCALAR_DIV`), quindi una conversione di unità fatta nel software è due giri
+d'idle per lettura: **a prescalare deve essere il contatore**, o il conto si
+ribalta. Questo ha deciso la forma prima che l'unità fosse scelta.
+
+#### Gli EXPECT che si muovono non sono quelli dei cicli
+
+`cntA = 5` in `test_tmgr` è il numero che il suo stesso commento chiama *«più
+forte di quelli degli altri test, perché NON DIPENDE DAL PERIODO DEL TIMER»*. Si
+muove.
+
+A arma a +2 tick e riarma dentro il tick in cui si sveglia, quindi le scadenze
+cadono ai tick 2, 4, 6, 8, 10. In tempo vero A riarma a `t(tick k) + δ`, dove δ
+è la latenza consegna→gestore→A che §3.71 ha misurato in **514 cicli
+invariabili**; la scadenza è `t + 8000` e il tick k+2 cade a `t + 8004`.
+Servirebbe δ ≤ 4. Scade al **k+3**, la cadenza passa da 2 tick a 3, e cntA
+scende.
+
+`test_mondo` è peggio: C arma a **+1 tick**, e in tempo vero «4000 cicli da
+adesso» non può **mai** essere soddisfatto dal prossimo tick, che dista meno di
+4000. C **dimezza il proprio ritmo**, e con lui saltano i sei dumps che
+dipendono da C che arriva ai multipli di dieci. Tutti e nove i campi.
+
+**La ragione è una sola, e vale più dei numeri: contare i risvegli aggancia in
+fase alla griglia dei tick.** «+1 tick» vuol dire «al prossimo tick», sempre,
+senza deriva mai — al prezzo di scattare **in anticipo**, fino a un tick intero,
+che è il difetto da correggere. Il tempo vero non scatta mai in anticipo e in
+cambio perde l'aggancio.
+
+Da cui un corollario che la formula elencava fra i guadagni e che invece è un
+**requisito**: con P uguale al periodo del tick, «adesso + P» non deriva,
+**dimezza**. Il riarmo isocrono non è una scelta che il cliente può fare, è
+l'unico modo che un cliente periodico ha di tenere il ritmo.
+
+#### L'unità: le tre scale, e quella in mezzo che non è di nessuno
+
+Decisa dall'utente in una riga — millisecondi — e la discussione che è seguita
+ha trovato l'argomento che la regge, che non è il wrap.
+
+La domanda dell'utente: *«quale evento fisico nel mondo reale è quantizzabile in
+nanosec?»*, dopo *«la nostra suite è troppo veloce»*. La risposta onesta è che
+in nanosecondi di eventi veri ce n'è — un simbolo a 30 Mbaud dura 33 ns, un
+campione a 100 Msps ne dura 10, la luce fa 30 cm in uno — ma **nessuno di essi è
+servito dal software**: sotto il microsecondo si è nel regno di DMA, FPGA e
+acceleratore, e il software vede il **blocco**, non il campione. È il motivo per
+cui esiste un processore vettoriale, ed è ciò che `test_vectors` già fa: nessun
+evento, un blocco e un `vload`.
+
+```
+ns     il ferro            nessuna interruzione — e' il ciclo, 10 ns
+us     la latenza          la CONSEGUENZA di un'interruzione, non un evento
+ms     la base dei tempi   le scadenze
+```
+
+**I microsecondi non sono la scala di nessun evento**: sono troppo lenti per il
+fisico e troppo veloci per una base dei tempi. Sono la scala delle latenze, che
+sono conseguenze. Il che chiude la tabella delle unità che la formula aveva
+messo in campo ragionando solo sul wrap: `µs` era un'opzione perché il vincolo
+guardato era quello sbagliato. Quello giusto è che **l'unità corrisponda a
+qualcosa che esiste**.
+
+E le due scale che restano la macchina le ha già entrambe: il ciclo, che è 10 ns
+ed è il grano del ferro (§3.56), e ora `CLOCK_MS`. In mezzo non serve niente, e
+i microsecondi restano quello che §3.56 aveva già deciso che fossero — **un modo
+di leggere i cicli**, non un contatore.
+
+#### Il contatore, fatto
+
+`CLOCK_MS` a `0x10000C`, sola lettura, i millisecondi dall'accensione.
+
+Un registro MMIO letto con `lw`, non un'istruzione nuova: è il modello che
+`kbd.vinc` dichiara per i device, e in più un opcode si numera per **posizione**
+nell'enum e finisce così negli oggetti — il 14/09 inserirne uno in mezzo aveva
+mosso l'impronta di tutti e quindici i programmi. Un indirizzo non muove niente,
+ed è la verifica che lo conferma: **17 impronte su 17 identiche**, confrontate
+con un build pulito di `HEAD` in un worktree, non date per scontate.
+
+**Free running**: nessun registro di controllo, nessun reset. Un contatore
+azzerabile è un contatore di cui bisogna sapere chi l'ha azzerato e quando, e due
+clienti che lo azzerassero si romperebbero a vicenda. Chi vuole un intervallo
+conserva la lettura precedente e **sottrae** — il modello di `mtime`. Scriverci
+cade da solo sul ramo «read-only register» che `mmio_store` aveva già: non è un
+caso da gestire, è un errore di costruzione.
+
+Il prescaler è `CPU_HZ/1000`, **derivato**: la frequenza resta dichiarata in un
+posto solo e l'orologio la segue, come i cinque strumenti di §3.56.
+
+`tests/test_clock.vasm`, `EXPECT "0 3 3 6"`, a file singolo e senza kernel come
+`test_kbd` e `test_due_irq` — il soggetto è la macchina. I quattro numeri provano
+**tre proprietà distinte**, e la terza non segue dalle prime due:
+
+| | |
+|---|---|
+| `3` | conta millisecondi: il prescaler è quello dichiarato |
+| `3` di nuovo | **leggerlo non ha effetto**. È l'opposto di `KBD_DATA`, l'altro registro leggibile di questa macchina, che CONSUMA il dato. Senza questa asserzione l'orologio potrebbe essere un cronometro che si azzera guardandolo |
+| `6` | **free running**: fra la prima e l'ultima lettura non è ripartito. Un contatore che qualcuno azzerasse passerebbe le prime due e non questa |
+
+Il ritardo è di **300.000 cicli esatti**, e l'esattezza non è pignoleria: il
+registro vale `floor(cicli/100.000)`, quindi una differenza è indipendente dalla
+fase **solo** se il ritardo è un multiplo intero del millisecondo — allora
+`floor((C+k·100000)/100000) = floor(C/100000)+k` per ogni C. Il conto sta nel
+sorgente istruzione per istruzione, e la corsa lo conferma: 600.009 cicli. Il
+valore atteso è **derivato prima di eseguire**, non letto dopo.
+
+`ctest` **44/44**, `scheduler_facts --check` verde.
+
+#### La risoluzione, che va saputa e non è un difetto del contatore
+
+Un millisecondo sono 100.000 cicli, cioè **25 tick** della suite. `test_mondo`
+dura 102.055 cicli, cioè 1,02 ms: durante l'intera corsa questo contatore
+**cambia valore una volta**.
+
+Non è il contatore a essere grosso. È che il tick della suite e l'orologio
+misurano su due scale che non si parlano — e la sezione seguente dice perché
+quella distanza **non** va chiusa decomprimendo il tick, che è la prima cosa che
+avevo proposto e che era sbagliata.
+
+#### Il compare register: serve, e NON per la ragione che gli avevo dato
+
+La formula in fondo a questo documento dice: *«CIÒ CHE NON SERVE, e che era un
+mio errore: il registro di COMPARE»*. Respingeva il compare come **registro da
+leggere per diagnostica**. L'utente lo ha riproposto come **sorgente
+dell'evento** — *«leggo il freerunning, sommo 10 msec, scrivo in un registro
+confrontato ogni ciclo ad hw»* — che è un'altra cosa e non era stata considerata.
+
+Gli avevo risposto che serve a togliere il drift. **Era un argomento più debole
+del vero, e in parte falso.**
+
+`timer_next = cycles + period` alla **consegna** ([vcpu.c](../src/vcpu.c)) non è
+un auto-reload: un auto-reload vero fa `timer_next += period`, cioè somma alla
+**scadenza nominale**. I 276 cicli di drift su 24 battiti misurati in §3.71 non
+sono quindi una proprietà dei timer hardware — un SysTick, un PIT, l'ARR di uno
+STM32 non slittano, perché la ricarica avviene nel ferro all'istante del wrap e
+il software non partecipa alla cadenza. **Si tolgono cambiando `=` in `+=`.** Una
+riga.
+
+Il compare register serve a ciò che un auto-reload non sa fare: **scadenze non
+periodiche**, cioè il tickless.
+
+#### `vcpu.h` dichiarava deliberato un difetto
+
+> *«IL BATTITO SLITTA, E NON È UN DIFETTO DA CORREGGERE... è la semantica di un
+> timeout SOFTWARE, che slitta per definizione»*
+
+`timer_next` **non è un timeout software**: è il timer hardware della macchina.
+Il commento fonde due difetti diversi in uno, e la metà sbagliata è quella che ha
+mandato la formula a cercare il rimedio giusto per il problema sbagliato.
+
+L'altra metà regge e resta: *«un timeout espresso in tick non è un timeout
+espresso in tempo, e sbaglia di più proprio quando il sistema ha più eventi da
+servire»*. Ma è la diagnosi di **`tmo_now`**, non di `timer_next`.
+
+Il commento è stato corretto. Il **codice no**: `settimer` è un percorso che i
+comparatori rendono legacy, e muovere gli `EXPECT` di sei test per ripararlo
+sarebbe lavoro pagato due volte. È il commento a fare danno, perché istruisce chi
+legge.
+
+#### Il bersaglio: foreground/background, e due comparatori invece di uno
+
+Detto dall'utente, ed è esperienza sua, non una proposta: *«ho progettato uno
+scheduler realtime per un satellite per telecomunicazioni... task che dovevano
+girare in time slicing e task asincroni. La mia soluzione fu un rtos ibrido: in
+foreground il time slicing, in background l'asincrono con possibilità di
+scambiarsi messaggi»*.
+
+Il foreground di un sistema così è un **cyclic executive**, non un round-robin:
+gli slot sono una tabella, si sa a priori chi gira quando, e la schedulabilità si
+dimostra guardandola. È il modello che ARINC 653 ha poi formalizzato in
+partizioni temporali.
+
+I due regimi vogliono **due meccanismi diversi**, e questo risponde alla domanda
+dell'utente *«free running + comparatore e un timer vero e proprio sono due cose
+diverse in hw?»* — sì, e la differenza è **dove sta il periodo**:
+
+| | il periodo è | drift | è un orologio? |
+|---|---|---|---|
+| auto-reload (SysTick, PIT, ARR) | stato dell'hardware | **zero per costruzione** | no: dice quanto MANCA |
+| free running + compare (mtime/mtimecmp) | non esiste: esiste la prossima scadenza | dipende da cosa somma il software | **sì** |
+| ciò che c'è qui oggi | `cycles + period` alla consegna | slitta | no |
+
+Il terzo non è nessuno dei due: è un ibrido che in hardware non corrisponde a
+niente.
+
+**Ma il compare sussume l'auto-reload.** Un comparatore riprogrammato
+`cmp += frame` non slitta, perché somma alla scadenza nominale: fa il foreground
+con l'esattezza dell'auto-reload, al prezzo di 10 cicli per battito che il ferro
+regalerebbe. In cambio dà il regime che l'auto-reload non sa fare.
+
+Da cui il disegno: **un contatore e due comparatori**, che è poi come sono fatti i
+timer general-purpose veri — un contatore con N canali di capture/compare. E la
+linea che lo tiene onesto è quella con cui è già scritto lo scheduler:
+**meccanismo, non politica**. N comparatori sono un timer; il foreground, la
+tabella degli slot e il round-robin sono software, e non si toccano finché non
+sono decisi.
+
+Si incassa subito una cosa indipendente dal foreground: oggi il battito e le
+scadenze sono **la stessa interruzione**, quindi il 32,3% che il gestore si
+prende in `test_mondo` fonde «quanto costa battere» e «quanto costa servire una
+scadenza». Con due canali il marcatore li separa da solo.
+
+#### `==` è un difetto, e `>=` è l'unica rete che resta
+
+L'utente: *«quando sono uguali scatta l'interruzione»*. L'uguaglianza stretta
+rompe in due modi, e il secondo è cattivo.
+
+Il contatore avanza di 1 ogni 100.000 cicli, quindi `counter == cmp` non è un
+istante: è vero per 100.000 cicli di fila. Ma il problema serio è l'altro — se il
+software scrive un `cmp` **già passato** (riarmo tardivo, o periodo più corto del
+tempo di servizio) l'uguaglianza non si verifica **mai più**, e il timer muore in
+silenzio. È il bug classico di `mtimecmp`, e capita sotto carico.
+
+La forma giusta è `counter - cmp >= 0` in aritmetica wrappante, che è **la stessa
+regola** che `timeout.vinc` già dichiara per le scadenze: *«i confronti vanno
+fatti sulla differenza, mai sui valori»*. Il confronto nel ferro e quello nel
+gestore diventano la stessa frase scritta due volte, una in C e una in assembly —
+oggi quella regola vive in un posto solo e nessun hardware la conferma.
+
+E conta il doppio nel tickless, perché **lì la rete sparisce**: col tick
+periodico un riarmo sbagliato lo salva il tick dopo (`tmo_now` è assoluto e si
+recuperano tutte le scadenze maturate — il «arriva tardi invece di non arrivare»
+che §9.2 e §3.70 hanno già accettato due volte). Senza tick **non c'è un tick
+dopo**. Con `>=` un compare programmato nel passato spara subito; con `==` il
+sistema non si sveglia più.
+
+#### Il vincolo che il tickless tocca, e che non si smonta
+
+`scheduler.vasm:527`: **«è esattamente SCHED_RR, e senza un quanto: IL TICK È IL
+QUANTO»**. Fra task di pari livello la rotazione la fa il tick.
+
+L'utente: *«non voglio, per ora, un time slicing»*. Ma il racconto del satellite
+è arrivato dopo, e dice che nel bersaglio il foreground **è** time slicing.
+Quindi «per ora» è per ora.
+
+Un solo programma ci si appoggia, e va saputo prima di toccare: `test_vectors`,
+`PRIO_AB 1`, col commento *«A e B PARI: è la rotazione a farli alternare»*. Senza
+quanto, A prende la CPU e la tiene: l'`EXPECT "0 0 20 19 39"` non si sposterebbe,
+**smetterebbe di avere senso** — i due `20` e `19` sono i giri di A e di B, e
+sarebbero `39` e `0`. Ed è l'unico test che prova il salvataggio del contesto
+**vettoriale** attraverso una commutazione, cioè la cosa in prova sparirebbe.
+
+Avevo proposto di ripensarlo. **Ritirato**: se il foreground torna, quella
+rotazione è precisamente ciò che serve, e un carico vettoriale nel foreground è
+il caso d'uso del satellite. Va lasciato dov'è.
+
+#### Un errore di metodo, corretto dall'utente a metà del primo passo
+
+Alla richiesta di **misurare prima di toccare** avevo risposto aprendo un
+worktree e cominciando a scrivere l'implementazione: due registri MMIO,
+`tmgr_tick` riscritto, l'unità già scelta. L'utente ha fermato la cosa a metà —
+*«scusa ma cosa stai facendo?»* — ed era giusto: uno spike che contiene tutte le
+decisioni non prese non è una misura, è la decisione presa di propria iniziativa.
+
+La misura vera costava meno: il modello dei cicli è deterministico
+(`CYC_SCALAR_MEM` = 4, `ALU` e `BR` = 1), le istruzioni in gioco erano una
+dozzina, e si contano leggendo. Il worktree è stato buttato senza che il repo
+fosse toccato.
+
+#### Cosa NON è stato fatto
+
+Il kernel non è stato toccato: `tmo_now`, `timeout_arm`, `timeout_expired` e
+tutti i test sono come prima. Il `settimer` che slitta è ancora lì, col commento
+corretto e il codice no.
+
+**I comparatori invece SONO stati fatti, nella stessa sessione** — `CMP_CTRL`,
+`CMP0`, `CMP1`, `CAUSE_CMP0/1`, `tests/test_cmp.vasm` con `EXPECT "121 3 6 0"`,
+`ctest` **45/45** e le 17 impronte ancora ferme. Il dettaglio sta in §3.73, che
+racconta anche perché l'unità decisa qui — i millisecondi — sia **giusta solo per
+metà del sistema**.
+
+Il **respiro** non è stato fatto neanche oggi, e la sua formula resta valida: il
+tick della suite NON va decompresso — 40 µs è l'ordine di grandezza di un PRI di
+tracking o di un buffer DMA, quindi il 26,7% e lo zero del minimo restano numeri
+veri e non artefatti. Avevo proposto di portarlo a 1 ms con l'argomento «lo fanno
+FreeRTOS e Linux»: è un argomento da kernel general-purpose, e in un modem o in
+un radar non regge.
 
 ---
 
@@ -8430,6 +9201,32 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 > apparentemente perfetto. Il criterio non diceva «esulta», diceva «riportalo
 > dicendo cos'è», e cos'è lo dice §6.1: il caso peggiore non è misurato.
 
+> **E tolta il 15/09, appena scaduta:** la formula «il prossimo passo — i due
+> comparatori», fatta nella stessa sessione che l'aveva scritta. Il suo criterio
+> di fine ha funzionato alla lettera — «ctest 45/45 e le 17 impronte invariate,
+> ed è quella la prova che si è aggiunto un indirizzo e non un opcode» — e in
+> più ha retto una cosa che non prevedeva: che il test fallisse al primo colpo
+> per un difetto **suo** e non della macchina (la trap fra il `lw` e la `beq`).
+> La formula diceva quali asserzioni servivano, non «scrivile giuste al primo
+> tentativo», e la differenza l'ha pagata il test, non il criterio.
+
+> **E tolta il 15/09, e NON perché scaduta — perché era SBAGLIATA:** la formula
+> «il prossimo passo — l'orologio di sistema». Metà del suo lavoro è stato fatto
+> (§3.72: il contatore c'è), ma l'altra metà mandava nella direzione opposta a
+> quella giusta, e in due punti. Diceva che il registro di **compare** «non
+> serve», e serve — è ciò che rende possibile il tickless, e la formula lo
+> respingeva perché lo aveva valutato come strumento di diagnostica invece che
+> come sorgente dell'evento. E poneva il **wrap** come «il vincolo che decide
+> l'unità, e non si cambia dopo», mentre il vincolo vero è che l'unità
+> corrisponda a qualcosa che esiste: i microsecondi, che la sua tabella metteva
+> alla pari delle altre due unità, non sono la scala di nessun evento.
+>
+> È il primo caso in questo documento di una formula ritirata per **errore di
+> contenuto** e non per scadenza, ed è la ragione per cui il riquadro qui sopra
+> va letto anche al contrario: una formula che punta invece di ricopiare resta
+> aggiornata sui *fatti*, ma non si autocorregge sui **giudizi**. Il suo sarebbe
+> sopravvissuto intatto a qualunque numero nuovo.
+
 > **E tolta il 14/09, appena scaduta:** la formula «il prossimo passo — la
 > latenza nel CASO PEGGIORE», che §3.69 ha reso lavoro **fatto** nella stessa
 > sessione. Il suo criterio ha funzionato alla lettera — «un programma con più
@@ -8439,61 +9236,52 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 > programma», non «serve un programma che funzioni al primo colpo», e la
 > differenza l'ha pagata la misura, non il criterio.
 
-**IL PROSSIMO PASSO — l'OROLOGIO DI SISTEMA (la discussione del 15/09, aperta):**
+**IL PROSSIMO PASSO — la SECONDA BASE DEI TEMPI, e `srai` (15/09, deciso):**
 ```
-Leggi docs/stato-lavori.md, §3.71, e riprendi dalla discussione che
-finisce li'. Poi include/vcpu.h (il riquadro dei canali della macchina) e
-il .vinc di timeout, campo TIMEOUT.expiry.
+Leggi docs/stato-lavori.md, §3.73 PRIMA di §3.72 -- la terza corregge la
+seconda su quale sia l'unita' giusta. Poi il riquadro dei COMPARATORI in
+include/vcpu.h e hal/interface/hal/clock.vinc: il meccanismo c'e' tutto,
+manca la base su cui confronta.
 
-IL PUNTO A CUI SIAMO ARRIVATI, e non e' ancora una decisione presa:
-un timeout non deve scattare perche' sono arrivati N risvegli, ma
-perche' IL TEMPO ha superato la soglia -- "ho un timeout di 10 msec, il
-conteggio dice che ne sono passati 10,5, quindi scatto". Serve un
-FREE RUNNING COUNTER hw leggibile dal software, il gestore conserva il
-precedente, e la differenza dice quanto e' vecchio il tick.
+E' ANCORA LAVORO DI MACCHINA, e il kernel non si tocca. La macchina a
+stati della time line viene dopo, e prima di lei vanno chiuse le due
+decisioni di POLITICA che sono in fondo al riquadro di §0 (cosa fare
+dopo uno sforamento, e se gli slot hanno slack): sono dell'utente, e
+cambiano la forma degli stati.
 
-LA FORMA C'E' GIA', ed e' la scoperta che rende il lavoro piccolo:
-TIMEOUT.expiry e' GIA' una scadenza ASSOLUTA, e il .vinc dice gia' che i
-confronti si fanno sulla differenza (scadenza - adesso) e mai sui valori.
-Sbagliata e' solo l'UNITA': tick (un contatore di risvegli) invece di
-tempo. Cambia tmo_now -- da variabile incrementata dall'ISR a lw da un
-registro -- e l'unita' di expiry. Il gestore fa gia' il resto.
+COSA MANCA, ed e' poco:
+  - il free running counter in CICLI, che e' la base del foreground. Non
+    e' derivato: e' il contatore stesso, gia' in cpu->cycles;
+  - un bit per canale in CMP_CTRL che dica su QUALE base quel canale
+    confronta. In hardware il prescaler e' del canale, non del chip, ed
+    e' per questo che il bit sta li' e non in un registro globale;
+  - `srai`, IN CODA all'enum come mark e mfcause. In mezzo rinumera gli
+    opcode e muove tutte e diciassette le impronte (successo il 14/09).
 
-COSA SI GUADAGNA, e oggi non esiste:
-  - il gestore puo' consegnare DI QUANTO e' in ritardo insieme alla
-    scadenza: il client saprebbe di aver dormito 10,5 invece di 10;
-  - il riarmo periodico diventa una SCELTA invece di un destino --
-    "scadenza_precedente + P" (isocrono, recupera) invece di "ora + P"
-    (deriva). E' la stessa differenza che la macchina ha nel suo
-    timer_next = cycles + period, portata dove il client la decide.
+PERCHE' DUE BASI E NON TRE: i us erano il compromesso fra risoluzione e
+portata, e con le due estreme -- cicli (0,01 us, wrap 43 s) e ms (wrap
+49 giorni) -- il compromesso non serve. Un frame dura ms, un timeout di
+guardia dura minuti.
 
-IL VINCOLO CHE DECIDE L'UNITA', e non si cambia dopo: IL WRAP. La regola
-"confronta le differenze" regge solo finche' nessun timeout supera meta'
-periodo del contatore. A 32 bit in CICLI a 100 MHz il wrap e' ogni ~43
-secondi (nessun timeout oltre i 21); in microsecondi ~71 minuti; in
-MILLISECONDI ~49 giorni. L'esempio dell'utente e' in millisecondi e non
-e' un caso.
+E PERCHE' LA BASE PURA NON E' UN ECCESSO: con un comparatore la
+risoluzione e' DISACCOPPIATA dalla frequenza delle interruzioni. Un tick
+a 10 ns sarebbe assurdo, una scadenza a 10 ns costa quanto qualunque
+altra. In piu' e' l'unica base in cui il JITTER e' esprimibile nella
+stessa unita' della time line: in millisecondi lo scarto fra time line
+disegnata e reale sarebbe 0 sempre, cioe' invisibile.
 
-CIO' CHE NON SERVE, e che era un mio errore: il registro di COMPARE (la
-scadenza nominale). Con uno stamp ASSOLUTO il tempo e' noto e basta;
-il compare servirebbe solo a separare "la trap e' partita tardi" da
-"l'intervallo era lungo", che e' diagnostica, non tempo.
+IL TEST sta a file singolo come test_clock e test_cmp: il soggetto e' la
+MACCHINA. Le asserzioni nuove sono due -- due canali sulle DUE basi
+diverse sparano ognuno sulla propria scala, e `srai` su un negativo da'
+il quoziente e non spazzatura (provalo contro `div` per la stessa
+potenza di due: devono coincidere, e costare 1 ciclo invece di 20).
 
-E UN COROLLARIO DA VALUTARE: con lo stamp nel payload il COALESCING
-tornerebbe quasi innocuo anche per il tick -- l'ISR scrive lo stamp prima
-della send, quindi se la send rifiuta lo stamp resta comunque aggiornato
-(e' lo stesso oggetto, ed e' una parola sola, quindi atomica). Il gestore
-leggerebbe l'ora dell'ULTIMO tick, che e' quella che gli serve. Il che
-rimette in discussione cosa abbiano comprato i 245 giri d'idle di §3.70:
-"ora - stamp" e' la profondita' della coda IN TEMPO invece che in numero
-di messaggi. Non tornare indietro di iniziativa propria: e' da discutere.
+NON toccare settimer, e non toccare il kernel. Il `timer_next` che
+slitta resta com'e': commento corretto, codice no.
 
-PRIMA DI TOCCARE, misurare il costo: quante istruzioni in piu' nell'ISR
-(percorso caldissimo) e nel gestore, e quali EXPECT si muovono. Ogni tag
-si e' sempre pagato in giri d'idle, e tmgr_marks si e' gia' mosso otto
-volte.
-
-Alla fine: ctest 43/43 e scheduler_facts --check verde.
+Alla fine: ctest 47/47 (o piu'), scheduler_facts --check verde, e
+tools/fingerprint.sh con le 17 impronte INVARIATE. Se `srai` le muove,
+e' finita in mezzo all'enum invece che in coda.
 ```
 
 **E PRIMA, O DOPO — il RESPIRO nel nucleo fattuale (non fatto il 15/09):**

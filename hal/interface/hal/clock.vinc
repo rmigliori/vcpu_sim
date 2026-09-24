@@ -1,0 +1,105 @@
+; hal/clock.vinc — L'OROLOGIO DI SISTEMA, un free running counter in millisecondi.
+;
+; Fino al 15/09/2026 il tempo che un programma poteva misurare era il CONTEGGIO
+; DEI RISVEGLI: "sono arrivati N tick". Non e' il tempo, ed e' una differenza
+; che si vede appena la si nomina -- il tick si consegna in ritardo (§3.71: fino
+; a 406 cicli, ed e' interrupt disable time) e il ritardo non si recupera, quindi
+; N tick valgono N periodi PIU' la somma dei ritardi. Un timeout che scatta sul
+; conteggio scatta perche' e' arrivato l'N-esimo risveglio; uno che scatta
+; sull'orologio scatta perche' il tempo e' passato.
+;
+; --- COME SI LEGGE ---
+; Come ogni registro di periferica, con una load -- la ISA non e' stata toccata,
+; per lo stesso motivo per cui non fu toccata per la tastiera (hal/kbd.vinc):
+;
+;     li  r1, CLOCK_MS
+;     lw  r2, 0(r1)              ; r2 = i millisecondi dall'accensione
+;
+; --- FREE RUNNING: non si azzera, non si scrive ---
+; Non c'e' un registro di controllo e non c'e' un reset, e non e' una mancanza:
+; un contatore azzerabile e' un contatore di cui bisogna sapere chi l'ha
+; azzerato e quando, e due clienti che lo azzerassero si romperebbero a vicenda.
+; Chi vuole un intervallo si conserva la lettura precedente e SOTTRAE. E' il
+; modello di `mtime` su RISC-V.
+;
+; Scriverci e' un errore della macchina ("MMIO store to read-only register"),
+; non un caso da gestire.
+;
+; --- LE DUE LETTURE SI SOTTRAGGONO, NON SI ORDINANO ---
+; Il contatore e' a 32 bit e `lw` estende il segno: dopo ~24,8 giorni il valore
+; letto diventa negativo, dopo ~49,7 giorni il contatore gira e ricomincia. E'
+; il comportamento del ferro, non un limite del simulatore. Quindi "e' passato
+; l'istante T?" si chiede come `T - adesso <= 0` e mai come `adesso >= T`, che
+; e' la stessa regola con cui timeout.vinc confronta le scadenze -- li' e'
+; scritta per un contatore di tick, qui vale per un orologio.
+;
+; --- PERCHE' MILLISECONDI ---
+; L'unita' la decide il wrap, ed e' la ragione per cui non sono cicli: a 32 bit,
+; contando CICLI a 100 MHz il contatore gira ogni ~43 secondi -- un timeout di
+; dieci minuti non sarebbe nemmeno esprimibile. In microsecondi gira ogni ~71
+; minuti, in millisecondi ogni ~49 giorni.
+;
+; Si paga in RISOLUZIONE, e va saputo prima di usarlo: un millisecondo sono
+; 100.000 cicli, cioe' 25 tick della suite di test, che gira con un tick
+; compresso di 25-2000 volte rispetto a uno vero (§7 di docs/scheduler-facts.md).
+; L'intera corsa di test_mondo dura 102.055 cicli: durante quella corsa questo
+; contatore cambia valore UNA VOLTA. Non e' il contatore a essere grosso -- e' il
+; tick della suite a essere finto -- ma finche' quella compressione c'e' le due
+; scale non si parlano, e un timeout in millisecondi su un tick da 40 µs non e'
+; una cosa che si possa provare in quella suite.
+;
+; File FOGLIA: non include niente.
+
+.equ CLOCK_MS    0x10000C        ; sola lettura: i millisecondi dall'accensione
+
+; --------------------------------------------------------------------------
+;  I COMPARATORI — le scadenze sull'orologio.
+;
+;  Un contatore che sale sempre e due registri confrontati con lui: quando la
+;  scadenza e' raggiunta, il canale chiede l'interruzione. E' mtime/mtimecmp di
+;  RISC-V, ed e' il capture/compare di qualunque timer general-purpose.
+;
+;      li  r1, CMP0
+;      li  r2, CLOCK_MS
+;      lw  r3, 0(r2)
+;      addi r3, r3, 10            ; fra 10 ms
+;      sw  r3, 0(r1)              ; la scadenza
+;      li  r1, CMP_CTRL
+;      li  r2, CMP_ARM0
+;      sw  r2, 0(r1)              ; da qui in poi il canale 0 puo' interrompere
+;
+;  --- DUE CANALI, DUE REGIMI ---
+;  Il canale 0 e' il posto del battito (un foreground a slot vuole una cadenza
+;  esatta), il canale 1 quello delle scadenze arbitrarie. Se sono pronti
+;  insieme vince il 0, per lo stesso motivo per cui il timer batte la tastiera:
+;  un battito non deve derivare.
+;
+;  --- IL RIARMO ISOCRONO E' UNA SCELTA, E QUI SI VEDE ---
+;      lw r3, 0(r1)  /  addi r3, r3, P  /  sw r3, 0(r1)
+;  somma alla scadenza PRECEDENTE: la cadenza e' esatta e il ritardo di consegna
+;  non si accumula. Sommare invece all'orologio letto ADESSO fa derivare il
+;  battito di tutta la latenza, ogni volta. Sono tre istruzioni uguali e due
+;  sistemi diversi: e' il punto per cui il comparatore esiste.
+;
+;  --- SPARARE NON DISARMA ---
+;  La richiesta non e' un flag: E' il confronto, e resta vera finche' la
+;  scadenza non cambia. Quindi un'ISR che torna senza riprogrammare ritrova la
+;  trap subito -- e' lo stesso protocollo di KBD_DATA, dove il flag lo abbassa
+;  la lettura e non la trap. Riarmare costa una `sw` sola.
+;
+;  --- NASCONO SPENTI ---
+;  CMP_CTRL vale 0 all'accensione. Senza armamento esplicito un canale a zero
+;  sarebbe gia' scaduto al primo ciclo (0 - 0 >= 0).
+;
+;  --- LA CAUSA ---
+;  Una per canale: CAUSE_CMP0 e CAUSE_CMP1, lette con `mfcause` come le altre.
+; --------------------------------------------------------------------------
+.equ CMP_CTRL    0x100010        ; lettura/scrittura: bit n = canale n armato
+.equ CMP_ARM0     1              ; bit 0 di CMP_CTRL
+.equ CMP_ARM1     2              ; bit 1 di CMP_CTRL
+
+.equ CMP0        0x100020        ; la scadenza del canale 0, in ms
+.equ CMP1        0x100024        ; la scadenza del canale 1, in ms
+
+.equ CAUSE_CMP0   2              ; `mfcause` dopo una trap del canale 0
+.equ CAUSE_CMP1   3              ; ...e del canale 1

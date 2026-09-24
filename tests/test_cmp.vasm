@@ -1,0 +1,219 @@
+; tests/test_cmp.vasm — I COMPARATORI sull'orologio, le scadenze in millisecondi.
+;
+; A file singolo e senza HAL ne' kernel, come test_clock, test_kbd e test_due_irq:
+; qui si prova la MACCHINA. Metterci in mezzo il kernel vorrebbe dire provare due
+; cose insieme senza sapere quale ha ceduto.
+;
+; --- CHE COSA C'E' DA PROVARE ---
+; Che un comparatore spari e' poco. Le quattro cose che lo rendono utilizzabile:
+;
+;   1. DUE CANALI INDIPENDENTI, con scadenze diverse, che sparano nell'ORDINE
+;      delle loro scadenze e non in quello in cui sono stati armati;
+;   2. LA SCADENZA E' QUELLA CHIESTA: fra l'armamento a +3 ms e lo sparo passano
+;      3 ms, non 2 e non 4;
+;   3. UNA SCADENZA GIA' PASSATA SPARA SUBITO. E' l'asserzione piu' importante
+;      del file: con un confronto di uguaglianza (`adesso == scadenza`) non
+;      sparerebbe MAI PIU', perche' il contatore l'ha gia' superata, e il timer
+;      morirebbe in silenzio. E' il bug classico di mtimecmp, e capita sotto
+;      carico -- cioe' quando meno te lo puoi permettere;
+;   4. SPARARE NON DISARMA: la richiesta e' il confronto, non un flag, quindi
+;      un'ISR che torna senza riprogrammare ritrova la trap. Qui si vede al
+;      rovescio -- ogni ramo dell'ISR o riprograma o disarma, e se non lo
+;      facesse il programma non terminerebbe.
+;
+; --- COME SI LEGGE `seq` ---
+; Ogni trap accoda una cifra: 1 per il canale 0, 2 per il canale 1. Alla fine
+; `seq` e' 121, che si legge da sinistra: il canale 0 (scadenza +3), poi il
+; canale 1 (scadenza +6), poi di nuovo il canale 0 (la scadenza nel passato).
+; Un numero solo dice l'ordine di tre eventi e quante volte ognuno e' arrivato.
+;
+; --- I QUATTRO NUMERI ---
+;   seq  121   l'ordine: 0, 1, 0. Se i canali sparassero nell'ordine di
+;              armamento invece che di scadenza sarebbe un altro numero, e se
+;              uno sparasse due volte di fila si vedrebbe
+;   dt0    3   ms fra l'armamento e lo sparo del canale 0. E' la scadenza
+;              chiesta: il comparatore confronta millisecondi, non altro
+;   dt1    6   lo stesso per il canale 1, misurato dallo STESSO t0. Prova che i
+;              due canali sono indipendenti e non uno il riarmo dell'altro
+;   dt2    0   dalla scrittura di una scadenza NEL PASSATO al suo sparo non
+;              passa nemmeno un millisecondo. E' la (3): con `==` invece di
+;              `>=` qui il programma non terminerebbe affatto
+
+.equ CLOCK_MS    0x10000C        ; li dichiara anche hal/clock.vinc; qui sono
+.equ CMP_CTRL    0x100010        ; ricopiati perche' questo test gira a file
+.equ CMP_ARM0     1              ; singolo, senza interfacce, di proposito
+.equ CMP_ARM1     2
+.equ CMP0        0x100020
+.equ CMP1        0x100024
+.equ CAUSE_CMP1   3
+
+  .data
+t0:    .word 0          ; l'istante di riferimento, letto una volta sola
+t2:    .word 0          ; quando e' stata scritta la scadenza nel passato
+seq:   .word 0          ; le cifre degli eventi, in ordine di arrivo
+dt0:   .word 0
+dt1:   .word 0
+dt2:   .word 0
+fase:  .word 0          ; 0 = la prima scadenza del canale 0, 1 = quella passata
+fine:  .word 0
+
+  .text
+main:
+  li r14, 4096
+  sethandler isr
+
+  ; --- l'istante di riferimento, e le due scadenze -------------------------
+  ; Letto UNA VOLTA e conservato: dt0 e dt1 si misurano dallo stesso t0, o
+  ; proverebbero solo che ogni canale e' coerente con se stesso.
+  li r1, CLOCK_MS
+  lw r2, 0(r1)
+  li r3, t0
+  sw r2, 0(r3)
+
+  ; Il canale 1 si arma con la scadenza PIU' LONTANA ed e' scritto per PRIMO:
+  ; cosi' l'ordine di sparo non puo' essere quello di armamento per caso.
+  addi r3, r2, 6
+  li r4, CMP1
+  sw r3, 0(r4)
+
+  addi r3, r2, 3
+  li r4, CMP0
+  sw r3, 0(r4)
+
+  li r1, CMP_CTRL
+  li r2, CMP_ARM0
+  li r3, CMP_ARM1
+  or r2, r2, r3
+  sw r2, 0(r1)             ; tutti e due armati, da qui possono interrompere
+
+  sti
+
+  ; Il ciclo di sfondo. Non conta niente: l'unica cosa che lo ferma e' l'ISR,
+  ; e se un ramo dell'ISR dimenticasse di riprogrammare o disarmare il suo
+  ; canale non ci si arriverebbe mai -- la trap si ripresenterebbe all'infinito.
+sfondo:
+  li r1, fine
+  lw r2, 0(r1)
+  beq r2, r0, sfondo
+
+  li r1, seq
+  lw r5, 0(r1)
+  dumps r5                 ; 121
+  li r1, dt0
+  lw r5, 0(r1)
+  dumps r5                 ; 3
+  li r1, dt1
+  lw r5, 0(r1)
+  dumps r5                 ; 6
+  li r1, dt2
+  lw r5, 0(r1)
+  dumps r5                 ; 0
+  halt
+
+; ==========================================================================
+;  L'ISR. Serve tre sorgenti (il canale 0 due volte, il canale 1 una) e chiede
+;  chi e' stato con `mfcause`, come test_due_irq.
+;
+;  --- L'ISR NON TOCCA r1 NE' r2, E NON E' UNA CORTESIA ---
+;  Questo programma non ha kernel, quindi nessuno salva il contesto: i registri
+;  che l'ISR sporca restano sporchi al ritorno. Il ciclo di sfondo li ricarica a
+;  ogni giro, ma questo NON basta -- la trap puo' cadere FRA il `lw` e la `beq`
+;  che lo usa, e allora la `beq` confronta un valore scritto dall'ISR.
+;
+;  E' capitato alla prima stesura di questo file: l'ISR faceva `li r2, CMP_ARM1`
+;  prima della `reti`, la trap cadeva sulla `beq`, e il ciclo di sfondo usciva
+;  al primo sparo invece che al terzo. Il test terminava con `seq = 1` e i due
+;  canali restanti mai osservati -- cioe' passava per meta' e taceva il resto.
+;  Assumere che un registro sopravviva a un confine di trap e' la stessa specie
+;  di errore che §3.69 ha pagato assumendo che i tick stessero a multipli di
+;  4000: un'ipotesi sul tempo, presa per un fatto.
+;
+;  In un sistema vero questo e' precisamente il lavoro dell'HAL, ed e' il motivo
+;  per cui esiste.
+; ==========================================================================
+isr:
+  mfcause r3
+
+  ; --- seq = seq*10 + cifra, dove la cifra e' 1 per il canale 0 e 2 per il 1 ---
+  li r4, CAUSE_CMP1
+  li r5, 1
+  bne r3, r4, isr_cifra
+  li r5, 2
+isr_cifra:
+  li r4, seq
+  lw r6, 0(r4)
+  li r7, 10
+  mul r6, r6, r7
+  add r6, r6, r5
+  sw r6, 0(r4)
+
+  li r4, CAUSE_CMP1
+  beq r3, r4, isr_canale1
+
+; --- il canale 0: due spari, e sono due cose diverse ---------------------
+  li r4, fase
+  lw r5, 0(r4)
+  bne r5, r0, isr_passata
+
+  ; Primo sparo: la scadenza a +3 ms. Si misura, e si DISARMA il canale --
+  ; riprogrammarlo qui vorrebbe dire un terzo sparo che il test non aspetta.
+  li r4, CLOCK_MS
+  lw r6, 0(r4)
+  li r4, t0
+  lw r7, 0(r4)
+  sub r6, r6, r7
+  li r4, dt0
+  sw r6, 0(r4)             ; 3
+
+  li r4, fase
+  li r5, 1
+  sw r5, 0(r4)
+
+  li r4, CMP_CTRL
+  li r5, CMP_ARM1
+  sw r5, 0(r4)             ; resta armato solo il canale 1
+  reti
+
+isr_passata:
+  ; Secondo sparo del canale 0: la scadenza scritta NEL PASSATO. Se qui non ci
+  ; si arriva, il confronto della macchina e' un'uguaglianza e non una
+  ; differenza -- il programma resterebbe nel ciclo di sfondo per sempre.
+  li r4, CLOCK_MS
+  lw r6, 0(r4)
+  li r4, t2
+  lw r7, 0(r4)
+  sub r6, r6, r7
+  li r4, dt2
+  sw r6, 0(r4)             ; 0: e' scattata subito
+
+  li r4, CMP_CTRL
+  sw r0, 0(r4)             ; tutto disarmato: non c'e' piu' niente da aspettare
+  li r4, fine
+  li r5, 1
+  sw r5, 0(r4)
+  reti
+
+; --- il canale 1: misura, poi arma il canale 0 NEL PASSATO ----------------
+isr_canale1:
+  li r4, CLOCK_MS
+  lw r6, 0(r4)
+  li r4, t0
+  lw r7, 0(r4)
+  sub r6, r6, r7
+  li r4, dt1
+  sw r6, 0(r4)             ; 6
+
+  ; La scadenza gia' passata: adesso meno 5 ms. Il canale 0 la deve prendere
+  ; alla `reti`, senza aspettare che il contatore faccia un giro intero.
+  li r4, CLOCK_MS
+  lw r6, 0(r4)
+  li r4, t2
+  sw r6, 0(r4)
+  addi r6, r6, -5
+  li r4, CMP0
+  sw r6, 0(r4)
+
+  li r4, CMP_CTRL
+  li r5, CMP_ARM0
+  sw r5, 0(r4)             ; e il canale 1 si disarma: ha finito
+  reti
