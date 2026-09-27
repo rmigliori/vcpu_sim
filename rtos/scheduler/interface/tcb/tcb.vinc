@@ -25,7 +25,69 @@
   .field pcb                   ; +12 INDIRIZZO del PCB del suo livello (§7.3)
   .field state                 ; +16 stato corrente
   .field crit                  ; +20 sezioni critiche possedute: != 0 => NON RUOTABILE
+  .field nopreempt             ; +24 != 0 => e' il SUPER TASK: nessuno lo prelaziona
 .ends
+
+; --------------------------------------------------------------------------
+;  TCB.nopreempt — IL SUPER TASK (27/09/2026, deciso dall'utente in §3.75).
+;
+;  Il super task e' il task della macchina a stati della time line (§3.74). Lo
+;  distinguono DUE cose, e nessuna delle due e' un rango:
+;
+;    come si ATTIVA   col dispatch diretto -- l'ISR lo mette in esecuzione con
+;                     sched_isr_exit_to, senza passare dallo scheduler
+;    cosa GLI SI GARANTISCE
+;                     mentre gira LO SCHEDULER NON SCEGLIE. Gli interrupt si
+;                     SERVONO -- un'ISR parte, legge, accoda, sveglia -- ma
+;                     nessuno prende la CPU finche' il super task non va in
+;                     `wait`. Chi viene svegliato nel frattempo aspetta PRONTO,
+;                     e la scelta si fa li'
+;
+;  Non e' mascheramento: il super task gira con IE=1, ed e' la ragione per cui
+;  §3.74 ne ha fatto un task invece di codice sul percorso di trap. La latenza
+;  del telecomando resta quella di un'ISR, non la durata di uno slot.
+;
+;  UN CAMPO E NON `pcb == 0`, ed e' la ragione per cui esiste: col livello nullo
+;  "super task" e "nessuno mi ha dato un livello" sarebbero lo stesso stato, e
+;  un boot che dimentica TCB.pcb renderebbe non prelazionabile un task qualunque
+;  senza un errore. Una PAROLA e non un bit: senza logiche immediate un bit
+;  costa lw+li+and+beq, una parola lw+bne.
+;
+;  NESSUNO LO SCRIVE A MANO. Lo scrive l'ASSEMBLER, con la direttiva
+;
+;      .supertask tcbT             ; al posto di  tcbT: .res TCB
+;
+;  che riserva il TCB con questa parola gia' a 1 nell'immagine dati -- il TCB
+;  NASCE super -- e definisce allo stesso indirizzo il simbolo globale
+;  `super_tcb`. Due super task sono quindi un errore di BUILD: "duplicate
+;  label" nello stesso file, "duplicate global 'super_tcb'" al link. Il super
+;  task e' al piu' uno perche' con due nessuna regola direbbe chi vince, visto
+;  che nessuno dei due si lascia prelazionare.
+;
+;  --- IL SUO TCB.pcb: UN LIVELLO IN PRESTITO ---
+;  Il super task non ha un livello suo. Quando l'ISR lo attiva, sched_isr_exit_to
+;  gli copia in TCB.pcb il PCB del task che interrompe -- il VECCHIO current --
+;  e da li' la preemption si calcola su quello: task_ready confronta ogni
+;  risvegliato col PCB di chi gira, e trova il suo. Alla sospensione il
+;  prestito si restituisce (pcb = 0). Quindi:
+;
+;      TCB.pcb != 0   gira, e ha interrotto il task di quel livello, che sta
+;                     nello slot PCB.preempted
+;      TCB.pcb == 0   a riposo, oppure gira senza aver interrotto nessuno (al
+;                     boot parte a freddo)
+;
+;  LA DISCIPLINA, che l'ambiente unico invita a dimenticare (§3.74, "l'ambiente
+;  si unifica, le regole no"): niente attese bloccanti oltre la sua `wait`,
+;  niente mutex, niente task_yield. Col livello in prestito, task_yield lo
+;  accoderebbe fra i pronti di un altro livello come un task qualunque, e un
+;  mutex gli riscriverebbe TCB.pcb col ceiling. A livello 0, sched_ready_above
+;  scandirebbe oltre pcb7.
+;
+;  Chi lo legge: sched_isr_exit (non consuma il need_resched),
+;  sched_isr_exit_to (rende PRONTO chi andrebbe dispacciato, invece di
+;  dispacciarlo, e scrive il prestito) e `wait`, che lo manda all'USCITA
+;  DEDICATA task_block_super.
+; --------------------------------------------------------------------------
 
 ; --------------------------------------------------------------------------
 ;  TCB.crit — PERCHE' ESISTE, visto che §7.4 si vantava di "costo nel TCB:

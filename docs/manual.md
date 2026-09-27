@@ -601,6 +601,8 @@ loop:   setvl r4, r3      ; 'loop' = indice di questa istruzione
 | `.endif` | `.endif` | chiude il condizionale aperto più di recente |
 | `.proc` / `.endproc` | `.proc NOME` … `.endproc NOME` | prologo/epilogo automatico per procedure non-foglia a corpo lineare (§4.2.1) |
 | `.macro` / `.endmacro` | `.macro NOME p1, p2` … `.endmacro` | una sequenza definita una volta ed **espansa** dove la si nomina; il corpo può essere **vuoto**, e allora non emette niente (§4.2.4) |
+| `.supertask` | `.supertask NOME` | nel segmento dati: il TCB del **super task**, come `NOME: .res TCB` ma con `TCB.nopreempt` già a 1 e il globale `super_tcb` allo stesso indirizzo; due super task sono un errore di build (§4.2.6) |
+| `.interrupt` / `.endinterrupt` | `.interrupt NOME` … `.endinterrupt NOME rN` | un gestore di trap che esce dal kernel: la coda salta a `sched_isr_exit_to` col TCB di `rN` da mettere in esecuzione direttamente, `r0` = nessuno (§4.2.5) |
 | `.global` | `.global sym ...` | **esporta** un simbolo definito qui (compilazione separata, §2.5) |
 | `.extern` | `.extern sym ...` | **importa** un simbolo definito in un altro modulo (§2.5) |
 
@@ -928,6 +930,78 @@ vuoto, due espansioni indipendenti della stessa macro e l'etichetta davanti a
 una chiamata. I cinque numeri attesi sono tutti derivabili a mano — un test del
 linguaggio che dipendesse dai cicli misurerebbe la macchina invece
 dell'assembler.
+
+#### 4.2.5 `.interrupt`: il gestore di trap, e il dispatch diretto
+
+```asm
+  .interrupt isr
+  mfcause r3
+  ...                     ; il corpo: etichette e direttive ammesse
+  li r1, la_mia_wait
+  call wait_signal        ; r1 = il TCB da svegliare, o 0
+  .endinterrupt isr r1
+```
+
+`.interrupt NOME` definisce l'etichetta `NOME`, come `.proc`, e non emette
+altro. `.endinterrupt NOME rN` emette la **coda**, e soltanto quella:
+
+```asm
+  mov r2, rN              ; omessa se rN e' gia' r2
+  mov r1, r14             ; il contesto opaco del task interrotto
+  j   sched_isr_exit_to
+```
+
+`sched_isr_exit_to` (nel kernel, `rtos/scheduler/impl/src/`) mette in
+esecuzione il TCB in `r2` **senza passare dallo scheduler**: è il dispatch
+diretto di §3.74 dell'handoff. Con `r2 = 0` fa quello che fa `sched_isr_exit`,
+cioè l'uscita ordinaria — quindi `.endinterrupt NOME r0` è la forma per un
+gestore che non ha nessuno da svegliare. L'operando è **obbligatorio**: dirlo
+costa un token, e toglie il caso di un gestore che salta al kernel con un `r2`
+qualunque.
+
+**La testa è vuota, di proposito.** Il contesto lo salva già il vettore
+dell'HAL (`_trap_entry` → `ctx_save`), che consegna con `r1` = contesto opaco
+**e** `r14` = lo stesso puntatore, perché il contesto opaco è la cima dello
+stack. Da cui l'unica regola del corpo: **deve lasciare lo stack com'era**, la
+stessa che `.proc` impone al suo. Le ISR scritte a mano tengono il contesto in
+un registro scelto a occhio (`mov r6, r1` … `mov r1, r6`); con la direttiva non
+serve.
+
+A differenza di `.proc` il corpo **non** è bufferizzato — la coda non dipende da
+lui — quindi etichette e direttive dentro sono ammesse. Non è annidabile, non
+accetta `.proc` dentro, vive solo in `.text`, e un `.interrupt` non chiuso è un
+errore. Un programma che non la usa non ne riceve un byte.
+
+`rtos/test/test_wait.vasm` è il programma che la usa, insieme alla coppia
+`wait`/`wait_signal` (`rtos/services/wait/`).
+
+#### 4.2.6 `.supertask`: il TCB che nasce super, e al più uno
+
+```asm
+.include "tcb/tcb.vinc"
+  .data
+  .supertask tcbT          ; al posto di  tcbT: .res TCB
+```
+
+Il **super task** è il task che l'ISR della time line mette in esecuzione col
+dispatch diretto, e mentre gira **lo scheduler non sceglie**: gli interrupt si
+servono, ma nessuno prende la CPU finché lui non va in `wait`. La definizione
+completa sta in `tcb.vinc`, accanto al campo `TCB.nopreempt`.
+
+La direttiva fa tre cose, e tutte e tre sono sue e non di chi la scrive:
+
+- definisce l'etichetta `NOME` e riserva `TCB.size` byte, come `.res TCB`;
+- scrive **1** nella parola `TCB.nopreempt` dell'immagine dati: il TCB nasce
+  super, e nessun boot deve ricordarsi di scriverlo;
+- definisce allo stesso indirizzo il simbolo **globale** `super_tcb`.
+
+Il terzo punto è la rete. Il super task è **al più uno**, e l'unicità la
+controlla la toolchain con i meccanismi che ha già: due `.supertask` nello
+stesso file fermano l'assembler («the super task is at most one»), in due file
+fermano `ld` («duplicate global 'super_tcb'»).
+
+Vive solo in `.data`, e vuole `tcb/tcb.vinc` incluso: cerca `TCB.size` e
+`TCB.nopreempt` fra le costanti, e senza di loro è un errore.
 
 ### 4.3 Manuale delle istruzioni
 

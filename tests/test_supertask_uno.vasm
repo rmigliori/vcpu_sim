@@ -1,0 +1,11 @@
+; tests/test_supertask_uno.vasm — UN super task, e nient'altro (27/09/2026, §3.75).
+;
+; Questo file da solo si assembla. Il test e' assemblarlo DUE VOLTE, in due
+; oggetti, e linkarli insieme: ognuno definisce il simbolo globale `super_tcb`,
+; e `ld` deve fermarsi con "duplicate global 'super_tcb'". Il super task e' al
+; piu' uno, e a dirlo e' la toolchain invece di una regola da ricordare.
+
+.include "tcb/tcb.vinc"
+
+  .data
+  .supertask tS

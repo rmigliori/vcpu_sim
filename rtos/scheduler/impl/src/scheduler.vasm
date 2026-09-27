@@ -33,7 +33,9 @@
 ; --- Modello a 3 stati (una posizione fisica del TCB per ogni stato) ---
 ;   READY(0)     : il TCB e' linkato nella ready queue.
 ;   RUNNING(1)   : il TCB e' FUORI da ogni coda, puntato solo da 'current'.
-;   SUSPENDED(2) : il TCB e' in una coda di semaforo/mailbox (estensione futura).
+;   SUSPENDED(2) : il TCB e' in una coda di semaforo/mailbox -- con UN'ECCEZIONE:
+;                  il titolare di una WAIT sospeso sulla wait e' FUORI da ogni
+;                  lista (fwd == bwd == 0), e lo ritrova WAIT.task (wait.vinc).
 ;
 ; --- TCB (16 byte):  +0 fwd  +4 bwd  +8 sp_salvato  +12 stato ---
 ;   sp_salvato = il puntatore-a-contesto opaco fornito dall'HAL.
@@ -126,9 +128,11 @@ g_lat_open: .word 0       ; !=0 => una finestra LATENCY e' aperta
   .global sched_init
   .global task_block
   .global task_yield
+  .global task_block_super
   .global task_ready
   .global prio_pcb
   .global sched_ready_above
+  .global dispatcher        ; per sched_isr_exit_to, nell'oggetto accanto
   .extern ctx_restore
   .extern hal_ctx_block
 
@@ -268,6 +272,66 @@ task_yield:
   sw r0, 0(r1)           ; la preemption chiesta la sto onorando io
   call scheduler         ; la scelta va rifatta, IE e' gia' 0
   j dispatcher           ; e da li' non si torna
+
+; =========================================================================
+;  task_block_super(): la SOSPENSIONE del super task -- la sua uscita
+;  DEDICATA (27/09/2026, §3.75). Stesso contratto di task_block: il chiamante
+;  si e' gia' fatto trovare (e' WAIT.task), ritorna quando lo rimettono in
+;  esecuzione. La chiama `wait` quando chi si sospende ha TCB.nopreempt.
+;
+;  --- PERCHE' NON task_block ---
+;  Il super task e' attivato col dispatch diretto e, mentre gira, lo scheduler
+;  non sceglie. Quando si sospende, la risposta a "chi gira adesso?" di solito
+;  e' GIA' NOTA: chi lui aveva interrotto. Passare da task_block voleva dire
+;  pagare una scansione per ritrovarla -- e lasciare il need_resched armato,
+;  perche' task_block non lo consuma. Questa uscita e' il gemello di
+;  sched_isr_exit, visto dall'altra parte: il super task e' un'ISR lunga che
+;  gira a interrupt aperti, e alla fine
+;
+;      need_resched spento  -> riprende il VECCHIO current, dallo slot: la
+;                              scelta non serve
+;      need_resched armato  -> lo consuma, e sceglie lo scheduler
+;
+;  Il flag dice la verita' perche' il super task, attivato, ha preso in
+;  prestito il LIVELLO del vecchio current (sched_isr_exit_to): task_ready ha
+;  confrontato ogni risvegliato con lui. Il vecchio current si ritrova senza
+;  variabili: e' nello slot di quel livello, e nessuno puo' averlo tolto --
+;  solo lo scheduler svuota gli slot, e mentre il super task gira non sceglie.
+;
+;  --- TCB.pcb == 0: NON HO INTERROTTO NESSUNO ---
+;  Il super task puo' girare senza essere stato attivato -- al boot parte a
+;  freddo -- e allora non c'e' un vecchio current da riprendere. Lo sceglie lo
+;  scheduler, e il flag si consuma lo stesso: la scansione completa lo soddisfa
+;  comunque. In uscita il prestito si RESTITUISCE (pcb = 0), cosi' lo 0 dice
+;  sempre il vero alla sospensione dopo.
+;
+;  Non ritorna per la via normale, come task_block: cade nel dispatcher.
+; ==========================================================================
+task_block_super:
+  mov r1, r15            ; l'indirizzo di ripresa: il ritorno al chiamante
+  call hal_ctx_block     ; r1 = contesto opaco del chiamante
+  li r2, current
+  lw r3, 0(r2)
+  sw r1, TCB.sp(r3)      ; il contesto vive nel TCB: il super task HA un
+                         ; contesto, come ogni task (§3.75)
+  li r4, SUSPENDED
+  sw r4, TCB.state(r3)
+  lw r5, TCB.pcb(r3)     ; il livello preso in prestito, 0 = nessuno
+  sw r0, TCB.pcb(r3)     ; ...e restituito
+  li r6, g_resched
+  lw r7, 0(r6)
+  bne r7, r0, tbs_scegli ; qualcuno batte il vecchio current: si sceglie
+  beq r5, r0, tbs_scegli ; nessun vecchio current da riprendere
+
+  ; --- il caso normale: riprende chi era stato interrotto, SENZA scansione ---
+  lw r1, PCB.preempted(r5)
+  sw r0, PCB.preempted(r5)  ; lo slot si svuota, come in sched_scan
+  j dispatcher
+
+tbs_scegli:
+  sw r0, 0(r6)           ; consuma il need_resched: la scelta sta per farsi
+  call scheduler         ; IE e' gia' 0
+  j dispatcher
 
 ; ==========================================================================
 ;  task_ready(r1 = &TCB): rende eseguibile un task e valuta la preemption.
@@ -467,6 +531,15 @@ sched_isr_exit:
   li r2, g_resched
   lw r4, 0(r2)
   beq r4, r0, sched_isr_exit_done
+
+  ; --- MENTRE GIRA IL SUPER TASK LO SCHEDULER NON SCEGLIE (§3.75) ---
+  ; Il need_resched NON si consuma: resta armato, e la scelta la fa lo
+  ; scheduler quando il super task si sospende nella sua `wait`, che passa da
+  ; task_block. E' una sveglia DIFFERITA, non persa. Costa una lw e una bne, e
+  ; solo a chi ha armato il flag. Vedi TCB.nopreempt in tcb.vinc.
+  lw r5, TCB.nopreempt(r3)
+  bne r5, r0, sched_isr_exit_done
+
   sw r0, 0(r2)           ; consuma il need_resched
 
   call sched_preempt     ; POLITICA: mette via l'uscente e sceglie -> r1
@@ -670,8 +743,13 @@ sched_scan_done:
 ;  dispatcher(r1 = &TCB) (MECCANISMO puro, interno): mette in esecuzione il task
 ;  che riceve IN INPUT, switch o no — chiama l'HAL (ctx_restore) e non sa ne'
 ;  vuole sapere come sono fatti i registri. Non ritorna mai (ctx_restore chiude
-;  con reti): niente da salvare. Non e' un'API generica (un solo chiamante:
-;  sched_isr_exit) -> scritto a mano.
+;  con reti): niente da salvare. Non e' un'API generica -> scritto a mano.
+;
+;  DUE CHIAMANTI dal 27/09/2026, ed e' la firma che §3.28 aveva preparato senza
+;  che nessuno ne avesse bisogno: sched_isr_exit, che il TCB lo fa scegliere
+;  allo scheduler, e sched_isr_exit_to, che lo riceve gia' deciso dall'ISR --
+;  il DISPATCH DIRETTO di §3.74. E' .global per quel secondo chiamante, che sta
+;  in un oggetto suo perche' i programmi che non lo usano non lo linkino.
 ;
 ;  L'INPUT ESPLICITO e' §12.3, e ha chiuso il debito che stava scritto qui.
 ;  Prima il TCB passava fra i due algoritmi attraverso 'current': lo scheduler

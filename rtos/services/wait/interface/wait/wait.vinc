@@ -1,0 +1,65 @@
+; wait/wait.vinc — il tipo WAIT: un canale di sveglia con UN attendente solo,
+; e il CONTATORE che gli impedisce di perdere una sveglia (27/09/2026, disegnata in §3.74).
+;
+; E' la forma di famiglia dei servizi -- il semaforo e' una HEAD col terzo campo
+; contabile, la mailbox una HEAD col terzo campo descrittivo -- ma SENZA la
+; testa: un attendente solo, noto per costruzione, quindi niente lista, niente
+; camminata, niente coda da scandire.
+;
+; --- IL CRITERIO CHE LA SEPARA DALLA MAILBOX, ed e' dell'utente ---
+;
+;   chi aspetta ha UN SOLO ingresso, ed e' la sveglia da un'ISR     -> WAIT
+;   deve distinguere fra piu' sorgenti, o ricevere DATI            -> mailbox
+;
+; Una mailbox privata a un solo scrittore non e' una mailbox: e' un canale di
+; sveglia con un'allocazione attaccata. Il primo cliente e' la macchina a stati
+; della time line; il secondo, il giorno che ci si mettera' mano, e' il gestore
+; dei timeout, il cui risveglio oggi e' un messaggio del pool (§3.70).
+;
+; --- pending: IL CONTATORE, e la sua convenzione ---
+;
+;   pending > 0    segnali arrivati mentre il titolare NON aspettava. La sua
+;                  prossima `wait` non sospende: li restituisce tutti e azzera
+;   pending == 0   niente in sospeso, nessuno in attesa
+;   pending == -1  il titolare E' IN ATTESA qui. Lo scrive `wait` prima di
+;                  sospendersi, lo legge `wait_signal` per sapere se c'e'
+;                  qualcuno da svegliare
+;
+; E' la stessa idea del semaforo -- il segno dice se c'e' chi aspetta -- con -1
+; come minimo, perche' chi aspetta e' uno solo.
+;
+; Il valore che `wait` restituisce e' la cosa che serve alla diagnostica:
+;
+;   0     nominale: la sveglia e' arrivata mentre aspettavi
+;   1     e' arrivata PRIMA che tu la chiedessi -- per la time line, lo slot
+;         ha sforato
+;   >= 2  ne sono arrivate N, e per la time line gli N-1 slot in mezzo non
+;         sono mai partiti
+;
+; Binario NO, e non per gusto: perderebbe esattamente l'informazione che §3.70
+; ha pagato 245 giri d'idle per non perdere nella mailbox del gestore.
+;
+; --- WAIT.task, E NON WAIT.owner ---
+; mutex.vinc ha gia' MUTEX.owner = "il TCB che lo tiene, 0 = libero", e lo
+; dichiara una proprieta' TEMPORALE, che mutex_lock deliberatamente NON
+; confronta con current. Qui e' l'opposto su tutti e due gli assi: proprieta'
+; PERMANENTE -- si lega una volta a wait_init e non si scrive piu' -- e
+; confrontata con current SEMPRE. Stessa parola, semantica rovesciata, in due
+; servizi adiacenti: e' la collisione che §3.60 ha gia' pagato una volta.
+;
+; --- IL TITOLARE SOSPESO E' FUORI DA OGNI LISTA ---
+; E' un'eccezione al modello a tre stati, e va saputa: SUSPENDED(2) e'
+; documentato come "in una coda di semaforo/mailbox", e qui il TCB ha
+; fwd == bwd == 0, che per queue.vinc e' la firma di un nodo LIBERO. Se
+; qualcuno provasse ad accodarlo altrove, enqueue lo accetterebbe. La rete che
+; il progetto ha gratis dappertutto, qui non c'e' -- ed e' per questo che il
+; guardiano su WAIT.task e' scritto a mano, e non solo nel build strumentato.
+;
+; File FOGLIA: non include niente.
+
+.struct WAIT
+  .field pending       ; +0  segnali non consumati; -1 = il titolare aspetta
+  .field task          ; +4  il TCB titolare, 0 = non legato. E' l'input del
+                       ;     dispatcher: l'ISR ha in mano la WAIT e ne ricava
+                       ;     il TCB, non il contrario
+.ends

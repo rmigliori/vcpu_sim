@@ -183,7 +183,9 @@ vasm_check(macro      MODE DUMPS EXPECT "15 25 75 35 42"
 # sono la prova che li ha presi dalla dichiarazione e non da una copia.
 # "24" dall'11/09/2026: il campo TCB.crit, che toglie la rotazione fra pari a
 # chi tiene un mutex (tcb.vinc). TCB.state resta a +16: il campo e' in fondo.
-vasm_check(include    MODE DUMPS EXPECT "24 16 16 512 1"
+# "28" dal 27/09/2026: il campo TCB.nopreempt, il SUPER TASK (§3.75). Anche lui
+# in fondo, e TCB.state infatti non si muove.
+vasm_check(include    MODE DUMPS EXPECT "28 16 16 512 1"
            IFLAGS -I$<TARGET_PROPERTY:vinc_tcb,INTERFACE_INCLUDE_DIRECTORIES>
                   -I$<TARGET_PROPERTY:vinc_pool,INTERFACE_INCLUDE_DIRECTORIES>
                   -I$<TARGET_PROPERTY:vinc_queue,INTERFACE_INCLUDE_DIRECTORIES>
@@ -298,6 +300,37 @@ vasm_check(clock      MODE DUMPS EXPECT "0 3 3 6"
 # A file singolo come test_clock e test_kbd: il soggetto e' la MACCHINA.
 vasm_check(cmp        MODE DUMPS EXPECT "121 3 6 0"
            SOURCE ${CMAKE_SOURCE_DIR}/tests/test_cmp.vasm)
+
+# .supertask — IL SUPER TASK E' AL PIU' UNO, e lo dice il BUILD (27/09/2026,
+# §3.75). Due test che PASSANO SE LA TOOLCHAIN RIFIUTA, e il rifiuto va letto
+# nel messaggio e non nel solo exit code: un `ld` che fallisse per un'altra
+# ragione passerebbe per buono.
+#
+#   supertask_link  lo stesso sorgente assemblato in DUE oggetti: ognuno
+#                   definisce il globale `super_tcb`, e `ld` si ferma
+#   supertask_asm   due .supertask nello stesso file: si ferma l'assembler
+#
+# Sono le due reti che il simbolo globale da' gratis. Quella che NON da' -- una
+# `sw` scritta a mano su TCB.nopreempt di un altro TCB -- resta una regola di
+# disciplina, dichiarata in tcb.vinc.
+vasm_object(st_uno_a SOURCE ${CMAKE_SOURCE_DIR}/tests/test_supertask_uno.vasm
+                     INTERFACES vinc_tcb)
+vasm_object(st_uno_b SOURCE ${CMAKE_SOURCE_DIR}/tests/test_supertask_uno.vasm
+                     INTERFACES vinc_tcb)
+add_custom_target(st_uno_oggetti ALL)
+add_dependencies(st_uno_oggetti st_uno_a st_uno_b)
+add_test(NAME supertask_link
+         COMMAND vcpu_sim ld ${VASM_BINARY_DIR}/st_uno_a.vo ${VASM_BINARY_DIR}/st_uno_b.vo
+                 -o ${CMAKE_BINARY_DIR}/st_doppio.vx)
+set_tests_properties(supertask_link PROPERTIES
+                     PASS_REGULAR_EXPRESSION "duplicate global 'super_tcb'")
+add_test(NAME supertask_asm
+         COMMAND vcpu_sim asm ${CMAKE_SOURCE_DIR}/tests/test_supertask_due.vasm
+                 "-I$<JOIN:$<TARGET_PROPERTY:vinc_tcb,INTERFACE_INCLUDE_DIRECTORIES>,;-I>"
+                 -o ${CMAKE_BINARY_DIR}/st_due.vo
+         COMMAND_EXPAND_LISTS)
+set_tests_properties(supertask_asm PROPERTIES
+                     PASS_REGULAR_EXPRESSION "the super task is at most one")
 
 vasm_check(kbd        MODE DUMPS EXPECT "0 294 0 3 121"
            IFLAGS -I$<TARGET_PROPERTY:vinc_hal,INTERFACE_INCLUDE_DIRECTORIES>

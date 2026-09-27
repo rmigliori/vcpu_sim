@@ -1044,12 +1044,18 @@ static int close_and_emit_proc(char* err, size_t errsz)
   return 1;
 }
 
+// Stato di .interrupt, dichiarato qui perche' .proc lo deve vedere: vedi il
+// blocco di .interrupt piu' sotto.
+static int    g_irq_active;
+static char   g_irq_name[64];
+
 static int handle_proc_directive(const char* first, char** toks, int k, int n,
                                   int section, int lineno, char* err, size_t errsz)
 {
   if (strcmp(first, ".proc") == 0)
   {
     if (g_proc_active) { snprintf(err, errsz, "line %d: nested .proc (already inside '%s')", lineno, g_proc_name); return -1; }
+    if (g_irq_active) { snprintf(err, errsz, "line %d: .proc inside .interrupt '%s'", lineno, g_irq_name); return -1; }
     if (n - k != 2) { snprintf(err, errsz, "line %d: .proc needs a name", lineno); return -1; }
     if (section != SEC_TEXT) { snprintf(err, errsz, "line %d: .proc outside .text", lineno); return -1; }
     snprintf(g_proc_name, sizeof g_proc_name, "%s", toks[k + 1]);
@@ -1094,6 +1100,137 @@ static int handle_proc_body_line(const char* raw_line, char** toks, int n,
   if (g_proc_body_count >= MAX_INSTR) { snprintf(err, errsz, "too many instructions"); return -1; }
   g_proc_body[g_proc_body_count++] = strdup(raw_line);
   return 1;
+}
+
+// ---------------------------------------------------------------------------
+//  .supertask NOME: il TCB del SUPER TASK (27/09/2026, §3.75 dell'handoff).
+//
+//      .data
+//      .supertask tcbT            ; al posto di  tcbT: .res TCB
+//
+//  Tre cose, e tutte e tre sono della direttiva e non di chi la scrive:
+//    - definisce l'etichetta NOME e riserva TCB.size byte, come .res TCB;
+//    - scrive 1 nella parola TCB.nopreempt dell'IMMAGINE DATI: il TCB nasce
+//      super, e nessun boot deve ricordarsi di scriverlo;
+//    - definisce allo stesso indirizzo il simbolo GLOBALE `super_tcb`. Il super
+//      task e' al piu' uno, e l'unicita' la controlla la toolchain gratis:
+//      due .supertask nello stesso file sono un errore qui, in due file sono
+//      "duplicate global 'super_tcb'" al link.
+//
+//  L'assembler deve conoscere due nomi del kernel, TCB.size e TCB.nopreempt, e
+//  li cerca fra le costanti: senza tcb.vinc incluso la direttiva e' un errore,
+//  ed e' giusto -- un super task senza il TCB del kernel non vuol dire niente.
+//  E' lo stesso accoppiamento di .interrupt con sched_isr_exit_to.
+//
+//  Restituisce 0 e riempie taglia e offset del campo, -1 con l'errore.
+// ---------------------------------------------------------------------------
+#define SUPERTASK_SYM "super_tcb"
+
+static int supertask_prepare(char** toks, int k, int n, int section, int lineno,
+                             int64_t* size, int64_t* off, char* err, size_t errsz)
+{
+  if (n - k != 2) { snprintf(err, errsz, "line %d: .supertask needs the name of the TCB", lineno); return -1; }
+  if (section != SEC_DATA) { snprintf(err, errsz, "line %d: .supertask outside .data", lineno); return -1; }
+  if (!find_const("TCB.size", size) || !find_const("TCB.nopreempt", off))
+  { snprintf(err, errsz, "line %d: .supertask needs TCB.size and TCB.nopreempt (include tcb/tcb.vinc)", lineno); return -1; }
+  if (find_symbol_idx(SUPERTASK_SYM) >= 0)
+  { snprintf(err, errsz, "line %d: a second .supertask ('%s'): the super task is at most one", lineno, toks[k + 1]); return -1; }
+  return 0;
+}
+
+// Le due etichette della direttiva, allo stesso indirizzo di dato.
+static int supertask_define(const char* name, int64_t addr, char* err, size_t errsz)
+{
+  if (add_symbol(name, addr, 0, err, errsz) != 0) return -1;
+  return add_symbol(SUPERTASK_SYM, addr, 0, err, errsz);
+}
+
+// ---------------------------------------------------------------------------
+//  .interrupt / .endinterrupt: il gestore di trap che esce dal kernel
+//  (27/09/2026, disegnata in §3.74 dell'handoff).
+//
+//      .interrupt NOME            definisce l'etichetta NOME, come .proc
+//        ...corpo...
+//      .endinterrupt NOME rN      rN = il TCB da mettere in esecuzione
+//                                 direttamente, r0 = nessuno
+//
+//  e .endinterrupt emette, e non emette altro:
+//
+//      mov r2, rN                 (omessa se rN e' gia' r2)
+//      mov r1, r14                il contesto opaco del task interrotto
+//      j   sched_isr_exit_to
+//
+//  E' la primitiva degli RTOS anni '80/'90 che l'utente aveva nominato il
+//  05/09 (§3.5): salvataggio del contesto in testa, salto a un simbolo fisso
+//  del kernel in coda. Allora fu scartata perche' l'HAL avrebbe dovuto leggere
+//  una variabile del kernel; oggi quella lettura la fa sched_isr_exit, e la
+//  direttiva non sa niente -- nomina un simbolo, come una `call`.
+//
+//  LA TESTA E' VUOTA, e non e' una dimenticanza: il salvataggio lo fa gia' il
+//  vettore dell'HAL (_trap_entry -> ctx_save), che consegna all'ISR con
+//  r1 = contesto opaco E r14 = lo stesso puntatore, perche' il contesto opaco
+//  E' la cima dello stack. Quindi la direttiva non ha bisogno di tenere il
+//  contesto in un registro durante il corpo: le basta che il corpo lasci lo
+//  stack com'era -- la stessa condizione che .proc impone al suo, e con la
+//  stessa conseguenza se violata. E' la ragione per cui qui c'e' `mov r1, r14`
+//  e non il `mov r6, r1` / `mov r1, r6` che le ISR scritte a mano si portano
+//  dietro, in un registro scelto a occhio.
+//
+//  L'OPERANDO E' OBBLIGATORIO, e r0 e' una risposta: "nessuno da svegliare
+//  direttamente", cioe' l'uscita ordinaria -- sched_isr_exit_to con r2 = 0 fa
+//  cio' che fa sched_isr_exit. Dirlo esplicitamente costa un token e toglie di
+//  mezzo il caso in cui un gestore dimentica di dire chi va svegliato e salta
+//  al kernel con un r2 qualunque.
+//
+//  A DIFFERENZA DI .proc il corpo NON e' bufferizzato: la coda non dipende dal
+//  corpo, quindi etichette e direttive dentro sono ammesse. Un gestore di trap
+//  ha rami -- diramarsi su `mfcause` e' la prima cosa che fa.
+//
+//  Non annidabile, niente .proc dentro, solo in .text. Un programma che non la
+//  usa non ne riceve un byte: ed e' cio' che fingerprint.sh prova.
+// ---------------------------------------------------------------------------
+static int handle_interrupt_directive(const char* first, char** toks, int k, int n,
+                                      int section, int lineno, char* err, size_t errsz)
+{
+  if (strcmp(first, ".interrupt") == 0)
+  {
+    if (g_irq_active) { snprintf(err, errsz, "line %d: nested .interrupt (already inside '%s')", lineno, g_irq_name); return -1; }
+    if (n - k != 2) { snprintf(err, errsz, "line %d: .interrupt needs a name", lineno); return -1; }
+    if (section != SEC_TEXT) { snprintf(err, errsz, "line %d: .interrupt outside .text", lineno); return -1; }
+    snprintf(g_irq_name, sizeof g_irq_name, "%s", toks[k + 1]);
+    if (add_symbol(g_irq_name, g_code_count, 1, err, errsz) != 0) return -1;
+    g_irq_active = 1;
+    return 1;
+  }
+  if (strcmp(first, ".endinterrupt") == 0)
+  {
+    if (!g_irq_active) { snprintf(err, errsz, "line %d: .endinterrupt without .interrupt", lineno); return -1; }
+    if (n - k != 3)
+    { snprintf(err, errsz, "line %d: .endinterrupt needs a name and the register with the TCB to dispatch (r0 = none)", lineno); return -1; }
+    if (strcmp(toks[k + 1], g_irq_name) != 0)
+    { snprintf(err, errsz, "line %d: .endinterrupt '%s' does not match open .interrupt '%s'", lineno, toks[k + 1], g_irq_name); return -1; }
+    // r0..r13: r14 e' il contesto stesso, r15 e' il link register che ogni
+    // `call` del corpo ha gia' sporcato.
+    const char* reg = toks[k + 2];
+    char* endp = NULL;
+    long v = (reg[0] == 'r') ? strtol(reg + 1, &endp, 10) : -1;
+    if (reg[0] != 'r' || !isdigit((unsigned char) reg[1]) || *endp != '\0' || v < 0 || v > 13)
+    { snprintf(err, errsz, "line %d: .endinterrupt '%s': expected r0..r13, got '%s'", lineno, g_irq_name, reg); return -1; }
+
+    char line[160];
+    if (v != 2)
+    {
+      snprintf(line, sizeof line, "mov r2, %s  ; .interrupt %s: il TCB da mettere in esecuzione", reg, g_irq_name);
+      if (emit_synth_line(line, err, errsz) != 0) return -1;
+    }
+    snprintf(line, sizeof line, "mov r1, r14  ; .interrupt %s: il contesto e' la cima dello stack", g_irq_name);
+    if (emit_synth_line(line, err, errsz) != 0) return -1;
+    snprintf(line, sizeof line, "j sched_isr_exit_to  ; .interrupt %s: fine", g_irq_name);
+    if (emit_synth_line(line, err, errsz) != 0) return -1;
+    g_irq_active = 0;
+    return 1;
+  }
+  return 0;
 }
 
 static void join_tokens(char** toks, int start, int n, char* out, size_t outsz)
@@ -1655,6 +1792,7 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
   g_const_count   = 0;
   g_struct_active = 0;
   g_proc_active   = 0;
+  g_irq_active    = 0;
   free_macros();
   g_proc_body_count = 0;
 
@@ -1762,6 +1900,16 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
         if ((uint64_t) data_ptr + sz > MEM_SIZE) { snprintf(err, errsz, "line %d: data overflow", lineno); fclose(fp); return -1; }
         data_ptr += sz;
       }
+      else if (strcmp(first, ".supertask") == 0)
+      {
+        int64_t sz, off;
+        if (supertask_prepare(toks, k, n, section, lineno, &sz, &off, err, errsz) != 0) { fclose(fp); return -1; }
+        if ((uint64_t) data_ptr + sz > MEM_SIZE) { snprintf(err, errsz, "line %d: data overflow", lineno); fclose(fp); return -1; }
+        if (supertask_define(toks[k + 1], data_ptr, err, errsz) != 0) { fclose(fp); return -1; }
+        int32_t one = 1;
+        memcpy(&cpu->mem[data_ptr + off], &one, 4);
+        data_ptr += sz;
+      }
       else if (strcmp(first, ".global") == 0 || strcmp(first, ".globl") == 0 ||
                strcmp(first, ".extern") == 0)
       {
@@ -1771,6 +1919,7 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
       else
       {
         int hp = handle_proc_directive(first, toks, k, n, section, lineno, err, errsz);
+        if (hp == 0) hp = handle_interrupt_directive(first, toks, k, n, section, lineno, err, errsz);
         if (hp < 0) { fclose(fp); return -1; }
         if (hp == 0)
         {
@@ -1812,6 +1961,7 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
 
   if (g_struct_active) { snprintf(err, errsz, "unterminated .struct '%s'", g_struct_name); free_code_lines(); fclose(fp); return -1; }
   if (g_proc_active) { snprintf(err, errsz, "unterminated .proc '%s'", g_proc_name); free_proc_body(); free_code_lines(); fclose(fp); return -1; }
+  if (g_irq_active) { snprintf(err, errsz, "unterminated .interrupt '%s'", g_irq_name); free_code_lines(); fclose(fp); return -1; }
   if (g_macro_active) { snprintf(err, errsz, "unterminated .macro '%s' opened at line %d", g_macros[g_macro_count-1].name, g_macro_line); free_macros(); free_code_lines(); fclose(fp); return -1; }
 
   // ---- Pass 2: encode instructions with resolved symbols ----------------
@@ -1887,6 +2037,7 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
   g_const_count   = 0;
   g_struct_active = 0;
   g_proc_active   = 0;
+  g_irq_active    = 0;
   free_macros();
   g_proc_body_count = 0;
 
@@ -1955,6 +2106,17 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
         if (k + 1 >= n) { snprintf(err, errsz, "line %d: .include needs a file", lineno); goto fail; }
         if (inc_push(&inc, toks[k + 1], lineno, err, errsz) < 0) goto fail;
       }
+      else if (strcmp(first, ".supertask") == 0)
+      {
+        int64_t sz, off;
+        if (supertask_prepare(toks, k, n, section, lineno, &sz, &off, err, errsz) != 0) goto fail;
+        if ((uint64_t) data_ptr + sz > MEM_SIZE) { snprintf(err, errsz, "line %d: data overflow", lineno); goto fail; }
+        if (supertask_define(toks[k + 1], data_ptr, err, errsz) != 0) goto fail;
+        int32_t one = 1;
+        memcpy(&data[data_ptr + off], &one, 4);
+        data_ptr += sz;
+        if (nglobal < MAX_SYMBOLS) snprintf(globals[nglobal++], 64, "%s", SUPERTASK_SYM);
+      }
       else if (strcmp(first, ".global") == 0 || strcmp(first, ".globl") == 0)
       {
         for (int i = k + 1; i < n && nglobal < MAX_SYMBOLS; ++i)
@@ -2012,6 +2174,7 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
       else
       {
         int hp = handle_proc_directive(first, toks, k, n, section, lineno, err, errsz);
+        if (hp == 0) hp = handle_interrupt_directive(first, toks, k, n, section, lineno, err, errsz);
         if (hp < 0) goto fail;
         if (hp == 0)
         {
@@ -2053,6 +2216,7 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
   // ---- Apply .global / .extern to the symbol table ----------------------
   if (g_struct_active) { snprintf(err, errsz, "unterminated .struct '%s'", g_struct_name); goto fail; }
   if (g_proc_active) { snprintf(err, errsz, "unterminated .proc '%s'", g_proc_name); goto fail; }
+  if (g_irq_active) { snprintf(err, errsz, "unterminated .interrupt '%s'", g_irq_name); goto fail; }
   if (g_macro_active) { snprintf(err, errsz, "unterminated .macro '%s' opened at line %d", g_macros[g_macro_count-1].name, g_macro_line); goto fail; }
   for (int i = 0; i < nglobal; ++i)
   {

@@ -190,15 +190,24 @@ aspetta**. Sono due numeri diversi sulla stessa commutazione.
 
 | | n | min | max | media | **jitter** |
 |---|---:|---:|---:|---:|---:|
-| latenza di preemption (**misurata dal kernel**) | 11 | 160 | 160 | 160 | **0** |
-| *gli stessi, @ 100 MHz* | | *1,60 µs* | *1,60 µs* | *1,60 µs* | ***0,00 µs*** |
+| latenza di preemption (**misurata dal kernel**) | 11 | 165 | 165 | 165 | **0** |
+| *gli stessi, @ 100 MHz* | | *1,65 µs* | *1,65 µs* | *1,65 µs* | ***0,00 µs*** |
 | `hal: ripristino del contesto` (le 11 su questo cammino) | 11 | 89 | 89 | 89 | **0** |
-| **pronto → ESEGUE DAVVERO** | 11 | **257** | **257** | **257** | **0** |
-| *gli stessi, @ 100 MHz* | | ***2,57 µs*** | ***2,57 µs*** | ***2,57 µs*** | ***0,00 µs*** |
+| **pronto → ESEGUE DAVVERO** | 11 | **262** | **262** | **262** | **0** |
+| *gli stessi, @ 100 MHz* | | ***2,62 µs*** | ***2,62 µs*** | ***2,62 µs*** | ***0,00 µs*** |
 
 **La riga che conta per un lettore realtime è l'ultima**, e fino al 14/09 questa
-pagina pubblicava la prima. La differenza non è un dettaglio: **160 è il 62% di
-257**.
+pagina pubblicava la prima. La differenza non è un dettaglio: **165 è il 63% di
+262**.
+
+> **160 → 165 dal 27/09/2026, e il gradino è di una decisione, non di un tag.**
+> È la guardia del **super task** in `sched_isr_exit` (§3.75 dell'handoff):
+> mentre gira il super task lo scheduler non sceglie, e per saperlo il kernel
+> legge `TCB.nopreempt` di chi gira — una `lw` (4 cicli) e una `bne` (1) — su
+> ogni uscita da ISR col need_resched armato, cioè su **ogni** preemption,
+> anche nei programmi dove nessun super task esiste. Misurato su
+> `test_tmgr_marks` e `test_mondo_marks` prima e dopo: **+5 esatti ovunque**,
+> jitter invariato. Il ripristino dell'HAL non si muove.
 
 **Undici finestre chiuse, una per ognuna delle undici preemption** della tabella
 precedente: le due misure si contano a vicenda, e il fatto che i conti tornino
@@ -242,8 +251,10 @@ Attraversa quindi la commutazione, ed è la prima finestra del progetto che nasc
 in una routine e muore in un'altra.
 
 Ogni finestra si decompone in **149 cicli ancora della vittima** (il kernel che
-lavora mentre `current` è ancora l'idle) e **20 già del gestore** — i cicli fra
-il commit di `current` e la chiusura. Non è un dettaglio di lettura: è il
+lavora mentre `current` è ancora l'idle) e **16 già del gestore** — i cicli fra
+il commit di `current` e la chiusura. Rimisurato il 27/09: la pagina diceva
+«149 e 20», cioè la scomposizione dei 169 di prima di `mark`, e non era stata
+aggiornata quando la misura era scesa a 160 (144 + 16). Non è un dettaglio di lettura: è il
 marcatore che fa quello per cui esiste, cioè dire *dove* sono finiti i cicli di
 una misura che attraversa un cambio di proprietario.
 
@@ -275,12 +286,12 @@ una misura che attraversa un cambio di proprietario.
 > quattro pezzi, **identici su tutte e undici le preemption**:
 >
 > ```
-> latenza di preemption   160      finestra del KERNEL
+> latenza di preemption   165      finestra del KERNEL (160 fino al 27/09)
 > (dispatcher)              7      le ultime istruzioni + call ctx_restore
 > hal: ripristino          89      finestra dell'HAL
 > (reti)                    1      la consegna vera e propria
 > ───────────────────────────
-> pronto → esegue         257      2,57 µs
+> pronto → esegue         262      2,62 µs
 > ```
 >
 > **Un ciclo solo resta fuori**, ed erano undici fino al 14/09. La differenza la
@@ -316,9 +327,9 @@ una misura che attraversa un cambio di proprietario.
 > può prendere dal software**, ed è la `reti` stessa: non esiste un'istruzione di
 > kernel *dopo* la consegna su cui appoggiare una marca. Per azzerarlo servirebbe
 > che lo dicesse la macchina, come fa per il tasto. Si dichiara invece di
-> inseguirlo — un ciclo su 257.
+> inseguirlo — un ciclo su 262.
 >
-> **Una cosa da tenere a mente leggendo 257:** è il cammino nella build
+> **Una cosa da tenere a mente leggendo 262:** è il cammino nella build
 > **strumentata**. Il sistema pulito è più veloce, e da oggi di quanto si conta
 > invece di stimarlo: `mark` costa **1 ciclo**, quindi la strumentazione dentro
 > una finestra vale esattamente **il numero di marche che contiene**. Su questo
@@ -403,8 +414,12 @@ quattro task su quattro livelli. Le preemption diventano di **due specie**:
 
 | chi preempta | livello | n | cicli |
 |---|---:|---:|---:|
-| il gestore dei timeout, svegliato dal tick | 0 | 24 | **160** |
-| il task del tasto, svegliato dall'ISR della tastiera | 1 | 2 | **167** |
+| il gestore dei timeout, svegliato dal tick | 0 | 24 | **165** |
+| il task del tasto, svegliato dall'ISR della tastiera | 1 | 2 | **172** |
+
+Erano 160 e 167 fino al 27/09: la guardia del super task (§6.1) costa 5 cicli
+a tutte e due le specie, quindi la **differenza** — il costo di un livello — non
+si muove.
 
 ```bash
 vcpu_sim run build/vasm/test_mondo_marks.vx --kbd "24000:a,64000:b" --marks rec.txt
@@ -416,8 +431,9 @@ esiste. Da qui il caso peggiore si **deduce** invece di doverlo costruire: il
 vincitore più profondo possibile sta a **livello 6** — sotto c'è solo l'idle, che
 non sveglia nessuno — quindi
 
-> **latenza nel caso peggiore = 160 + 6 × 7 = 202 cicli**, più il ripristino
-> dell'HAL e la `reti` di §6.1: **299 cicli, 2,99 µs**.
+> **latenza nel caso peggiore = 165 + 6 × 7 = 207 cicli**, più il dispatcher,
+> il ripristino dell'HAL e la `reti` di §6.1: **304 cicli, 3,04 µs**. (Erano
+> 202 e 299 fino al 27/09.)
 
 È una deduzione e va citata come tale: il programma che la mette in scena non
 esiste, e costruirlo vorrebbe dire sette task su sette livelli. Ma il costo per
@@ -430,7 +446,8 @@ scheduler (otto livelli, l'ottavo è l'idle) — non una stima.
 > un tick trova gli interrupt chiusi, viene differito, e quando la trap parte sta
 > girando il gestore a livello 0 — il task del tasto non lo batte, **non
 > preempta**, e il caso interessante non succede. È esattamente quello che è
-> successo al primo tentativo: 24 finestre tutte da 160, jitter zero di nuovo.
+> successo al primo tentativo: 24 finestre tutte da 160 (oggi 165), jitter zero
+> di nuovo.
 
 ---
 
@@ -438,7 +455,7 @@ Elencato perché un nucleo fattuale incompleto è utile e un nucleo fattuale che
 finge di essere completo no. In ordine di quanto serve ai quattro documenti:
 
 - ~~la latenza di preemption~~ — **fatta il 14/09**, ed è §6.1 qui sopra:
-  257 cicli fino all'istante in cui il task esegue davvero;
+  262 cicli fino all'istante in cui il task esegue davvero (257 fino al 27/09);
 - ~~la latenza nel CASO PEGGIORE~~ — **fatta il 14/09**, ed è §6.2 qui sotto.
   Voleva un programma con più livelli popolati, e adesso c'è: `test_mondo`, due
   sorgenti e quattro task. Il jitter ha smesso di essere zero;

@@ -58,8 +58,14 @@ vasm_object(t_scheduler SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_scheduler.vasm
 
 vasm_program(test_scheduler OBJECTS t_scheduler LINK lib_kernel)
 
+#
+#  "65 3 8 56" dal 27/09/2026 (era "67 4 8 57"):
+#  la guardia del SUPER TASK in sched_isr_exit (§3.75): una lw e una bne a ogni
+#  uscita da ISR col need_resched armato, cioe' a ogni preemption. Qui nessuno e'
+#  super task, quindi la guardia non scatta mai: si paga e basta.
+#  cntD, il terzo e quello che conta, resta 8.
 vasm_check(scheduler MODE DUMPS PROGRAM test_scheduler
-           EXPECT "67 4 8 57")
+           EXPECT "65 3 8 56")
 
 # ---------------------------------------------------------------------------
 #  test_block — il blocco volontario: un task che dorme davvero.
@@ -131,8 +137,14 @@ vasm_object(t_chain SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_chain.vasm
 
 vasm_program(test_chain OBJECTS t_chain LINK lib_messaggi lib_kernel)
 
+#
+#  "3 3 3 629" dal 27/09/2026 (era "3 3 3 632"):
+#  la guardia del SUPER TASK in sched_isr_exit (§3.75): una lw e una bne a ogni
+#  uscita da ISR col need_resched armato, cioe' a ogni preemption. Qui nessuno e'
+#  super task, quindi la guardia non scatta mai: si paga e basta.
+#  I tre derivabili restano 3 3 3.
 vasm_check(chain MODE DUMPS PROGRAM test_chain
-           EXPECT "3 3 3 632")
+           EXPECT "3 3 3 629")
 
 # ---------------------------------------------------------------------------
 #  test_tmgr — il gestore dei timeout come TASK: l'ultimo passo di §3.28.
@@ -184,8 +196,13 @@ vasm_program(test_tmgr OBJECTS t_tmgr
              LINK lib_timeout_manager lib_messaggi lib_kernel lib_pool
                   lib_timeout)
 
+#  "5 0 2318" dal 27/09/2026 (era "5 0 2324"):
+#  la guardia del SUPER TASK in sched_isr_exit (§3.75): una lw e una bne a ogni
+#  uscita da ISR col need_resched armato, cioe' a ogni preemption. Qui nessuno e'
+#  super task, quindi la guardia non scatta mai: si paga e basta.
+#  cntA e cntErr restano 5 e 0.
 vasm_check(tmgr MODE DUMPS PROGRAM test_tmgr
-           EXPECT "5 0 2324")
+           EXPECT "5 0 2318")
 
 # ---------------------------------------------------------------------------
 #  test_tmgr_marks — LO STESSO PROGRAMMA, COL KERNEL STRUMENTATO (13/09/2026).
@@ -229,6 +246,8 @@ vasm_program(test_tmgr_marks OBJECTS t_tmgr
 #    2458  + la finestra HALSW, dentro ctx_restore (14/09/2026)
 #    2519  i tag diventano UN'ISTRUZIONE, `mark` (14/09/2026)
 #    2274  il risveglio del gestore viene dal POOL (14/09/2026)
+#    2269  la guardia del SUPER TASK in sched_isr_exit (27/09/2026, §3.75):
+#          non e' un tag, e si paga uguale nelle due configurazioni
 #
 #  L'ULTIMO GRADINO E' UNA CORREZIONE, e vale la pena leggerlo al contrario.
 #  Il commento del 13/09 diceva che quelle tre istruzioni erano "una volta
@@ -282,7 +301,7 @@ vasm_program(test_tmgr_marks OBJECTS t_tmgr
 #  tocca registri, quindi la chiusura di HALSW e' scesa fino a ridosso della
 #  `reti`. Il confine non misurato della latenza passa da 11 cicli a 1.
 vasm_check(tmgr_marks MODE DUMPS PROGRAM test_tmgr_marks
-           EXPECT "5 0 2274")
+           EXPECT "5 0 2269")
 
 # ---------------------------------------------------------------------------
 #  test_semaphore — il semaforo contatore, e l'INSERIMENTO ORDINATO di §13.6.
@@ -523,9 +542,15 @@ vasm_program(test_mondo OBJECTS t_mondo
 
 vasm_check(mondo MODE DUMPS PROGRAM test_mondo
            ARGS --kbd "24000:a,64000:b"
-           EXPECT "75 97 71 75 98 71 24 0 2493")
+           EXPECT "75 97 71 75 98 71 24 0 2482")
 
-# 2493 e' il PULITO. La variante strumentata piu' sotto ne fa di meno: i tag si
+# "... 2482" dal 27/09/2026 (era "... 2493"):
+# la guardia del SUPER TASK in sched_isr_exit (§3.75): una lw e una bne a ogni
+# uscita da ISR col need_resched armato, cioe' a ogni preemption. Qui nessuno e'
+# super task, quindi la guardia non scatta mai: si paga e basta.
+# I primi otto, i derivati, non si muovono.
+#
+# 2482 e' il PULITO. La variante strumentata piu' sotto ne fa di meno: i tag si
 # pagano, e si pagano in giri d'idle come ovunque in questo progetto. Le due
 # corse sono lo stesso sistema che fa le stesse cose -- i primi sei numeri
 # coincidono, ed e' quello il controllo.
@@ -539,3 +564,28 @@ vasm_program(test_mondo_marks OBJECTS t_mondo
              LINK lib_timeout_manager lib_messaggi lib_kernel lib_pool
                   lib_timeout
              CONFIG marks)
+
+# ---------------------------------------------------------------------------
+#  test_wait — IL MECCANISMO DEL FOREGROUND: `.interrupt`, il dispatch
+#  diretto e la coppia WAIT (27/09/2026, disegnati in §3.74).
+#
+#  Un programma solo, sul meccanismo e non su un'applicazione: nessuna time
+#  line, nessuna attivita'. Un titolare senza livello, l'idle, il comparatore 0
+#  come sorgente e un'ISR che disarma e segnala.
+#
+#  Undici numeri, TUTTI DERIVABILI -- il sorgente li deriva uno per uno. Il
+#  quarto e' quello che conta: la SVEGLIA PERSA. Un segnale arrivato prima della
+#  wait deve farla tornare con 1 invece di sospenderla, ed e' stato visto
+#  fallire togliendo il contatore: il cane da guardia sul canale 1 stampa
+#  "99999 1", cioe' "fermo al passo 1", invece di lasciare il programma appeso.
+#
+#  E' il primo programma che linka lib_wait e il secondo membro di lib_kernel
+#  (sched_isr_exit_to). Gli altri non li ricevono, ed e' fingerprint.sh a dirlo.
+# ---------------------------------------------------------------------------
+vasm_object(t_wait SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_wait.vasm
+                   INTERFACES vinc_queue vinc_tcb vinc_wait vinc_hal)
+
+vasm_program(test_wait OBJECTS t_wait LINK lib_wait lib_kernel)
+
+vasm_check(wait MODE DUMPS PROGRAM test_wait
+           EXPECT "-1 -1 1 1 0 1 3 1 2 0 1 0 12345 0 0")

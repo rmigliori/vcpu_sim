@@ -1,6 +1,13 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **24 settembre 2026** (§3.74 **la macchina a stati è un
+> Ultimo aggiornamento: **27 settembre 2026** (§3.75 **il meccanismo è
+> scritto**: `.interrupt`, il dispatch diretto `sched_isr_exit_to` e la coppia
+> `WAIT`, con la **sveglia persa vista rossa** togliendo il contatore; e il
+> **super task**, deciso dall'utente: mentre gira lo scheduler non sceglie,
+> si dichiara con `.supertask` e due sono un errore di build. 48/48, latenza
+> di preemption 160 → 165 rimisurata. La macchina a stati resta da scrivere, e
+> aspetta una tabella di time line che non esiste);
+> il **24/09**: §3.74 **la macchina a stati è un
 > task, e `.interrupt` torna**: sessione di sola discussione — nessun codice — che
 > **smentisce tre posizioni di §3.73** e produce il disegno del foreground. La
 > macchina a stati della time line è un **task** svegliato da `.interrupt` con
@@ -93,23 +100,41 @@
 
 ## 0. STATO ATTUALE — DA DOVE SI RIPRENDE
 
-> ### ▶ RIPRENDI DA QUI (24/09/2026 o dopo)
+> ### ▶ RIPRENDI DA QUI (27/09/2026 o dopo)
 >
-> **ORDINE DI LETTURA: §3.74, poi §3.73, poi §3.72.** Ognuna corregge la
-> precedente in qualche punto, e leggerle al contrario fa ripartire da posizioni
-> ritirate.
+> **ORDINE DI LETTURA: §3.75, poi §3.74, poi §3.73, poi §3.72.** Ognuna
+> corregge la precedente in qualche punto, e leggerle al contrario fa ripartire
+> da posizioni ritirate.
 >
-> **IL DISEGNO DEL FOREGROUND È FATTO, IL CODICE NO (§3.74).** Sessione di sola
-> discussione. Non esistono `.interrupt`, `WAIT`, il dispatch diretto, le
-> attività come procedure, le code a nodi derivati: il kernel è intatto e i test
-> sono i 45 del 15/09.
+> **IL MECCANISMO DEL FOREGROUND È SCRITTO, E IL SUPER TASK ESISTE (§3.75).**
+> `.interrupt` / `.endinterrupt` nell'assembler, `sched_isr_exit_to` (il
+> dispatch diretto, in un oggetto suo di `lib_kernel`), la coppia
+> `wait`/`wait_signal` in `rtos/services/wait/`, e `rtos/test/test_wait.vasm`.
+> La **sveglia persa** è stata vista rossa (`99999 1`) togliendo il contatore.
 >
-> **E FIN DOVE SI SCRIVE, perché non è tutto insieme:**
+> **E la regola dell'utente: MENTRE GIRA IL SUPER TASK LO SCHEDULER NON
+> SCEGLIE.** Gli interrupt si servono, ma nessuno prende la CPU finché il super
+> task non va in `wait`. Non è mascheramento — quello resta non preso. Il super
+> task si dichiara con `.supertask tcbT`: il TCB nasce con `TCB.nopreempt = 1`,
+> e un secondo super task è un **errore di build** (`duplicate global
+> 'super_tcb'`). Costa **5 cicli su ogni preemption**, in tutti i programmi:
+> latenza 160 → 165, pronto → esegue 257 → 262, rimisurati.
+>
+> **E il super task ha un'uscita sua** (`task_block_super`, idea dell'utente):
+> attivato, prende in prestito il PCB del task che interrompe, e la preemption
+> si calcola su quello; quando si sospende riprende l'interrotto senza
+> scansione, oppure fa scegliere lo scheduler se qualcuno lo batte. Il flag di
+> preemption non resta mai stantio.
+>
+> `ctest` **48/48**, `--check` verde. Le impronte si muovono nei 13 programmi
+> con un TCB e restano ferme negli altri 4, ed è voluto (`TCB.size` 24 → 28).
+>
+> **E FIN DOVE SI È SCRITTO, perché non è tutto insieme:**
 >
 > ```
-> ORA     .interrupt, sched_isr_exit_to(tcb), WAIT e la sua coppia.
->         Sono MECCANISMO: si provano a file singolo, come test_clock e
->         test_cmp, e non chiedono niente all'applicazione
+> FATTO   .interrupt, sched_isr_exit_to(tcb), WAIT e la sua coppia.
+>         Sono MECCANISMO, e il test non chiede niente all'applicazione
+>         (§3.75)
 >
 > DOPO    la macchina a stati, le attivita' come procedure, le code a
 >         nodi derivati. Sono POLITICA e DATI: vogliono una TABELLA di
@@ -144,8 +169,10 @@
 >   dispatch e uno yield. Zero commutazioni per slot (192 cicli l'una,
 >   §3.64). task_yield NON SERVE: serve una casella d'ESITO
 >
-> la macchina a stati NON HA CONTESTO: allo stop lo stack e' vuoto e lo
->   stato sta in .data, quindi non si ripristina -- si riavvia A FREDDO
+> [RITIRATA il 27/09, §3.75] "la macchina a stati NON HA CONTESTO e si
+>   riavvia A FREDDO". Ha un contesto come ogni task, e la wait lo salva:
+>   lo stack e' del programmatore, e se non lo svuota vuol dire che ci ha
+>   lasciato qualcosa che gli serve
 >
 > L'ATTIVITA' CHE SFORA NON VIENE FERMATA, e §3.73 diceva il contrario. Il
 >   dispatcher vede che current e' gia' la time line, non commuta, e la
@@ -3632,6 +3659,320 @@ il contratto scritto.
 
 ---
 
+### 3.75 IL MECCANISMO È SCRITTO: `.interrupt`, IL DISPATCH DIRETTO, `WAIT` — E IL SUPER TASK (27/09/2026)
+
+La sessione è in **due tempi**, e vanno letti separati perché il secondo
+cambia il criterio di fine del primo. Prima il meccanismo di §3.74, scritto da
+me con alcune scelte di forma prese senza discuterle (sono segnate). Poi, su
+domanda dell'utente, il **super task**: una regola decisa in conversazione,
+che §3.74 lasciava aperta, e che si paga in tutte le immagini.
+
+**Il pezzo «ORA» di §0 è fatto**, e il pezzo «DOPO» no: nessuna macchina a
+stati, nessuna attività come procedura, nessuna coda a nodi derivati. Quelli
+vogliono una tabella di time line vera, e nessuno l'ha scritta.
+
+```
+src/assembler.c                         .interrupt NOME / .endinterrupt NOME rN
+rtos/scheduler/impl/src/
+  sched_isr_exit_to.vasm                il dispatch diretto, OGGETTO SUO in lib_kernel
+  scheduler.vasm                        `dispatcher` diventa .global (zero istruzioni)
+rtos/services/wait/                     lib_wait: wait_init, wait, wait_signal
+rtos/test/test_wait.vasm                il test del meccanismo
+docs/manual.md §4.2.5                   la direttiva
+
+-- secondo tempo, il super task --
+rtos/scheduler/interface/tcb/tcb.vinc   TCB.nopreempt, e la DEFINIZIONE del concetto
+src/assembler.c                         .supertask NOME: il TCB nasce super, e
+                                        definisce il globale `super_tcb`
+scheduler.vasm                          la guardia in sched_isr_exit, e l'USCITA
+                                        DEDICATA task_block_super
+sched_isr_exit_to.vasm                  il ramo "differito": dispatch -> task_ready;
+                                        il PRESTITO del livello all'attivazione
+wait.vasm                               il super task si sospende dall'uscita sua
+tests/test_supertask_{uno,due}.vasm     due super task = errore di BUILD
+docs/scheduler-facts.md §6.1, §6.2      la latenza rimisurata: +5 cicli
+```
+
+**Criterio di fine del PRIMO tempo:** `ctest` 46/46, `--check` verde,
+**TEXT+DATA identici su 17 programmi su 17** (build pulito di `HEAD` contro build
+pulito dell'albero nuovo), e la SYMMAP mossa in 12 — i programmi col kernel —
+per una riga sola, `dispatcher`. Verificato con un diff delle symmap.
+
+**Criterio di fine a sessione chiusa:** `ctest` **48/48** (i due nuovi sono i
+rifiuti di build del super task), `--check` verde dopo aver rigenerato le
+misure. Le impronte si muovono in **13 programmi su 17** — quelli che allocano
+un TCB, cioè i 12 col kernel più `test_mailbox` — e sono ferme nei 4 che non ne
+hanno (`multi`, `test_pool`, `test_queue`, `test_timeout`). Qui muoversi è il
+punto: `TCB.size` 24 → 28 e la guardia nel kernel.
+
+> **LA FORMULA DICEVA «17 impronte INVARIATE», E ALLA LETTERA NON SI POTEVA.**
+> `sched_isr_exit_to` deve chiamare `dispatcher`, che non era esportato. Le due
+> strade: scriverla dentro `scheduler.vasm` — e allora il TEXT di tutti e dodici
+> si muove, perché il membro entra intero anche dove nessuno la chiama — o in
+> un oggetto separato di `lib_kernel`, che il linker prende **solo su
+> richiesta** (`ld`, «selective inclusion»), pagando un `.global`. Presa la
+> seconda: ciò che la formula voleva provare — che niente di nuovo entra nei
+> programmi che non lo usano — lo prova TEXT+DATA, ed è vero su tutti.
+> La formula aveva previsto la conseguenza per `.interrupt` e non per il
+> kernel: è la regola 3 applicata a chi scrive le formule.
+
+#### `.interrupt`: la testa è vuota, e l'operando è obbligatorio
+
+```
+.interrupt isr              definisce l'etichetta, come .proc. Non emette altro
+  ...corpo...               etichette e direttive ammesse: non e' bufferizzato
+.endinterrupt isr r1        mov r2, r1 / mov r1, r14 / j sched_isr_exit_to
+```
+
+**La testa è vuota** perché il salvataggio che la `.interrupt` degli anni '80
+faceva in testa qui lo fa già il vettore (`_trap_entry` → `ctx_save`, §12.2), e
+consegna con `r1` = contesto **e** `r14` = lo stesso puntatore. Quindi la
+direttiva non deve tenere il contesto in un registro: le basta che il corpo
+lasci lo stack com'era, la regola di `.proc`. §3.74 diceva «emette `ctx_save`
+in testa»: era la forma storica, e in questo HAL è già del vettore.
+
+**L'operando è obbligatorio, e `r0` è una risposta** — «nessuno da svegliare
+direttamente»: `sched_isr_exit_to` con `r2 = 0` salta a `sched_isr_exit`. Un
+simbolo fisso solo, come voleva §3.74, e nessun gestore che salti al kernel con
+un `r2` dimenticato. Scelta mia, non discussa.
+
+#### `sched_isr_exit_to`: il test `current == tcb` prima di tutto
+
+```
+r2 == 0              -> sched_isr_exit: l'uscita ordinaria, need_resched compreso
+current == r2        -> j ctx_restore: lo SFORAMENTO. Ne' commutazione ne'
+                        salvataggio nel TCB, e la trap torna dentro l'attivita'
+gira il super task   -> task_ready(r2) e si torna nel super task (secondo
+                        tempo: il dispatch diventa un risveglio)
+altrimenti           -> contesto nel TCB dell'uscente, uscente nello SLOT del
+                        suo livello (PREEMPTED, come sp_preempted), dispatcher(r2)
+```
+
+Il ramo «è già lui» non passa dal dispatcher, perché nessuno entra in
+esecuzione. Conseguenza, **solo nella build strumentata**: una finestra LATENCY
+aperta nella stessa ISR resterebbe aperta fino al dispatcher successivo. Oggi
+nessuna ISR della time line sveglia anche qualcun altro; è scritto nel file.
+
+#### `WAIT`: tre scelte che sono MIE, e vanno lette come tali
+
+§3.74 fissava l'interfaccia (coppia dedicata, titolare legato all'init, un
+contatore, guardiano sulla `wait`, esito invece di sospensione). Scrivendola
+sono uscite tre cose che §3.74 non diceva:
+
+| | |
+|---|---|
+| **`pending == -1` vuol dire «il titolare aspetta»** | `wait_signal` deve sapere se c'è qualcuno da svegliare, e `TCB.state == SUSPENDED` non basta: il titolare potrebbe essere sospeso su un *altro* servizio. È il segno del semaforo, col minimo a -1 perché chi aspetta è uno |
+| **`wait` consuma TUTTO, non uno** | «indietro di N» si gestisce una volta. Con un consumo per chiamata la `wait` dopo tornerebbe subito con N-1 e lo stesso ritardo si conterebbe due volte. Il valore restituito è «quanti segnali sono arrivati mentre il titolare NON aspettava»: 0 nominale, 1 sforamento, ≥2 la scala di §3.74 |
+| **`wait_signal` restituisce 0 se il titolare né aspetta né gira** | Metterlo in esecuzione lo lascerebbe in DUE posti (una coda, o uno slot). Il segnale resta contato. Con un titolare solo il caso non si dà; con due — la time line e il gestore dei timeout — sì |
+
+#### Il test, e le due asserzioni viste ROSSE
+
+`rtos/test/test_wait.vasm`: un titolare T **senza livello** (`TCB.pcb = 0`),
+l'idle, il comparatore 0 come sorgente, un'ISR che **disarma e segnala** e
+nient'altro. Undici numeri nel primo tempo, quattordici a sessione chiusa,
+tutti derivabili, nessuno dipende dai cicli:
+
+```
+-1 -1 1 1 0 1 3 1 2 0 1 0 12345 0 0
+```
+
+«A file singolo come test_clock e test_cmp» non si poteva prendere alla
+lettera: quelli girano senza kernel, e qui il soggetto **è** il kernel. È un
+programma solo, sul meccanismo e senza applicazione, in `rtos/test/`.
+
+**Il modo in cui questo meccanismo si rompe non è un numero sbagliato: è un
+task che dorme per sempre.** Quindi il test ha un **cane da guardia** sul
+canale 1 a +20 ms (la corsa buona ne dura 2): se scatta stampa `99999` e il
+passo a cui ci si è fermati, invece di lasciare il programma appeso.
+
+| mutazione | esito |
+|---|---|
+| **tolto il contatore** (`wait` non guarda `pending` e si sospende sempre) | `99999 1`: **fermo al passo 1, la SVEGLIA PERSA**. L'asserzione che vale più delle altre, vista rossa |
+| **tolto `current == tcb`** in `sched_isr_exit_to` | `integro` 0 e `pendI` **85**: lo sforamento scrive il contesto nel TCB del titolare e lo mette nello slot di un livello che non ha — `PCB.preempted(0)` — e la scrittura sporca memoria altrui. È il guasto che §3.74 prevedeva, «rompe la volta che un'attività sfora» |
+
+Il test è passato verde **al primo colpo**, ed è esattamente il motivo per cui
+andava visto rosso.
+
+#### IL SUPER TASK: mentre gira, lo scheduler non sceglie
+
+Il primo tempo lasciava aperto «chi può prelazionare il super task». L'utente
+ha riaperto la questione con una domanda — *«non avevamo detto di implementare
+le priorità delle interruzioni?»* — e la risposta ha separato due cose che la
+domanda teneva insieme:
+
+```
+SERVIRE un interrupt     l'ISR parte, legge, accoda, sveglia   -> SI', sempre
+CEDERGLI LA CPU          commutare a chi l'ISR ha svegliato    -> NO, finche'
+                                                                  il super task
+                                                                  non va in wait
+```
+
+Mascherare gli interrupt inferiori per tutta la durata del super task avrebbe
+riportato la latenza del telecomando alla durata di uno slot, cioè
+esattamente ciò per cui §3.74 ha fatto della macchina a stati un task. **Il
+mascheramento per livello resta indicato e non preso** (§3.74): non era stato
+deciso, e l'handoff lo registrava correttamente. La regola, confermata
+dall'utente: **quando il super task gira lo scheduler non deve schedulare.**
+
+**Il riconoscimento è un campo nel TCB, ed è dell'utente.** Io avevo proposto
+`TCB.pcb == 0`; l'utente: *«non basterebbe un bit nel TCB?»*. Sì, ed è meglio
+per una ragione che la mia proposta nascondeva: col livello nullo «super task»
+e «nessuno mi ha dato un livello» sono lo stesso stato, e un boot che dimentica
+`TCB.pcb` renderebbe non prelazionabile un task qualunque senza un errore. Il
+campo è `TCB.nopreempt` — il nome dice cosa fa lo scheduler, non un rango — ed
+è una **parola**, non un bit: senza logiche immediate un bit costa
+`lw`+`li`+`and`+`beq`, una parola `lw`+`bne`. La definizione del concetto sta in
+`tcb.vinc`, accanto al campo, come quella di `TCB.crit`.
+
+**Due super task sono un errore di BUILD, ed è l'idea dell'utente**: *«non
+possiamo definire un prologo per il super task senza che l'utente se ne
+preoccupi? Il prologo definirà la variabile globale che, se multidefinita,
+genererà un errore.»* La mia rifinitura è stata **dove**: non un prologo sul
+codice del task — non saprebbe di quale TCB è, e il campo sarebbe a 1 solo dopo
+la prima esecuzione — ma una direttiva sulla **dichiarazione** del TCB:
+
+```
+  .data
+  .supertask tcbT          ; al posto di  tcbT: .res TCB
+```
+
+che riserva il TCB con `TCB.nopreempt` **già a 1 nell'immagine dati** (il TCB
+nasce super, nessun boot lo scrive) e definisce allo stesso indirizzo il
+globale `super_tcb`. Due nello stesso file: l'assembler si ferma («the super
+task is at most one»); in due file: `duplicate global 'super_tcb'` al link.
+Tutti e due sono test di `ctest` che passano **se il build rifiuta**, letti sul
+messaggio e non sul solo exit code. Il limite, dichiarato in `tcb.vinc`: una
+`sw` scritta a mano sul campo di un altro TCB nessuno la impedisce, ma adesso
+la via normale non la scrive nessuno, quindi è un'anomalia che si trova con un
+grep.
+
+**Le due regole nel codice:**
+
+| dove | cosa |
+|---|---|
+| `sched_isr_exit` | col need_resched armato e `current.nopreempt != 0`, il flag **non si consuma** e si torna nel super task. La scelta la fa lo scheduler quando il super task si sospende nella `wait`: sveglia **differita**, non persa |
+| `sched_isr_exit_to` | se gira il super task e il TCB da dispacciare è un altro (il secondo titolare), il dispatch diventa **`task_ready`**: pronto in coda al suo livello. Non basta non commutare — `wait_signal` ha già portato `pending` da -1 a 0, e il titolare è fuori da ogni lista: lasciato lì sarebbe la sveglia persa in una forma più sottile |
+
+**Il test**: `test_wait` dichiara T con `.supertask` e aggiunge H, un task
+normale al livello 1 titolare di una WAIT sua — il ruolo che avrà il gestore
+dei timeout. Tre numeri nuovi, `0 12345 0`: H segnalato mentre gira T è
+**READY** e non RUNNING; l'ordine degli eventi, cifra per cifra, dice che T
+non viene mai interrotto a favore di H; e H esce dalla sua `wait` con 0.
+**Tutte e due le regole viste rosse**, e rosse nel modo peggiore: senza la
+guardia `99999 7`, senza il ramo differito `99999 6`. In tutti e due i casi T
+viene prelazionato e messo nello «slot» di un livello che non ha, nessuna
+scansione lo ritrova, e il super task sparisce.
+
+**IL PREZZO, misurato: 5 cicli su OGNI preemption, in tutti i programmi.**
+La guardia sta sul cammino di `sched_isr_exit` con il flag armato, cioè su
+ogni preemption, anche dove un super task non esiste. Rimisurato con il
+marcatore su `test_tmgr_marks` e `test_mondo_marks`, `HEAD` contro albero nuovo:
+
+```
+latenza di preemption     160 -> 165       livello 1: 167 -> 172, jitter 7 = 7
+pronto -> esegue          257 -> 262
+caso peggiore (dedotto)   202 -> 207, e 299 -> 304 col ripristino
+```
+
+`scheduler-facts.md` §6.1 e §6.2 sono aggiornati, col gradino dichiarato. E
+cinque `EXPECT` si sono mossi, **solo nei numeri che dipendono dai cicli** —
+tutti i derivabili sono fermi (`3 3 3`, `5 0`, i primi otto di `mondo`, il
+`cntD` di `scheduler`); ogni gradino è scritto accanto al suo `vasm_check`.
+`test_include` passa da `24` a `28`: `TCB.size`, ed è il test che esiste per
+dirlo.
+
+#### L'USCITA DEDICATA del super task, e il flag che torna a dire la verità
+
+Il problema: la guardia rimandava il need_resched alla `wait` del super task,
+la `wait` passava da `task_block`, e `task_block` **non lo consuma**. Il flag
+restava stantio e la prima uscita ordinaria da ISR successiva faceva una
+rotazione fra pari che nessuno aveva chiesto — in un sistema vero, **a ogni
+slot**.
+
+**Misurato prima di decidere.** Un rivelatore provvisorio in `task_block`
+(«entro col flag armato?») ha detto che nella suite il flag stantio nasce
+**solo** in `test_wait` e in `test_coop` — e in `test_coop`, senza interrupt,
+non lo consuma mai nessuno. Il caso che avevo citato come esempio, una
+`send_s` da task seguita da un blocco, qui non si presenta: l'avevo dato per
+possibile senza misurarlo. E far consumare il flag a `task_block` per tutti
+sposta cinque `EXPECT` **in giù** (mondo 2482 → 2456): solo costo, perché nei
+programmi senza super task non c'è niente da risparmiare.
+
+**La domanda dell'utente che ha cambiato strada:** *«non capisco perché non
+abbiamo un'uscita dedicata per l'attivazione del super task»*. E poi: *«quando
+gira il super task vuol dire che c'era un vecchio current che è stato
+interrotto: la preemption va calcolata su quello, no?»*. Sì, su tutte e due. E
+la prima smentisce una frase mia di §3.74 — «il risveglio è diretto, il sonno
+passa dallo scheduler normale, ed è una decisione vera»: è una decisione vera
+solo se nel frattempo qualcuno si è svegliato. Nel caso normale la risposta è
+già nota.
+
+```
+attivazione (sched_isr_exit_to)   il vecchio current va nel suo slot, e il
+                                  super task ne PRENDE IN PRESTITO IL PCB
+mentre gira                       task_ready decide contro il vecchio current;
+                                  la guardia impedisce la commutazione
+sospensione (task_block_super)    flag spento -> riprende il vecchio current
+                                                 dallo slot, SENZA scansione
+                                  flag armato -> lo consuma, sceglie lo scheduler
+                                  pcb == 0    -> non ha interrotto nessuno (al
+                                                 boot): sceglie lo scheduler
+                                  e restituisce il prestito: pcb = 0
+```
+
+Il prestito è la forma economica di «calcolare sul vecchio current»:
+`task_ready` non cambia di un'istruzione, perché trova il PCB dell'interrotto
+in `current.pcb`, e l'interrotto si ritrova senza variabili, nello slot di quel
+livello. Il caso `pcb == 0` l'ha fatto notare la domanda di verifica
+dell'utente: T parte a freddo dal boot, e senza la ricaduta l'uscita
+leggerebbe uno «slot» nella zona di guardia. `wait` sceglie l'uscita dal TCB:
+il super task va a `task_block_super`, un titolare normale resta su
+`task_block`.
+
+**Il test**, che adesso ha J, il **pari** dell'idle al livello 7, e un passo 8:
+dopo la `wait` del super task un colpo di timer esce da `sched_isr_exit`. Il
+quindicesimo numero è `cntJ`, e deve essere 0. Le quattro mutazioni:
+
+| tolto | esito |
+|---|---|
+| l'uscita dedicata (la `wait` torna a `task_block`) | `cntJ` **17915**: il flag stantio fa ruotare il livello 7. Il problema di partenza, visto |
+| il test del flag nel ramo veloce | sequenza **`1345`**: al passo 6 H è pronto e batte l'idle, ma la CPU torna all'idle. Inversione di priorità |
+| la ricaduta per `pcb == 0` | il programma **si pianta**, e nemmeno il cane da guardia lo dice: l'uscita salta a un «TCB» letto nella zona di guardia |
+| il prestito del livello | **verde**, ed è giusto dirlo: senza prestito il livello resta 0, ogni `wait` ricade sullo scheduler, e il risultato è corretto. Si perde il ramo veloce, cioè una scansione per slot: è un fatto di COSTO, e questo test non lo vede |
+
+Nessun `EXPECT` degli altri programmi si è mosso e la latenza di preemption
+resta 165: l'uscita dedicata la esegue solo chi ha un super task. Il TEXT dei
+programmi col kernel si muove, perché `scheduler.vasm` è cresciuto.
+
+#### Cosa resta APERTO, e perché non è stato scritto
+
+- **l'asimmetria generale di `task_block`**, che non consuma il need_resched.
+  Per il super task è chiusa dall'uscita dedicata; per tutti gli altri resta
+  quella che `task_yield` dichiara «osservazione aperta» dall'11/09, e nella
+  suite si vede solo in `test_coop`, dove è innocua. Chiuderla costa due
+  istruzioni per blocco in tutti i programmi, misurate;
+- **il prestito non si vede nei numeri**: se un giorno si vorrà provarlo, serve
+  una misura di costo (la scansione risparmiata), non un'asserzione;
+- ~~**`sched_isr_exit` scrive il contesto nel TCB del super task**~~ —
+  **CHIUSO, e non era un problema.** Lo era solo con una macchina a stati che
+  riparte a freddo e `TCB.sp` costante, e quella posizione l'utente l'ha
+  ritirata (§3.74, il riquadro «RITIRATA IL 27/09»): il super task ha un
+  contesto come ogni task, `sched_isr_exit` ci scrive come per tutti e il
+  dispatcher ripristina subito dallo stesso frame. Resta un'asimmetria innocua
+  con lo sforamento in `sched_isr_exit_to`, che il TCB non lo scrive perché non
+  fa contabilità — e la contabilità lì non va fatta per un'altra ragione (lo
+  slot di un livello che non esiste). Prima di chiudere l'avevo anche
+  descritto come «un guasto con la ripartenza a freddo»: era vero solo per una
+  delle due forme possibili di quella `wait`, cioè scritto troppo forte;
+- **il vincolo su `CMP_CTRL` in `clock.vinc`** (scritture da task fra
+  `irq_save`/`irq_restore`) non è stato scritto: fuori da questo lavoro, e
+  resta fra le due cose di §0 che non aspettano la time line. Il test non lo
+  viola — T scrive una costante, non fa read-modify-write;
+- **il gestore dei timeout come secondo cliente di `WAIT`**: non toccato. Muove
+  EXPECT e impronte, e ha adesso un meccanismo pronto a riceverlo.
+
+---
+
 ### 3.74 LA MACCHINA A STATI È UN TASK, E `.interrupt` TORNA (24/09/2026)
 
 **Sessione di sola discussione: non è stata scritta una riga di codice.** È
@@ -3726,6 +4067,13 @@ scansione.
 > (vedi «la macchina a stati non ha contesto» più sotto). Il test sta prima di
 > tutti e due, e dimenticarlo non rompe niente subito: rompe la volta che
 > un'attività sfora, cioè l'unica che conta.
+>
+> **La ragione qui sopra è RITIRATA (27/09, §3.75); il test resta.** `TCB.sp`
+> non è una costante — la macchina a stati ha un contesto, vedi più sotto — e
+> scriverci sarebbe innocuo. Il test `current == tcb` resta necessario per
+> l'altra metà: senza, lo sforamento passerebbe dalla contabilità e metterebbe
+> il super task nello slot di un livello che non ha. `test_wait` l'ha visto
+> rosso.
 
 E l'asimmetria in uscita è corretta: quando la macchina a stati si sospende la
 CPU deve andare a qualcuno, e *quella* è una decisione vera. Il **risveglio** è
@@ -3934,6 +4282,33 @@ Due cose che vanno con questa scelta:
 | **lo stack è scratch** | quello che ci pushi vale DENTRO un passaggio. Tutto ciò che attraversa una sospensione sta in `.data`. Costa zero, perché coincide con ciò che una macchina a stati è comunque |
 | **niente attese bloccanti nel foreground** | non perché un'attività non rilasci (finisce sempre, vedi sotto), ma perché un'attività **bloccata** ferma la time line e nessuno la può sbloccare in tempo |
 
+> ### ⚠ RITIRATA IL 27/09 DALL'UTENTE: la macchina a stati HA un contesto (§3.75)
+>
+> *«È un problema di sw developing fare tutte le pop delle eventuali push: se
+> non sono fatte vuol dire che il sw developer vuole mantenere qualcosa di utile
+> sullo stack, no?»* Sì. E la posizione qui sopra era un **mio irrigidimento**
+> della sua: lui aveva detto «farà le push necessarie», cioè che lo stack è
+> responsabilità di chi scrive; io l'ho trasformato in «lo stack è vuoto PER
+> COSTRUZIONE, quindi non c'è niente da salvare, quindi si riparte a freddo».
+> Da «di solito è vuoto» a «deve esserlo»: una regola imposta dal kernel invece
+> di un'abitudine scelta dal programmatore.
+>
+> Col modello normale — la `wait` salva il contesto, come fa dal 27/09 — i due
+> casi sono coperti senza che nessuno lo sappia: stack vuoto, e il salvataggio
+> costa solo sé stesso; stack non vuoto, e il salvataggio conserva ciò che il
+> programmatore ci ha lasciato, che la ripartenza a freddo butterebbe **in
+> silenzio**. La ripartenza a freddo comprava il solo salvataggio, poche decine
+> di istruzioni per slot, e se un giorno contassero si misurano prima.
+>
+> **E c'era un argomento tecnico che l'avrebbe fatta cadere già il 24/09.** Un
+> frame «freddo» costante non sopravvive al primo uso: `ctx_restore` lo legge
+> salendo e lascia `r14` alla sua cima, cioè alla base dello stack, e la prima
+> `push` del task scrive a `base - 4`, **dentro il frame**. La «costante» poteva
+> essere solo il puntatore, col contenuto da ricostruire a ogni sospensione.
+>
+> Cade con lei la riga «lo stack è scratch» della tabella qui sopra, come
+> REGOLA; resta come abitudine. L'altra riga resta intera.
+
 #### L'ATTIVITÀ CHE SFORA NON VIENE FERMATA — e §3.73 diceva il contrario
 
 **Questa è la quarta posizione di §3.73 che cade**, ed è la più grossa: *«è
@@ -4006,7 +4381,8 @@ al lavoro, che è ciò che deve fare — ha uno slot da far partire adesso.
 perché la macchina a stati riparte a freddo e non ha nessun registro che le dica
 cosa stava girando; e perché `attuale` viene sovrascritto quando lancia lo slot
 nuovo, quindi il colpevole sarebbe già perso. **`pending` dice quanti,
-`precedente` dice chi.**
+`precedente` dice chi.** (27/09: la prima ragione cade con la ripartenza a
+freddo, §3.75. La seconda regge da sola, e basta.)
 
 #### La traccia, che è il terreno solido
 
@@ -10135,36 +10511,20 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 > programma», non «serve un programma che funzioni al primo colpo», e la
 > differenza l'ha pagata la misura, non il criterio.
 
-**IL PROSSIMO PASSO — `.interrupt` e `WAIT` (24/09, sbloccati):**
-```
-Leggi docs/stato-lavori.md: il riquadro RIPRENDI DA QUI, poi §3.74 PER
-INTERO. Non fermarti a §0 -- §3.74 smentisce QUATTRO posizioni di §3.73 e
-ribalta la cornice foreground/background, e il riquadro non basta a
-ricostruire il perche'. Le decisioni di politica sono CHIUSE tutte: si
-scrive.
-
-Il test sta a file singolo come test_clock e test_cmp: il soggetto e' il
-MECCANISMO. L'asserzione che vale piu' delle altre e' la SVEGLIA PERSA, e
-va verificata FALLIRE togliendo il contatore.
-
-Alla fine: ctest 46/46 (o piu'), scheduler_facts --check verde, e le 17
-impronte INVARIATE -- e' la prova che .interrupt non emette niente nei
-programmi che non la usano, come .ifdef (§3.43) e .macro (§3.65).
-```
-
-> **Perché è corta, ed è una prova della regola qui sopra.** La prima stesura
-> aveva quaranta righe: cosa scrive `.interrupt`, cosa fa `sched_isr_exit_to`,
-> come è fatta la `WAIT`, perché il campo non si chiama `owner`. **È tutto in
-> §3.74**, quindi era copia — e copiare è il difetto che questo riquadro mette
-> in guardia dal tenere. È stata l'utente a chiedere «basterebbe solo la prima
-> parte?», e la risposta è sì **più il criterio di fine**, che è l'unica cosa
-> che §3.74 non dice e che una formula deve aggiungere.
+> **E tolta il 27/09, appena scaduta:** la formula «il prossimo passo —
+> `.interrupt` e `WAIT`», fatta nella sessione dopo quella che l'aveva scritta
+> (§3.75). Era corta — puntava a §3.74 invece di ricopiarlo — e il criterio di
+> fine ha retto in due punti su tre. «L'asserzione che vale più delle altre va
+> verificata FALLIRE» ha funzionato alla lettera: il test è passato al primo
+> colpo, e senza quella riga nessuno l'avrebbe visto rosso. **Il terzo punto
+> era sbagliato**: «le 17 impronte INVARIATE, prova che `.interrupt` non emette
+> niente» pensava alla direttiva e dimenticava che il dispatch diretto chiama
+> un simbolo del kernel non esportato. TEXT+DATA sono rimasti fermi su 17 su 17,
+> la symmap no — e §3.75 lo dice invece di arrotondarlo.
 >
-> Il taglio ha però stanato **due cose dette il 24/09 e mai scritte**, che
-> stavano solo nella conversazione: il nome `sched_isr_exit_to` col fatto che il
-> suo test governa **anche il `ctx_save`**, e la **sveglia persa come
-> asserzione da verificare rossa**. Sono state messe in §3.74, non nella
-> formula — perché §3.74 si mantiene e la formula no.
+> **Al suo posto non c'è una formula per la macchina a stati**, ed è voluto: il
+> «DOPO» di §0 aspetta una tabella di time line vera — istanti, budget, i due
+> modi — che è un dato dell'applicazione e non si inventa per poterla provare.
 
 **E IN PARALLELO, senza dipendenze — la SECONDA BASE DEI TEMPI, e `srai` (15/09, deciso):**
 ```
@@ -10177,11 +10537,10 @@ E' ANCORA LAVORO DI MACCHINA, e il kernel non si tocca. Non dipende da
 niente di §3.74, che e' sola discussione: §3.74 lo dice esplicitamente.
 
 La macchina a stati della time line viene dopo, ed e' DISEGNATA ma non
-scritta (§3.74). Le decisioni di politica che la bloccavano sono CHIUSE
-tutte -- back-to-back, ripresa dallo slot successivo, nodi condivisi col
-bound al massimo dei due modi -- quindi .interrupt e WAIT si possono
-scrivere. Leggi §3.74 per intero prima, perche' smentisce QUATTRO
-posizioni di §3.73 e la cornice foreground/background di §0.
+scritta (§3.74); il suo MECCANISMO -- .interrupt, il dispatch diretto,
+WAIT -- e' scritto dal 27/09 (§3.75) e non tocca niente di quanto segue.
+Leggi §3.74 per intero prima, perche' smentisce QUATTRO posizioni di
+§3.73 e la cornice foreground/background di §0.
 
 COSA MANCA, ed e' poco:
   - il free running counter in CICLI, che e' la base del foreground. Non
@@ -10213,9 +10572,10 @@ potenza di due: devono coincidere, e costare 1 ciclo invece di 20).
 NON toccare settimer, e non toccare il kernel. Il `timer_next` che
 slitta resta com'e': commento corretto, codice no.
 
-Alla fine: ctest 47/47 (o piu'), scheduler_facts --check verde, e
-tools/fingerprint.sh con le 17 impronte INVARIATE. Se `srai` le muove,
-e' finita in mezzo all'enum invece che in coda.
+Alla fine: ctest 49/49 (o piu'), scheduler_facts --check verde, e
+tools/fingerprint.sh con le 18 impronte INVARIATE (test_wait e' la
+diciottesima dal 27/09). Se `srai` le muove, e' finita in mezzo all'enum
+invece che in coda.
 ```
 
 **E PRIMA, O DOPO — il RESPIRO nel nucleo fattuale (non fatto il 15/09):**

@@ -1,0 +1,139 @@
+; rtos/scheduler/impl/src/sched_isr_exit_to.vasm — il DISPATCH DIRETTO: l'uscita
+; da un'ISR che sa gia' chi deve girare (27/09/2026, disegnata in §3.74 dell'handoff).
+;
+; E' la terza uscita da trap, accanto alle due di scheduler.vasm:
+;
+;   sched_isr_exit      "rifai la scelta se qualcuno l'ha chiesta"  -> scheduler
+;   sched_isr_exit_to   "metti in esecuzione QUESTO"                -> dispatcher
+;
+; La divisione dentro sched_isr_exit non e' in due pezzi ma in tre --
+; CONTABILITA' (il contesto uscente nel suo TCB) + SCELTA + DISPATCH -- e qui
+; si salta solo quello in mezzo. Il costo dell'attivazione diventa COSTANTE:
+; niente scansione, che §3.69 ha misurato a 7 cicli per livello. Sul modello a
+; istante fisso quel che fa danno non e' la latenza, e' il JITTER.
+;
+; --- PERCHE' UN OGGETTO SUO E NON UNA ROUTINE IN scheduler.vasm ---
+; Il linker prende un membro d'archivio solo se qualcuno ne nomina un simbolo.
+; Scritta dentro scheduler.vasm, questa routine entrerebbe in TUTTI i programmi
+; che linkano il kernel, e ne muoverebbe l'immagine senza che nessuno la
+; chiami. Qui dentro, i programmi che non la usano restano byte per byte quelli
+; di prima -- ed e' fingerprint.sh a dirlo, non questo commento.
+;
+; Il prezzo e' `dispatcher` diventato .global, che prima non era: una riga in
+; piu' nella tabella dei simboli dei programmi col kernel, e zero istruzioni.
+;
+; Nessun tag del marcatore, quindi e' identico nelle due configurazioni. MA
+; nel ramo "e' gia' lui" non si passa dal dispatcher, e una finestra LATENCY
+; aperta da un task_ready in questa stessa ISR resterebbe aperta fino al
+; dispatcher successivo -- nella build strumentata, e da guardare il giorno che
+; un'ISR della time line svegliera' anche qualcun altro.
+
+.include "tcb/tcb.vinc"
+
+  .text
+
+  .global sched_isr_exit_to
+  .extern current
+  .extern dispatcher
+  .extern sched_isr_exit
+  .extern ctx_restore
+  .extern task_ready
+
+; ==========================================================================
+;  sched_isr_exit_to(r1 = contesto opaco del task interrotto, r2 = &TCB da
+;  mettere in esecuzione, 0 = nessuno). Ci salta la coda di `.interrupt`, e
+;  non ritorna mai.
+;
+;  --- IL TEST current == tcb STA PRIMA DI TUTTO ---
+;  Se chi deve girare e' gia' quello che girava -- lo SFORAMENTO: l'ISR della
+;  time line spara mentre la macchina a stati sta ancora eseguendo l'attivita'
+;  -- non c'e' niente da commutare, quindi niente CONTABILITA': il ramo va
+;  dritto a ctx_restore col frame appena salvato dal vettore, e la trap ritorna
+;  DENTRO l'attivita', che prosegue e finisce. Nessuno entra in esecuzione,
+;  quindi non c'e' niente da far dichiarare al dispatcher.
+;
+;  Dimenticarlo non rompe niente subito: rompe la volta che un'attivita' sfora,
+;  cioe' l'unica che conta. La contabilita' metterebbe il titolare nello slot
+;  del suo livello come un preemptato qualunque -- e il super task un livello
+;  non ce l'ha (TCB.pcb 0): la scrittura cade su PCB.preempted di un PCB
+;  all'indirizzo 0, nessuna scansione lo ritrova, e il super task sparisce.
+;  test_wait l'ha visto rosso.
+;
+;  Che il TCB non si scriva e' la conseguenza, non la ragione. Il 24/09 (§3.74)
+;  la ragione data era "TCB.sp della time line e' una COSTANTE, la macchina a
+;  stati riparte a freddo": posizione RITIRATA dall'utente il 27/09 (§3.75). Il
+;  super task ha un contesto come ogni altro task, lo stack e' del programmatore,
+;  e scriverci sarebbe innocuo -- e' cio' che sched_isr_exit fa nello stesso caso.
+;
+;  --- L'USCENTE VA NELLO SLOT DEL SUO LIVELLO, come in sp_preempted ---
+;  "Dove va l'uscente lo decide chi lo toglie dalla CPU" (§2): qui lo toglie
+;  un'attivazione diretta, cioe' una preemption, e un preemptato riprende da
+;  dove stava -- PCB.preempted, non la coda. Lo slot e' libero per
+;  costruzione: uno slot occupato sta sempre SOTTO chi gira (vedi
+;  sched_ready_above), e l'uscente stava girando.
+;
+;  --- r2 = 0: NESSUNO DA SVEGLIARE, e l'uscita e' quella ordinaria ---
+;  wait_signal restituisce 0 quando il titolare non aspetta e non gira (e' in
+;  una coda o in uno slot): metterlo in esecuzione lo lascerebbe in DUE posti.
+;  Allora si esce come ogni altra ISR, compreso l'onorare un need_resched.
+;
+;  --- SE GIRA IL SUPER TASK, IL DISPATCH DIVENTA UN RISVEGLIO (§3.75) ---
+;  Mentre gira il super task lo scheduler non sceglie, e un dispatch diretto
+;  e' una scelta. Ma non basta non commutare: wait_signal ha gia' portato
+;  pending da -1 a 0, e il titolare segnalato e' sospeso FUORI da ogni lista,
+;  dove lo scheduler non lo troverebbe mai -- sarebbe la sveglia persa, solo
+;  piu' sottile. Quindi lo si rende PRONTO con task_ready: aspetta in coda al
+;  suo livello, lo sceglie lo scheduler quando il super task va in `wait`, ed
+;  esce dalla sua `wait` con 0 come nel caso nominale. task_ready confronta
+;  col livello che il super task ha preso in prestito, cioe' con l'interrotto:
+;  se il risvegliato lo batte, arma il need_resched, e l'uscita dedicata del
+;  super task fara' scegliere lo scheduler. Con un titolare solo questo ramo
+;  non scatta; con due -- la time line e il gestore dei timeout -- si'.
+;
+;  Clobber: tutto -- non ritorna.
+; ==========================================================================
+sched_isr_exit_to:
+  beq r2, r0, sieto_nessuno
+  li r3, current
+  lw r4, 0(r3)             ; l'uscente
+  beq r4, r2, sieto_gia_lui
+  lw r5, TCB.nopreempt(r4)
+  bne r5, r0, sieto_differito  ; gira il super task: non si commuta
+
+  ; --- CONTABILITA': identica a quella di sched_isr_exit + sp_preempted ---
+  sw r1, TCB.sp(r4)        ; il contesto uscente vive nel suo TCB
+  lw r5, TCB.pcb(r4)
+  sw r4, PCB.preempted(r5) ; nello slot: riprendera' da dove stava
+  li r6, PREEMPTED
+  sw r6, TCB.state(r4)
+
+  ; --- IL SUPER TASK PRENDE IN PRESTITO IL LIVELLO DELL'INTERROTTO (§3.75) ---
+  ; Mentre gira il super task, la preemption si calcola sul VECCHIO current:
+  ; task_ready confronta col PCB di chi gira, e da qui in poi quel PCB e'
+  ; quello dell'interrotto. E l'uscita dedicata (task_block_super) lo ritrova
+  ; senza nessuna variabile in piu': e' nello slot di questo livello. Solo per
+  ; il super task -- un titolare normale ha un livello suo, e non si tocca.
+  lw r6, TCB.nopreempt(r2)
+  beq r6, r0, sieto_dispatch
+  sw r5, TCB.pcb(r2)
+sieto_dispatch:
+
+  ; --- niente SCELTA: il TCB e' gia' deciso ---
+  mov r1, r2
+  j dispatcher             ; MECCANISMO: commit di current, e ctx_restore
+
+sieto_gia_lui:
+  j ctx_restore            ; r1 = il frame appena salvato dal vettore: si torna
+                           ; dentro l'attivita', e il suo TCB non si tocca
+
+sieto_nessuno:
+  j sched_isr_exit         ; r1 e' ancora il contesto
+
+sieto_differito:
+  addi r14, r14, -4
+  sw r1, 0(r14)            ; il contesto del super task: task_ready sporca r1
+  mov r1, r2
+  call task_ready          ; PRONTO, in coda al suo livello
+  lw r1, 0(r14)
+  addi r14, r14, 4
+  j ctx_restore            ; e si torna dentro il super task

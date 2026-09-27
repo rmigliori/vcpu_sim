@@ -36,15 +36,15 @@
 | programma | istruzioni | vec-elem-ops | cicli | tempo @ 100 MHz |
 |---|---:|---:|---:|---:|
 | `scheduler` | 2032 | 0 | 4458 | 44,6 µs |
-| `block` | 2543 | 0 | 5488 | 54,9 µs |
-| `chain` | 7298 | 0 | 16646 | 166,5 µs |
+| `block` | 2549 | 0 | 5503 | 55,0 µs |
+| `chain` | 7293 | 0 | 16632 | 166,3 µs |
 | `mailbox` | 288 | 0 | 639 | 6,39 µs |
-| `semaphore` | 3516 | 0 | 7288 | 72,9 µs |
-| `mutex` | 3434 | 0 | 7143 | 71,4 µs |
+| `semaphore` | 3639 | 0 | 7555 | 75,5 µs |
+| `mutex` | 3446 | 0 | 7173 | 71,7 µs |
 | `tmgr` | 22216 | 0 | 49834 | 498,3 µs |
 | `coop` | 4866 | 0 | 10531 | 105,3 µs |
 | `events` | 9265 | 0 | 18767 | 187,7 µs |
-| `vectors` | 92628 | 43712 | 159568 | 1,60 ms |
+| `vectors` | 92611 | 43712 | 159668 | 1,60 ms |
 
 Misurati così, uno per riga:
 
@@ -73,13 +73,13 @@ silenzio.
 
 | programma | modo | atteso | argomenti della macchina |
 |---|---|---|---|
-| `scheduler` | DUMPS | `67 4 8 57` | — |
+| `scheduler` | DUMPS | `65 3 8 56` | — |
 | `block` | DUMPS | `3 25` | — |
-| `chain` | DUMPS | `3 3 3 632` | — |
+| `chain` | DUMPS | `3 3 3 629` | — |
 | `mailbox` | DUMPS | `0 1 2 11 22 0 33 0 0` | — |
 | `semaphore` | DUMPS | `123456 2 1 -6` | — |
 | `mutex` | DUMPS | `0 0 1 1 1` | — |
-| `tmgr` | DUMPS | `5 0 2324` | — |
+| `tmgr` | DUMPS | `5 0 2318` | — |
 | `coop` | DUMPS | `0 5 5 5 0` | — |
 | `events` | DUMPS | `0 5 495 5 718` | `--kbd 2000:a,6000:b,10000:c,14000:d,18000:e` |
 | `vectors` | DUMPS | `0 0 20 19 39` | — |
@@ -100,19 +100,19 @@ Un programma che non compare non ha prodotto una traccia leggibile.
 
 | proprietario | cicli | quota |
 |---|---:|---:|
-| ISR | 1972 | 44.2% |
-| H | 1070 | 24.0% |
-| idle | 770 | 17.3% |
+| ISR | 2007 | 45.0% |
+| H | 1050 | 23.6% |
+| idle | 765 | 17.2% |
 | boot | 321 | 7.2% |
-| D | 185 | 4.1% |
-| M | 140 | 3.1% |
+| D | 180 | 4.0% |
+| M | 135 | 3.0% |
 
 **`block`**
 
 | proprietario | cicli | quota |
 |---|---:|---:|
-| ISR | 2556 | 46.6% |
-| W | 2160 | 39.4% |
+| ISR | 2571 | 46.7% |
+| W | 2160 | 39.3% |
 | idle | 455 | 8.3% |
 | boot | 317 | 5.8% |
 
@@ -120,11 +120,11 @@ Un programma che non compare non ha prodotto una traccia leggibile.
 
 | proprietario | cicli | quota |
 |---|---:|---:|
-| idle | 6820 | 41.0% |
-| B | 2514 | 15.1% |
+| idle | 6791 | 40.8% |
+| B | 2808 | 16.9% |
 | A | 2442 | 14.7% |
-| ISR | 2209 | 13.3% |
-| C | 2160 | 13.0% |
+| ISR | 2230 | 13.4% |
+| C | 1860 | 11.2% |
 | boot | 501 | 3.0% |
 
 **`mailbox`**
@@ -137,18 +137,18 @@ Un programma che non compare non ha prodotto una traccia leggibile.
 
 | proprietario | cicli | quota |
 |---|---:|---:|
-| boot | 4775 | 65.5% |
-| ISR | 2171 | 29.8% |
-| idle | 342 | 4.7% |
+| boot | 4258 | 56.4% |
+| ISR | 2955 | 39.1% |
+| idle | 342 | 4.5% |
 
 **`mutex`**
 
 | proprietario | cicli | quota |
 |---|---:|---:|
-| ISR | 2364 | 33.1% |
-| U | 1787 | 25.0% |
-| S | 1176 | 16.5% |
-| W | 958 | 13.4% |
+| ISR | 2404 | 33.5% |
+| U | 1782 | 24.8% |
+| S | 1176 | 16.4% |
+| W | 953 | 13.3% |
 | boot | 573 | 8.0% |
 | T | 285 | 4.0% |
 
@@ -156,9 +156,9 @@ Un programma che non compare non ha prodotto una traccia leggibile.
 
 | proprietario | cicli | quota |
 |---|---:|---:|
-| idle | 24440 | 49.0% |
+| idle | 24385 | 48.9% |
 | tmgr | 12833 | 25.8% |
-| ISR | 6803 | 13.7% |
+| ISR | 6858 | 13.8% |
 | A | 4375 | 8.8% |
 | boot | 1383 | 2.8% |
 
@@ -184,8 +184,8 @@ Un programma che non compare non ha prodotto una traccia leggibile.
 | proprietario | cicli | quota |
 |---|---:|---:|
 | A | 57582 | 36.1% |
-| B | 55672 | 34.9% |
-| ISR | 41716 | 26.1% |
+| B | 55577 | 34.8% |
+| ISR | 41911 | 26.2% |
 | idle | 4094 | 2.6% |
 | boot | 504 | 0.3% |
 

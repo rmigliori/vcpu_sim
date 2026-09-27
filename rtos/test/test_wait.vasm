@@ -1,0 +1,627 @@
+; rtos/test/test_wait.vasm — IL MECCANISMO del foreground: `.interrupt`, il
+; dispatch diretto (sched_isr_exit_to) e la coppia WAIT (27/09/2026, disegnati
+; in §3.74 dell'handoff).
+;
+; E' un test del MECCANISMO, non un'applicazione: non c'e' nessuna time line,
+; nessuna tabella di slot, nessuna attivita'. Quelle sono POLITICA e DATI e
+; vengono dopo (§0, "fin dove si scrive"). Qui c'e' il minimo che mette in
+; gioco i tre pezzi nuovi: un titolare T, un'idle I, una sorgente -- il
+; comparatore 0 -- e un'ISR che DISARMA E SEGNALA, e basta. Non sa niente di chi
+; sveglia: la WAIT da segnalare gliela dice `bersaglio`, scritta da T.
+;
+; T E' IL SUPER TASK: dichiarato con `.supertask`, quindi il suo TCB nasce con
+; TCB.nopreempt = 1 e TCB.pcb = 0 -- non ha livello, non compete (§3.74). Mentre
+; gira LO SCHEDULER NON SCEGLIE (§3.75): chi viene svegliato aspetta pronto.
+; Per provarlo c'e' H, un task normale al livello 1 titolare di una WAIT sua:
+; e' il "secondo titolare" -- il ruolo che un giorno avra' il gestore dei
+; timeout.
+;
+; --- LA SVEGLIA PERSA, e perche' vale piu' delle altre ---
+; Un segnale che arriva PRIMA della wait non deve far sospendere il titolare.
+; Senza questa asserzione tutto il resto passa verde -- il meccanismo funziona
+; finche' ISR e titolare non si incrociano -- e il sistema si pianta il giorno
+; che un'attivita' sfora, cioe' l'unico giorno per cui esiste.
+;
+; VISTA FALLIRE il 27/09/2026, togliendo il contatore a `wait` (la riga che
+; torna subito quando pending > 0): T si sospende sul segnale gia' consumato,
+; l'idle gira, e dopo 20 ms il cane da guardia stampa "99999 1" -- fermo al
+; passo 1. Un'asserzione mai vista rossa non e' ancora una rete (§3.58).
+;
+; --- IL CANE DA GUARDIA ---
+; Il canale 1, armato al boot a +20 ms. La corsa buona dura meno di 3 ms e
+; finisce con una `halt` prima che scatti. Serve perche' il modo in cui questo
+; meccanismo si rompe NON e' un numero sbagliato: e' un task che dorme per
+; sempre, cioe' un programma che non termina. Il cane lo trasforma in una riga
+; rossa che dice A CHE PASSO ci si e' fermati.
+;
+; --- GLI UNDICI NUMERI, tutti DERIVABILI: nessuno dipende dai cicli ---
+;
+;   -1  wait_init su una WAIT gia' legata: il titolare si lega UNA volta
+;   -1  wait chiamata da I, che non e' il titolare: esito, e NON si sospende
+;    1  lo SFORAMENTO torna dentro T: un registro vivo attraverso la trap e'
+;       intatto, e tcbT.sp non e' stato scritto. Il secondo controllo non
+;       protegge il TCB -- scriverci sarebbe innocuo, T ha un contesto come
+;       tutti -- ma dice DA QUALE RAMO si e' passati: "e' gia' lui", e non la
+;       contabilita', che metterebbe T nello slot di un livello che non ha
+;    1  LA SVEGLIA PERSA: il segnale arrivato prima della wait c'e' ancora, e
+;       la wait torna con 1 senza sospendere
+;    0  nominale: T aspettava, il comparatore lo sveglia DIRETTAMENTE
+;    1  ...dopo 1 ms: ha aspettato davvero la scadenza
+;    3  I, interrotta dal dispatch diretto, e' PREEMPTED: e' nello slot del
+;       suo livello, come dopo sp_preempted -- la contabilita' c'e'
+;    1  un segnale a un titolare che NE' ASPETTA NE' GIRA (I, su wI) e'
+;       contato e NON consegnato: metterlo in esecuzione lo lascerebbe in due
+;       posti. E' l'uscita con r2 = 0, cioe' sched_isr_exit
+;    2  due segnali prima della wait: la scala, non un flag
+;    0  ...e la wait li ha consumati TUTTI: quella dopo aspetta davvero
+;    1  ...la scadenza, 1 ms. Con un consumo di uno per volta tornerebbe
+;       subito con 1, e qui ci sarebbe 0
+;    0  H segnalato MENTRE GIRA T: e' READY, non RUNNING. Il dispatch diretto
+;       e' diventato un risveglio (sched_isr_exit_to, ramo "differito")
+; 12345 L'ORDINE, cifra per cifra. 1 e 3/4 li scrive T, 2 e 5 H:
+;         1 2    passo 6: T continua dopo il segnale a H, e H gira solo quando
+;                T va in wait
+;         3 4 5  passo 7: un'ISR sveglia H per la via normale -- need_resched
+;                armato -- e mette T in esecuzione. Poi un'altra trap esce da
+;                sched_isr_exit col flag ancora armato: T NON viene prelazionato
+;                (4 prima di 5), e H gira alla wait di T
+;    0  ...e H esce dalla sua wait con 0: il risveglio differito e' nominale
+;    0  J, il PARI dell'idle al livello 7, non ha MAI girato. Passo 8: T si
+;       sospende, riprende l'idle, e un'ISR ordinaria (il timer, un colpo solo)
+;       esce da sched_isr_exit. Se il need_resched del passo 7 fosse rimasto
+;       armato -- task_block non lo consuma -- quell'uscita farebbe una
+;       rotazione fra pari che nessuno ha chiesto, e J girerebbe. L'uscita
+;       dedicata del super task (task_block_super) lo consuma
+;
+; L'USCITA DEDICATA, e i suoi tre rami, sono tutti attraversati: TCB.pcb a 0
+; (passo 2, T partito a freddo non ha interrotto nessuno: sceglie lo
+; scheduler), flag spento (passi 5 e 8: riprende l'idle dallo slot, senza
+; scansione), flag armato (passi 6 e 7: H batte l'idle, sceglie lo scheduler).
+; "Senza scansione" e' un fatto di COSTO e non si vede nei numeri: qui si vede
+; che il risultato e' giusto in tutti e tre.
+;
+; LE DUE REGOLE DI §3.75 VISTE ROSSE il 27/09/2026, e rosse nel modo peggiore:
+;   senza la guardia in sched_isr_exit             "99999 7"
+;   senza il ramo differito in sched_isr_exit_to   "99999 6"
+; In tutti e due i casi T viene prelazionato e messo nello "slot" di un livello
+; che non ha (PCB.preempted di un PCB all'indirizzo 0): nessuna scansione lo
+; ritrova, e il super task sparisce. Lo dice il cane da guardia, al passo giusto.
+
+.include "tcb/tcb.vinc"
+.include "queue/queue_api.vinc"
+.include "wait/wait.vinc"
+.include "hal/hal.vinc"
+.include "hal/clock.vinc"
+
+  .data
+
+wT:         .res WAIT      ; la WAIT di T
+wI:         .res WAIT      ; una WAIT di I, che I non aspetta mai: il terzo caso
+wH:         .res WAIT      ; la WAIT di H, il secondo titolare
+cntJ:       .word 0        ; i giri di J: deve restare 0
+bersaglio:  .word 0        ; la WAIT che l'ISR segnala: la sceglie T, passo per passo
+anche:      .word 0        ; != 0: l'ISR PRIMA sveglia il titolare di questa per la
+                           ; via normale (task_ready), poi segnala `bersaglio`
+cifraH:     .word 0        ; la cifra che H annota al prossimo risveglio
+seq:        .word 0        ; l'ordine degli eventi, una cifra per evento
+passo:      .word 0        ; dove si e' arrivati, per il cane da guardia
+tD:         .word 0
+tG:         .word 0
+cntI:       .word 0
+
+r_rilega:   .word 0
+r_intruso:  .word 0
+r_integro:  .word 0
+r_persa:    .word 0
+r_nominale: .word 0
+r_dtD:      .word 0
+r_statoI:   .word 0
+r_pendI:    .word 0
+r_doppio:   .word 0
+r_azzerato: .word 0
+r_dtG:      .word 0
+r_statoH:   .word 0
+r_H:        .word 0
+
+  .supertask tcbT          ; T: il TCB nasce con TCB.nopreempt = 1
+tcbI:       .res TCB
+tcbH:       .res TCB
+tcbJ:       .res TCB
+
+stackT:     .space 128
+stackT_top:
+stackI:     .space 64
+stackI_top:
+stackH:     .space 64
+stackH_top:
+stackJ:     .space 64
+stackJ_top:
+
+  .text
+
+  .global main
+  .extern current
+  .extern pcb1
+  .extern pcb7
+  .extern task_ready
+  .extern sched_init
+  .extern wait_init
+  .extern wait
+  .extern wait_signal
+  .extern sched_isr_exit_to
+  .extern irq_install
+  .extern irq_arm
+  .extern irq_enable
+  .extern ctx_init
+
+; ==========================================================================
+;  BOOT. Nessun settimer: l'unica sorgente e' il comparatore, e il need_resched
+;  non lo arma nessuno.
+; ==========================================================================
+main:
+  li r14, stackT_top
+  call sched_init
+
+  li r1, wT
+  li r2, tcbT
+  call wait_init
+  li r1, wT
+  li r2, tcbI
+  call wait_init           ; -1: gia' legata a T
+  li r2, r_rilega
+  sw r1, 0(r2)
+  li r1, wI
+  li r2, tcbI
+  call wait_init
+  li r1, wH
+  li r2, tcbH
+  call wait_init
+
+  ; --- H (livello 1): READY, in coda. Gira alla prima wait che sospende T,
+  ;     e si sospende subito sulla sua ---
+  li r1, stackH_top
+  li r2, taskH
+  call ctx_init
+  li r3, tcbH
+  sw r1, TCB.sp(r3)
+  li r4, pcb1
+  sw r4, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r1, r4
+  mov r2, r3
+  call enqueue_tail
+
+  ; --- I (idle, livello 7): READY, in coda ---
+  li r1, stackI_top
+  li r2, taskI
+  call ctx_init
+  li r3, tcbI
+  sw r1, TCB.sp(r3)
+  li r4, pcb7
+  sw r4, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r1, r4               ; &pcb == &pcb.coda
+  mov r2, r3
+  call enqueue_tail
+
+  ; --- J (livello 7, DOPO I nella coda): il pari dell'idle. Nessuno lo
+  ;     sceglie mai, perche' I non si blocca e riprende sempre dallo slot:
+  ;     puo' girare solo per una ROTAZIONE fra pari ---
+  li r1, stackJ_top
+  li r2, taskJ
+  call ctx_init
+  li r3, tcbJ
+  sw r1, TCB.sp(r3)
+  li r4, pcb7
+  sw r4, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r1, r4
+  mov r2, r3
+  call enqueue_tail
+
+  ; --- T: parte a freddo, RUNNING e fuori da ogni coda. TCB.pcb resta 0, e
+  ;     TCB.nopreempt e' gia' 1: l'ha scritto l'assembler ---
+  li r3, tcbT
+  li r1, current
+  sw r3, 0(r1)
+  li r5, RUNNING
+  sw r5, TCB.state(r3)
+
+  li r1, isr
+  call irq_install
+  call irq_arm
+
+  ; --- il cane da guardia: canale 1, fra 20 ms ---
+  li r1, CLOCK_MS
+  lw r2, 0(r1)
+  addi r2, r2, 20
+  li r1, CMP1
+  sw r2, 0(r1)
+  li r1, CMP_CTRL
+  li r2, CMP_ARM1
+  sw r2, 0(r1)
+
+  call irq_enable
+  li r5, taskT
+  jr r5
+
+; ==========================================================================
+;  T, il titolare. Un copione, un passo dopo l'altro.
+; ==========================================================================
+taskT:
+  li r1, bersaglio
+  li r2, wT
+  sw r2, 0(r1)
+
+  ; --- passo 1: lo SFORAMENTO, e la SVEGLIA PERSA -------------------------
+  ; Il comparatore spara mentre T gira: e' l'attivita' che sfora. La trap
+  ; cade dentro arma_passato, e deve tornare li' con i registri di T.
+  li r1, passo
+  li r2, 1
+  sw r2, 0(r1)
+  li r9, 777               ; un valore vivo attraverso la trap
+  li r1, tcbT
+  lw r10, TCB.sp(r1)       ; il TCB del titolare, PRIMA
+  call arma_passato        ; -> trap: pending 0 -> 1, e si torna qui
+  li r1, tcbT
+  lw r11, TCB.sp(r1)       ; ...e DOPO
+  li r12, 0
+  li r2, 777
+  bne r9, r2, p1_esito
+  bne r10, r11, p1_esito
+  li r12, 1
+p1_esito:
+  li r1, r_integro
+  sw r12, 0(r1)
+
+  li r1, wT
+  call wait                ; 1, SUBITO: il segnale di prima non si e' perso
+  li r2, r_persa
+  sw r1, 0(r2)
+
+  ; --- passo 2: il caso NOMINALE, cioe' il dispatch diretto ---------------
+  ; T aspetta, gira l'idle, e al millisecondo il comparatore mette T in
+  ; esecuzione senza passare dallo scheduler.
+  li r1, passo
+  li r2, 2
+  sw r2, 0(r1)
+  call arma_futuro         ; r1 = adesso, la scadenza e' adesso + 1
+  li r2, tD
+  sw r1, 0(r2)
+  li r1, wT
+  call wait                ; 0: la sveglia e' arrivata mentre aspettavo
+  li r2, r_nominale
+  sw r1, 0(r2)
+  li r1, tcbI
+  lw r2, TCB.state(r1)     ; I e' stata MESSA VIA come una preemptata
+  li r1, r_statoI
+  sw r2, 0(r1)
+  li r1, CLOCK_MS
+  lw r2, 0(r1)
+  li r1, tD
+  lw r3, 0(r1)
+  sub r2, r2, r3
+  li r1, r_dtD
+  sw r2, 0(r1)             ; 1
+
+  ; --- passo 3: un titolare che NE' ASPETTA NE' GIRA ----------------------
+  ; I e' nello slot. Il segnale su wI va contato e NON consegnato: la coda
+  ; di .interrupt riceve r1 = 0, e l'uscita e' quella ordinaria.
+  li r1, passo
+  li r2, 3
+  sw r2, 0(r1)
+  li r1, bersaglio
+  li r2, wI
+  sw r2, 0(r1)
+  call arma_passato        ; -> trap su wI, e si torna qui
+  li r1, bersaglio
+  li r2, wT
+  sw r2, 0(r1)
+  li r1, wI
+  lw r2, WAIT.pending(r1)  ; 1
+  li r1, r_pendI
+  sw r2, 0(r1)
+
+  ; --- passo 4: due segnali prima della wait ------------------------------
+  li r1, passo
+  li r2, 4
+  sw r2, 0(r1)
+  call arma_passato        ; pending 1
+  call arma_passato        ; pending 2
+  li r1, wT
+  call wait                ; 2
+  li r2, r_doppio
+  sw r1, 0(r2)
+
+  ; --- passo 5: la wait di prima li ha consumati TUTTI --------------------
+  li r1, passo
+  li r2, 5
+  sw r2, 0(r1)
+  call arma_futuro
+  li r2, tG
+  sw r1, 0(r2)
+  li r1, wT
+  call wait                ; 0, e dopo aver aspettato
+  li r2, r_azzerato
+  sw r1, 0(r2)
+  li r1, CLOCK_MS
+  lw r2, 0(r1)
+  li r1, tG
+  lw r3, 0(r1)
+  sub r2, r2, r3
+  li r1, r_dtG
+  sw r2, 0(r1)             ; 1
+
+  ; --- passo 6: il secondo titolare segnalato MENTRE GIRA T ---------------
+  ; wait_signal restituisce tcbH (aspettava), ma T e' il super task: niente
+  ; dispatch, H diventa PRONTO e la trap torna in T.
+  li r1, passo
+  li r2, 6
+  sw r2, 0(r1)
+  li r1, cifraH
+  li r2, 2
+  sw r2, 0(r1)
+  li r1, bersaglio
+  li r2, wH
+  sw r2, 0(r1)
+  call arma_passato        ; -> trap: H pronto, e si torna qui
+  li r1, 1
+  call annota              ; 1: T ha continuato
+  li r1, tcbH
+  lw r2, TCB.state(r1)     ; 0: READY, non RUNNING
+  li r1, r_statoH
+  sw r2, 0(r1)
+  li r1, bersaglio
+  li r2, wT
+  sw r2, 0(r1)
+  call arma_futuro
+  li r1, wT
+  call wait                ; qui gira H (annota 2), poi l'idle, poi la scadenza
+
+  ; --- passo 7: il need_resched armato mentre gira T ----------------------
+  ; La scadenza trova l'idle in esecuzione: l'ISR sveglia H per la via
+  ; normale -- task_ready, che batte l'idle e ARMA il need_resched -- e poi
+  ; mette T in esecuzione col dispatch diretto, che il flag non lo consuma.
+  li r1, passo
+  li r2, 7
+  sw r2, 0(r1)
+  li r1, cifraH
+  li r2, 5
+  sw r2, 0(r1)
+  li r1, anche
+  li r2, wH
+  sw r2, 0(r1)
+  call arma_futuro
+  li r1, wT
+  call wait                ; T riparte qui col need_resched armato
+  li r1, anche
+  sw r0, 0(r1)
+  li r1, 3
+  call annota              ; 3
+  ; Un'altra trap, che esce da sched_isr_exit (wI: nessuno da svegliare). Col
+  ; flag armato sceglierebbe H: la guardia la rimanda.
+  li r1, bersaglio
+  li r2, wI
+  sw r2, 0(r1)
+  call arma_passato
+  li r1, bersaglio
+  li r2, wT
+  sw r2, 0(r1)
+  li r1, 4
+  call annota              ; 4: ancora T, NON H
+  call arma_futuro
+  li r1, wT
+  call wait                ; qui gira H (annota 5)
+
+  ; --- passo 8: un'uscita ORDINARIA da ISR dopo la wait del super task -----
+  ; Il timer, un colpo solo fra 20000 cicli; la scadenza di T fra 2 ms, cioe'
+  ; sempre DOPO il timer qualunque sia la fase del millisecondo. In mezzo gira
+  ; l'idle, e l'ISR del timer esce da sched_isr_exit con r0.
+  li r1, passo
+  li r2, 8
+  sw r2, 0(r1)
+  li r1, CLOCK_MS
+  lw r2, 0(r1)
+  addi r2, r2, 2
+  li r1, CMP0
+  sw r2, 0(r1)
+  li r1, CMP_CTRL
+  li r2, CMP_ARM0
+  li r3, CMP_ARM1
+  or r2, r2, r3
+  sw r2, 0(r1)
+  li r1, 20000
+  settimer r1
+  li r1, wT
+  call wait                ; l'idle, il timer, di nuovo l'idle, poi T
+
+  ; --- i numeri, nell'ordine dell'intestazione ---
+  li r1, r_rilega
+  lw r5, 0(r1)
+  dumps r5
+  li r1, r_intruso
+  lw r5, 0(r1)
+  dumps r5
+  li r1, r_integro
+  lw r5, 0(r1)
+  dumps r5
+  li r1, r_persa
+  lw r5, 0(r1)
+  dumps r5
+  li r1, r_nominale
+  lw r5, 0(r1)
+  dumps r5
+  li r1, r_dtD
+  lw r5, 0(r1)
+  dumps r5
+  li r1, r_statoI
+  lw r5, 0(r1)
+  dumps r5
+  li r1, r_pendI
+  lw r5, 0(r1)
+  dumps r5
+  li r1, r_doppio
+  lw r5, 0(r1)
+  dumps r5
+  li r1, r_azzerato
+  lw r5, 0(r1)
+  dumps r5
+  li r1, r_dtG
+  lw r5, 0(r1)
+  dumps r5
+  li r1, r_statoH
+  lw r5, 0(r1)
+  dumps r5
+  li r1, seq
+  lw r5, 0(r1)
+  dumps r5
+  li r1, r_H
+  lw r5, 0(r1)
+  dumps r5
+  li r1, cntJ
+  lw r5, 0(r1)
+  dumps r5
+  halt
+
+; ==========================================================================
+;  I, l'idle. Prova per prima cosa a fare la wait di T -- e non deve riuscirci
+;  ne' restarci appesa -- poi conta.
+; ==========================================================================
+taskI:
+  li r1, wT
+  call wait                ; -1: I non e' il titolare
+  li r2, r_intruso
+  sw r1, 0(r2)
+  li r1, cntI
+loopI:
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  j loopI
+
+; ==========================================================================
+;  H, il secondo titolare: un task normale che aspetta la sua WAIT. Annota la
+;  cifra che T gli ha preparato, cosi' `seq` dice CHI ha girato QUANDO.
+; ==========================================================================
+taskH:
+  li r1, wH
+  call wait
+  li r2, r_H
+  sw r1, 0(r2)
+  li r2, cifraH
+  lw r1, 0(r2)
+  call annota
+  j taskH
+
+; ==========================================================================
+;  J, il pari dell'idle: conta, e basta. Se il contatore si muove, qualcuno ha
+;  fatto ruotare il livello 7.
+; ==========================================================================
+taskJ:
+  li r1, cntJ
+loopJ:
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  j loopJ
+
+; ==========================================================================
+;  annota(r1 = cifra): seq = seq*10 + cifra. Foglia. Clobber: r2, r3, r4.
+; ==========================================================================
+annota:
+  li r2, seq
+  lw r3, 0(r2)
+  li r4, 10
+  mul r3, r3, r4
+  add r3, r3, r1
+  sw r3, 0(r2)
+  ret
+
+; ==========================================================================
+;  arma_passato: una scadenza GIA' PASSATA sul canale 0, cioe' una trap al
+;  confine dell'istruzione successiva alla `sw` che arma. Il cane da guardia
+;  resta armato. Foglia. Clobber: r1, r2, r3.
+; ==========================================================================
+arma_passato:
+  li r1, CLOCK_MS
+  lw r2, 0(r1)
+  addi r2, r2, -1
+  li r1, CMP0
+  sw r2, 0(r1)
+  li r1, CMP_CTRL
+  li r2, CMP_ARM0
+  li r3, CMP_ARM1
+  or r2, r2, r3
+  sw r2, 0(r1)             ; la trap scatta QUI
+  ret
+
+; ==========================================================================
+;  arma_futuro -> r1 = adesso (ms). La scadenza e' adesso + 1: fra zero e un
+;  millisecondo, secondo la fase -- ma "adesso + 1" si legge sempre come 1.
+;  Foglia. Clobber: r1..r4.
+; ==========================================================================
+arma_futuro:
+  li r1, CLOCK_MS
+  lw r4, 0(r1)
+  addi r2, r4, 1
+  li r1, CMP0
+  sw r2, 0(r1)
+  li r1, CMP_CTRL
+  li r2, CMP_ARM0
+  li r3, CMP_ARM1
+  or r2, r2, r3
+  sw r2, 0(r1)
+  mov r1, r4
+  ret
+
+; ==========================================================================
+;  L'ISR. DISARMA E SEGNALA, e basta: non conosce ne' T ne' la time line.
+;  Riarmare e' politica, ed e' di chi aspetta; disarmare e' meccanismo, e
+;  serve -- SPARARE NON DISARMA (clock.vinc), e senza la trap si ripresenta al
+;  confine d'istruzione dopo, con pending che cresce a ogni ciclo.
+;
+;  La coda la scrive .interrupt: il TCB che wait_signal restituisce va dritto
+;  a sched_isr_exit_to, 0 compreso.
+; ==========================================================================
+  .interrupt isr
+  mfcause r3
+  li r4, CAUSE_CMP1
+  beq r3, r4, isr_guardia
+  li r4, CAUSE_TIMER
+  beq r3, r4, isr_timer
+
+  li r4, CMP_CTRL
+  li r5, CMP_ARM1
+  sw r5, 0(r4)             ; DISARMA il canale 0 (il cane resta armato)
+
+  ; --- solo al passo 7: un risveglio per la VIA NORMALE, prima ---
+  li r4, anche
+  lw r1, 0(r4)
+  beq r1, r0, isr_bersaglio
+  call wait_signal         ; r1 = tcbH, che aspettava
+  beq r1, r0, isr_bersaglio
+  call task_ready          ; in coda al livello 1, e need_resched se batte chi gira
+isr_bersaglio:
+  li r4, bersaglio
+  lw r1, 0(r4)
+  call wait_signal         ; r1 = il TCB da mettere in esecuzione, o 0
+  .endinterrupt isr r1
+
+; --- il timer del passo 8: un colpo solo, e l'uscita ORDINARIA ---
+; Si spegne (period 0) ed esce con "nessuno da svegliare": la stessa coda che
+; .interrupt emette con r0, scritta a mano perche' questo ramo sta fuori dal
+; blocco. sched_isr_exit_to con r2 = 0 e' sched_isr_exit.
+isr_timer:
+  settimer r0
+  mov r2, r0
+  mov r1, r14
+  j sched_isr_exit_to
+
+; --- il cane da guardia: qualcuno dorme e non doveva ---
+isr_guardia:
+  li r5, 99999
+  dumps r5
+  li r1, passo
+  lw r5, 0(r1)
+  dumps r5                 ; il passo a cui ci si e' fermati
+  halt

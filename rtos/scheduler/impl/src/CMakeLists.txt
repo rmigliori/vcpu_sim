@@ -18,8 +18,16 @@
 # entrambe sulla stessa riga di `ld` e' un errore rumoroso, "duplicate global
 # 'pcb0'". Cosa significhi "marks" lo dice `vasm_config` nel CMakeLists di primo
 # livello, in un posto solo.
+#
+# DUE SORGENTI dal 27/09/2026, e la divisione non e' di gusto: il linker prende
+# un membro d'archivio solo se qualcuno ne nomina un simbolo. sched_isr_exit_to
+# (il dispatch diretto, §3.74) sta in un oggetto suo perche' i programmi che non
+# la chiamano non ne ricevano un'istruzione -- in scheduler.vasm muoverebbe
+# l'immagine di tutti. Il prezzo e' `dispatcher` diventato .global: una riga in
+# piu' nella symmap dei programmi col kernel, zero istruzioni.
 vasm_library(lib_kernel
   SOURCES    ${CMAKE_CURRENT_SOURCE_DIR}/scheduler.vasm
+             ${CMAKE_CURRENT_SOURCE_DIR}/sched_isr_exit_to.vasm
   INTERFACES vinc_tcb vinc_queue vinc_hal
   LINK       lib_queue lib_hal
   CONFIGS    marks)

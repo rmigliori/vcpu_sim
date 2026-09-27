@@ -1,0 +1,9 @@
+; tests/test_supertask_due.vasm — DUE super task nello STESSO file (27/09/2026,
+; §3.75). L'assembler deve rifiutarlo: la direttiva trova `super_tcb` gia'
+; definito e lo dice, invece del generico "duplicate label".
+
+.include "tcb/tcb.vinc"
+
+  .data
+  .supertask tA
+  .supertask tB

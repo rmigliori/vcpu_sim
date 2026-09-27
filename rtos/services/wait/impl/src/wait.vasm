@@ -1,0 +1,178 @@
+; rtos/services/wait/impl/src/wait.vasm — la coppia dedicata: `wait` sospende il
+; titolare, `wait_signal` lo sveglia (27/09/2026, disegnata in §3.74 dell'handoff).
+;
+; --- PERCHE' NON IL SEMAFORO ---
+; semaphore.vasm dichiara SOLO DA TASK, E NESSUNA VARIANTE _s: il suo contatore
+; e' contabile e §3.26 ha deciso che gli eventi passano dalla mailbox. Qui chi
+; segnala e' un'ISR, e piegare il semaforo avrebbe forzato quella regola.
+;
+; --- PERCHE' IL CONTATORE: LA SVEGLIA PERSA ---
+; Una coppia sospendi/risveglia NUDA ha il difetto classico: se il risveglio
+; arriva PRIMA della sospensione -- l'ISR spara mentre la macchina a stati sta
+; ancora lavorando -- non ha dove posarsi, e il task dorme per sempre. Il
+; meccanismo funziona benissimo finche' i due non si incrociano, e il sistema
+; si pianta il giorno che un'attivita' sfora, cioe' l'unico giorno per cui
+; esiste. rtos/test/test_wait.vasm lo prova, ed e' stato visto fallire senza.
+;
+; --- IL GUARDIANO STA SULLA wait E NON SULLA signal ---
+; E' la VISIBILITA' del guasto. Un task sbagliato che fa `wait` si sospende su
+; un canale che nessuno segnalera' per lui, fuori da ogni lista: perso senza
+; traccia. Un canale sbagliato segnalato fa girare il task sbagliato: grave, ma
+; si vede subito. Si controlla dove e' silenzioso.
+;
+; E il controllo e' PERMANENTE. Il precedente opposto esiste -- semaphore.vasm
+; non mette il tetto perche' un post di troppo "non corrompe niente" -- e non si
+; trasferisce: qui corrompe. Costa una lw e una bne. Sul fallimento vale la
+; regola del modulo piu' basso (queue.vinc: "segnala e basta, non ferma la
+; macchina"): `wait` restituisce un esito e NON sospende.
+
+.include "tcb/tcb.vinc"
+.include "wait/wait.vinc"
+
+  .text
+
+  .global wait_init
+  .global wait
+  .global wait_signal
+
+  .extern irq_save
+  .extern irq_restore
+  .extern task_block
+  .extern task_block_super
+  .extern current
+
+; ==========================================================================
+;  wait_init(r1 = &WAIT, r2 = &TCB titolare) -> r1 = 0 legato, -1 rifiutato.
+;  Al boot, a IE = 0.
+;
+;  Il titolare si lega UNA VOLTA: una WAIT gia' legata rifiuta, e cosi' un TCB
+;  nullo. Non esiste un wait_unbind, ed e' voluto -- il titolare e' l'identita'
+;  del canale, non uno stato che passa di mano (vedi WAIT.task in wait.vinc).
+;
+;  Foglia. Clobber: r3.
+; ==========================================================================
+wait_init:
+  lw r3, WAIT.task(r1)
+  bne r3, r0, wait_init_ko
+  beq r2, r0, wait_init_ko
+  sw r2, WAIT.task(r1)
+  sw r0, WAIT.pending(r1)
+  li r1, 0
+  ret
+wait_init_ko:
+  li r1, -1
+  ret
+
+; ==========================================================================
+;  wait(r1 = &WAIT) -> r1 = quanti segnali sono arrivati mentre il titolare NON
+;  aspettava (>= 0), oppure -1 se il chiamante non e' il titolare. Solo da TASK:
+;  puo' sospendere.
+;
+;  IL VALORE E' QUELLO LETTO ALLA CHIAMATA, ed e' il punto (§3.74): al ritorno
+;  il contatore vale 0 in ogni caso, quindi e' solo qui che nominale e
+;  sforamento si distinguono. E la stessa chiamata fa la cosa giusta nei due
+;  casi senza un ramo per il chiamante: con 0 aspetta, con N > 0 torna subito --
+;  ha lavoro da far partire adesso.
+;
+;  SI CONSUMA TUTTO, non uno: "indietro di N" si gestisce una volta. Se si
+;  consumasse un segnale per chiamata, la wait successiva tornerebbe subito con
+;  N-1 e lo stesso ritardo verrebbe contato due volte.
+;
+;  Al risveglio il contatore non e' necessariamente 0: se un altro segnale e'
+;  arrivato fra la sveglia e la ripresa, e' un segnale che il titolare non stava
+;  aspettando, e si restituisce come tale.
+;
+;  Frame (dopo il prologo):  +0 psw del chiamante   +4 &WAIT   +8 r15
+;  Non-foglia, con salti -> prologo/epilogo a mano. Clobber: r2..r13.
+; ==========================================================================
+wait:
+  addi r14, r14, -4
+  sw r15, 0(r14)          ; +8
+  addi r14, r14, -4
+  sw r1, 0(r14)           ; +4: &WAIT, che task_block non rispetta
+  call irq_save           ; r5 = psw del chiamante, IE = 0
+  addi r14, r14, -4
+  sw r5, 0(r14)           ; +0
+
+  ; --- IL GUARDIANO: il chiamante e' il titolare? ---
+  li r2, current
+  lw r2, 0(r2)
+  lw r3, WAIT.task(r1)
+  bne r2, r3, wait_intruso
+
+  lw r4, WAIT.pending(r1)
+  bne r4, r0, wait_consuma    ; c'era gia' qualcosa: NON si sospende
+
+  ; --- niente in sospeso: si aspetta. -1 dice a wait_signal "sono qui" ---
+  li r4, -1
+  sw r4, WAIT.pending(r1)
+  ; --- DUE USCITE, e la sceglie il TCB, non il chiamante ---
+  ; Il super task esce dalla sua uscita dedicata: riprende il vecchio current
+  ; senza scansione, o fa scegliere lo scheduler se qualcuno lo batte, e in
+  ; tutti e due i casi consuma il need_resched. Un titolare normale -- il
+  ; gestore dei timeout, un giorno -- si sospende come ogni altro task.
+  lw r5, TCB.nopreempt(r2)    ; r2 e' ancora current
+  bne r5, r0, wait_super
+  call task_block         ; si torna qui quando il dispatch diretto ci sceglie
+  j wait_sveglia
+wait_super:
+  call task_block_super   ; idem, dall'uscita dedicata
+wait_sveglia:
+  call irq_save           ; ristabilisce IE=0 (la psw d'ingresso e' sullo stack)
+  lw r1, 4(r14)           ; &WAIT: task_block ha sporcato tutto
+  lw r4, WAIT.pending(r1) ; 0, se nessuno ha segnalato ancora dopo la sveglia
+
+wait_consuma:
+  sw r0, WAIT.pending(r1)
+  mov r1, r4
+
+wait_fine:
+  lw r5, 0(r14)
+  addi r14, r14, 8        ; scarta psw e &WAIT
+  call irq_restore        ; psw del chiamante. Non tocca r1
+  lw r15, 0(r14)          ; dopo la call: irq_restore passa da r15
+  addi r14, r14, 4
+  ret
+
+wait_intruso:
+  li r1, -1               ; e NON si sospende: vedi in testa al file
+  j wait_fine
+
+; ==========================================================================
+;  wait_signal(r1 = &WAIT) -> r1 = il TCB da mettere in esecuzione, 0 = nessuno.
+;  SOLO DA ISR, a IE = 0: e' raw, e da un task non avrebbe nessuno che
+;  commuta. Il risultato va dritto nell'operando di `.endinterrupt`.
+;
+;  Conta SEMPRE, poi decide chi restituire:
+;
+;    il titolare aspettava (pending era -1)   -> il suo TCB: va svegliato
+;    il titolare e' CHI GIRA                  -> il suo TCB lo stesso: e' lo
+;                                                sforamento, e sara' il test
+;                                                current == tcb di
+;                                                sched_isr_exit_to a non
+;                                                commutare ne' salvare
+;    ne' l'uno ne' l'altro                    -> 0. E' in una coda o in uno
+;                                                slot: metterlo in esecuzione
+;                                                lo lascerebbe in due posti. Il
+;                                                segnale resta contato, e lo
+;                                                raccogliera' la sua wait
+;
+;  Il terzo caso con un titolare solo non si da'; con due -- la time line e il
+;  gestore dei timeout -- si'.
+;
+;  Foglia. Clobber: r2, r3.
+; ==========================================================================
+wait_signal:
+  lw r2, WAIT.pending(r1)
+  addi r2, r2, 1
+  sw r2, WAIT.pending(r1)
+  lw r3, WAIT.task(r1)
+  beq r2, r0, ws_titolare     ; era -1: aspettava
+  li r2, current
+  lw r2, 0(r2)
+  beq r2, r3, ws_titolare     ; gira gia' lui: lo sforamento
+  li r1, 0
+  ret
+ws_titolare:
+  mov r1, r3
+  ret

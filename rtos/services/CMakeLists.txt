@@ -18,7 +18,14 @@
 #              non ci si blocca mai, e la coda esiste
 #              solo per far DEGRADARE un ceiling
 #              dichiarato male                        -> §13.5
+#
+#  E dal 27/09/2026 un quarto, che non e' una coda: la WAIT (§3.74).
+#
+#    wait      UNA sveglia da un'ISR, e chi aspetta
+#              e' uno solo e noto per costruzione    -> un contatore, e il
+#                                                        dispatch diretto
 # ---------------------------------------------------------------------------
 add_subdirectory(mailbox)
 add_subdirectory(semaphore)
 add_subdirectory(mutex)
+add_subdirectory(wait)
