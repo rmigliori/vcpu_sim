@@ -102,6 +102,34 @@
 
 > ### ▶ RIPRENDI DA QUI (27/09/2026 o dopo)
 >
+> **DOVE SIAMO RIMASTI.** Tutto il lavoro del 27/09 è **committato in
+> `10bf10f`** (più il commit di questo handoff), su `master`, e **NON
+> pushato**: il push si fa quando l'utente lo chiede. `git status -sb` dice di
+> quanto `master` è avanti su `origin`. `ctest` **48/48**,
+> `--check` verde. La discussione si è chiusa senza decisioni pendenti: ogni
+> domanda aperta in sessione ha avuto risposta ed è in §3.75.
+>
+> **IL PROSSIMO PASSO NON È DECISO**, e si sceglie discutendo. I candidati, in
+> nessun ordine:
+>
+> ```
+> la macchina a stati       il "DOPO" qui sotto. Aspetta una TABELLA di
+>                           time line vera -- istanti, budget, i due modi --
+>                           che e' un dato dell'utente, non si inventa
+> il gestore dei timeout    secondo cliente di WAIT: il suo risveglio oggi e'
+>   come titolare di WAIT   un messaggio del pool (§3.70). Muove EXPECT e
+>                           impronte, e il meccanismo e' pronto a riceverlo
+> task_block e il flag      l'asimmetria generale (non consuma il
+>                           need_resched). Per il super task e' chiusa; per gli
+>                           altri costa 2 istruzioni per blocco, misurate
+> clock.vinc                il vincolo sul read-modify-write di CMP_CTRL, e
+>                           annotare le logiche immediate: sono commenti
+> seconda base dei tempi    formula pronta in §6, lavoro di MACCHINA
+>   e srai
+> il respiro nel nucleo     formula pronta in §6
+>   fattuale
+> ```
+>
 > **ORDINE DI LETTURA: §3.75, poi §3.74, poi §3.73, poi §3.72.** Ognuna
 > corregge la precedente in qualche punto, e leggerle al contrario fa ripartire
 > da posizioni ritirate.
@@ -10525,6 +10553,28 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 > **Al suo posto non c'è una formula per la macchina a stati**, ed è voluto: il
 > «DOPO» di §0 aspetta una tabella di time line vera — istanti, budget, i due
 > modi — che è un dato dell'applicazione e non si inventa per poterla provare.
+
+**PER RIPRENDERE dopo il 27/09 — il prossimo passo si decide discutendo:**
+```
+Leggi docs/stato-lavori.md: il riquadro RIPRENDI DA QUI, poi §3.75 PER
+INTERO, poi §3.74 coi suoi riquadri RITIRATA. §3.75 ne smentisce due
+posizioni -- la ripartenza a freddo, e "il sonno del super task passa
+dallo scheduler" -- e nel resto di §3.74 restano scritte nella forma
+vecchia.
+
+Il meccanismo del foreground e il super task sono FATTI e committati
+(10bf10f, non pushato). Il prossimo passo NON e' deciso: partiamo
+dall'elenco dei candidati in testa al riquadro e ne discutiamo prima di
+scrivere. Le scelte di forma che emergono scrivendo si dicono PRIMA.
+
+Prima di toccare niente: ctest 48/48 e scheduler_facts --check verde.
+```
+
+> **Perché non manda da nessuna parte.** Le formule di questa sezione puntano
+> a un lavoro deciso; qui il lavoro non lo è, e la sessione del 27/09 ha
+> mostrato cosa succede quando si parte in quarta su scelte non discusse
+> (§3.75). Quindi la formula porta alla discussione, e il criterio di fine è
+> quello di partenza: verificare che la base sia verde prima di muoverla.
 
 **E IN PARALLELO, senza dipendenze — la SECONDA BASE DEI TEMPI, e `srai` (15/09, deciso):**
 ```
