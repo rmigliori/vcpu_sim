@@ -221,6 +221,75 @@
 //  poi in una lettura MMIO.
 #define CAUSE_CMP    2   // .. CAUSE_CMP + CMP_CHANNELS - 1
 
+// ---------------------------------------------------------------------------
+//  L'ADC — 12 bit, I e Q, a BLOCCHI e con la DMA  (28/09/2026)
+//
+//  Il front-end di un radar altimetro: un blocco di N campioni COMPLESSI
+//  scritto in RAM dalla periferica, senza la CPU. La CPU vede il blocco, non
+//  il campione (§3.74).
+//
+//  --- L'ACQUISIZIONE LA AVVIA LA TIME LINE, deciso dall'utente ---
+//  Non gira da sola: una scrittura ad ADC_CTRL dice «acquisisci ADC_COUNT
+//  campioni a ADC_ADDR, uno ogni ADC_PERIOD cicli». E' lo sweep comandato e la
+//  finestra di ricezione aperta. Un ADC libero col suo clock scivolerebbe
+//  rispetto al comparatore e riaprirebbe «chi possiede il ritmo» (§3.74), che e'
+//  chiusa a favore della CPU. Il ping-pong lo fa il programma: arma il blocco B
+//  mentre elabora A, e lo scambio e' la scrittura di ADC_ADDR.
+//
+//  --- NESSUN INTERRUPT, deciso dall'utente ---
+//  A svegliare il super task e' il comparatore, e la WAIT ha un ingresso solo
+//  (§3.74). Al posto dell'interrupt c'e' ADC_STATUS, con un CONTATORE dei
+//  blocchi finiti: chi prende il blocco verifica che sia finito QUELLO che
+//  aspetta, non uno qualunque.
+//
+//  --- IL FORMATO: I e Q alternati, una parola a 32 bit ciascuno ---
+//      ADC_ADDR + 8*i      I del campione i
+//      ADC_ADDR + 8*i + 4  Q del campione i
+//  Col segno GIA' ESTESO dalla DMA, in [-2048, 2047]; fuori scala SATURA, non
+//  riparte dall'altro estremo. Un ADC vero spesso impacchetta 16+16 in una
+//  parola: qui spacchettare vorrebbe `srai`, che manca, e allargare nella DMA
+//  e' la semplificazione DICHIARATA. Per il float c'e' `vcvt`.
+//
+//  --- UN CAMPIONE OGNI ADC_PERIOD CICLI, scritto quando e' preso ---
+//  Il campione i e' preso all'istante `avvio + (i+1)*ADC_PERIOD` -- serve un
+//  periodo per convertire -- e finisce in RAM al primo confine d'istruzione da
+//  li' in poi, come ogni altra sorgente. Il blocco quindi si RIEMPIE mentre il
+//  programma gira, ed e' cio' che rende visibile l'errore da cui il contatore
+//  protegge: leggere un blocco a meta'. La DMA non ruba cicli alla CPU: nessuna
+//  contesa di bus, ed e' una semplificazione.
+//
+//  --- IL SEGNALE E' IL MONDO, e sta fuori dalla macchina ---
+//  `--adc <frequenza_Hz>,<ampiezza>`: un esponenziale complesso,
+//  I = A cos(2 pi f t), Q = A sin(2 pi f t), con t il tempo ASSOLUTO
+//  dell'istante di campionamento -- il mondo non riparte quando la CPU avvia
+//  l'ADC. La frequenza ha un SEGNO, e con I e Q il segno si vede: e' cio' che
+//  prova che I e Q non sono scambiati. Senza `--adc` campiona zero.
+//
+//  --- ADC_STATUS ---
+//      bit 0      ADC_BUSY      sta acquisendo
+//      bit 1      ADC_OVERRUN   un avvio e' arrivato mentre acquisiva
+//      bit 2..31  i blocchi finiti dall'accensione (ADC_STATUS >> ADC_DONE_SHIFT)
+//
+//  L'AVVIO MENTRE ACQUISISCE E' IGNORATO e alza ADC_OVERRUN, che resta alzato
+//  finche' qualcuno legge ADC_STATUS -- come KBD_OVERRUN, che abbassa la
+//  lettura del dato. Non e' un errore del simulatore: e' un errore di tempo
+//  della time line, e lo deve vedere il programma, non fermarlo.
+//
+//  ADC_ADDR, ADC_COUNT e ADC_PERIOD si rileggono; ADC_CTRL si scrive e basta.
+// ---------------------------------------------------------------------------
+#define ADC_ADDR     (MMIO_BASE + 0x40)
+#define ADC_COUNT    (MMIO_BASE + 0x44)
+#define ADC_PERIOD   (MMIO_BASE + 0x48)
+#define ADC_CTRL     (MMIO_BASE + 0x4C)
+#define ADC_STATUS   (MMIO_BASE + 0x50)
+
+#define ADC_START       1   // ADC_CTRL: avvia
+#define ADC_BUSY        1   // ADC_STATUS, bit 0
+#define ADC_OVERRUN     2   // ADC_STATUS, bit 1
+#define ADC_DONE_SHIFT  2   // ADC_STATUS >> 2 = blocchi finiti
+#define ADC_MAX         2047
+#define ADC_MIN        (-2048)
+
 // Un evento della traccia: "al ciclo N arriva il carattere c".
 typedef struct
 {
@@ -647,7 +716,14 @@ typedef enum
   // strumentazione che filtrava in produzione, era il formato che cambiava
   // sotto. In coda invece non tocca niente di esistente.
   OP_MARK,   // a=porto, imm=valore           -> annota una marca (strumentazione)
-  OP_MFCAUSE // a=rd                          -> r[rd] = cause (chi ha interrotto)
+  OP_MFCAUSE, // a=rd                         -> r[rd] = cause (chi ha interrotto)
+
+  // vcvt (28/09/2026): la PRIMA conversione intero -> float dell'ISA, e non ce
+  // n'era nessuna. Nasce con l'ADC a 12 bit: i campioni sono interi, la FFT e'
+  // in float. Il registro vettoriale porta BIT, non un tipo -- vload copia la
+  // parola cosi' com'e' -- e vcvt la reinterpreta come int32 e la converte. E'
+  // il modello di RVV (vfcvt.f.x.v). Solo vettoriale: e' l'unica che serve.
+  OP_VCVT    // a=vd, b=vs                    -> v[vd][i] = (float) (int32) bits(v[vs][i])
 } OpCode;
 
 typedef struct
@@ -665,7 +741,12 @@ typedef struct
 typedef struct
 {
   int64_t r[NUM_SCALAR];
-  double  f[NUM_FLOAT];
+  // f0..f15 sono float a 32 BIT, come la memoria e come v0..v7 (28/09/2026).
+  // Fino ad allora erano double: ctx_save li salva con fsw, a 32 bit, e un task
+  // interrotto riprendeva coi suoi float ARROTONDATI -- il risultato dipendeva
+  // da dove cadevano gli interrupt. L'excess precision dell'8087, dentro il
+  // contesto. tests/test_fctx.vasm e' la prova, vista rossa prima.
+  float   f[NUM_FLOAT];
   float   v[NUM_VECTOR][VLMAX];
   int     vl;
   uint64_t vmask;   // per-element predicate written by vms* compares (bit i = element i)
@@ -724,6 +805,23 @@ typedef struct
   int      kbd_trace_len;
   int      kbd_trace_pos;
 
+  // L'ADC (vedi ADC_ADDR). I tre registri di configurazione, e l'acquisizione
+  // in corso -- che si CONGELA all'avvio: riscrivere ADC_ADDR a meta' blocco
+  // prepara il prossimo, non sposta questo.
+  int32_t  adc_addr, adc_count, adc_period;
+  int64_t  adc_cur_addr;         // l'acquisizione in corso
+  int32_t  adc_cur_count;
+  int32_t  adc_cur_period;
+  int32_t  adc_i;                // il prossimo campione da prendere
+  uint64_t adc_next;             // l'istante in cui e' preso
+  unsigned char adc_busy;
+  unsigned char adc_overrun;
+  uint32_t adc_done;             // i blocchi finiti
+
+  // Il mondo (--adc): un esponenziale complesso, frequenza in Hz col segno.
+  double   adc_freq;
+  double   adc_amp;
+
   // Marcatore (vedi MARK_BASE). La registrazione si accende da riga di
   // comando; le sw dei tag costano i loro cicli comunque, ed e' voluto.
   Marca    marche[MARCHE_MAX];
@@ -767,6 +865,10 @@ void vcpu_init(VCpu* cpu);
 // I cicli devono essere non decrescenti (la traccia si consuma in ordine).
 // Ritorna 0, o -1 con il messaggio in 'err'. Va chiamata dopo vcpu_init.
 int vcpu_kbd_trace(VCpu* cpu, const char* spec, char* err, size_t errsz);
+
+// Il segnale dell'ADC da riga di comando: "<frequenza_Hz>,<ampiezza>".
+// Ritorna 0, o -1 con il motivo in err.
+int vcpu_adc_signal(VCpu* cpu, const char* spec, char* err, size_t errsz);
 
 // Annota una marca. La chiamano il device (MARK_KEY), lo store watcher
 // (MARK_EXEC) e le sw dei tag applicativi.

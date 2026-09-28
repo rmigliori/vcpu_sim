@@ -1,0 +1,59 @@
+; tests/test_vcvt.vasm — LA PRIMA CONVERSIONE INTERO -> FLOAT (28/09/2026).
+;
+; A file singolo, senza HAL ne' kernel: il soggetto e' un'istruzione.
+;
+; --- PERCHE' ESISTE ---
+; L'ADC e' a 12 bit, I e Q: i campioni sono INTERI. La FFT e' in float. Fino a
+; oggi l'ISA non aveva nessuna conversione, e un intero caricato con vload e
+; usato come float e' spazzatura -- un intero negativo, letto come float, e'
+; un NaN.
+;
+; --- IL TEST E' L'USO VERO ---
+; I e Q ALTERNATI in memoria, una parola a 32 bit ciascuno col segno gia'
+; esteso, come li scrivera' la DMA dell'ADC. Ogni canale si prende con un
+; vload a passo 8 byte (la forma a tre operandi) -- le I da iq, le Q da iq+4
+; -- e si converte.
+;
+; Ci sono gli estremi dei 12 bit, 2047 e -2048: se ci stanno loro ci sta ogni
+; campione. E i segni sono mescolati in tutti e due i canali, perche' una
+; conversione che sbagliasse il segno (una parola letta senza segno) darebbe
+; numeri enormi e non piccoli.
+;
+; --- I QUATTRO NUMERI, a mano ---
+;   2247    la somma delle I:  100 - 200 + 300 + 2047
+;   2047    la massima delle I
+;  -2050    la somma delle Q:   -1 +   2 -   3 - 2048
+;  -2048    la minima delle Q
+;
+; Senza vcvt (le due righe tolte, le riduzioni sui registri caricati) escono
+; `-nan 2.86846e-42 -nan -nan`: gli interi negativi letti come float sono NaN,
+; i positivi piccoli sono denormali. VISTO ROSSO.
+
+  .data
+iq:  .word 100, -1
+     .word -200, 2
+     .word 300, -3
+     .word 2047, -2048
+
+  .text
+main:
+  li r1, 4
+  setvl r1, r1             ; quattro campioni complessi
+  li r2, 8                 ; il passo: da una I alla successiva, saltando la Q
+
+  li r3, iq
+  vload v1, r3, r2         ; le I, ancora bit di interi
+  vcvt v2, v1
+  vredsum f1, v2
+  dumpf f1                 ; 2247
+  vredmax f2, v2
+  dumpf f2                 ; 2047
+
+  addi r3, r3, 4
+  vload v3, r3, r2         ; le Q
+  vcvt v4, v3
+  vredsum f3, v4
+  dumpf f3                 ; -2050
+  vredmin f4, v4
+  dumpf f4                 ; -2048
+  halt

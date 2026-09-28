@@ -1,0 +1,93 @@
+; tests/test_fctx.vasm — UN INTERRUPT NON DEVE CAMBIARE I NUMERI (28/09/2026).
+;
+; --- IL GUASTO ---
+; Fino al 28/09/2026 i registri float f0..f15 erano `double` nel simulatore, e la
+; memoria float a 32 bit. ctx_save li salva con `fsw` e ctx_restore li rilegge
+; con `flw`: un task interrotto riprendeva con i suoi f ARROTONDATI a 32 bit, e
+; tutto quello che calcolava dopo partiva da un altro numero. Il risultato di un
+; calcolo dipendeva da DOVE cadevano gli interrupt -- stesso programma, ISR
+; spostata di qualche ciclo, ultime cifre diverse. E' l'excess precision
+; dell'8087 (registri a 80 bit, variabili a 64) portata dentro il contesto.
+;
+; La correzione e' nella macchina: f0..f15 sono float a 32 bit, come la memoria
+; e come i registri vettoriali, e il salvataggio del contesto diventa esatto.
+;
+; --- IL TEST ---
+; Lo stesso conto, f1 = 1/3 e poi f1*3 - 1, fatto due volte:
+;
+;   senza interrupt   a IE=0, fra le due meta' non puo' cadere niente
+;   con un interrupt  fra le due meta' si aspetta una trap, che passa da
+;                     _trap_entry -> ctx_save -> ISR -> ctx_restore
+;
+; I due risultati devono essere IDENTICI, e sono tutti e due 0: 1/3 arrotondato
+; a 32 bit, per 3, arrotonda di nuovo a 1.0 esatto.
+;
+; Sulla macchina di prima si leggeva `0 2.98023e-08`: senza interrupt il conto
+; restava in double e dava 0, con l'interrupt f1 tornava arrotondato a 32 bit e
+; il prodotto, calcolato in double, non arrotondava piu' a 1. VISTO ROSSO prima
+; della correzione.
+;
+; Non c'e' kernel: il soggetto e' il contesto dell'HAL, e l'ISR torna con
+; ctx_restore sullo stesso frame. Con lo scheduler in mezzo si proverebbero due
+; cose insieme.
+
+  .data
+ntrap:  .word 0          ; quante trap sono arrivate
+
+  .text
+  .global main
+  .extern irq_arm
+  .extern irq_install
+  .extern ctx_restore
+
+main:
+  li r14, 65536            ; lo stack: il frame con lo stato float e vettoriale
+                           ; e' di ~2,2 KB, e qui ci deve stare
+  call irq_arm             ; il vettore e' _trap_entry: il percorso dell'HAL
+  li r1, isr
+  call irq_install
+
+  ; --- 1. SENZA INTERRUPT: IE e' ancora 0 ---------------------------------
+  fli f2, 1.0
+  fli f3, 3.0
+  fdiv f1, f2, f3          ; f1 = 1/3
+  fmul f4, f1, f3
+  fsub f5, f4, f2          ; f1*3 - 1
+  dumpf f5                 ; 0
+
+  ; --- 2. CON UN INTERRUPT FRA LE DUE META' ------------------------------
+  fdiv f1, f2, f3          ; f1 = 1/3, e da qui deve attraversare una trap
+
+  li r1, 50
+  settimer r1
+  sti
+
+attesa:
+  li r2, ntrap
+  lw r3, 0(r2)
+  beq r3, r0, attesa       ; il ciclo non tocca un registro float
+
+  fmul f4, f1, f3
+  fsub f5, f4, f2
+  dumpf f5                 ; 0, come sopra
+  halt
+
+; ==========================================================================
+;  L'ISR: SPEGNE IL TIMER, conta, e torna sullo stesso frame. r1 e' il
+;  contesto opaco che _trap_entry consegna, e ctx_restore lo vuole in r1: non
+;  va toccato.
+;
+;  Spegnere non e' una rifinitura. Il timer riparte dall'istante della trap
+;  (timer_next = cicli + periodo), e un task che ha toccato i float si porta
+;  dietro il frame vettoriale: salvarlo e riprenderlo costa piu' dei 50 cicli
+;  del periodo. Senza `settimer r0` la reti ritrova il timer gia' scaduto, il
+;  task non esegue piu' un'istruzione, e il programma non termina. E' successo
+;  alla prima stesura di questo file.
+; ==========================================================================
+isr:
+  settimer r0              ; una trap sola, per costruzione
+  li r2, ntrap
+  lw r3, 0(r2)
+  addi r3, r3, 1
+  sw r3, 0(r2)
+  j ctx_restore

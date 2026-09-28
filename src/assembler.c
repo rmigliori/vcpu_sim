@@ -739,6 +739,13 @@ static int encode(char** toks, int n, Instr* out, char* err, size_t errsz)
     R('v', NUM_VECTOR); out->b = reg;
     out->op = (strcmp(mn, "vredmax") == 0) ? OP_VREDMAX : OP_VREDMIN;
   }
+  else if (strcmp(mn, "vcvt") == 0)
+  {
+    if (need(ARGS, 2, mn, err, errsz)) return -1;
+    R('v', NUM_VECTOR); out->a = reg;
+    R('v', NUM_VECTOR); out->b = reg;
+    out->op = OP_VCVT;
+  }
   else if (strcmp(mn, "vsplat") == 0)
   {
     if (need(ARGS, 2, mn, err, errsz)) return -1;

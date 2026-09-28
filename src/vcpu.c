@@ -62,6 +62,20 @@ static int32_t mmio_load(VCpu* cpu, int64_t addr)
     return ch;
   }
 
+  // L'ADC. Leggere lo stato ABBASSA l'overrun, come leggere KBD_DATA abbassa
+  // quello della tastiera: chi l'ha visto una volta l'ha visto.
+  if (addr == ADC_STATUS)
+  {
+    uint32_t s = (cpu->adc_done << ADC_DONE_SHIFT)
+               | (cpu->adc_overrun ? ADC_OVERRUN : 0u)
+               | (cpu->adc_busy ? ADC_BUSY : 0u);
+    cpu->adc_overrun = 0;
+    return (int32_t) s;
+  }
+  if (addr == ADC_ADDR)   return cpu->adc_addr;
+  if (addr == ADC_COUNT)  return cpu->adc_count;
+  if (addr == ADC_PERIOD) return cpu->adc_period;
+
   fprintf(stderr, "runtime error: MMIO load from unmapped register 0x%llx\n",
           (unsigned long long) addr);
   return 0;
@@ -173,6 +187,35 @@ static void mmio_store(VCpu* cpu, int64_t addr, int32_t value)
     cpu->cmp_val[(addr - CMP_BASE) / 4] = value;
     return;
   }
+
+  // L'ADC: tre registri di configurazione, e l'avvio.
+  if (addr == ADC_ADDR)   { cpu->adc_addr   = value; return; }
+  if (addr == ADC_COUNT)  { cpu->adc_count  = value; return; }
+  if (addr == ADC_PERIOD) { cpu->adc_period = value; return; }
+  if (addr == ADC_CTRL)
+  {
+    if (!(value & ADC_START)) return;
+    // Mentre acquisisce l'avvio e' IGNORATO e si alza l'overrun: e' un errore
+    // di tempo della time line, e lo deve vedere il programma.
+    if (cpu->adc_busy) { cpu->adc_overrun = 1; return; }
+    // Una configurazione impossibile invece e' un errore di COSTRUZIONE, come
+    // un canale del comparatore che non esiste: si dice, e non si parte.
+    if (cpu->adc_count <= 0 || cpu->adc_period <= 0 || cpu->adc_addr < 0 ||
+        (int64_t) cpu->adc_addr + 8 * (int64_t) cpu->adc_count > (int64_t) MEM_SIZE)
+    {
+      fprintf(stderr, "runtime error: ADC, configurazione impossibile "
+                      "(addr 0x%x, count %d, period %d)\n",
+              (unsigned) cpu->adc_addr, cpu->adc_count, cpu->adc_period);
+      return;
+    }
+    cpu->adc_cur_addr   = cpu->adc_addr;
+    cpu->adc_cur_count  = cpu->adc_count;
+    cpu->adc_cur_period = cpu->adc_period;
+    cpu->adc_i    = 0;
+    cpu->adc_next = cpu->cycles + (uint64_t) cpu->adc_period;
+    cpu->adc_busy = 1;
+    return;
+  }
   if (is_marca(addr))
   {
     int canale = (int) ((addr - MARK_BASE) / 4);
@@ -232,6 +275,65 @@ static void kbd_pump(VCpu* cpu)
     // E' il ritardo del polling, cioe' una delle cose da misurare.
     vcpu_marca(cpu, MARK_KEY, cpu->kbd_data);
   }
+}
+
+// Un canale dell'ADC: arrotonda e SATURA a 12 bit. Fuori scala resta
+// all'estremo, non riparte dall'altro -- il ferro fa cosi', e un ritorno
+// dall'estremo opposto sarebbe un segnale che non esiste.
+static int32_t adc_quantizza(double x)
+{
+  double r = floor(x + 0.5);
+  if (r > ADC_MAX) return ADC_MAX;
+  if (r < ADC_MIN) return ADC_MIN;
+  return (int32_t) r;
+}
+
+// L'ADC al confine d'istruzione, come la tastiera: prende i campioni maturati
+// e li scrive in RAM. Il tempo del campione e' l'istante in cui e' PRESO
+// (adc_next), non quello in cui arriva in memoria -- il segnale non sa niente
+// di quanto era lunga l'istruzione in corso.
+static void adc_pump(VCpu* cpu)
+{
+  while (cpu->adc_busy && cpu->cycles >= cpu->adc_next)
+  {
+    double t   = (double) cpu->adc_next / (double) CPU_HZ;
+    double fi  = 2.0 * M_PI * cpu->adc_freq * t;
+    int32_t iv = adc_quantizza(cpu->adc_amp * cos(fi));
+    int32_t qv = adc_quantizza(cpu->adc_amp * sin(fi));
+
+    int64_t a = cpu->adc_cur_addr + 8 * (int64_t) cpu->adc_i;
+    memcpy(&cpu->mem[a],     &iv, sizeof iv);
+    memcpy(&cpu->mem[a + 4], &qv, sizeof qv);
+
+    cpu->adc_i    += 1;
+    cpu->adc_next += (uint64_t) cpu->adc_cur_period;
+    if (cpu->adc_i == cpu->adc_cur_count)
+    {
+      cpu->adc_busy  = 0;
+      cpu->adc_done += 1;
+    }
+  }
+}
+
+int vcpu_adc_signal(VCpu* cpu, const char* spec, char* err, size_t errsz)
+{
+  char* end = NULL;
+  double f = strtod(spec, &end);
+  if (end == spec || *end != ',')
+  {
+    snprintf(err, errsz, "segnale ADC: atteso <frequenza_Hz>,<ampiezza> in \"%s\"", spec);
+    return -1;
+  }
+  const char* p = end + 1;
+  double a = strtod(p, &end);
+  if (end == p || *end != '\0')
+  {
+    snprintf(err, errsz, "segnale ADC: ampiezza non valida in \"%s\"", spec);
+    return -1;
+  }
+  cpu->adc_freq = f;
+  cpu->adc_amp  = a;
+  return 0;
 }
 
 int vcpu_kbd_trace(VCpu* cpu, const char* spec, char* err, size_t errsz)
@@ -386,6 +488,7 @@ static int sporca_estensione(int op)
     case OP_VSCALE: case OP_VSPLAT: case OP_VADDS:
     case OP_VMIN:  case OP_VMAX:   case OP_VMERGE:
     case OP_VADDM: case OP_VSUBM:  case OP_VMULM:
+    case OP_VCVT:
     case OP_VMSLT: case OP_VMSGT:  case OP_VMSEQ:   // scrivono vmask
     case OP_SETVL:                                  // scrive vl
 
@@ -447,6 +550,7 @@ static uint64_t instr_cost(const Instr* in, int vl)
     case OP_VSPLAT: case OP_VADDS: case OP_VMIN: case OP_VMAX:
     case OP_VMSLT: case OP_VMSGT: case OP_VMSEQ: case OP_VMERGE:
     case OP_VADDM: case OP_VSUBM: case OP_VMULM:
+    case OP_VCVT:
       return VEC_ARITH_STARTUP + lanes_pass;
 
     case OP_VREDSUM:
@@ -493,19 +597,29 @@ static void execute(VCpu* cpu, const Instr* in)
       case OP_DIV:  set_scalar(cpu, in->a, cpu->r[in->c] ? cpu->r[in->b] / cpu->r[in->c] : 0); break;
       case OP_REM:  set_scalar(cpu, in->a, cpu->r[in->c] ? cpu->r[in->b] % cpu->r[in->c] : 0); break;
 
-      case OP_FLI:  cpu->f[in->a] = in->fimm;                              break;
+      // f0..f15 sono float a 32 bit (vcpu.h): ogni operazione arrotonda al suo
+      // risultato, e fsw/flw non perdono niente -- e' cio' che rende esatto il
+      // salvataggio del contesto.
+      case OP_FLI:  cpu->f[in->a] = (float) in->fimm;                      break;
       case OP_FLW:  cpu->f[in->a] = load_f32(cpu, cpu->r[in->b] + in->imm);          break;
-      case OP_FSW:  store_f32(cpu, cpu->r[in->b] + in->imm, (float) cpu->f[in->a]);   break;
+      case OP_FSW:  store_f32(cpu, cpu->r[in->b] + in->imm, cpu->f[in->a]);           break;
       case OP_FADD: cpu->f[in->a] = cpu->f[in->b] + cpu->f[in->c];         break;
       case OP_FMUL: cpu->f[in->a] = cpu->f[in->b] * cpu->f[in->c];         break;
-      case OP_FMACC: cpu->f[in->a] += cpu->f[in->b] * cpu->f[in->c];       break;
+      case OP_FMACC:
+      {
+        // DUE arrotondamenti, non una FMA fusa: e' la semantica di vmacc, e
+        // scalare e vettoriale devono dare lo stesso numero.
+        float prod = cpu->f[in->b] * cpu->f[in->c];
+        cpu->f[in->a] = cpu->f[in->a] + prod;
+        break;
+      }
       case OP_FMOV: cpu->f[in->a] = cpu->f[in->b];                         break;
       case OP_FMIN: cpu->f[in->a] = (cpu->f[in->b] < cpu->f[in->c]) ? cpu->f[in->b] : cpu->f[in->c]; break;
       case OP_FMAX: cpu->f[in->a] = (cpu->f[in->b] > cpu->f[in->c]) ? cpu->f[in->b] : cpu->f[in->c]; break;
       case OP_FSUB: cpu->f[in->a] = cpu->f[in->b] - cpu->f[in->c];         break;
-      case OP_FDIV: cpu->f[in->a] = (cpu->f[in->c] != 0.0) ? cpu->f[in->b] / cpu->f[in->c] : 0.0; break;
+      case OP_FDIV: cpu->f[in->a] = (cpu->f[in->c] != 0.0f) ? cpu->f[in->b] / cpu->f[in->c] : 0.0f; break;
       case OP_FNEG: cpu->f[in->a] = -cpu->f[in->b];                        break;
-      case OP_FSQRT: cpu->f[in->a] = sqrt(cpu->f[in->b]);                  break;
+      case OP_FSQRT: cpu->f[in->a] = sqrtf(cpu->f[in->b]);                 break;
 
       case OP_LW:   set_scalar(cpu, in->a, load_i32(cpu, cpu->r[in->b] + in->imm));  break;
       case OP_SW:   store_i32(cpu, cpu->r[in->b] + in->imm, (int32_t) cpu->r[in->a]); break;
@@ -680,9 +794,12 @@ static void execute(VCpu* cpu, const Instr* in)
 
       case OP_VREDSUM:
       {
+        // L'accumulatore resta DOUBLE e si arrotonda UNA volta, alla fine: cosi'
+        // la somma non dipende dall'ordine degli elementi, e un test che la
+        // legge ha un numero derivabile. Il registro di destinazione e' float.
         double acc = 0.0;
         for (int i = 0; i < cpu->vl; ++i) acc += cpu->v[in->b][i];
-        cpu->f[in->a] = acc;
+        cpu->f[in->a] = (float) acc;
         cpu->vec_elem_ops += cpu->vl;
         break;
       }
@@ -707,6 +824,23 @@ static void execute(VCpu* cpu, const Instr* in)
       case OP_VSPLAT:
         for (int i = 0; i < cpu->vl; ++i)
           cpu->v[in->a][i] = (float) cpu->f[in->b];
+        cpu->vec_elem_ops += cpu->vl;
+        break;
+
+      // I bit della corsia letti come int32, e convertiti. Il memcpy e' la
+      // reinterpretazione senza aliasing; che i bit arrivino intatti fin qui
+      // (vload -> registro -> vcvt) lo garantisce il fatto che nel mezzo ci
+      // sono solo COPIE di float, mai un'operazione aritmetica. Un intero
+      // negativo, letto come float, e' un NaN: su x86-64 e ARM64 una copia lo
+      // lascia com'e'. Il valore e' esatto: un int32 fino a 2^24 sta in un
+      // float, e i campioni a 12 bit ci stanno con largo margine.
+      case OP_VCVT:
+        for (int i = 0; i < cpu->vl; ++i)
+        {
+          int32_t bits;
+          memcpy(&bits, &cpu->v[in->b][i], sizeof bits);
+          cpu->v[in->a][i] = (float) bits;
+        }
         cpu->vec_elem_ops += cpu->vl;
         break;
 
@@ -894,6 +1028,7 @@ const char* vcpu_disasm(const Instr* in, char* buf, size_t bufsz)
     case OP_VREDMAX: snprintf(buf, bufsz, "vredmax f%d, v%d", in->a, in->b); break;
     case OP_VREDMIN: snprintf(buf, bufsz, "vredmin f%d, v%d", in->a, in->b); break;
     case OP_VSPLAT: snprintf(buf, bufsz, "vsplat v%d, f%d", in->a, in->b); break;
+    case OP_VCVT:   snprintf(buf, bufsz, "vcvt v%d, v%d", in->a, in->b); break;
     case OP_VADDS:  snprintf(buf, bufsz, "vadds v%d, v%d, f%d", in->a, in->b, in->c); break;
     case OP_VMIN:   snprintf(buf, bufsz, "vmin v%d, v%d, v%d", in->a, in->b, in->c); break;
     case OP_VMAX:   snprintf(buf, bufsz, "vmax v%d, v%d, v%d", in->a, in->b, in->c); break;
@@ -1136,6 +1271,7 @@ void vcpu_run_from(VCpu* cpu, const Instr* prog, int prog_len, RunMode mode, int
     // guarda PSW_IE e vale anche per un programma che gli interrupt non li
     // abilita mai -- che e' precisamente il caso del polling.
     kbd_pump(cpu);
+    adc_pump(cpu);
 
     // LA RICHIESTA, PRIMA DELLA CONSEGNA (15/09/2026). Il timer matura quando
     // il conto dei cicli raggiunge la scadenza, e questo non ha niente a che

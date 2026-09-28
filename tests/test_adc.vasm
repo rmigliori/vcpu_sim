@@ -1,0 +1,143 @@
+; tests/test_adc.vasm — L'ADC A 12 BIT, I e Q, A BLOCCHI (28/09/2026).
+;
+; A file singolo, senza HAL ne' kernel, come test_cmp: il soggetto e' la
+; MACCHINA. Gira TRE volte con tre segnali (--adc in CMakeLists.txt), e i numeri
+; che cambiano fra le tre corse sono le ultime due.
+;
+; --- LA FASE NON SI PUO' ASSERIRE, e il test non la guarda ---
+; Il segnale e' il mondo, con la fase del tempo ASSOLUTO: dipende dal ciclo in
+; cui il programma avvia l'ADC, cioe' da quante istruzioni ci sono prima.
+; Asserire un campione vorrebbe dire rifare questo conto a ogni ritocco del
+; file. Quindi si asserisce solo cio' che non dipende dalla fase:
+;
+;   IL VERSO DI ROTAZIONE   con f = 250 kHz e un campione ogni 100 cicli (1 us)
+;                           il fasore gira di UN QUARTO di giro per campione:
+;                           z1 = j z0, cioe' I1 = -Q0 e Q1 = I0. Il prodotto
+;                           vettoriale I0*Q1 - Q0*I1 vale allora I0^2 + Q0^2,
+;                           POSITIVO. Con f negativa gira al contrario ed e'
+;                           negativo. E' cio' che prova che I e Q non sono
+;                           scambiati -- il guasto classico, che con un segnale
+;                           reale non si vedrebbe mai
+;   IL MODULO               I0^2 + Q0^2 = A^2 a meno della quantizzazione, e
+;                           arrotondato ai milioni e' esatto
+;
+; --- I DIECI NUMERI ---
+;    0   ADC_STATUS prima di tutto: niente acquisito, niente in corso
+;    1   subito dopo l'avvio: BUSY, e nessun blocco finito
+;    3   un secondo avvio mentre acquisisce: IGNORATO, e BUSY|OVERRUN
+;    1   riletto: l'overrun l'ha abbassato la lettura di prima
+;    1   l'ultimo campione e' ancora VUOTO: il blocco si riempie nel tempo, ed
+;        e' l'errore da cui il contatore protegge -- leggerlo a meta'
+;    4   a blocco finito: un blocco (4 = 1 << 2), niente in corso
+;    0   l'ultimo campione adesso e' scritto
+;    0   la parola DOPO il blocco e' intatta: la DMA si ferma a ADC_COUNT
+;   sgn  il verso di rotazione:  +1 con f > 0,  -1 con f < 0,  0 con f = 0
+;   mag  (I0^2 + Q0^2) in milioni, arrotondato: 1 con A = 1000; con A = 3000 e
+;        f = 0 vale 4, perche' I0 SATURA a 2047 (2047^2 = 4.190.209). Senza la
+;        saturazione sarebbe 9
+;
+; Visti rossi, sul simulatore mutato: con I e Q scambiati nella DMA `sgn` si
+; rovescia; senza la saturazione `mag` vale 9.
+
+.equ ADC_ADDR    0x100040        ; li dichiara vcpu.h; qui sono ricopiati perche'
+.equ ADC_COUNT   0x100044        ; questo test gira a file singolo, senza
+.equ ADC_PERIOD  0x100048        ; interfacce, di proposito
+.equ ADC_CTRL    0x10004C
+.equ ADC_STATUS  0x100050
+.equ ADC_START    1
+
+  .data
+blocco: .word 0, 0, 0, 0, 0, 0, 0, 0     ; 4 campioni, I e Q alternati
+guardia: .word 0                          ; la parola dopo: deve restare 0
+
+  .text
+main:
+  li r10, ADC_STATUS
+  lw r5, 0(r10)
+  dumps r5                 ; 0
+
+  ; --- la configurazione, e l'avvio --------------------------------------
+  li r1, ADC_ADDR
+  li r2, blocco
+  sw r2, 0(r1)
+  li r1, ADC_COUNT
+  li r2, 4
+  sw r2, 0(r1)
+  li r1, ADC_PERIOD
+  li r2, 100
+  sw r2, 0(r1)
+  li r1, ADC_CTRL
+  li r2, ADC_START
+  sw r2, 0(r1)
+
+  lw r5, 0(r10)
+  dumps r5                 ; 1: BUSY
+
+  sw r2, 0(r1)             ; un secondo avvio, mentre acquisisce
+  lw r5, 0(r10)
+  dumps r5                 ; 3: BUSY | OVERRUN
+  lw r5, 0(r10)
+  dumps r5                 ; 1: la lettura l'ha abbassato
+
+  ; --- l'ultimo campione, prima: ancora vuoto -----------------------------
+  li r3, blocco
+  lw r6, 24(r3)            ; I3
+  lw r7, 28(r3)            ; Q3
+  mul r6, r6, r6
+  mul r7, r7, r7
+  add r6, r6, r7
+  li r5, 1
+  beq r6, r0, vuoto_prima
+  li r5, 0
+vuoto_prima:
+  dumps r5                 ; 1
+
+  ; --- si aspetta il blocco: il CONTATORE, non il bit BUSY -----------------
+attesa:
+  lw r5, 0(r10)
+  srli r6, r5, 2
+  beq r6, r0, attesa
+  dumps r5                 ; 4
+
+  ; --- l'ultimo campione, dopo: scritto -----------------------------------
+  lw r6, 24(r3)
+  lw r7, 28(r3)
+  mul r6, r6, r6
+  mul r7, r7, r7
+  add r6, r6, r7
+  li r5, 1
+  beq r6, r0, vuoto_dopo
+  li r5, 0
+vuoto_dopo:
+  dumps r5                 ; 0
+
+  li r4, guardia
+  lw r5, 0(r4)
+  dumps r5                 ; 0
+
+  ; --- il verso di rotazione: sgn(I0*Q1 - Q0*I1) --------------------------
+  lw r6, 0(r3)             ; I0
+  lw r7, 4(r3)             ; Q0
+  lw r8, 8(r3)             ; I1
+  lw r9, 12(r3)            ; Q1
+  mul r11, r6, r9
+  mul r12, r7, r8
+  sub r11, r11, r12
+  li r5, 0
+  beq r11, r0, segno
+  li r5, 1
+  blt r0, r11, segno
+  li r5, -1
+segno:
+  dumps r5                 ; +1, -1 o 0
+
+  ; --- il modulo: (I0^2 + Q0^2 + 500000) / 1000000 ------------------------
+  mul r6, r6, r6
+  mul r7, r7, r7
+  add r6, r6, r7
+  li r7, 500000
+  add r6, r6, r7
+  li r7, 1000000
+  div r5, r6, r7
+  dumps r5                 ; 1, o 4 quando satura
+  halt

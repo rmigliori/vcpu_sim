@@ -100,25 +100,38 @@
 
 ## 0. STATO ATTUALE — DA DOVE SI RIPRENDE
 
-> ### ▶ RIPRENDI DA QUI (27/09/2026 o dopo)
+> ### ▶ RIPRENDI DA QUI (28/09/2026 o dopo)
 >
-> **DOVE SIAMO RIMASTI.** Tutto il lavoro del 27/09 è **committato in
-> `10bf10f`** (più il commit di questo handoff), su `master`, e **NON
-> pushato**: il push si fa quando l'utente lo chiede. `git status -sb` dice di
-> quanto `master` è avanti su `origin`. `ctest` **48/48**,
-> `--check` verde. La discussione si è chiusa senza decisioni pendenti: ogni
-> domanda aperta in sessione ha avuto risposta ed è in §3.75.
+> **DOVE SIAMO RIMASTI.** Tutto il lavoro del 28/09 è **committato** in un
+> commit solo, su `master`, e **NON pushato**: il push si fa quando l'utente lo
+> chiede. `git status -sb` dice di quanto `master` è avanti su `origin`.
+> `ctest` **53/53**, `--check` verde, `tools/fingerprint.sh` con le 18 impronte
+> di prima **invariate** più la nuova di `test_fctx`. **Si riprende dalla FFT**,
+> e la formula è in §6.
 >
-> **IL PROSSIMO PASSO NON È DECISO**, e si sceglie discutendo. I candidati, in
-> nessun ordine:
+> **28/09: IL PROSSIMO PASSO È DECISO, ed è un TEST (§3.76).** Un super task
+> con macchina a stati a 1 ms, ADC **a blocchi**, FFT in float, e il risultato
+> spedito con un messaggio a un task asincrono. **Tre prerequisiti FATTI**: i
+> float a 32 bit (erano `double`, un interrupt li arrotondava: `test_fctx`),
+> `vcvt` (la prima conversione intero → float dell'ISA) e **l'ADC a 12 bit, I e
+> Q, avviato dalla time line, senza interrupt** (`test_adc`, tre corse). Tutti
+> visti rossi. Restano, in quest'ordine: **la FFT** (da sola, come procedura),
+> poi i nodi del messaggio (ping-pong?) e i task asincroni.
+>
+> **Il 27/09**, per chi ne cerca le tracce: il meccanismo del foreground e il
+> super task, committati in `10bf10f` (§3.75).
+>
+> **I candidati di prima, per memoria** — la macchina a stati ha adesso la sua
+> tabella, ed è il test qui sopra:
 >
 > ```
 > la macchina a stati       il "DOPO" qui sotto. Aspetta una TABELLA di
 >                           time line vera -- istanti, budget, i due modi --
 >                           che e' un dato dell'utente, non si inventa
-> il gestore dei timeout    secondo cliente di WAIT: il suo risveglio oggi e'
->   come titolare di WAIT   un messaggio del pool (§3.70). Muove EXPECT e
->                           impronte, e il meccanismo e' pronto a riceverlo
+> il gestore dei timeout    RIMANDATO il 28/09 (§3.76): non guadagna
+>   come titolare di WAIT   precisione, e il tick e' destinato a sparire. Si
+>                           fa INSIEME al passaggio dei timeout sul canale 1
+>                           del comparatore, come un lavoro solo
 > task_block e il flag      l'asimmetria generale (non consuma il
 >                           need_resched). Per il super task e' chiusa; per gli
 >                           altri costa 2 istruzioni per blocco, misurate
@@ -130,9 +143,11 @@
 >   fattuale
 > ```
 >
-> **ORDINE DI LETTURA: §3.75, poi §3.74, poi §3.73, poi §3.72.** Ognuna
-> corregge la precedente in qualche punto, e leggerle al contrario fa ripartire
-> da posizioni ritirate.
+> **ORDINE DI LETTURA: §3.76, poi §3.75, poi §3.74, poi §3.73, poi §3.72.**
+> Ognuna corregge la precedente in qualche punto, e leggerle al contrario fa
+> ripartire da posizioni ritirate. §3.76 (28/09) non ha codice: collega ogni
+> pezzo del disegno al suo predecessore in letteratura, e rimanda il gestore
+> dei timeout.
 >
 > **IL MECCANISMO DEL FOREGROUND È SCRITTO, E IL SUPER TASK ESISTE (§3.75).**
 > `.interrupt` / `.endinterrupt` nell'assembler, `sched_isr_exit_to` (il
@@ -3687,6 +3702,253 @@ il contratto scritto.
 
 ---
 
+### 3.76 I PREDECESSORI: ogni pezzo ha un nome, la combinazione no (28/09/2026)
+
+**Sessione di sola discussione, nessun codice.** Due esiti: il gestore dei
+timeout come titolare di `WAIT` è **rimandato** (sotto, in fondo), e il disegno
+di §3.74–§3.75 è stato messo a confronto con la letteratura e l'industria.
+
+La domanda dell'utente: *«mi sbaglio o stiamo implementando uno scheduler real
+time che non ho mai visto in letteratura?»* La risposta: **i pezzi sono tutti
+noti, e quasi ognuno ha un nome; la combinazione non ha un nome da manuale, ma
+è una composizione di ingegneria, non una teoria di scheduling nuova.**
+
+E va scritto con precisione chi ha fatto cosa, perché §3.5 ne porta la
+cicatrice: **l'utente non conosceva questi predecessori.** Il disegno è stato
+ricostruito dal problema, non copiato. Che converga con soluzioni industriali
+consolidate è un argomento a suo favore.
+
+> **I riferimenti qui sotto sono citati A MEMORIA**, da me, e non verificati
+> su una fonte. I nomi e l'impianto sono solidi; anni, firme di API e dettagli
+> di comportamento vanno controllati **prima di citarli per iscritto** davanti a
+> qualcuno. È la regola 3 applicata alla bibliografia.
+
+#### La tabella dei collegamenti
+
+| nostro | predecessore | uguale | diverso |
+|---|---|---|---|
+| la time line | **cyclic executive** (Baker & Shaw, 1989): frame maggiore e minore | una sequenza fissa di attività con budget, verificata offline | niente di sostanziale |
+| `cmp = base_frame + offset[i]`, istanti assoluti da tabella | **schedule table** di AUTOSAR OS: *expiry point* con offset rispetto a un contatore, pilotato da un timer hardware | gli istanti si leggono, non si sommano: la tabella non deriva | AUTOSAR attiva task; noi chiamiamo procedure dentro un task solo |
+| la time line insieme a un background a priorità | **integrazione time-triggered / event-triggered**: *slot shifting* (Fohler, 1995); in forma rigida **ARINC 653** (finestre fisse di partizione, priorità dentro la partizione) | due regimi, un ritmo fisso e uno a eventi, sulla stessa CPU | ARINC fa **rispettare** la finestra togliendo la CPU; noi no (vedi lo sforamento) |
+| lo sforamento: l'attività **non si ferma**, `pending` dice di quanti slot | le politiche di *frame overrun* del cyclic executive: abortire, continuare, saltare. La *timing protection* di AUTOSAR rileva il budget esaurito e passa a un hook, che di norma termina | «continuare» è una delle politiche classiche | la scelta è motivata dalla **diagnosi**: abortire distrugge il dato che serve (§3.74). Nell'industria di sicurezza prevale fermare; §3.74 dice perché qui no, e quando lo diventerebbe |
+| **mentre gira il super task lo scheduler non sceglie** | il **task non prelazionabile** di OSEK: gli interrupt si servono, si rischedula solo quando il task si blocca o termina. In Linux, `preempt_disable`/`preempt_enable` | la **guardia** di `sched_isr_exit`: il flag `need_resched` resta armato e si guarda all'uscita. Il punto di rischedulazione, la `wait`, è la `WaitEvent` di OSEK | niente |
+| `TCB.nopreempt` come campo | **preemption threshold** (Wang & Saksena, 1999; ThreadX): la soglia oltre cui un task si lascia prelazionare | il nostro è il caso estremo, soglia al massimo | la soglia è graduata, il nostro è un sì/no |
+| `WAIT`: un contatore, un titolare, `wait` consuma tutto e restituisce quanti | la **direct-to-task notification** di FreeRTOS (`vTaskNotifyGiveFromISR` / `ulTaskNotifyTake` col clear); il semaforo privato del task di µC/OS-III | un contatore legato a un task, senza coda, segnalabile da ISR, consumato tutto in una volta | il nostro valore conta solo i segnali arrivati mentre il titolare **non** aspettava, quindi **0 è il nominale**; lì il valore comprende anche il segnale che sveglia. E il guardiano `current == WAIT.task` |
+| il dispatch diretto, `sched_isr_exit_to(tcb)` | l'**attivazione di un task da ISR di categoria 2** in OSEK/AUTOSAR; la separazione scheduler/dispatcher è da manuale | l'ISR nomina il task, nessuna scansione | niente |
+
+#### Cosa è MENO comune, e non è un'idea nuova
+
+- **Il prestito del PCB** (`task_block_super`): l'interrotto riprende dallo
+  slot senza scansione, a meno che qualcuno si sia svegliato. È l'ottimizzazione
+  di ogni uscita da una sezione non prelazionabile, qui applicata a un task
+  intero. Tecnica, non teoria.
+- **Il super task unico garantito dal build** (`.supertask`, `duplicate global
+  'super_tcb'`). Come meccanismo non l'ho mai visto; come idea è un vincolo di
+  configurazione, e i sistemi AUTOSAR ne verificano di simili al generatore.
+
+#### Perché serve saperlo
+
+**Si dice in una riga a un collega:** *«un cyclic executive dentro un task non
+prelazionabile, attivato come una schedule table AUTOSAR, sopra un kernel a
+priorità fisse; la sveglia è una task notification di FreeRTOS»*. Ognuna di
+quelle parole la conosce chi lavora sul ferro.
+
+**E l'analisi di schedulabilità non va inventata.** Il foreground si verifica
+offline come ogni cyclic executive. Il background è a priorità fisse **con una
+regione non prelazionabile**: il super task entra come termine di **blocking**
+per tutti gli altri task, lungo quanto lo slot più lungo. Nel dominio di §3.74
+quel termine si regge perché il background è I/O e ha mezzo milione di cicli di
+tempo morto per misura.
+
+> Questo è anche il punto da mettere in chiaro per primo quando qualcuno obietta
+> «un task non prelazionabile rovina la latenza». Rovina la latenza di
+> **commutazione** di tutti gli altri, di una quantità nota. **Non tocca quella
+> di interrupt**, perché le ISR si servono sempre. È la separazione di §3.75,
+> *servire* contro *cedere la CPU*.
+
+#### Il gestore dei timeout su `WAIT`: RIMANDATO, e perché
+
+Era il candidato che avevo proposto io. La domanda dell'utente, *«per far sì
+che il tick sia più preciso?»*, l'ha ridimensionato:
+
+- **la precisione non cambia.** L'istante lo decide il timer, e `tmgr_tick`
+  incrementa `tmo_now` nello stesso punto in tutti e due i casi. Cambierebbero i
+  cicli del risveglio (`buf_alloc` + `send` / `receive` + `buf_free` contro
+  `wait_signal` / `wait`), **non misurati**, e qualche ciclo non sposta il tick a
+  cui un timeout scade;
+- **mi sono corretto io su una conseguenza scritta senza guardare il codice.**
+  Avevo detto che con `WAIT` l'avanzamento sarebbe diventato `tmo_now += 1 +
+  esito`. È falso: `tmo_now` lo incrementa l'ISR, e il gestore legge un
+  assoluto e non conta i risvegli. Anche **l'argomento del pool vuoto era
+  gonfiato**: il risveglio perso non perde dati, costa un tick di ritardo, ed è
+  scritto in `timeout_manager.vasm`;
+- **resta un argomento di forma**: un risveglio che non porta dati prende un
+  buffer del pool per ogni tick e compete con le consegne, che i dati li
+  portano;
+- **e un motivo per non farlo adesso**: il tick è destinato a sparire. Il
+  disegno di §0 è tickless, e i timeout lunghi andranno sul canale 1 del
+  comparatore in base ms. Allora cambia la sorgente del risveglio e `tmo_now`
+  come contatore di tick probabilmente non esisterà più. La conversione a
+  `WAIT` sopravvive a quel cambio, ma farla oggi sul tick vuol dire rifarla dopo
+  attorno a un'altra sorgente.
+
+**Esito, condiviso dall'utente:** si fa **insieme** al passaggio dei timeout sul
+comparatore, come un lavoro solo.
+
+#### IL PROSSIMO TEST, e il primo prerequisito: i float a 32 bit (FATTO)
+
+**Il test che l'utente vuole**, ed è la prima tabella di time line vera:
+
+```
+task asincroni     si scambiano messaggi (il background)
+il super task      una macchina a stati, periodo 1 ms:
+                     acquisizione da un AD converter
+                     FFT sui dati
+                     il RISULTATO va con un messaggio a un task asincrono
+                     (idea dell'utente: il primo test che attraversa il
+                     confine foreground -> background)
+```
+
+**Deciso dall'utente: l'ADC è A BLOCCHI**, come nel suo altimetro (§3.74: la
+CPU vede il blocco, non il campione). La periferica riempie per conto suo metà
+di un buffer mentre il super task elabora l'altra, e ogni millisecondo le metà
+si scambiano. Il segnale sarà una sinusoide sintetica di frequenza nota, così il
+picco della FFT cade in un bin **derivabile**.
+
+**La FFT si fa in virgola mobile**: la macchina è vettoriale e float, con
+gather e scatter. `srai` non è un prerequisito, perché il problema della
+virgola fissa con segno (§3.73) qui non si pone. Stima a occhio, **non
+misurata**: una FFT a 64 punti costa qualche migliaio di cicli, e un
+millisecondo ne vale 100.000.
+
+**Il prerequisito trovato leggendo la macchina, e CORRETTO: un interrupt
+cambiava i numeri.** `f0..f15` erano `double` nel simulatore, la memoria float
+a 32 bit, e `ctx_save` li salva con `fsw`. Un task interrotto riprendeva coi
+suoi float **arrotondati**, e il risultato dipendeva da dove cadevano gli
+interrupt. È l'excess precision dell'8087, dentro il contesto. Nessun test se
+ne accorgeva, perché nessuno fa conti in float scalare sotto interrupt; la FFT
+nel super task, interrotta dalle ISR, sarebbe stata la prima.
+
+```
+la correzione, decisa dall'utente     f a 32 BIT, come la memoria e i vettori.
+                                      Scartata: tenere i double e aggiungere
+                                      fsd/fld (frame +64 byte, ISA +2)
+fmacc                                 NON fusa, due arrotondamenti: e' la
+                                      semantica di vmacc
+vredsum                               accumula in double, arrotonda UNA volta:
+                                      la somma non dipende dall'ordine
+```
+
+Il test è `tests/test_fctx.vasm`: `1/3*3 - 1` senza e con una trap in mezzo,
+linkato a `lib_hal` e senza kernel. **Visto rosso sulla macchina di prima**,
+`0 2.98023e-08`; dopo, `0 0`.
+
+> **La prima stesura del test non terminava, per colpa mia e non della
+> macchina.** Il timer riparte dall'istante della trap (`timer_next = cicli +
+> periodo`), e un task che ha toccato i float si porta dietro il frame
+> vettoriale, che costa più dei 50 cicli del periodo: la `reti` ritrovava il
+> timer già scaduto e il task non avanzava più di un'istruzione. L'ISR adesso
+> spegne il timer (`settimer r0`), e la trap è una sola per costruzione.
+
+> **Un falso allarme evitato, e va scritto perché è la domanda che viene
+> subito dopo:** `ctx_save` salva i float **solo** con `PSW_VDIRTY` alzato, e
+> sembrava che un task con soli float scalari restasse scoperto. No: anche le
+> operazioni float scalari alzano `VDIRTY` (`sporca_estensione` in `vcpu.c`).
+
+**Criterio di fine:** `ctest` **49/49** (il nuovo è `fctx`), `--check` verde,
+**nessun `EXPECT` mosso**. E siccome `ctest` guarda solo i numeri dichiarati,
+l'output **completo** dei programmi float (i tredici di `standalone/`,
+`multi`, `test_vectors`, `test_mondo`) è stato confrontato fra il simulatore di
+`HEAD` e quello nuovo: **identico in tutti**. Aggiornati `vcpu.h`, `vcpu.c` e
+`manual.md` §3 (la riga dei registri float, `fmacc`, la nota su `vredsum`).
+
+#### L'ADC: 12 bit, I e Q, avviato dalla time line (FATTO) — e `vcvt`
+
+**Le decisioni, tutte dell'utente:**
+
+```
+l'acquisizione la AVVIA LA TIME LINE   non un ADC libero col suo clock: quello
+                                       scivolerebbe sul comparatore e
+                                       riaprirebbe "chi possiede il ritmo"
+                                       (§3.74), chiusa a favore della CPU.
+                                       Il ping-pong lo fa il programma
+NESSUN INTERRUPT dall'ADC              la WAIT ha un ingresso solo. Al suo
+                                       posto ADC_STATUS, con un CONTATORE dei
+                                       blocchi finiti
+12 bit, I e Q                          "a questo punto farei un ADC a 12 bit
+                                       canali reale e immaginario" -- e io
+                                       avevo proposto float32 dall'ADC, che
+                                       era la semplificazione piu' grossa
+```
+
+> **Una mia frase da correggere, e corretta in sessione.** Proponendo i
+> `float32` dall'ADC avevo lasciato intendere che «ora si fa così». Non è vero:
+> anche oggi un ADC di radar produce quasi sempre **interi**, spesso I/Q, e la
+> conversione in float nel front-end è un caso, non la regola. Con i 12 bit la
+> questione è sparita, ma la frase era sbagliata.
+
+**Il formato, e le due semplificazioni DICHIARATE:** I e Q **alternati**, una
+parola a 32 bit ciascuno, col segno già esteso dalla DMA, in `[-2048, 2047]`,
+e fuori scala **satura**. Un ADC vero spesso impacchetta 16+16: spacchettare
+vorrebbe `srai`, che manca, quindi allarga la DMA. E la DMA **non ruba cicli**
+alla CPU.
+
+**`vcvt vd, vs` — la prima conversione intero → float dell'ISA**, e non ce
+n'era nessuna: **il quarto buco dell'ISA stanato dal dominio**, dopo `srai`, le
+logiche immediate e la divisione che tace. Solo vettoriale, perché è l'unica
+che il test usa; né la scalare né l'inversa. Il registro vettoriale porta
+**bit**, non un tipo (il modello di RVV): `vload` copia la parola, `vcvt` la
+legge come `int32`. In coda all'enum, e verificato: **18 binari su 18 identici
+byte per byte** a un build pulito di `HEAD`.
+
+**La periferica** (`vcpu.h`, `vcpu.c`, `main.c`, `manual.md` §3.2):
+
+```
+ADC_ADDR 0x100040  ADC_COUNT 0x44  ADC_PERIOD 0x48  ADC_CTRL 0x4C  ADC_STATUS 0x50
+ADC_STATUS    bit 0 BUSY | bit 1 OVERRUN | bit 2.. blocchi finiti
+il campione i e' preso a  avvio + (i+1)*PERIOD,  in RAM al confine dopo
+avvio mentre acquisisce   IGNORATO, alza OVERRUN; la lettura lo abbassa
+config impossibile        errore del simulatore (e' di costruzione)
+--adc <Hz>,<A>            I = A cos(2 pi f t), Q = A sin, t ASSOLUTO; f col segno
+```
+
+**I test, tutti visti rossi:**
+
+| test | cosa | rosso |
+|---|---|---|
+| `vcvt` | I e Q alternati, un `vload` a passo 8 per canale, `vcvt`, somme ed estremi a mano: `2247 2047 -2050 -2048` | senza `vcvt`: `-nan 2.86846e-42 -nan -nan` |
+| `adc_pos` / `adc_neg` / `adc_sat` | lo stesso programma con tre segnali. Otto numeri di periferica (stato, overrun ignorato e abbassato, il blocco che si RIEMPIE, il contatore, la DMA che si ferma a N), poi il **verso di rotazione** e il **modulo** | I e Q scambiati nella DMA: il verso si rovescia. Senza saturazione: il modulo vale 9 invece di 4 |
+
+> **La fase NON si asserisce, e il test lo dice.** Il segnale ha la fase del
+> tempo assoluto, che dipende dal ciclo di avvio, cioè da quante istruzioni lo
+> precedono. Si asserisce ciò che non ne dipende: con 250 kHz e un campione al
+> µs il fasore gira di un quarto di giro, `z1 = j·z0`, e `I0·Q1 − Q0·I1 = |z0|²`
+> è **positivo** — negativo con la frequenza negativa. È ciò che prova che I e Q
+> non sono scambiati, il guasto classico.
+
+**Criterio di fine:** `ctest` **53/53**, `--check` verde, nessun `EXPECT`
+mosso.
+
+> **Trovato e CORRETTO su richiesta dell'utente:** in `manual.md` §3.1 l'ultimo
+> paragrafo diceva ancora «**Non c'è interrupt**: la tastiera non può armare
+> una trap», e poche righe sopra lo stesso manuale descrive l'interrupt della
+> tastiera dal 14/09. Era un residuo, tolto.
+
+**Cosa resta prima di scrivere il test:**
+
+- ~~**l'ADC a blocchi nella macchina**~~ — **FATTO**, qui sopra;
+- **la FFT**: complessa, a 64 punti, sui campioni I/Q convertiti con `vcvt`. Il
+  bin del picco è derivabile dal segnale (`--adc`), e con la frequenza negativa
+  cade in N−k;
+- **i nodi del messaggio al background**: il risultato è un prestito dal
+  foreground, e §3.74 dice che il pool sparisce da lì. La forma classica è un
+  ping-pong di due nodi, e la tabella deve dimostrare che due bastano. Cosa
+  succede se il consumatore resta indietro è una decisione di POLITICA;
+- **quali task asincroni**: prima di proporre una struttura, guardare se
+  `test_mondo` è il punto di partenza.
+
+---
+
 ### 3.75 IL MECCANISMO È SCRITTO: `.interrupt`, IL DISPATCH DIRETTO, `WAIT` — E IL SUPER TASK (27/09/2026)
 
 La sessione è in **due tempi**, e vanno letti separati perché il secondo
@@ -4106,6 +4368,13 @@ scansione.
 E l'asimmetria in uscita è corretta: quando la macchina a stati si sospende la
 CPU deve andare a qualcuno, e *quella* è una decisione vera. Il **risveglio** è
 diretto, il **sonno** passa dallo scheduler normale.
+
+> **RITIRATA il 27/09 (§3.75).** È una decisione vera solo se nel frattempo
+> qualcuno si è svegliato. Nel caso normale la risposta è già nota: il super
+> task ha interrotto qualcuno, e sospendendosi lo riprende dallo slot **senza
+> scansione**. È l'uscita dedicata `task_block_super`, idea dell'utente; lo
+> scheduler sceglie solo col flag di preemption armato, o se il super task non
+> ha interrotto nessuno (`pcb == 0`, al boot).
 
 #### `WAIT`: una coppia dedicata, e il contatore che le impedisce di perdere
 
@@ -4681,6 +4950,14 @@ un ambiente    il super task E' un task: si misura con gli strumenti che ci
 - **il nome inganna.** «Super» fa pensare a un **rango**, e la decisione è
   l'opposto: non ha priorità, `PRIO_MAX` resta al gestore dei timeout. A
   distinguerlo è il **percorso di attivazione**, non una posizione in classifica.
+
+> **RITIRATE il 27/09 due voci della disciplina (§3.75): «stack scratch» e
+> «nessun contesto».** Il super task ha un contesto come ogni task e la `wait`
+> lo salva; lo stack è del programmatore, e quello che ci lascia gli serve (il
+> riquadro «RITIRATA IL 27/09» più sopra). Restano intere **niente attese
+> bloccanti** e **niente mutex**, e resta vero che le regole non si unificano:
+> in più adesso c'è quella che lo definisce, **mentre gira lo scheduler non
+> sceglie**.
 
 > **Una mia affermazione sbagliata, corretta dall'utente.** Avevo scritto che
 > l'unificazione crea un accoppiamento «prima strutturalmente impossibile»: il
@@ -10554,27 +10831,36 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 > «DOPO» di §0 aspetta una tabella di time line vera — istanti, budget, i due
 > modi — che è un dato dell'applicazione e non si inventa per poterla provare.
 
-**PER RIPRENDERE dopo il 27/09 — il prossimo passo si decide discutendo:**
+> **E tolta il 28/09, appena scaduta:** la formula «il prossimo passo si
+> decide discutendo», che portava all'elenco dei candidati invece che a un
+> lavoro. Ha funzionato come doveva: la discussione ha scartato il candidato
+> che proponevo io (il gestore dei timeout su `WAIT`, rimandato), e il passo
+> l'ha deciso l'utente — un test con FFT, ADC e super task. Il suo criterio di
+> fine, «la base verde prima di muoverla», ha retto. E la sua riga «nel resto
+> di §3.74 restano scritte nella forma vecchia» è stata la prima cosa corretta
+> quel giorno: le due frasi hanno adesso la loro nota RITIRATA.
+
+**PER RIPRENDERE dopo il 28/09 — il prossimo passo è la FFT:**
 ```
-Leggi docs/stato-lavori.md: il riquadro RIPRENDI DA QUI, poi §3.75 PER
-INTERO, poi §3.74 coi suoi riquadri RITIRATA. §3.75 ne smentisce due
-posizioni -- la ripartenza a freddo, e "il sonno del super task passa
-dallo scheduler" -- e nel resto di §3.74 restano scritte nella forma
-vecchia.
+Leggi docs/stato-lavori.md: il riquadro RIPRENDI DA QUI, poi §3.76 PER
+INTERO -- il piano del test, e i tre prerequisiti fatti: i float a 32
+bit, vcvt, l'ADC. Poi docs/manual.md §3.2 (l'ADC) e la riga di vcvt.
 
-Il meccanismo del foreground e il super task sono FATTI e committati
-(10bf10f, non pushato). Il prossimo passo NON e' deciso: partiamo
-dall'elenco dei candidati in testa al riquadro e ne discutiamo prima di
-scrivere. Le scelte di forma che emergono scrivendo si dicono PRIMA.
+Il prossimo passo e' DECISO: la FFT complessa a 64 punti sui campioni
+I/Q dell'ADC, convertiti con vcvt. DA SOLA, come procedura, prima del
+super task e del messaggio al background. La sua forma -- radix-2, il
+bit reversal col gather, i twiddle in tabella, dove sta il test -- si
+discute PRIMA di scrivere, e le scelte di forma che emergono scrivendo
+si dicono prima.
 
-Prima di toccare niente: ctest 48/48 e scheduler_facts --check verde.
+Prima di toccare niente: ctest 53/53 e scheduler_facts --check verde.
+
+Alla fine: il picco nel bin k derivato dal segnale --adc (la frequenza
+scelta perche' il blocco contenga k periodi interi) e in N-k con la
+frequenza negativa; il test visto ROSSO; tools/fingerprint.sh con le 19
+impronte esistenti INVARIATE -- la FFT aggiunge un programma, non ne
+muove.
 ```
-
-> **Perché non manda da nessuna parte.** Le formule di questa sezione puntano
-> a un lavoro deciso; qui il lavoro non lo è, e la sessione del 27/09 ha
-> mostrato cosa succede quando si parte in quarta su scelte non discusse
-> (§3.75). Quindi la formula porta alla discussione, e il criterio di fine è
-> quello di partenza: verificare che la base sia verde prima di muoverla.
 
 **E IN PARALLELO, senza dipendenze — la SECONDA BASE DEI TEMPI, e `srai` (15/09, deciso):**
 ```
@@ -10598,8 +10884,8 @@ COSA MANCA, ed e' poco:
   - un bit per canale in CMP_CTRL che dica su QUALE base quel canale
     confronta. In hardware il prescaler e' del canale, non del chip, ed
     e' per questo che il bit sta li' e non in un registro globale;
-  - `srai`, IN CODA all'enum come mark e mfcause. In mezzo rinumera gli
-    opcode e muove tutte e diciassette le impronte (successo il 14/09).
+  - `srai`, IN CODA all'enum come mark, mfcause e vcvt (28/09). In mezzo
+    rinumera gli opcode e muove tutte le impronte (successo il 14/09).
 
 PERCHE' DUE BASI E NON TRE: i us erano il compromesso fra risoluzione e
 portata, e con le due estreme -- cicli (0,01 us, wrap 43 s) e ms (wrap
@@ -10622,10 +10908,10 @@ potenza di due: devono coincidere, e costare 1 ciclo invece di 20).
 NON toccare settimer, e non toccare il kernel. Il `timer_next` che
 slitta resta com'e': commento corretto, codice no.
 
-Alla fine: ctest 49/49 (o piu'), scheduler_facts --check verde, e
-tools/fingerprint.sh con le 18 impronte INVARIATE (test_wait e' la
-diciottesima dal 27/09). Se `srai` le muove, e' finita in mezzo all'enum
-invece che in coda.
+Alla fine: ctest tutto verde -- 53 il 28/09, piu' i test nuovi -- scheduler_facts
+--check verde, e tools/fingerprint.sh con le 19 impronte INVARIATE
+(test_fctx e' la diciannovesima dal 28/09). Se `srai` le muove, e' finita
+in mezzo all'enum invece che in coda.
 ```
 
 **E PRIMA, O DOPO — il RESPIRO nel nucleo fattuale (non fatto il 15/09):**

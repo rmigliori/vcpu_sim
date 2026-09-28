@@ -96,6 +96,9 @@ static void print_stats(const VCpu* cpu)
 // "run" su un .vx) e non cambia niente per chi non la usa.
 static const char* g_kbd_spec = NULL;
 static const char* g_marche_out = NULL;
+// Il segnale dell'ADC (--adc), stesso percorso della traccia: e' il MONDO,
+// e sta fuori dalla macchina come i tasti premuti.
+static const char* g_adc_spec = NULL;
 
 // ---------------------------------------------------------------------------
 //  Il marcatore: accensione e scarico.
@@ -194,6 +197,19 @@ static int apply_kbd_trace(VCpu* cpu)
   return 0;
 }
 
+// Il segnale dell'ADC, applicato dopo vcpu_init come la traccia. Ritorna 0 o 1.
+static int apply_adc_signal(VCpu* cpu)
+{
+  char err[256] = {0};
+  if (!g_adc_spec) return 0;
+  if (vcpu_adc_signal(cpu, g_adc_spec, err, sizeof err) != 0)
+  {
+    fprintf(stderr, "%s\n", err);
+    return 1;
+  }
+  return 0;
+}
+
 static int cmd_legacy(const char* path, RunMode mode)
 {
   static VCpu  cpu;
@@ -202,6 +218,7 @@ static int cmd_legacy(const char* path, RunMode mode)
 
   vcpu_init(&cpu);
   if (apply_kbd_trace(&cpu) != 0) return 2;
+  if (apply_adc_signal(&cpu) != 0) return 2;
   int len = assemble(path, &cpu, prog, err, sizeof err);
   if (len < 0) { fprintf(stderr, "assemble error: %s\n", err); return 1; }
 
@@ -399,12 +416,13 @@ static int cmd_run(int argc, char** argv)
     if (strcmp(argv[i], "--trace") == 0)      mode = RUN_TRACE;
     else if (strcmp(argv[i], "--debug") == 0) mode = RUN_DEBUG;
     else if (strcmp(argv[i], "--kbd") == 0 && i + 1 < argc) g_kbd_spec = argv[++i];
+    else if (strcmp(argv[i], "--adc") == 0 && i + 1 < argc) g_adc_spec = argv[++i];
     else if (strcmp(argv[i], "--marks") == 0 && i + 1 < argc) g_marche_out = argv[++i];
     else path = argv[i];
   }
   if (!path)
   {
-    fprintf(stderr, "usage: %s run <prog.vx> [--trace|--debug] [--kbd <ciclo:car,...>]"
+    fprintf(stderr, "usage: %s run <prog.vx> [--trace|--debug] [--kbd <ciclo:car,...>] [--adc <Hz>,<ampiezza>]"
                     " [--marks <file>]\n", argv[0]);
     return 2;
   }
@@ -424,6 +442,7 @@ static int cmd_run(int argc, char** argv)
   {
     vcpu_init(&cpu);
     if (apply_kbd_trace(&cpu) != 0) { vimage_free(img); free(img); return 2; }
+    if (apply_adc_signal(&cpu) != 0) { vimage_free(img); free(img); return 2; }
     marks_prepare(&cpu, img);
     int len = 0;
     int64_t entry = vx_load(img, &cpu, prog, &len);
@@ -574,6 +593,7 @@ int main(int argc, char** argv)
     if (strcmp(argv[i], "--trace") == 0)      mode = RUN_TRACE;
     else if (strcmp(argv[i], "--debug") == 0) mode = RUN_DEBUG;
     else if (strcmp(argv[i], "--kbd") == 0 && i + 1 < argc) g_kbd_spec = argv[++i];
+    else if (strcmp(argv[i], "--adc") == 0 && i + 1 < argc) g_adc_spec = argv[++i];
     else if (strcmp(argv[i], "--marks") == 0 && i + 1 < argc) g_marche_out = argv[++i];
     // UN'OPZIONE SCONOSCIUTA E' UN ERRORE, non il nome del programma
     // (14/09/2026, §3.68). Qui c'era un `else path = argv[i]` che prendeva
@@ -591,10 +611,10 @@ int main(int argc, char** argv)
   if (!path)
   {
     fprintf(stderr,
-            "usage: %s [--trace|--debug] [--kbd <ciclo:car,...>] [--marks <file>] [-I <dir>]... [-D <name>]... <program.vasm>\n"
+            "usage: %s [--trace|--debug] [--kbd <ciclo:car,...>] [--adc <Hz>,<ampiezza>] [--marks <file>] [-I <dir>]... [-D <name>]... <program.vasm>\n"
             "       %s asm <in.vasm> -o <out.vo> [-I <dir>]... [-D <name>]...\n"
             "       %s ld  <a.vo|lib.va> ... [-e <sym>] -o <out.vx>\n"
-            "       %s run <prog.vx> [--trace|--debug] [--kbd <ciclo:car,...>] [--marks <file>]\n"
+            "       %s run <prog.vx> [--trace|--debug] [--kbd <ciclo:car,...>] [--adc <Hz>,<ampiezza>] [--marks <file>]\n"
             "       %s nm  [-n|-p] [-r] <file.vo|file.vx>\n"
             "       %s ar  <lib.va> <o1.vo> ...\n",
             argv[0], argv[0], argv[0], argv[0], argv[0], argv[0]);

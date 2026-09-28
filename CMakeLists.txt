@@ -193,6 +193,53 @@ vasm_check(include    MODE DUMPS EXPECT "28 16 16 512 1"
 vasm_check(epsw       MODE DUMPS EXPECT "1 0 0 7"
            SOURCE ${CMAKE_SOURCE_DIR}/tests/test_epsw.vasm)
 
+# test_fctx — UN INTERRUPT NON DEVE CAMBIARE I NUMERI (28/09/2026).
+#
+# Lo stesso conto in float, 1/3*3 - 1, senza e con una trap in mezzo: i due
+# risultati devono essere identici. Fino al 28/09 non lo erano (`0 2.98023e-08`):
+# i registri f erano double e ctx_save li salva a 32 bit, quindi un task
+# interrotto riprendeva coi suoi float arrotondati. Corretto nella macchina, con
+# f a 32 bit come la memoria e i vettori; il ragionamento e' nel sorgente.
+#
+# Linkato a lib_hal e senza kernel: il soggetto e' il contesto dell'HAL.
+vasm_object(t_fctx    SOURCE ${CMAKE_SOURCE_DIR}/tests/test_fctx.vasm)
+vasm_program(test_fctx OBJECTS t_fctx LINK lib_hal)
+vasm_check(fctx       MODE DUMPS PROGRAM test_fctx EXPECT "0 0")
+
+# test_vcvt — LA PRIMA CONVERSIONE INTERO -> FLOAT (28/09/2026).
+#
+# I campioni dell'ADC sono interi a 12 bit, la FFT e' in float, e fino a oggi
+# l'ISA non convertiva. Il test e' l'uso vero: I e Q alternati, un vload a
+# passo 8 per canale, vcvt, e somme ed estremi fatti a mano nel sorgente. Senza
+# vcvt escono NaN e denormali.
+vasm_check(vcvt       MODE DUMPS EXPECT "2247 2047 -2050 -2048"
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_vcvt.vasm)
+
+# test_adc — L'ADC A 12 BIT, I e Q, A BLOCCHI (28/09/2026).
+#
+# Lo stesso programma con TRE segnali, e cambiano solo gli ultimi due numeri:
+#   adc_pos   +250 kHz, A = 1000   il fasore gira di +90 gradi a campione: +1
+#   adc_neg   -250 kHz, A = 1000   gira al contrario: -1. Prova che I e Q non
+#                                  sono scambiati -- visto rosso scambiandoli
+#   adc_sat   0 Hz,     A = 3000   fuori scala: I0 SATURA a 2047, e il modulo in
+#                                  milioni vale 4 invece di 9 -- visto rosso
+#                                  togliendo la saturazione
+# I primi otto sono la periferica: stato, overrun ignorato e abbassato dalla
+# lettura, il blocco che si RIEMPIE nel tempo, il contatore, la DMA che si
+# ferma a ADC_COUNT. La fase del segnale non si asserisce: dipende dal ciclo di
+# avvio, e il perche' e' nel sorgente.
+#
+# A file singolo come test_cmp: il soggetto e' la MACCHINA.
+vasm_check(adc_pos    MODE DUMPS EXPECT "0 1 3 1 1 4 0 0 1 1"
+           ARGS --adc 250000,1000
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_adc.vasm)
+vasm_check(adc_neg    MODE DUMPS EXPECT "0 1 3 1 1 4 0 0 -1 1"
+           ARGS --adc -250000,1000
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_adc.vasm)
+vasm_check(adc_sat    MODE DUMPS EXPECT "0 1 3 1 1 4 0 0 0 4"
+           ARGS --adc 0,3000
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_adc.vasm)
+
 # test_due_irq — LA SECONDA SORGENTE DI INTERRUZIONE (14/09/2026, §3.67).
 #
 # Fino a oggi la macchina ne aveva UNA, il timer, e la tastiera si interrogava.

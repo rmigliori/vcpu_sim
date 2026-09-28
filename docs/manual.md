@@ -106,12 +106,12 @@ stanno in [`cmake/vasm.cmake`](../cmake/vasm.cmake).
 ### 2.3 Eseguire un programma
 
 ```bash
-./build/vcpu_sim [--trace|--debug] [--kbd <ciclo:car,...>] <programma.vasm>
+./build/vcpu_sim [--trace|--debug] [--kbd <ciclo:car,...>] [--adc <Hz>,<ampiezza>] <programma.vasm>
 ```
 
 Senza flag esegue il programma normalmente. `--trace` e `--debug` sono descritti
 in §2.4; `--kbd` alimenta la tastiera con una traccia a cicli ed è descritto in
-§3.1.
+§3.1; `--adc` dà all'ADC il suo segnale ed è descritto in §3.2.
 
 C'è una quarta opzione, disponibile solo su `run`: **`--marche <file>`** scrive
 la registrazione del *marcatore* — i tag che il programma piazza scrivendo nei
@@ -461,7 +461,7 @@ breakpoint at 5
 | Risorsa | Quantità | Note |
 |---|---|---|
 | Registri scalari interi | `r0`..`r15` | interi a 64 bit; **`r0` è cablato a 0** (le scritture sono ignorate) |
-| Registri scalari float | `f0`..`f15` | valore a doppia precisione internamente |
+| Registri scalari float | `f0`..`f15` | `float` a **32 bit**, come la memoria e i registri vettoriali: ogni operazione arrotonda al suo risultato, e `fsw`/`flw` non perdono niente. Fino al 28/09/2026 erano a doppia precisione, e il salvataggio del contesto (che usa `fsw`) arrotondava i float di un task interrotto: il risultato di un calcolo dipendeva da dove cadevano gli interrupt |
 | Registri vettoriali | `v0`..`v7` | ciascuno contiene fino a `VLMAX = 64` elementi `float` (32 bit) |
 | Vector Length (`VL`) | 1 registro | numero di elementi processati dalle op vettoriali; impostato con `setvl` |
 | Registro di maschera (`vmask`) | 1 registro | 64 bit, un bit per corsia; scritto dai confronti `vms*` e usato da `vmerge` |
@@ -553,9 +553,59 @@ in `ctest`, e `tests/test_kbd.vasm` ci sta. Un secondo alimentatore che legga
 `stdin` da un thread vivrebbe nel tempo di parete e non sarebbe riproducibile —
 ma il programma vedrebbe gli stessi due registri, senza cambiare una riga.
 
-**Non c'è interrupt**: la tastiera non può armare una trap, e non esiste un
-registro per abilitarla. La macchina ha ancora una sola sorgente di interrupt, il
-timer, e un solo vettore.
+### 3.2 L'ADC: 12 bit, I e Q, a blocchi
+
+Dal 28/09/2026 la macchina ha il front-end di un radar: un convertitore che
+scrive in RAM, **con la DMA e senza la CPU**, un blocco di N campioni
+**complessi**. La CPU vede il blocco, non il campione.
+
+| Registro | Indirizzo | Accesso | Significato |
+|---|---|---|---|
+| `ADC_ADDR` | `0x100040` | lettura/scrittura | dove scrivere il blocco |
+| `ADC_COUNT` | `0x100044` | lettura/scrittura | N, i campioni complessi del blocco |
+| `ADC_PERIOD` | `0x100048` | lettura/scrittura | i cicli fra un campione e il successivo |
+| `ADC_CTRL` | `0x10004C` | scrittura | bit 0 `ADC_START` = avvia l'acquisizione |
+| `ADC_STATUS` | `0x100050` | lettura | bit 0 `ADC_BUSY`; bit 1 `ADC_OVERRUN`; bit 2..31 i blocchi finiti dall'accensione — **e la lettura abbassa l'overrun** |
+
+**L'acquisizione la avvia il programma**, non gira da sola: una scrittura ad
+`ADC_CTRL` dice *«acquisisci `ADC_COUNT` campioni a `ADC_ADDR`, uno ogni
+`ADC_PERIOD` cicli»*, ed è lo sweep comandato con la finestra di ricezione
+aperta. Un ADC libero col suo clock scivolerebbe rispetto alla time line. Il
+ping-pong lo fa il programma: avvia il blocco B mentre elabora A.
+
+**Il formato: I e Q alternati, una parola a 32 bit ciascuno**, a `ADC_ADDR + 8i`
+e `ADC_ADDR + 8i + 4`, col segno già esteso e i valori in `[-2048, 2047]`; fuori
+scala **satura**. Un ADC vero spesso impacchetta I e Q in 16+16 bit: qui
+spacchettarli vorrebbe `srai`, che manca, e allargare nella DMA è la
+semplificazione dichiarata. Per portarli in float c'è
+[`vcvt`](#43-manuale-delle-istruzioni), e un canale si carica con un `vload` a
+passo 8.
+
+**Il blocco si riempie nel tempo.** Il campione i è preso all'istante
+`avvio + (i+1)·ADC_PERIOD` e arriva in RAM al primo confine d'istruzione dopo.
+Leggere il blocco prima che sia finito dà un blocco **a metà**, e per questo lo
+stato ha un **contatore** dei blocchi finiti invece di un solo bit: chi prende
+un blocco verifica che sia finito quello che aspetta. La DMA non ruba cicli
+alla CPU.
+
+**Nessun interrupt**: a dire quando è il momento è la time line, cioè il
+comparatore. **Un avvio mentre acquisisce è ignorato** e alza `ADC_OVERRUN`: è
+un errore di tempo che il programma deve vedere, non un errore del simulatore.
+Una configurazione impossibile (N o periodo non positivi, un blocco che esce
+dalla RAM) invece è un errore di costruzione, e il simulatore lo dice.
+
+**Il segnale è il mondo**, e si dà al simulatore come la traccia della tastiera:
+
+```bash
+vcpu_sim run prog.vx --adc 250000,1000
+```
+
+cioè un esponenziale complesso di **250 kHz** e ampiezza **1000**:
+`I = A·cos(2πft)`, `Q = A·sin(2πft)`, con `t` il tempo **assoluto** del
+campione (il mondo non riparte quando la CPU avvia l'ADC). La frequenza ha un
+segno, e con I e Q si vede: una frequenza negativa fa girare il fasore al
+contrario. Senza `--adc` si campiona zero. `tests/test_adc.vasm` gira tre volte,
+con tre segnali.
 
 ---
 
@@ -1038,7 +1088,7 @@ La colonna **Cicli** riporta il costo nel modello di timing (§6);
 | `fsw` | `fs, rs1` &nbsp;/&nbsp; `fs, disp(rs1)` | `mem_float[rs1 + disp] = fs` | 4 |
 | `fadd` | `fd, fs1, fs2` | `fd = fs1 + fs2` | 4 |
 | `fmul` | `fd, fs1, fs2` | `fd = fs1 * fs2` | 4 |
-| `fmacc` | `fd, fs1, fs2` | `fd += fs1 * fs2` (multiply-accumulate) | 4 |
+| `fmacc` | `fd, fs1, fs2` | `fd += fs1 * fs2` (multiply-accumulate, **non fusa**: due arrotondamenti, come `vmacc`) | 4 |
 | `fmov` | `fd, fs1` | `fd = fs1` | 4 |
 | `fmin` | `fd, fs1, fs2` | `fd = min(fs1, fs2)` | 4 |
 | `fmax` | `fd, fs1, fs2` | `fd = max(fs1, fs2)` | 4 |
@@ -1249,6 +1299,16 @@ Tutte operano sui primi `VL` elementi.
 | `vredmax` | `fd, vs` | riduzione: `fd = max(vs[0..VL-1])` | 6 + P + ⌈log₂VL⌉ |
 | `vredmin` | `fd, vs` | riduzione: `fd = min(vs[0..VL-1])` | 6 + P + ⌈log₂VL⌉ |
 | `vsplat` | `vd, fs` | broadcast: `vd[i] = fs` per ogni corsia | 6 + P |
+| `vcvt` | `vd, vs` | conversione: i bit di `vs[i]` letti come `int32`, `vd[i] = (float)` di quel valore | 6 + P |
+
+> **`vcvt` è l'unica conversione intero → float dell'ISA** (28/09/2026), e
+> nasce con l'ADC a 12 bit: i campioni sono interi, i calcoli sono in float.
+> Funziona perché un registro vettoriale porta **bit**, non un tipo: `vload`
+> copia la parola così com'è, e finché nessuna operazione aritmetica la tocca
+> resta un intero. Usarla come float **prima** di `vcvt` dà spazzatura: un
+> intero negativo letto come float è un NaN. È il modello di RVV
+> (`vfcvt.f.x.v`). Non esiste la versione scalare né quella inversa: non
+> servono ancora a nessuno.
 
 > **Attenzione all'ordine degli operandi float:** in `vmacc` il registro float è
 > il **secondo** operando (`vmacc vd, fs, vs1`), in `vscale` è il **terzo**
@@ -1257,7 +1317,9 @@ Tutte operano sui primi `VL` elementi.
 > `vredsum` è l'unica operazione che **collassa** un vettore in uno scalare
 > (float): serve per prodotti scalari e norme. Il termine `⌈log₂VL⌉` nel costo
 > modella l'albero di riduzione, il motivo per cui le riduzioni sono meno
-> efficienti delle operazioni elemento-per-elemento.
+> efficienti delle operazioni elemento-per-elemento. La somma si accumula
+> internamente in doppia precisione e si arrotonda a 32 bit **una volta**, alla
+> fine: il risultato non dipende dall'ordine degli elementi.
 
 > `vloadx`/`vstorex` (**gather/scatter**) usano un vettore di indici arbitrari
 > (uno per corsia, espressi in *elementi*) invece di uno stride costante:
