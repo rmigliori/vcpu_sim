@@ -125,7 +125,7 @@
 .equ MARK_CH7     0x10011C
 
 ; I porti dati, uno per canale: MARKD_CHn arma il canale n.
-; Stanno a MARK_BASE + 32*4, cioe' subito sopra i canali (include/vcpu.h).
+; Stanno a MARK_BASE + 32*4, cioe' subito sopra i canali (include/devices.h).
 .equ MARKD_CH2    0x100188
 .equ MARKD_CH3    0x10018C
 .equ MARKD_CH4    0x100190

@@ -31,6 +31,8 @@ endif()
 # assembler.c, che un header proprio non ce l'ha (§5 dell'handoff).
 add_executable(vcpu_sim
   src/vcpu.c
+  src/devices.c
+  src/machine.c
   src/toolchain.c
   src/assembler.c
   src/main.c)

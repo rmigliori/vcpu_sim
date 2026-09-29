@@ -563,12 +563,12 @@ fail:
   return -1;
 }
 
-int64_t vx_load(const VImage* img, VCpu* cpu, Instr* prog, int* prog_len)
+int64_t vx_load(const VImage* img, uint8_t* mem, Instr* prog, int* prog_len)
 {
   memcpy(prog, img->text, img->text_count * sizeof(Instr));
   *prog_len = img->text_count;
   if (img->data_count > 0)
-    memcpy(cpu->mem, img->data, (size_t) img->data_count);
+    memcpy(mem, img->data, (size_t) img->data_count);
 
   // Publish global symbols so --trace/--debug can use them.
   vcpu_labels_clear();

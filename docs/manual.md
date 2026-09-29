@@ -34,8 +34,9 @@ Il progetto si trova in `vcpu_sim/` ed è composto da:
 
 | File | Ruolo |
 |---|---|
-| `include/vcpu.h` | ISA, costanti di configurazione, stato macchina, API |
-| `src/vcpu.c` | Interprete fetch-decode-execute + modello di timing |
+| `include/vcpu.h`, `src/vcpu.c` | **il core**: ISA, registri, modello di timing, esecuzione di un'istruzione, presa di una trap, timer privato |
+| `include/devices.h`, `src/devices.c` | **le periferiche**: la mappa MMIO (il «datasheet»), tastiera, comparatori, ADC, marcatore |
+| `include/machine.h`, `src/machine.c` | **la scheda**: il clock master coi suoi divisori, la memoria, il bus, il ciclo principale, l'arbitraggio delle interruzioni, il debugger |
 | `src/assembler.c` | Assembler a due passi con symbol table |
 | `include/toolchain.h` | Modello oggetti/eseguibili/archivi (`.vo`/`.vx`/`.va`) |
 | `src/toolchain.c` | Formati, linker e loader della compilazione separata (§2.5) |
@@ -48,6 +49,24 @@ Flusso di esecuzione:
 ```
  sorgente .vasm ──▶ assembler (2 passi) ──▶ array di Instr ──▶ interprete ──▶ stampa + statistiche
                      symbol table                              registri + memoria + VL
+```
+
+**Core, periferiche e scheda sono separati dal 29/09/2026.** Prima la
+struttura della CPU conteneva tutto: memoria, device e tempo, che era il
+conto dei cicli della CPU. Adesso la scheda (`VMachine`) possiede un clock
+master (100 MHz) con un divisore intero per dominio — CPU, periferiche,
+millisecondi — la memoria, i device e le CPU (una, per ora). Ogni accesso di
+una CPU alla memoria o ai device passa dal bus della scheda, e i device
+ricevono il tempo come argomento, in tick master. Con i divisori a 1 la
+macchina è identica al ciclo a quella di prima: è la prima tappa verso più
+CPU (AMP).
+
+```
+ VMachine ── clock master ─┬─ /1 CPU ─────────── VCpu 0: registri, pc, psw, timer privato
+                           ├─ /1 periferiche ─── ADC_PERIOD
+                           └─ /100000 ms ─────── CLOCK_MS, comparatori
+          ── bus ─┬─ RAM (1 MiB)
+                  └─ MMIO: tastiera, comparatori, ADC (DMA in RAM), marcatore
 ```
 
 ---
@@ -563,13 +582,13 @@ scrive in RAM, **con la DMA e senza la CPU**, un blocco di N campioni
 |---|---|---|---|
 | `ADC_ADDR` | `0x100040` | lettura/scrittura | dove scrivere il blocco |
 | `ADC_COUNT` | `0x100044` | lettura/scrittura | N, i campioni complessi del blocco |
-| `ADC_PERIOD` | `0x100048` | lettura/scrittura | i cicli fra un campione e il successivo |
+| `ADC_PERIOD` | `0x100048` | lettura/scrittura | i tick del clock periferiche fra un campione e il successivo (oggi divisore 1: cicli) |
 | `ADC_CTRL` | `0x10004C` | scrittura | bit 0 `ADC_START` = avvia l'acquisizione |
 | `ADC_STATUS` | `0x100050` | lettura | bit 0 `ADC_BUSY`; bit 1 `ADC_OVERRUN`; bit 2..31 i blocchi finiti dall'accensione — **e la lettura abbassa l'overrun** |
 
 **L'acquisizione la avvia il programma**, non gira da sola: una scrittura ad
 `ADC_CTRL` dice *«acquisisci `ADC_COUNT` campioni a `ADC_ADDR`, uno ogni
-`ADC_PERIOD` cicli»*, ed è lo sweep comandato con la finestra di ricezione
+`ADC_PERIOD` tick»*, ed è lo sweep comandato con la finestra di ricezione
 aperta. Un ADC libero col suo clock scivolerebbe rispetto alla time line. Il
 ping-pong lo fa il programma: avvia il blocco B mentre elabora A.
 
@@ -1487,6 +1506,14 @@ registrazione delle marche (`# frequenza`). Gli strumenti la leggono da lì, e
 nessuno ne tiene una copia — `tools/trace.py` e `tools/marks.py read`
 accettano `--mhz` per rileggere la **stessa** registrazione a un'altra
 frequenza, senza rieseguire niente.
+
+Dal 29/09/2026 `CPU_HZ` è la frequenza del **clock master** della scheda
+(`include/machine.h`), e ogni dominio ne prende una con un divisore intero: la
+CPU, le periferiche (`ADC_PERIOD` si conta in tick periferiche) e i
+millisecondi di `CLOCK_MS`. Oggi i divisori di CPU e periferiche sono 1,
+quindi un ciclo di CPU è ancora un tick master e tutto quanto sopra vale alla
+lettera. Il tempo simulato **si calcola, non scorre**: il clock non genera
+eventi, e nessun processo lo scandisce.
 
 **100 MHz** perché è il **GR712RC**, il LEON3-FT doppio che l'ESA ha volato di
 più, e questa è una macchina di quella famiglia: `VEC_LANES 1` con startup 6 —

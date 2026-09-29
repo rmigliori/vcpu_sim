@@ -101,8 +101,8 @@ void vimage_free(VImage* img);
 int  vx_write(const char* path, const VImage* img, char* err, size_t errsz);
 int  vx_read(const char* path, VImage* img, char* err, size_t errsz);
 
-// Load a linked image into the CPU: fills prog[], copies data into memory,
-// sets *prog_len, returns the entry instruction index.
-int64_t vx_load(const VImage* img, VCpu* cpu, Instr* prog, int* prog_len);
+// Load a linked image: fills prog[], copies data into 'mem' (la memoria della
+// scheda), sets *prog_len, returns the entry instruction index.
+int64_t vx_load(const VImage* img, uint8_t* mem, Instr* prog, int* prog_len);
 
 #endif // TOOLCHAIN_H

@@ -13,7 +13,7 @@ all: $(BIN)
 $(BIN): $(OBJ)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
-$(BUILD)/%.o: src/%.c include/vcpu.h | $(BUILD)
+$(BUILD)/%.o: src/%.c $(wildcard include/*.h) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD):

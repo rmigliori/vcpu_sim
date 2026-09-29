@@ -35,12 +35,12 @@ import argparse, collections, os, re, subprocess, sys
 
 RADICE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-MARK_BASE   = 0x100100          # deve coincidere con include/vcpu.h
+MARK_BASE   = 0x100100          # deve coincidere con include/devices.h
 MARK_CHANNELS = 32
 MARKD_BASE  = MARK_BASE + MARK_CHANNELS * 4
 MARKN_BASE  = MARKD_BASE + MARK_CHANNELS * 4
 RISERVATI    = 3                 # esecuzione, tasto, timer: li scrive la macchina
-MARK_EXEC_CH = 0                 # il canale dell'esecuzione, come in vcpu.h
+MARK_EXEC_CH = 0                 # il canale dell'esecuzione, come in devices.h
 
 
 class Categoria:
@@ -85,7 +85,7 @@ class Nomi:
 
     Il canale 0 porta indirizzi di TCB, e un indirizzo non ha un nome finche'
     qualcuno non glielo da'. Il programma lo REGISTRA a runtime scrivendo un id
-    sul porto dei nomi (vedi MARKN_BASE in include/vcpu.h); l'id -> nome
+    sul porto dei nomi (vedi MARKN_BASE in include/devices.h); l'id -> nome
     visualizzato sta qui, perche' questo file e' l'unico posto in cui vivono i
     nomi da mostrare -- se stesse nel programma sarebbe un secondo posto.
     """

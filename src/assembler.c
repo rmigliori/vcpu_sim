@@ -1792,7 +1792,7 @@ static int inc_push(IncState* inc, const char* raw, int lineno, char* err, size_
   return 1;
 }
 
-int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
+int assemble(const char* path, uint8_t* mem, Instr* prog, char* err, size_t errsz)
 {
   g_symbol_count = 0;
   g_code_count   = 0;
@@ -1874,7 +1874,7 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
             snprintf(err, errsz, "line %d: data overflow", lineno);
             fclose(fp); return -1;
           }
-          memcpy(&cpu->mem[data_ptr], &val, 4);
+          memcpy(&mem[data_ptr], &val, 4);
           data_ptr += 4;
         }
       }
@@ -1888,7 +1888,7 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
             snprintf(err, errsz, "line %d: data overflow", lineno);
             fclose(fp); return -1;
           }
-          memcpy(&cpu->mem[data_ptr], &val, 4);
+          memcpy(&mem[data_ptr], &val, 4);
           data_ptr += 4;
         }
       }
@@ -1914,7 +1914,7 @@ int assemble(const char* path, VCpu* cpu, Instr* prog, char* err, size_t errsz)
         if ((uint64_t) data_ptr + sz > MEM_SIZE) { snprintf(err, errsz, "line %d: data overflow", lineno); fclose(fp); return -1; }
         if (supertask_define(toks[k + 1], data_ptr, err, errsz) != 0) { fclose(fp); return -1; }
         int32_t one = 1;
-        memcpy(&cpu->mem[data_ptr + off], &one, 4);
+        memcpy(&mem[data_ptr + off], &one, 4);
         data_ptr += sz;
       }
       else if (strcmp(first, ".global") == 0 || strcmp(first, ".globl") == 0 ||
@@ -2027,7 +2027,7 @@ int vcpu_label_define(const char* name, int64_t value, int is_code)
 // ---------------------------------------------------------------------------
 //  Object assembly: like assemble() but produces a relocatable VObject.
 //  Symbolic operands are left as placeholders and recorded as relocations;
-//  data is emitted into the object's own image (not into cpu->mem).
+//  data is emitted into the object's own image (not into the machine's memory).
 // ---------------------------------------------------------------------------
 static int is_branch_op(OpCode op)
 {

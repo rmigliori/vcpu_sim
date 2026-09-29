@@ -39,7 +39,7 @@
 ; Visti rossi, sul simulatore mutato: con I e Q scambiati nella DMA `sgn` si
 ; rovescia; senza la saturazione `mag` vale 9.
 
-.equ ADC_ADDR    0x100040        ; li dichiara vcpu.h; qui sono ricopiati perche'
+.equ ADC_ADDR    0x100040        ; li dichiara devices.h; qui sono ricopiati perche'
 .equ ADC_COUNT   0x100044        ; questo test gira a file singolo, senza
 .equ ADC_PERIOD  0x100048        ; interfacce, di proposito
 .equ ADC_CTRL    0x10004C

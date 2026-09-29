@@ -1,6 +1,9 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **29 settembre 2026** (§3.77 **la FFT**: `fft64` in
+> Ultimo aggiornamento: **29 settembre 2026** (§3.78 **verso più CPU**: AMP,
+> un processo solo, un clock master con divisori interi; la tappa 1 FATTA --
+> core, periferiche e scheda separati, identica al ciclo su 48 programmi;
+> §3.77 **la FFT**: `fft64` in
 > `dsp/`, radix 2 in decimation in time, il bit reversal fuso nel gather
 > dall'ADC e ogni stadio che passa dalla memoria perché l'ISA non permuta le
 > corsie. `5 64 0` e `59 64 0`, visti rossi due volte, 7.663 cicli. E
@@ -108,22 +111,28 @@
 
 > ### ▶ RIPRENDI DA QUI (29/09/2026 o dopo)
 >
-> **DOVE SIAMO RIMASTI.** La FFT è **fatta e vista rossa** (§3.77). `ctest`
-> **55/55**, `--check` verde, le **19 impronte di `HEAD` invariate** più la nuova
-> di `test_fft` — confrontate contro un build pulito di `HEAD`, perché
-> `tools/fingerprint.sh` per default legge `build/`, che è stantia (§3.77).
-> `git status` dice se il lavoro del 29/09 è committato; il push resta
+> **DOVE SIAMO RIMASTI.** Il 29/09 sono successe due cose. La FFT è **fatta e
+> vista rossa** (§3.77, commit `0c3db23`). Poi la strada è cambiata: **la
+> macchina diventa multi-CPU, asimmetrica (AMP)**, e il test grande si farà
+> sulla nuova architettura (§3.78). **La tappa 1 è fatta**: core, periferiche
+> e scheda separati, con il tempo che passa dalla CPU a un clock master con
+> divisori interi, e la macchina **identica al ciclo** a quella di prima
+> (`tools/equiv.py`: tracce e marche dei 48 programmi uguali a `HEAD`, visto
+> rosso due volte). `ctest` **55/55**, `--check` verde, le 20 impronte
+> identiche a `HEAD`. `git status` dice se è committato; il push resta
 > dell'utente, e da una sessione di Claude **non riesce per costruzione**
-> (`origin` è via SSH con passphrase, §3.77). **Si riprende dai nodi del
-> messaggio**, e la formula è in §6.
+> (§3.77). **Si riprende dalla tappa 2, che si DISCUTE prima**: la formula è
+> in §6.
 >
 > **IL TEST DECISO IL 28/09 (§3.76).** Un super task con macchina a stati a
 > 1 ms, ADC **a blocchi**, FFT in float, e il risultato spedito con un
 > messaggio a un task asincrono. **Quattro pezzi FATTI**: i float a 32 bit
 > (`test_fctx`), `vcvt`, **l'ADC a 12 bit I e Q avviato dalla time line**
 > (`test_adc`) e **la FFT** (`fft64` in `dsp/`, `test_fft`: 7.663 cicli, il 7,7%
-> di un millisecondo). Tutti visti rossi. Restano, in quest'ordine: **i nodi del
-> messaggio** (ping-pong?), poi i task asincroni, poi il test intero.
+> di un millisecondo). Tutti visti rossi. **Il resto si fa dopo le tappe 2 e 3
+> della macchina multi-CPU** (§3.78): i nodi del messaggio, i task asincroni e
+> il test intero sono la tappa 4, col foreground su una CPU e il background
+> sull'altra.
 >
 > **Il 28/09**, per chi ne cerca le tracce: i float a 32 bit, `vcvt` e l'ADC,
 > committati in `6818a80` (§3.76).
@@ -153,7 +162,7 @@
 >   fattuale
 > ```
 >
-> **ORDINE DI LETTURA: §3.77, §3.76, poi §3.75, poi §3.74, poi §3.73, poi §3.72.**
+> **ORDINE DI LETTURA: §3.78, §3.77, §3.76, poi §3.75, poi §3.74, poi §3.73, poi §3.72.**
 > Ognuna corregge la precedente in qualche punto, e leggerle al contrario fa
 > ripartire da posizioni ritirate. §3.76 (28/09) non ha codice: collega ogni
 > pezzo del disegno al suo predecessore in letteratura, e rimanda il gestore
@@ -3709,6 +3718,153 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.78 VERSO PIÙ CPU: core, periferiche e scheda separati, e il tempo passa alla scheda (29/09/2026)
+
+**Una discussione che ha cambiato la strada, e la prima tappa fatta.** Prima
+del test grande (super task + task asincroni) l'utente ha chiesto se l'hardware
+simulato non dovesse stare separato dal resto, e la risposta è diventata una
+direzione nuova: **una macchina a più CPU**. Il test grande si farà **sulla
+nuova architettura**, non prima.
+
+#### Le decisioni, e di chi sono
+
+```
+MULTI-CPU, ASIMMETRICA (AMP)      dell'utente. Del processore di ND Satcom non
+                                  si sa niente: AMP rischia meno e si allarga a
+                                  SMP, non il contrario. SMP romperebbe il
+                                  fondamento del kernel (sezione critica =
+                                  IE a 0) e vorrebbe una RMW atomica che l'ISA
+                                  non ha. AMP costringe anche a fare il LOCATOR,
+                                  uno dei fronti per ND Satcom (due immagini,
+                                  regioni, una memoria comune)
+PRIMA LA SEPARAZIONE, POI         dell'utente: il test nato su una CPU sola
+  IL TEST GRANDE                  andrebbe riscritto
+UN PROCESSO SOLO, non uno per     mia, accettata. Il problema non e' separare i
+  CPU ne' uno per le periferiche  processi, e' il TEMPO: con piu' processi
+                                  l'ordine delle scritture lo decide lo
+                                  scheduler di Linux e il determinismo sparisce.
+                                  Lockstep costa migliaia di volte, i quanti
+                                  (SystemC) perdono l'esattezza al ciclo. Un
+                                  processo che fa avanzare la CPU piu' indietro
+                                  e' esatto e deterministico. QEMU per anni ha
+                                  fatto cosi' (a memoria)
+UN CLOCK MASTER E DIVISORI        dell'utente ("un circuito di clock comune dal
+  INTERI                          quale prescalare"): l'albero di clock di un
+                                  chip vero. Solo interi, domini SINCRONI, niente
+                                  clock domain crossing (dichiarato). La seconda
+                                  base dei tempi di §3.73 ci sta dentro: due
+                                  uscite dello stesso master
+IL CLOCK NON E' UN PROCESSO       proposta dell'utente, e l'ho sconsigliata: il
+  LINUX AD ALTA PRIORITA'         tempo simulato SI CALCOLA, non scorre. Un tick
+                                  sono 10 ns, il jitter di Linux e' di us, cioe'
+                                  migliaia di cicli, e il determinismo sparisce.
+                                  Legare il tempo simulato a quello vero serve
+                                  solo in hardware-in-the-loop, e anche li' e'
+                                  un "pacer" sopra il clock, non un generatore
+ADC_PERIOD IN TICK PERIFERICHE    dell'utente: l'ADC non sa quanto va la CPU
+LA REGOLA DELLO STESSO ISTANTE    non scelta a tavolino: la decide l'invariante.
+                                  E' "l'evento si serve PRIMA dell'istruzione",
+                                  ed e' l'unica che lascia tutto identico --
+                                  mutata in ">", cambiano i 4 programmi con la
+                                  tastiera
+```
+
+La mia prima risposta sui processi separati aveva confuso: avevo presentato la
+co-simulazione a processi prima di arrivare a raccomandare il processo unico, e
+l'utente ha capito che le periferiche sarebbero state processi Linux. **Nessun
+device è un processo**: sono moduli C nello stesso programma.
+
+#### Le quattro tappe
+
+```
+TAPPA 1  ristrutturazione pura     FATTA (qui sotto)
+TAPPA 2  due CPU, AMP              memoria condivisa, doorbell, chi possiede
+                                   quali device, ordine per tempo
+TAPPA 3  il locator                regioni, un .vx per CPU, due programmi
+                                   d'accordo su una variabile condivisa
+TAPPA 4  il test grande            CPU 0: super task, ADC, FFT
+                                   CPU 1: task asincroni
+                                   in mezzo: i nodi del messaggio (ping-pong)
+```
+
+I nodi del messaggio, che erano il prossimo passo della formula del mattino,
+**finiscono nella tappa 4**: in AMP il confine foreground → background può
+diventare fisico, fra le due CPU, e il ping-pong la mailbox fra loro.
+
+#### La tappa 1: la macchina cambia forma, non comportamento
+
+```
+include/vcpu.h    + src/vcpu.c      IL CORE: ISA, registri, timing, vcpu_step
+                                    (UNA istruzione), vcpu_trap, timer PRIVATO
+include/devices.h + src/devices.c   LE PERIFERICHE: la mappa MMIO -- 478 righe
+                                    spostate ALLA LETTERA da vcpu.h con uno
+                                    script -- e tastiera, comparatori, ADC,
+                                    marcatore, col contratto load/store/
+                                    advance(t)/irq
+include/machine.h + src/machine.c   LA SCHEDA: VClock (master CPU_HZ, div_cpu 1,
+                                    div_periph 1, div_ms CPU_HZ/1000), la
+                                    memoria, il bus, il ciclo principale,
+                                    l'arbitraggio (comparatori, timer, tastiera:
+                                    l'ordine di prima), il debugger
+```
+
+- `VCpu` adesso è **solo la CPU**, più un puntatore alla scheda da cui passa
+  ogni accesso. Il nome resta alla CPU, che è ciò che ha sempre promesso.
+- **Il timer resta nel core**: si programma con `settimer`, non via MMIO. È il
+  timer privato di ogni core, come il generic timer dei core ARM.
+- **Il timbro delle marche** (`mark_current`, `trap_depth`) è della CPU: è il
+  `current` del **suo** programma. Il marcatore lo riceve come argomento.
+- **I device ricevono il tempo come argomento**, in tick master: nessuno ha un
+  orologio suo, e nessuno sa quante CPU ci sono.
+- **L'assembler e il loader ricevono un puntatore alla memoria**, non la CPU.
+- **`prossimo_evento()` non è stato scritto, e l'avevo promesso.** Le nostre
+  CPU non dormono mai, quindi si fa sempre avanzare la CPU più indietro e i
+  device si portano al suo istante. Serve solo il giorno in cui una CPU potrà
+  fermarsi ad aspettare un interrupt.
+- `NUM_CPU = 1`. Il ciclo principale gira sulla CPU 0, e il come si sceglie
+  fra più CPU **non è scritto**: è la tappa 2, ed è ancora aperta.
+
+#### La prova: `tools/equiv.py`, perché impronte e `ctest` qui non bastano
+
+Le impronte guardano i `.vx`, cioè la toolchain. `ctest` guarda i numeri
+dichiarati. Una ristrutturazione del simulatore che spostasse un evento di un
+ciclo li lascerebbe verdi quasi tutti. Quindi: **ogni programma di `ctest`**
+(48, con i loro `--kbd` e `--adc`) rilanciato con `--trace` e `--marks` sul
+simulatore di `HEAD` e su quello nuovo, e le due cartelle confrontate. Prima
+di tutto, due corse dello stesso simulatore: identiche byte per byte.
+
+| verifica | esito |
+|---|---|
+| tracce e marche dei 48 programmi, contro `HEAD` | **identiche** |
+| `ctest` | 55/55 |
+| impronte, contro un build pulito di `HEAD` | **identiche**, 20 su 20 |
+| `--check` | verde |
+| build con `-Wall -Wextra`, CMake e `Makefile` | nessun warning |
+
+L'uguaglianza è venuta **al primo colpo**, e un confronto che non ha mai visto
+una differenza non dimostra niente. **Visto rosso due volte:**
+
+| mutazione | cosa cambia |
+|---|---|
+| `div_periph = 2` | **solo** i 5 programmi con l'ADC (`adc_*`, `fft_*`): la prova che `ADC_PERIOD` è in tick periferiche e che nient'altro ne dipende |
+| `>` invece di `>=` nella tastiera | **solo** i 4 con la tastiera (`due_irq`, `events`, `kbd`, `mondo`): la regola dello stesso istante |
+
+`tools/equiv.py` è nel repository perché la tappa 2 ne avrà bisogno: i
+programmi a una CPU dovranno restare identici anche con due CPU nella scheda.
+
+#### Riferimenti corretti
+
+Il testo spostato citava `load_i32` e `store_i32`, adesso il bus di
+`machine.c`. Aggiornati anche i rimandi a `vcpu.h` che oggi valgono per
+`devices.h` (in `hal/adc.vinc`, `hal/marker.vinc`, `tests/test_adc.vasm`,
+`tools/marks.py`), l'unità di `ADC_PERIOD` (tick periferiche, nel manuale, in
+`devices.h` e in `hal/adc.vinc`) e il commento di `CPU_HZ`, che adesso è la
+frequenza del clock master. Nel manuale: §1 con la tabella dei file e lo schema
+della scheda, §3.2, §6.1. I rimandi a `vcpu.h` che valgono ancora (VDIRTY, i
+costi, `VLMAX`, `CPU_HZ`) sono rimasti.
 
 ---
 
@@ -10991,36 +11147,57 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 > Conteneva anche «il PUSH: se ho già rinnovato il token, riprova», e il
 > problema era già risolto nella stessa giornata passando `origin` a SSH.
 
-**PER RIPRENDERE dopo il 29/09 — il prossimo passo sono i NODI DEL MESSAGGIO:**
+> **E tolta la sera del 29/09, senza mai essere usata:** la formula «il
+> prossimo passo sono i NODI DEL MESSAGGIO», scritta la mattina. Non era
+> sbagliata: è stata superata da una decisione dell'utente presa nella stessa
+> sessione, la macchina multi-CPU (§3.78). I nodi del messaggio non spariscono,
+> finiscono nella tappa 4, dove il confine foreground → background può
+> diventare quello fra due CPU. Il suo criterio di fine sulle impronte («contro
+> un build pulito di HEAD, con `out`») è passato alla formula che segue.
+
+**PER RIPRENDERE dopo il 29/09 — la TAPPA 2 della macchina multi-CPU, che si DISCUTE prima:**
 ```
-Leggi docs/stato-lavori.md: il riquadro RIPRENDI DA QUI, poi §3.77 (la
-FFT, e perche' i suoi buffer d'uscita sono del chiamante), poi in §3.76
-l'elenco "Cosa resta prima di scrivere il test", poi in §3.74 dove dice
-che il pool sparisce dal foreground.
+Leggi docs/stato-lavori.md: il riquadro RIPRENDI DA QUI, poi §3.78 PER
+INTERO -- le decisioni (AMP, un processo solo, il clock master), le
+quattro tappe, e com'e' fatta la tappa 1. Poi include/machine.h e
+include/devices.h: il contratto dei device e la scheda.
 
-Il prossimo passo e' portare il risultato della FFT dal super task a un
-task asincrono. NON e' deciso come: la forma classica e' un PING-PONG di
-due nodi, e la tabella deve DIMOSTRARE che due bastano. Cosa succede se
-il consumatore resta indietro e' una decisione di POLITICA, dell'utente.
-E prima di proporre quali task asincroni, guarda se test_mondo e' il
-punto di partenza. Si discute PRIMA di scrivere, e le scelte di forma
-che emergono scrivendo si dicono prima.
+La tappa 2 sono DUE CPU nella scheda. Niente e' deciso, e l'ordine della
+discussione conta perche' ogni punto si appoggia al precedente:
+  1. la MAPPA DI MEMORIA: RAM privata per CPU piu' una regione comune?
+     la privata allo stesso indirizzo per tutte (lo stesso kernel si linka
+     uguale) o una mappa unica dove ognuno vede l'altro a un offset (lo
+     spazio multiprocessore degli SHARC, che l'utente ha usato)?
+  2. DI CHI SONO I DEVICE: comparatori per CPU o della scheda? ADC e
+     tastiera a una CPU, o su un bus comune con l'instradamento degli IRQ?
+  3. COME PARLANO: un doorbell (un IRQ verso l'altra CPU) piu' la memoria
+     comune, o una mailbox hardware?
+  4. IL TEMPO: si fa avanzare la CPU piu' indietro. La contesa del bus non
+     si modella, e va DICHIARATA come la DMA che non ruba cicli. E il
+     pareggio fra due CPU allo stesso istante: chi passa prima? Lo decide
+     una regola scritta, e deve essere deterministica
+  5. UN PROGRAMMA PER CPU: la riga di comando con due .vx, e il loader. Il
+     locator vero e' la tappa 3: qui basta che due immagini si carichino.
+Si discute PRIMA di scrivere, e le scelte di forma che emergono scrivendo
+si dicono prima. Non scrivere oltre cio' che e' deciso.
 
-Prima di toccare niente: ctest 55/55 e scheduler_facts --check verde.
+Prima di toccare niente: ctest 55/55, scheduler_facts --check verde, e la
+base di tools/equiv.py registrata con il simulatore di HEAD (il comando e'
+nell'intestazione dello script).
 
-Alla fine: il test visto ROSSO, e le impronte confrontate con un build
-PULITO DI HEAD in un worktree, passando `out` allo script (il comando e'
-in §3.77): tools/fingerprint.sh da solo legge build/, che e' stantia, e
-direbbe "invariate" su file vecchi. Le 20 di oggi (test_fft e' la
-ventesima) restano ferme, a meno che la forma decisa tocchi il kernel --
-e allora si dice PRIMA quali si muovono e perche'.
+Alla fine: OGNI programma a una CPU IDENTICO al ciclo -- tools/equiv.py
+contro HEAD, vuoto -- e le 20 impronte identiche a un build pulito di
+HEAD (tools/fingerprint.sh con l'argomento `out`: da solo legge build/).
+Il primo programma a due CPU ha un test visto ROSSO, e il determinismo si
+prova: due corse dello stesso programma a due CPU, uscite identiche.
 ```
 
 **E IN PARALLELO, senza dipendenze — la SECONDA BASE DEI TEMPI, e `srai` (15/09, deciso):**
 ```
 Leggi docs/stato-lavori.md, §3.73 PRIMA di §3.72 -- la terza corregge la
 seconda su quale sia l'unita' giusta. Poi il riquadro dei COMPARATORI in
-include/vcpu.h e hal/interface/hal/clock.vinc: il meccanismo c'e' tutto,
+include/devices.h (fino al 29/09 in vcpu.h) e hal/interface/hal/clock.vinc,
+e il clock master in include/machine.h (§3.78): il meccanismo c'e' tutto,
 manca la base su cui confronta.
 
 E' ANCORA LAVORO DI MACCHINA, e il kernel non si tocca. Non dipende da
@@ -11034,7 +11211,8 @@ Leggi §3.74 per intero prima, perche' smentisce QUATTRO posizioni di
 
 COSA MANCA, ed e' poco:
   - il free running counter in CICLI, che e' la base del foreground. Non
-    e' derivato: e' il contatore stesso, gia' in cpu->cycles;
+    e' derivato: dal 29/09 e' il clock master stesso (machine_now), e le
+    due basi sono due uscite dello stesso albero di clock (§3.78);
   - un bit per canale in CMP_CTRL che dica su QUALE base quel canale
     confronta. In hardware il prescaler e' del canale, non del chip, ed
     e' per questo che il bit sta li' e non in un registro globale;

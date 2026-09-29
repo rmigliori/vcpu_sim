@@ -1,4 +1,4 @@
-#include "vcpu.h"
+#include "machine.h"
 #include "toolchain.h"
 
 #include <stdio.h>
@@ -78,8 +78,11 @@ static int parse_asm_flag(int argc, char** argv, int* i)
   return parse_define_flag(argc, argv, i);
 }
 
-static void print_stats(const VCpu* cpu)
+// Le statistiche sono della CPU (0, finche' ce n'e' una); la frequenza e'
+// quella del clock master.
+static void print_stats(const VMachine* m)
 {
+  const VCpu* cpu = &m->cpu[0];
   printf("---- stats ----\n");
   printf("instructions executed : %llu\n", (unsigned long long) cpu->instr_count);
   printf("vector element ops     : %llu\n", (unsigned long long) cpu->vec_elem_ops);
@@ -87,7 +90,7 @@ static void print_stats(const VCpu* cpu)
   // La frequenza accanto ai cicli, e non altrove: chi legge questi numeri per
   // farne un tempo (tools/scheduler_facts.py) la trova qui, invece di tenerne
   // una copia. E' lo stesso modello dei canali riservati nella registrazione.
-  printf("clock (Hz)             : %llu\n", (unsigned long long) CPU_HZ);
+  printf("clock (Hz)             : %llu\n", (unsigned long long) m->clock.hz);
 }
 
 // --- legacy path: assemble a .vasm and run it in memory --------------------
@@ -110,10 +113,11 @@ static const char* g_adc_spec = NULL;
 //  (un test che non linka il kernel), il canale dell'esecuzione resta vuoto e
 //  il resto funziona lo stesso.
 // ---------------------------------------------------------------------------
-static void marks_prepare(VCpu* cpu, const VImage* img)
+static void marks_prepare(VMachine* m, const VImage* img)
 {
   if (!g_marche_out) return;
-  cpu->mark_on = 1;
+  VCpu* cpu = &m->cpu[0];
+  m->marker.on = 1;
   for (int i = 0; i < img->sym_count; ++i)
     if (!img->symmap[i].is_code && strcmp(img->symmap[i].name, "current") == 0)
     {
@@ -126,10 +130,11 @@ static void marks_prepare(VCpu* cpu, const VImage* img)
 
 // La stessa cosa per il percorso a file singolo, che una VImage non ce l'ha: il
 // simbolo lo chiede all'assembler, che l'ha appena visto passare.
-static void marks_prepare_legacy(VCpu* cpu)
+static void marks_prepare_legacy(VMachine* m)
 {
   if (!g_marche_out) return;
-  cpu->mark_on = 1;
+  VCpu* cpu = &m->cpu[0];
+  m->marker.on = 1;
   int64_t addr;
   if (assemble_symbol("current", &addr))
   {
@@ -140,8 +145,9 @@ static void marks_prepare_legacy(VCpu* cpu)
           MARK_EXEC);
 }
 
-static void marks_dump(const VCpu* cpu)
+static void marks_dump(const VMachine* m)
 {
+  const VMarker* mk = &m->marker;
   if (!g_marche_out) return;
   FILE* f = fopen(g_marche_out, "w");
   if (!f) { perror(g_marche_out); return; }
@@ -154,12 +160,12 @@ static void marks_dump(const VCpu* cpu)
   // "nessuno ha armato" sarebbero la stessa riga.
   // I NOMI REGISTRATI dal programma, prima delle marche: il lettore li vuole
   // avere in mano quando comincia a leggerle.
-  for (int i = 0; i < cpu->mark_names_len; ++i)
-    fprintf(f, "# nome %d %d %d\n", cpu->mark_names[i].canale,
-            cpu->mark_names[i].valore, cpu->mark_names[i].id);
-  if (cpu->mark_names_lost)
+  for (int i = 0; i < mk->names_len; ++i)
+    fprintf(f, "# nome %d %d %d\n", mk->names[i].canale,
+            mk->names[i].valore, mk->names[i].id);
+  if (mk->names_lost)
     fprintf(stderr, "marche: %d nomi PERSI (oltre il tetto di %d)\n",
-            cpu->mark_names_lost, MARK_NAMES_MAX);
+            mk->names_lost, MARK_NAMES_MAX);
   fprintf(f, "# ciclo canale valore current dato ha_dato in_trap\n");
   fprintf(f, "# riservato %d esecuzione\n", MARK_EXEC);
   fprintf(f, "# riservato %d tasto\n", MARK_KEY);
@@ -169,27 +175,27 @@ static void marks_dump(const VCpu* cpu)
   // tenesse per conto suo leggerebbe in microsecondi sbagliati una traccia
   // prodotta da un'altra macchina -- senza accorgersene, perche' i cicli
   // sarebbero comunque giusti.
-  fprintf(f, "# frequenza %llu\n", (unsigned long long) CPU_HZ);
-  for (int i = 0; i < cpu->marks_len; ++i)
+  fprintf(f, "# frequenza %llu\n", (unsigned long long) m->clock.hz);
+  for (int i = 0; i < mk->len; ++i)
   {
-    const Marca* m = &cpu->marche[i];
-    fprintf(f, "%llu %d %d %d %d %d %d\n", (unsigned long long) m->cycle,
-            m->canale, m->valore, m->current, m->dato, m->ha_dato, m->in_trap);
+    const Marca* e = &mk->marche[i];
+    fprintf(f, "%llu %d %d %d %d %d %d\n", (unsigned long long) e->cycle,
+            e->canale, e->valore, e->current, e->dato, e->ha_dato, e->in_trap);
   }
   fclose(f);
-  printf("marche: %d in %s", cpu->marks_len, g_marche_out);
-  if (cpu->marks_lost)
+  printf("marche: %d in %s", mk->len, g_marche_out);
+  if (mk->lost)
     printf("  (PERSE %llu: oltre il tetto di %d)",
-           (unsigned long long) cpu->marks_lost, MARCHE_MAX);
+           (unsigned long long) mk->lost, MARCHE_MAX);
   printf("\n");
 }
 
-// Applica la traccia dopo vcpu_init, che azzera tutto. Ritorna 0 o 1.
-static int apply_kbd_trace(VCpu* cpu)
+// Applica la traccia dopo machine_init, che azzera tutto. Ritorna 0 o 1.
+static int apply_kbd_trace(VMachine* m)
 {
   char err[256] = {0};
   if (!g_kbd_spec) return 0;
-  if (vcpu_kbd_trace(cpu, g_kbd_spec, err, sizeof err) != 0)
+  if (kbd_set_trace(&m->kbd, g_kbd_spec, err, sizeof err) != 0)
   {
     fprintf(stderr, "%s\n", err);
     return 1;
@@ -197,12 +203,12 @@ static int apply_kbd_trace(VCpu* cpu)
   return 0;
 }
 
-// Il segnale dell'ADC, applicato dopo vcpu_init come la traccia. Ritorna 0 o 1.
-static int apply_adc_signal(VCpu* cpu)
+// Il segnale dell'ADC, applicato dopo machine_init come la traccia. Ritorna 0 o 1.
+static int apply_adc_signal(VMachine* m)
 {
   char err[256] = {0};
   if (!g_adc_spec) return 0;
-  if (vcpu_adc_signal(cpu, g_adc_spec, err, sizeof err) != 0)
+  if (adc_set_signal(&m->adc, g_adc_spec, err, sizeof err) != 0)
   {
     fprintf(stderr, "%s\n", err);
     return 1;
@@ -212,14 +218,14 @@ static int apply_adc_signal(VCpu* cpu)
 
 static int cmd_legacy(const char* path, RunMode mode)
 {
-  static VCpu  cpu;
+  static VMachine m;
   static Instr prog[MAX_INSTR];
   char err[256] = {0};
 
-  vcpu_init(&cpu);
-  if (apply_kbd_trace(&cpu) != 0) return 2;
-  if (apply_adc_signal(&cpu) != 0) return 2;
-  int len = assemble(path, &cpu, prog, err, sizeof err);
+  machine_init(&m);
+  if (apply_kbd_trace(&m) != 0) return 2;
+  if (apply_adc_signal(&m) != 0) return 2;
+  int len = assemble(path, m.mem, prog, err, sizeof err);
   if (len < 0) { fprintf(stderr, "assemble error: %s\n", err); return 1; }
 
   // --marks VALE ANCHE QUI (14/09/2026, §3.68). Fino a oggi la registrazione
@@ -230,10 +236,10 @@ static int cmd_legacy(const char* path, RunMode mode)
   //
   // Dev'essere DOPO assemble(): il canale 0 vuole l'indirizzo di `current`, e
   // quel simbolo esiste solo a assemblaggio fatto.
-  marks_prepare_legacy(&cpu);
-  vcpu_run_ex(&cpu, prog, len, mode);
-  marks_dump(&cpu);
-  print_stats(&cpu);
+  marks_prepare_legacy(&m);
+  machine_run(&m, prog, len, mode, 0);
+  marks_dump(&m);
+  print_stats(&m);
   return 0;
 }
 
@@ -427,7 +433,7 @@ static int cmd_run(int argc, char** argv)
     return 2;
   }
 
-  static VCpu  cpu;
+  static VMachine m;
   static Instr prog[MAX_INSTR];
   VImage* img = calloc(1, sizeof(VImage));
   if (!img) { fprintf(stderr, "out of memory\n"); return 1; }
@@ -440,15 +446,15 @@ static int cmd_run(int argc, char** argv)
   }
   else
   {
-    vcpu_init(&cpu);
-    if (apply_kbd_trace(&cpu) != 0) { vimage_free(img); free(img); return 2; }
-    if (apply_adc_signal(&cpu) != 0) { vimage_free(img); free(img); return 2; }
-    marks_prepare(&cpu, img);
+    machine_init(&m);
+    if (apply_kbd_trace(&m) != 0) { vimage_free(img); free(img); return 2; }
+    if (apply_adc_signal(&m) != 0) { vimage_free(img); free(img); return 2; }
+    marks_prepare(&m, img);
     int len = 0;
-    int64_t entry = vx_load(img, &cpu, prog, &len);
-    vcpu_run_from(&cpu, prog, len, mode, entry);
-    marks_dump(&cpu);
-    print_stats(&cpu);
+    int64_t entry = vx_load(img, m.mem, prog, &len);
+    machine_run(&m, prog, len, mode, entry);
+    marks_dump(&m);
+    print_stats(&m);
     rc = 0;
   }
 
