@@ -36,8 +36,20 @@ altrimenti "marche: N in <percorso>" farebbe differire due cartelle diverse.
 I test trace_* (la pagina sotto gjs) e i passi asm/ld non sono programmi, e
 si saltano. Due corse dello stesso simulatore danno uscite identiche byte per
 byte: e' la prima cosa da verificare su una macchina nuova.
+
+--- IL TETTO, e perche' l'uscita non passa dalla memoria ---
+Il 29/09 sera il confronto ha fatto intervenire l'OOM killer: test_bases, nato
+insieme a CMP_CYC, sul simulatore di HEAD non riceve mai lo sparo sui cicli e
+gira in tondo su `bne`, e --trace stampa ogni giro. In 120 secondi sono GIGA,
+e capture_output li teneva tutti in RAM (5,6 GB su 6,8). Ora l'uscita va nel
+file a blocchi e si ferma a TETTO byte; la piu' grande legittima era 21 MB
+(clock.out). Anche la cartella delle uscite conta: /tmp e' tmpfs, cioe' RAM.
+Un'uscita troncata finisce con "--- troncata a TETTO byte ---", cosi' un
+programma appeso si riconosce invece di sembrare solo diverso.
 """
-import os, re, shlex, subprocess, sys
+import os, re, shlex, subprocess, sys, tempfile, threading
+
+TETTO = 64 << 20                                      # byte di stdout per programma
 
 if len(sys.argv) != 4:
   sys.exit(__doc__.split("\n\n")[1])
@@ -64,10 +76,27 @@ for num, cmd in re.findall(r"^(\d+): Test command: (.*)$", txt, re.M):
     new = [sim, "run", argv[2], "--trace", "--marks", marks] + argv[3:]
   else:
     new = [sim, "--trace", "--marks", marks] + argv[1:]
-  r = subprocess.run(new, capture_output=True, text=True, timeout=120, cwd=outdir)
-  with open(os.path.join(outdir, name + ".out"), "w") as f:
-    f.write(r.stdout)
-    f.write("--- stderr ---\n" + r.stderr)
-    f.write("--- exit %d ---\n" % r.returncode)
+  with open(os.path.join(outdir, name + ".out"), "wb") as f, \
+       tempfile.TemporaryFile() as err:
+    p = subprocess.Popen(new, stdout=subprocess.PIPE, stderr=err, cwd=outdir)
+    orologio = threading.Timer(120, p.kill)           # appeso senza stampare
+    orologio.start()
+    n, troncata = 0, False
+    for blocco in iter(lambda: p.stdout.read(1 << 16), b""):
+      if n + len(blocco) > TETTO:
+        f.write(blocco[:TETTO - n])
+        troncata = True
+        p.kill()
+        break
+      f.write(blocco)
+      n += len(blocco)
+    p.stdout.close()
+    rc = p.wait()
+    orologio.cancel()
+    if troncata:
+      f.write(b"\n--- troncata a %d byte ---\n" % TETTO)
+    err.seek(0)
+    f.write(b"--- stderr ---\n" + err.read(TETTO))
+    f.write(b"--- exit %d ---\n" % rc)
   done += 1
 print("programmi eseguiti:", done)

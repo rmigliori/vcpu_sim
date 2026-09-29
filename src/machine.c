@@ -77,6 +77,14 @@ static int32_t clock_ms(const VMachine* m, uint64_t t)
   return (int32_t) (uint32_t) (t / m->clock.div_ms);
 }
 
+// L'ALTRA BASE: i cicli, cioe' il clock master senza prescaler (§3.73). Non e'
+// derivata da niente -- e' l'albero di clock alla radice -- e per questo non ha
+// un divisore: le due basi sono due USCITE dello stesso master (§3.78).
+static int32_t clock_cycles(uint64_t t)
+{
+  return (int32_t) (uint32_t) t;
+}
+
 // L'altra CPU: con due, una sola (devices.h, la mailbox).
 static VMbox* mbox_peer(VMachine* m, const VCpu* cpu)
 {
@@ -89,6 +97,7 @@ static int32_t mmio_load(VMachine* m, VCpu* cpu, int64_t addr)
   int32_t v;
   if (kbd_load(&m->kbd, addr, &v))                         return v;
   if (addr == CLOCK_MS)                                    return clock_ms(m, t);
+  if (addr == CLOCK_CYCLES)                                return clock_cycles(t);
   if (cmp_load(&m->cmp[cpu->id], addr, &v))                return v;
   if (adc_load(&m->adc, addr, &v))                         return v;
   if (mbox_load(&m->mbox[cpu->id], mbox_peer(m, cpu), addr, &v)) return v;
@@ -512,7 +521,7 @@ void machine_run(VMachine* m, RunMode mode)
     // della tastiera -- l'azione utile chiude l'evento, non la trap.
     if (cpu->psw & PSW_IE)
     {
-      int scattato = cmp_pending(&m->cmp[cpu->id], clock_ms(m, t));
+      int scattato = cmp_pending(&m->cmp[cpu->id], clock_ms(m, t), clock_cycles(t));
       if (scattato >= 0)
       {
         if (mode == RUN_TRACE)

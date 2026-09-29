@@ -33,11 +33,19 @@
 ; e' la stessa regola con cui timeout.vinc confronta le scadenze -- li' e'
 ; scritta per un contatore di tick, qui vale per un orologio.
 ;
-; --- PERCHE' MILLISECONDI ---
-; L'unita' la decide il wrap, ed e' la ragione per cui non sono cicli: a 32 bit,
-; contando CICLI a 100 MHz il contatore gira ogni ~43 secondi -- un timeout di
-; dieci minuti non sarebbe nemmeno esprimibile. In microsecondi gira ogni ~71
-; minuti, in millisecondi ogni ~49 giorni.
+; --- PERCHE' MILLISECONDI, E PERCHE' DAL 29/09 CI SONO DUE BASI ---
+; L'unita' la decide il wrap: a 32 bit, contando CICLI a 100 MHz il contatore
+; gira ogni ~43 secondi -- un timeout di dieci minuti non sarebbe nemmeno
+; esprimibile. In microsecondi gira ogni ~71 minuti, in millisecondi ogni ~49
+; giorni.
+;
+; Ma questo dice perche' un timeout LUNGO non sta in cicli, non che i cicli non
+; servano: il foreground misura istanti e SCARTI dentro un frame, e in
+; millisecondi lo scarto fra la time line disegnata e quella reale sarebbe 0
+; sempre, cioe' invisibile. Quindi le basi sono DUE, le due estreme -- cicli e
+; millisecondi -- e i microsecondi, che erano il compromesso, non servono piu':
+; un frame dura ms, un timeout di guardia dura minuti, e nessun evento di questo
+; sistema ha i us come scala. La seconda base e' CLOCK_CYCLES, qui sotto.
 ;
 ; Si paga in RISOLUZIONE, e va saputo prima di usarlo: un millisecondo sono
 ; 100.000 cicli, cioe' 25 tick della suite di test, che gira con un tick
@@ -51,6 +59,24 @@
 ; File FOGLIA: non include niente.
 
 .equ CLOCK_MS    0x10000C        ; sola lettura: i millisecondi dall'accensione
+
+; --------------------------------------------------------------------------
+;  L'ALTRA BASE: I CICLI (29/09/2026)
+;
+;      li  r1, CLOCK_CYCLES
+;      lw  r2, 0(r1)              ; r2 = i cicli del clock master
+;
+;  Stesse regole di CLOCK_MS -- free running, sola lettura, le letture si
+;  SOTTRAGGONO -- e un wrap molto piu' corto: ~43 secondi a 100 MHz. E' la base
+;  del FOREGROUND, dove si misurano istanti dentro un frame e scarti che possono
+;  essere negativi (uno scarto in ritardo lo e' per costruzione: da qui `srai`).
+;
+;  E' il clock della SCHEDA, non i cicli della CPU che legge: con un `div_cpu`
+;  maggiore di 1 avanzerebbe piu' in fretta dei cicli di quella CPU. Oggi
+;  `div_cpu` e' 1 e le due cose coincidono -- ed e' il tempo su cui due CPU
+;  possono mettersi d'accordo, che i loro cicli non sono.
+; --------------------------------------------------------------------------
+.equ CLOCK_CYCLES 0x100030       ; sola lettura: i cicli dall'accensione
 
 ; --------------------------------------------------------------------------
 ;  I COMPARATORI — le scadenze sull'orologio.
@@ -94,12 +120,36 @@
 ;  --- LA CAUSA ---
 ;  Una per canale: CAUSE_CMP0 e CAUSE_CMP1, lette con `mfcause` come le altre.
 ; --------------------------------------------------------------------------
-.equ CMP_CTRL    0x100010        ; lettura/scrittura: bit n = canale n armato
-.equ CMP_ARM0     1              ; bit 0 di CMP_CTRL
-.equ CMP_ARM1     2              ; bit 1 di CMP_CTRL
+.equ CMP_CTRL    0x100010        ; lettura/scrittura: armamento e base
+.equ CMP_ARM0     1              ; bit 0 di CMP_CTRL: canale 0 armato
+.equ CMP_ARM1     2              ; bit 1 di CMP_CTRL: canale 1 armato
 
-.equ CMP0        0x100020        ; la scadenza del canale 0, in ms
-.equ CMP1        0x100024        ; la scadenza del canale 1, in ms
+; --- LA BASE E' DEL CANALE (29/09/2026) ---
+; Il canale confronta sui MILLISECONDI se il suo bit di base e' 0, sui CICLI se
+; e' 1. Il bit sta qui accanto all'armamento e non in un registro globale perche'
+; in hardware il prescaler e' del canale -- ed e' anche cio' che serve, visto che
+; i due regimi convivono: la deadline di uno slot si misura in cicli, un timeout
+; del background in millisecondi.
+;
+;     li r2, CMP_ARM0             ; canale 0 armato, sui millisecondi
+;     li r2, CMP_ARM0_CYC         ; canale 0 armato, sui CICLI
+;
+; Una lettura di CMP_CTRL restituisce armamento E base, cosi' un
+; read-modify-write che arma un canale non azzera la base di un altro.
+;
+; Le combinazioni armato+base hanno un nome loro perche' l'assembler NON ha
+; espressioni fra costanti: `CMP_ARM0 + CMP_CYC0` non si assembla, e nemmeno
+; `CMP_ARM0+0x10000` (la forma `simbolo+N` vale per le etichette, non per le
+; .equ). Comporre una maschera a runtime costerebbe due `li` e un `or`, perche'
+; le logiche IMMEDIATE non ci sono -- e' l'annotazione di §3.74 dell'handoff,
+; della stessa famiglia di `srai`.
+.equ CMP_CYC0    0x10000         ; bit 16: il canale 0 confronta sui cicli
+.equ CMP_CYC1    0x20000         ; bit 17: ...il canale 1
+.equ CMP_ARM0_CYC 0x10001        ; CMP_ARM0 | CMP_CYC0
+.equ CMP_ARM1_CYC 0x20002        ; CMP_ARM1 | CMP_CYC1
+
+.equ CMP0        0x100020        ; la scadenza del canale 0, nella SUA base
+.equ CMP1        0x100024        ; la scadenza del canale 1, nella SUA base
 
 .equ CAUSE_CMP0   2              ; `mfcause` dopo una trap del canale 0
 .equ CAUSE_CMP1   3              ; ...e del canale 1

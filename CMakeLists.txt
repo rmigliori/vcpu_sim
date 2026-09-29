@@ -412,6 +412,33 @@ vasm_check(clock      MODE DUMPS EXPECT "0 3 3 6"
 vasm_check(cmp        MODE DUMPS EXPECT "121 3 6 0"
            SOURCE ${CMAKE_SOURCE_DIR}/tests/test_cmp.vasm)
 
+# test_bases — LE DUE BASI DEI TEMPI (29/09/2026, §3.73). Il canale 0 confronta
+# sui CICLI, il canale 1 sui MILLISECONDI, armati insieme.
+#   2   CAUSE_CMP0: spara prima il canale sui cicli (scadenza a +500 cicli)
+#   8   lo scarto fra scadenza e ISR, IN CICLI: la consegna si VEDE
+#   3   CAUSE_CMP1: poi quello sui millisecondi (scadenza a +2 ms)
+#   0   lo STESSO scarto in millisecondi: zero, perche' 8 cicli su 100.000 non
+#       si vedono. E' l'argomento per cui le basi sono due, non un dettaglio
+#   2   i cicli allo sparo / 100.000: il canale in ms ha aspettato 200.000 cicli
+#       mentre l'altro ne aspettava 500
+# Il terzo e il quarto numero sono la coppia che conta. Il timeout serve: se il
+# bit di base fosse ignorato, il canale 0 aspetterebbe 500 ms e il programma
+# resterebbe appeso invece di fallire.
+vasm_check(bases      MODE DUMPS EXPECT "2 8 3 0 2"
+           IFLAGS -I$<TARGET_PROPERTY:vinc_hal,INTERFACE_INCLUDE_DIRECTORIES>
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_bases.vasm)
+
+# test_srai — LO SHIFT ARITMETICO (29/09/2026, §3.73). `srli` su un negativo non
+# e' una divisione, `div` costa 20 cicli e questo 1.
+#   -8 -8   `srai` e `div` coincidono sul multiplo esatto (-64, 8)
+#   2305843009213693944   cosa dava `srli`: il pattern letto senza segno
+#   -9 -8   e NON coincidono altrove: srai va al floor, div tronca verso zero
+#   8       sui positivi sono la stessa cosa
+# La coppia -9 / -8 e' dichiarata di proposito: la prima stesura del test
+# asseriva che `srai` e `div` coincidessero sempre, che e' comodo e falso.
+vasm_check(srai       MODE DUMPS EXPECT "-8 -8 2305843009213693944 -9 -8 8"
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_srai.vasm)
+
 # .supertask — IL SUPER TASK E' AL PIU' UNO, e lo dice il BUILD (27/09/2026,
 # §3.75). Due test che PASSANO SE LA TOOLCHAIN RIFIUTA, e il rifiuto va letto
 # nel messaggio e non nel solo exit code: un `ld` che fallisse per un'altra

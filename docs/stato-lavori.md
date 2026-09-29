@@ -1,6 +1,11 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **29 settembre 2026** (§3.80 **la tappa 3**: il
+> Ultimo aggiornamento: **29 settembre 2026, sera** (§3.81 **la seconda base
+> dei tempi e `srai`**: `CLOCK_CYCLES`, il bit di base per canale in
+> `CMP_CTRL`, `srai` in coda all'enum; `bases` misura 8 cicli di consegna che
+> in ms sono 0. `ctest --timeout 60` 68/68, impronte 26/26 ferme. E
+> `tools/equiv.py` che mandava la macchina in OOM su un test appeso di `HEAD`,
+> corretto; §3.80 **la tappa 3**: il
 > locator -- un file di collocazione con le regioni e l'unità dichiarata, la
 > sezione `.shared` che non si inizializza e i cui simboli sono globali per
 > definizione, la mappa con sezione e dimensione, e `run` che rifiuta due
@@ -126,7 +131,7 @@
 > `e29e2bd`): **due CPU**, RAM locale da 0 per ognuna e RAM condivisa a
 > `0x200000`, spinlock e mailbox hardware, il distributore delle interruzioni,
 > la DMA solo nella RAM condivisa, `run cpu0.vx cpu1.vx`. **La tappa 3**
-> (§3.80), discussa e poi scritta: **il locator** — un file di collocazione con
+> (§3.80, `d5fad3e`), discussa e poi scritta: **il locator** — un file di collocazione con
 > le regioni e l'**unità dichiarata** (`CODE` in istruzioni, `DATA` in byte,
 > come il PM/DM del `.ldf`), un blocco `PROCESSOR` che dice solo ciò che
 > differisce, la sezione **`.shared`** che si riserva e non si inizializza e i
@@ -141,6 +146,16 @@
 > cambiato. `git status` dice se è committato; il push resta dell'utente, e da
 > una sessione di Claude **non riesce per costruzione** (§3.77).
 > **Si riprende dalla tappa 4, il test grande**: la formula è in §6.
+>
+> **E LA SERA DEL 29/09 (§3.81): la seconda base dei tempi e `srai`, FATTE.**
+> `CLOCK_CYCLES` a `MMIO_BASE + 0x30` (il clock master, non i cicli della CPU),
+> un bit per canale in `CMP_CTRL` che dice su quale base confronta, e `srai` in
+> coda all'enum. `ctest --timeout 60` **68/68**, impronte **26/26** ferme,
+> tracce identiche a `HEAD` su 52 programmi su 54 (i due diversi sono i test
+> nuovi). E **`tools/equiv.py` ha un tetto** di 64 MB per programma: senza, un
+> test che su `HEAD` resta appeso ha portato `python3` a 5,6 GB e l'OOM killer
+> si è preso la sessione. Aperto e da decidere: l'assembler non limita
+> l'immediato degli shift (`srai r, r, 64` è UB in C, e lo era già `srli`).
 >
 > **IL TEST DECISO IL 28/09 (§3.76), CHE ADESSO È LA TAPPA 4.** Un super task con
 > macchina a stati a 1 ms, ADC **a blocchi**, FFT in float, e il risultato spedito
@@ -175,13 +190,13 @@
 >                           altri costa 2 istruzioni per blocco, misurate
 > clock.vinc                il vincolo sul read-modify-write di CMP_CTRL, e
 >                           annotare le logiche immediate: sono commenti
-> seconda base dei tempi    formula pronta in §6, lavoro di MACCHINA
+> seconda base dei tempi    FATTE il 29/09 sera (§3.81)
 >   e srai
 > il respiro nel nucleo     formula pronta in §6
 >   fattuale
 > ```
 >
-> **ORDINE DI LETTURA: §3.80, §3.79, §3.78, §3.77, §3.76, poi §3.75, poi §3.74, poi §3.73, poi §3.72.**
+> **ORDINE DI LETTURA: §3.81, §3.80, §3.79, §3.78, §3.77, §3.76, poi §3.75, poi §3.74, poi §3.73, poi §3.72.**
 > Ognuna corregge la precedente in qualche punto, e leggerle al contrario fa
 > ripartire da posizioni ritirate. §3.76 (28/09) non ha codice: collega ogni
 > pezzo del disegno al suo predecessore in letteratura, e rimanda il gestore
@@ -361,8 +376,9 @@
 > l'unica in cui il **jitter è esprimibile nella stessa unità della time line**:
 > in ms lo scarto sarebbe `0` sempre, cioè invisibile.
 >
-> Manca: la seconda base, e il bit per-canale che dice su quale delle due un
-> comparatore confronta (in hardware il prescaler è del canale, non del chip).
+> ~~Manca: la seconda base, e il bit per-canale che dice su quale delle due un
+> comparatore confronta (in hardware il prescaler è del canale, non del chip).~~
+> **FATTI in §3.81**: `CLOCK_CYCLES` e il bit 16+n di `CMP_CTRL`.
 >
 > ---
 >
@@ -370,7 +386,7 @@
 >
 > | | |
 > |---|---|
-> | manca **`srai`** | la virgola fissa **con segno non è scrivibile**: `(a*b)>>15` con `srli` dà spazzatura sui negativi, e l'alternativa è `div` — 20 cicli invece di 1. Tre usi indipendenti in una sessione. Va **in coda all'enum**, o muove tutte le impronte |
+> | ~~manca **`srai`**~~ **FATTO in §3.81**, in coda all'enum | la virgola fissa **con segno non è scrivibile**: `(a*b)>>15` con `srli` dà spazzatura sui negativi, e l'alternativa è `div` — 20 cicli invece di 1. Tre usi indipendenti in una sessione. Va **in coda all'enum**, o muove tutte le impronte |
 > | **`div`+`rem` = 40 cicli** | non si fondono, e nessuno dichiara che sia una scelta. x86 li dà entrambi con una `DIV`; la spec RISC-V **raccomanda** di fondere la coppia adiacente. La divisione fixed-point piena costa **63 cicli** |
 > | la divisione **tace** | per zero restituisce `0` invece di trappare, e l'overflow del quoziente non esiste — `sw` tronca a 32 bit in silenzio. Sul ferro lì c'è `#DE` |
 >
@@ -3737,6 +3753,121 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.81 LA SECONDA BASE DEI TEMPI, E `srai` — e un OOM che non era del test (29/09/2026, sera)
+
+**È la formula «in parallelo» di §6, eseguita com'era scritta: lavoro di
+MACCHINA, il kernel non si tocca, `settimer` nemmeno.** Una trappola nella
+formula stessa è stata detta prima di partire (sotto).
+
+```
+CLOCK_CYCLES      MMIO_BASE + 0x30, sola lettura: i 32 bit bassi del CLOCK
+                  MASTER (machine_now), non i cicli della CPU che legge. Oggi
+                  div_cpu e' 1 e coincidono; il giorno che non lo sara', resta
+                  il tempo della SCHEDA, l'unico su cui due CPU si accordano
+la base del       bit 16+n di CMP_CTRL: 0 = millisecondi (il default, quindi
+  CANALE          ogni programma di prima e' invariato), 1 = cicli. Nel
+                  registro del canale e non in uno globale, perche' in hardware
+                  il prescaler e' del canale. Una LETTURA di CMP_CTRL restituisce
+                  armamento E base: un read-modify-write non perde il bit di un
+                  altro canale (la corsa trap/sw di §3.74 resta, dichiarata)
+cmp_pending       vuole tutte e due le basi, e ogni canale sottrae dalla sua.
+                  Stessa formula wrappante: la seconda base non costa un
+                  secondo percorso
+srai              IN CODA all'enum (OP_SRAI dopo OP_VCVT), 1 ciclo. In C e'
+                  scritto come divisione col FLOOR, perche' `>>` su un negativo
+                  e' implementation-defined
+clock.vinc        CLOCK_CYCLES, CMP_CYC0/1, e le combinazioni CMP_ARM0_CYC /
+                  CMP_ARM1_CYC con un nome loro: l'assembler NON somma due
+                  costanti (`CMP_ARM0 + CMP_CYC0` non si assembla, provato), e a
+                  runtime servono due `li` e un `or` perche' le logiche
+                  immediate non ci sono. E' l'annotazione che §0 chiedeva
+manuale           l'albero di clock con le due basi, la riga di `srai` nella
+                  tabella delle istruzioni, e il paragrafo dell'ADC che diceva
+                  "srai, che manca"
+```
+
+**I due test, a file singolo perché il soggetto è la macchina:**
+
+```
+bases   2 8 3 0 2    canale 0 sui CICLI a +500, canale 1 sui MS a +2, armati
+                     insieme. La coppia che conta e' 8 / 0: lo scarto fra
+                     scadenza e ISR e' 8 cicli, e in millisecondi e' ZERO -- la
+                     consegna e' la stessa, ma in ms non si vede. E' l'argomento
+                     per cui le basi sono due, misurato
+srai    -8 -8 2305843009213693944 -9 -8 8
+                     srai e div coincidono sul multiplo esatto, srli da'
+                     spazzatura, e -65: srai -9, div -8
+```
+
+**Visti rossi, mutando la macchina:** la base ignorata in `cmp_pending` manda
+`bases` in **timeout** (il canale 0 aspetterebbe 500 ms), come il commento del
+test prevede; `srai` fatto logico fa fallire `srai` coi numeri sbagliati.
+
+**La trappola nella formula di §6.** Diceva «provalo contro `div` per la stessa
+potenza di due: devono coincidere». Coincidono **solo sui multipli esatti**:
+`srai` arrotonda verso meno infinito, `div` tronca verso zero. Il test asserisce
+la coincidenza dove è vera e **dichiara** la differenza dove non lo è (`-9 -8`),
+invece di un'uguaglianza comoda e falsa.
+
+**Tre errori miei, presi strada facendo:**
+
+1. **Un indirizzo già occupato.** Il primo `CLOCK_CYCLES` stava a `MMIO_BASE +
+   0x08`, che è `KBD_CTRL`: `mmio_load` interroga i device in ordine, la
+   tastiera risponde prima, e la lettura tornava 0 **in silenzio**. L'ha
+   scoperto il test: lo scarto veniva negativo, cioè la trap sarebbe arrivata
+   prima della scadenza. Una collisione di indirizzi qui non è un errore, è un
+   valore sbagliato — e la mappa in `devices.h` è l'unica dichiarazione, che
+   nessuno verifica. Scritto accanto a `CLOCK_CYCLES`.
+2. **Numeri attesi calcolati, e sbagliati.** Misurati invece di adattati:
+   deterministici, e dicono la cosa giusta.
+3. **`git checkout src/vcpu.c` per annullare una mutazione ha annullato anche
+   `srai`**, che non era committato. Riapplicato — e nella riapplicazione
+   `floor_shift` era finito fra il commento di `load_i32` e la sua funzione;
+   rimesso a posto prima del commit. **Per le mutazioni: annullarle con un
+   `Edit` inverso, non con `git checkout` su un file sporco.**
+
+**L'OOM, e la diagnosi sbagliata che c'era prima.** Il confronto con
+`tools/equiv.py` contro `HEAD` ha fatto intervenire l'OOM killer: `python3` a
+**5,6 GB** su 6,8, e la sessione è morta con lui. La diagnosi della sessione,
+un attimo prima, era «il mio test traccia 200.000 cicli, due volte: lo
+dimezzo». **Era sbagliata**: la traccia di `bases` sul simulatore nuovo è 7,2 MB.
+La causa vera è che sul simulatore di **`HEAD`**, che non ha il bit di base,
+`bases` **resta appeso** su `bne` — esattamente la mutazione «base ignorata» — e
+`--trace` stampa ogni giro per i 120 s del timeout; `capture_output` teneva tutto
+in RAM. Il test **non** è stato dimezzato. Corretto lo strumento: l'uscita va
+nel file a blocchi e si ferma a **64 MB** per programma (la più grande
+legittima è `clock.out`, 21 MB), con `--- troncata a N byte ---` in coda, così
+un programma appeso si riconosce invece di sembrare solo diverso. Il timeout
+resta per chi si appende senza stampare. Python ora sta a **19 MB** e il
+confronto intero dura 3 s. Il motivo è nel docstring, compreso che `/tmp` è
+tmpfs, cioè anch'esso RAM.
+
+**La lezione generale:** ogni volta che una tappa aggiunge un test che il
+simulatore di `HEAD` non sa eseguire, `equiv.py` contro `HEAD` lo fa girare su
+una macchina che non ha la funzione — e un test della macchina che *senza* la
+funzione resta appeso è la regola, non l'eccezione (`bases` è scritto apposta
+così). Adesso costa 64 MB e non la sessione.
+
+| verifica, finale | esito |
+|---|---|
+| `ctest --timeout 60` | **68/68** (66 + `bases` + `srai`) |
+| `tools/equiv.py` contro `HEAD` | 54 programmi, **52 identici**; diversi solo `bases` (su `HEAD` appeso, troncato a 64 MB) e `srai` (su `HEAD` l'istruzione non esiste) |
+| impronte, con `out` e contro un build pulito di `HEAD` | **26/26 identiche**: `srai` è in coda all'enum |
+| `scheduler_facts.py --check out` | verde |
+| build | nessun warning |
+
+**Rimasto, e dichiarato:**
+
+- **L'immediato degli shift non è controllato.** L'assembler accetta
+  `srai r2, r1, 64`, e in C uno shift di 64 è comportamento indefinito:
+  `-64 >> 64` dà `-64`, non `-1` (misurato). **Non è nuovo**: `slli` e `srli`
+  hanno lo stesso buco da sempre. La correzione ovvia è rifiutare in assembler
+  fuori da `0..63`, ma cambia cosa la toolchain accetta, e va deciso.
+- La corsa del read-modify-write su `CMP_CTRL` fra la trap e la `sw` resta
+  quella di §3.74; qui si evita solo di perdere un bit per costruzione.
 
 ---
 
@@ -10940,12 +11071,12 @@ servono i numeri della macchina.
 > Il **`--timeout`** dal 29/09 (§3.79), e non è pignoleria: un test che aspetta un
 > evento che non arriva resta appeso in silenzio, ed è già costato dieci minuti.
 >
-> **66 test** (39 il 14/09, 57 la mattina del 29/09): le tre invarianti storiche,
+> **68 test** (39 il 14/09, 57 la mattina del 29/09, 66 dopo il locator): le tre invarianti storiche,
 > i test mirati (`queue`, `pool`,
 > `timeout`, `mailbox`, `scheduler`, `block`, `chain`, `tmgr`, `tmgr_marks`,
 > `semaphore`, `mutex`, `coop`, `events`, `vectors`, più
 > `proc`/`include`/`epsw`/`kbd`/`ifdef_off`/`ifdef_on` sulla toolchain e
-> sulla macchina), i due `amp` e `intd` a **due CPU** (§3.79), i **nove** del
+> sulla macchina, e `bases`/`srai` — §3.81), i due `amp` e `intd` a **due CPU** (§3.79), i **nove** del
 > locator (§3.80 — uno positivo e otto che passano *se la toolchain rifiuta*),
 > i **quattro `trace_*`** che ESEGUONO la pagina di traccia
 > sotto `gjs` (§3.49 — opzionali: senza `gjs` non esistono), e i 13 programmi di
@@ -11604,7 +11735,9 @@ le 26 impronte identiche a un build pulito di HEAD -- questa tappa AGGIUNGE
 programmi, non ne muove. Se una si muove, si dice PRIMA quale e perche'.
 ```
 
-**E IN PARALLELO, senza dipendenze — la SECONDA BASE DEI TEMPI, e `srai` (15/09, deciso):**
+**~~E IN PARALLELO, senza dipendenze — la SECONDA BASE DEI TEMPI, e `srai` (15/09, deciso)~~ — FATTA il 29/09 sera, §3.81.** La
+formula resta per memoria; il suo criterio «devono coincidere con `div`» vale
+solo sui multipli esatti, e §3.81 dice perché.
 ```
 Leggi docs/stato-lavori.md, §3.73 PRIMA di §3.72 -- la terza corregge la
 seconda su quale sia l'unita' giusta. Poi il riquadro dei COMPARATORI in

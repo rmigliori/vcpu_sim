@@ -444,14 +444,14 @@ static int encode(char** toks, int n, Instr* out, char* err, size_t errsz)
     out->imm = imm;
     out->op  = (mn[0] == 'a') ? OP_ADDI : OP_SLLI;
   }
-  else if (strcmp(mn, "srli") == 0)
+  else if (strcmp(mn, "srli") == 0 || strcmp(mn, "srai") == 0)
   {
     if (need(ARGS, 3, mn, err, errsz)) return -1;
     R('r', NUM_SCALAR); out->a = reg;
     R('r', NUM_SCALAR); out->b = reg;
     if (parse_int(toks[k++], &imm, err, errsz)) return -1;
     out->imm = imm;
-    out->op  = OP_SRLI;
+    out->op  = (mn[2] == 'l') ? OP_SRLI : OP_SRAI;
   }
   else if (strcmp(mn, "and") == 0 || strcmp(mn, "or") == 0 || strcmp(mn, "xor") == 0 ||
            strcmp(mn, "div") == 0 || strcmp(mn, "rem") == 0)
@@ -985,7 +985,7 @@ static int emit_synth_line(const char* text, char* err, size_t errsz)
 static int scalar_dest_reg(char** toks, int n)
 {
   static const char* dest1[] = {
-    "li", "mov", "add", "sub", "mul", "addi", "slli", "srli",
+    "li", "mov", "add", "sub", "mul", "addi", "slli", "srli", "srai",
     "and", "or", "xor", "div", "rem", "lw", "setvl", "mfpsw", "mfepc",
     "mfepsw", "mfvl", "mfvmask", NULL
   };

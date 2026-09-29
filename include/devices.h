@@ -145,10 +145,50 @@
 #define CLOCK_MS    (MMIO_BASE + 0x0C)
 
 // ---------------------------------------------------------------------------
+//  L'ALTRA BASE DEI TEMPI: I CICLI (29/09/2026, §3.73)
+//
+//  CLOCK_CYCLES   sola lettura   il clock master, i 32 bit bassi
+//
+//  --- PERCHE' DUE BASI, E NON TRE ---
+//  I microsecondi erano il compromesso fra risoluzione e portata, e con le due
+//  estreme il compromesso non serve: i CICLI hanno 0,01 us di risoluzione e
+//  girano in 43 s, i MILLISECONDI girano in 49 giorni. Un frame dura ms, un
+//  timeout di guardia dura minuti. E i us non sono la scala di NESSUN evento di
+//  questo sistema.
+//
+//  --- E NON E' UN ECCESSO ---
+//  Con un comparatore la risoluzione e' DISACCOPPIATA dalla frequenza delle
+//  interruzioni: un tick a 10 ns sarebbe assurdo, una scadenza a 10 ns costa
+//  quanto qualunque altra. Ed e' l'unica base in cui il JITTER e' esprimibile
+//  nella stessa unita' della time line -- in millisecondi lo scarto fra la time
+//  line disegnata e quella reale sarebbe 0 sempre, cioe' invisibile.
+//
+//  --- E' IL CLOCK MASTER, non i cicli della CPU che legge ---
+//  La sorgente e' `machine_now`, cioe' l'albero di clock della scheda (§3.78):
+//  una CPU con `div_cpu` > 1 legge un contatore che avanza piu' in fretta dei
+//  suoi cicli. Oggi `div_cpu` e' 1 e le due cose coincidono; il giorno in cui
+//  non lo sara', questo registro resta il tempo della SCHEDA, che e' l'unico su
+//  cui due CPU possono mettersi d'accordo.
+//
+//  I 32 bit bassi, come CLOCK_MS: chi confronta due letture le SOTTRAE.
+//
+//  --- PERCHE' NON E' ACCANTO A CLOCK_MS ---
+//  Perche' 0x08 e' KBD_CTRL. Il primo tentativo l'ha messo la' e la lettura
+//  tornava 0 in SILENZIO: `mmio_load` interroga i device in ordine e la tastiera
+//  risponde prima, quindi una collisione di indirizzi non e' un errore, e' un
+//  valore sbagliato. L'ha scoperto un test che calcolava un numero -- lo scarto
+//  veniva negativo, cioe' la trap sarebbe arrivata prima della scadenza.
+//  Tenerlo a mente per il prossimo registro: la mappa di questo file e' l'unica
+//  dichiarazione, e nessuno la verifica.
+// ---------------------------------------------------------------------------
+#define CLOCK_CYCLES (MMIO_BASE + 0x30)
+
+// ---------------------------------------------------------------------------
 //  I COMPARATORI — le scadenze sull'orologio (15/09/2026, §3.72)
 //
 //  CMP_CTRL       lettura/scrittura   bit n = il canale n e' armato
-//  CMP_BASE + 4n  lettura/scrittura   la scadenza del canale n, in ms
+//                                     bit 16+n = il canale n confronta sui CICLI
+//  CMP_BASE + 4n  lettura/scrittura   la scadenza del canale n, nella SUA base
 //
 //  Un contatore che sale sempre e N registri confrontati con lui: quando la
 //  scadenza e' raggiunta, il canale chiede l'interruzione. E' mtime/mtimecmp di
@@ -214,10 +254,24 @@
 //  scatta ed e' l'errore. A distinguerli non e' il tempo -- e' CHI STAVA
 //  GIRANDO quando e' scattato.
 // ---------------------------------------------------------------------------
+//  --- LA BASE E' DEL CANALE, NON DEL CHIP (29/09/2026, §3.73) ---
+//  Ogni canale dice su QUALE base confronta: millisecondi (il default, bit a 0)
+//  oppure cicli. Il bit sta in CMP_CTRL accanto all'armamento e non in un
+//  registro globale perche' in hardware il prescaler e' del canale -- ed e'
+//  anche cio' che serve, visto che i due regimi convivono: il canale 0 porta la
+//  deadline di uno slot del foreground, che si misura in cicli, e il canale 1 le
+//  scadenze del background, che durano millisecondi.
+//
+//  Il confronto resta la DIFFERENZA wrappante a 32 bit su tutte e due: cambia
+//  solo con chi si sottrae. Un canale che cambia base mentre e' armato sta
+//  confrontando una scadenza vecchia con un contatore nuovo, e nessuno lo vieta:
+//  e' la stessa regola di sempre -- riarmare e' politica.
 #define CMP_CHANNELS  2
 #define CMP_CTRL    (MMIO_BASE + 0x10)
 #define CMP_BASE    (MMIO_BASE + 0x20)
 #define CMP_ARM(n)   (1u << (n))
+#define CMP_CYCLES(n) (1u << (16 + (n)))   // 0 = millisecondi, 1 = cicli
+#define CMP_CYCLES_SHIFT 16
 
 //  LA CAUSA: chi ha interrotto. Con due sorgenti il vettore deve saperlo, e
 //  questa macchina somiglia a RISC-V (epc, epsw, reti), dove la causa e' un CSR
@@ -637,8 +691,9 @@ typedef struct
 // `(int32_t)(ms - val[n]) >= 0`, rivalutata a ogni confine d'istruzione.
 typedef struct
 {
-  int32_t  val[CMP_CHANNELS];  // la scadenza, in millisecondi
+  int32_t  val[CMP_CHANNELS];  // la scadenza, nella base del canale
   uint32_t armed;              // bitmask: bit n = canale n armato
+  uint32_t cycles;             // bitmask: bit n = canale n confronta sui CICLI
 } VCmp;
 
 // L'ADC: i tre registri di configurazione, e l'acquisizione in corso -- che
@@ -718,7 +773,9 @@ int  kbd_set_trace(VKbd* k, const char* spec, char* err, size_t errsz);
 
 int  cmp_load(const VCmp* c, int64_t addr, int32_t* out);
 int  cmp_store(VCmp* c, int64_t addr, int32_t value);
-int  cmp_pending(const VCmp* c, int32_t ms);          // il canale, o -1
+// Il canale scaduto, o -1. Vuole ENTRAMBE le basi perche' ogni canale sceglie
+// la sua (CMP_CYCLES): chi chiama non sa quale serve, il canale sì.
+int  cmp_pending(const VCmp* c, int32_t ms, int32_t cycles);
 
 // L'avvio di un'acquisizione e i campioni vogliono il CLOCK: il periodo e' in
 // tick periferiche, e l'istante del campione diventa un tempo in secondi.

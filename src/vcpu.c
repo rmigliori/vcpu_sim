@@ -31,6 +31,17 @@ static void store_f32(VCpu* cpu, int64_t addr, float value)
   machine_storef(cpu->m, cpu, addr, value);
 }
 
+// Lo shift aritmetico a destra, scritto come divisione col FLOOR: e' cio' che il
+// ferro fa replicando il bit di segno, e non dipende da come il compilatore
+// implementa `>>` su un negativo.
+static int64_t floor_shift(int64_t v, int n)
+{
+  int64_t d = (int64_t) 1 << n;
+  int64_t q = v / d;
+  if (v % d != 0 && v < 0) q -= 1;   // verso meno infinito
+  return q;
+}
+
 // NON prende un const VCpu*, e la ragione e' concettuale prima che tecnica:
 // leggere KBD_DATA consuma il carattere.
 static int32_t load_i32(VCpu* cpu, int64_t addr)
@@ -103,7 +114,7 @@ static uint64_t instr_cost(const Instr* in, int vl)
   switch (in->op)
   {
     case OP_LI: case OP_MOV: case OP_ADD: case OP_SUB: case OP_MUL:
-    case OP_ADDI: case OP_SLLI: case OP_SRLI:
+    case OP_ADDI: case OP_SLLI: case OP_SRLI: case OP_SRAI:
     case OP_AND: case OP_OR: case OP_XOR:
     case OP_SETVL: case OP_FLI:
     case OP_STI: case OP_CLI: case OP_SETHANDLER: case OP_SETTIMER: case OP_MARK:
@@ -180,6 +191,11 @@ static void execute(VCpu* cpu, const Instr* in)
       case OP_ADDI: set_scalar(cpu, in->a, cpu->r[in->b] + in->imm);       break;
       case OP_SLLI: set_scalar(cpu, in->a, cpu->r[in->b] << in->imm);      break;
       case OP_SRLI: set_scalar(cpu, in->a, (int64_t) ((uint64_t) cpu->r[in->b] >> in->imm)); break;
+      // Lo shift aritmetico: il segno si replica. In C lo shift a destra di un
+      // negativo e' implementation-defined, quindi qui e' scritto come la
+      // divisione col floor che il ferro realizza -- il compilatore la riconosce
+      // e ne fa uno shift, e il comportamento non dipende da lui.
+      case OP_SRAI: set_scalar(cpu, in->a, floor_shift(cpu->r[in->b], (int) in->imm)); break;
       case OP_AND:  set_scalar(cpu, in->a, cpu->r[in->b] & cpu->r[in->c]); break;
       case OP_OR:   set_scalar(cpu, in->a, cpu->r[in->b] | cpu->r[in->c]); break;
       case OP_XOR:  set_scalar(cpu, in->a, cpu->r[in->b] ^ cpu->r[in->c]); break;
@@ -535,6 +551,7 @@ const char* vcpu_disasm(const Instr* in, char* buf, size_t bufsz)
     case OP_ADDI:   snprintf(buf, bufsz, "addi r%d, r%d, %lld", in->a, in->b, (long long) in->imm); break;
     case OP_SLLI:   snprintf(buf, bufsz, "slli r%d, r%d, %lld", in->a, in->b, (long long) in->imm); break;
     case OP_SRLI:   snprintf(buf, bufsz, "srli r%d, r%d, %lld", in->a, in->b, (long long) in->imm); break;
+    case OP_SRAI:   snprintf(buf, bufsz, "srai r%d, r%d, %lld", in->a, in->b, (long long) in->imm); break;
     case OP_AND:    snprintf(buf, bufsz, "and r%d, r%d, r%d", in->a, in->b, in->c); break;
     case OP_OR:     snprintf(buf, bufsz, "or r%d, r%d, r%d", in->a, in->b, in->c); break;
     case OP_XOR:    snprintf(buf, bufsz, "xor r%d, r%d, r%d", in->a, in->b, in->c); break;

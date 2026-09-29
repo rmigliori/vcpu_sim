@@ -1,0 +1,122 @@
+; tests/test_bases.vasm — LE DUE BASI DEI TEMPI: ogni canale spara sulla SUA
+; (29/09/2026, §3.73). A file singolo come test_clock e test_cmp: il soggetto e'
+; la MACCHINA.
+;
+; Il canale 0 confronta sui CICLI, il canale 1 sui MILLISECONDI, e le due
+; scadenze sono scelte perche' l'ORDINE e la DISTANZA degli spari dicano che le
+; basi sono davvero due:
+;
+;   canale 0: adesso + 500 CICLI        -> 5 us
+;   canale 1: adesso + 2 MILLISECONDI   -> 200.000 cicli
+;
+; Se il canale 0 leggesse i millisecondi, "adesso + 500 ms" non scatterebbe mai
+; in questa corsa e il programma resterebbe appeso. Se il canale 1 leggesse i
+; cicli, "adesso + 2" sarebbe gia' passato e sparerebbe SUBITO, invertendo
+; l'ordine. Due scale diverse, non due nomi della stessa.
+;
+; --- I CINQUE NUMERI, e i due in mezzo sono l'argomento ---
+;   2        la causa del primo sparo: CAUSE_CMP0, il canale sui cicli
+;   8        lo scarto fra la scadenza e la lettura dentro l'ISR, IN CICLI. Non
+;            e' zero e non puo' esserlo: la trap arriva al confine d'istruzione
+;            dopo, e poi l'ISR deve leggere `mfcause`, confrontare e caricare
+;            l'orologio. Sono 8 cicli di consegna, e si VEDONO
+;   3        la causa del secondo sparo: CAUSE_CMP1, il canale sui millisecondi
+;   0        lo stesso scarto per il canale in millisecondi: ZERO. Non perche' la
+;            consegna sia istantanea -- e' la stessa di prima -- ma perche' un
+;            millisecondo sono 100.000 cicli e 8 non si vedono. E' PRECISAMENTE
+;            la ragione per cui le basi sono due: in millisecondi il jitter della
+;            time line non e' esprimibile, e un numero che vale 0 sempre non e'
+;            una misura
+;   2        i cicli all'istante del secondo sparo, divisi per 100.000: il canale
+;            in millisecondi ha aspettato due millisecondi VERI, cioe' 200.000
+;            cicli, mentre quello in cicli ne aveva aspettati 500. La divisione
+;            serve a non asserire il ciclo esatto (200.019): qui conta la scala
+;
+; ROSSO se CMP_CTRL ignorasse CMP_CYC0: il canale 0 aspetterebbe 500 ms e il
+; programma resterebbe appeso -- per questo il test ha un timeout in ctest.
+
+.include "hal/clock.vinc"
+
+  .data
+scad0:  .space 1                 ; la scadenza del canale 0, per lo scarto
+
+  .text
+  .global main
+
+main:
+  sethandler isr
+  li r11, 0                      ; quanti spari
+
+  ; --- il canale 0, sui CICLI: adesso + 500 ---
+  li r1, CLOCK_CYCLES
+  lw r2, 0(r1)
+  addi r2, r2, 500
+  li r3, CMP0
+  sw r2, 0(r3)
+  li r4, scad0
+  sw r2, 0(r4)                   ; ...e me la ricordo, per lo scarto
+
+  ; --- il canale 1, sui MILLISECONDI: adesso + 2 ---
+  li r1, CLOCK_MS
+  lw r5, 0(r1)
+  addi r5, r5, 2
+  li r3, CMP1
+  sw r5, 0(r3)
+
+  ; --- armati insieme, ognuno sulla sua base ---
+  ; Due `li` e un `or` perche' l'assembler non somma due costanti: la nota sta
+  ; in hal/clock.vinc, accanto a CMP_ARM0_CYC.
+  li r3, CMP_CTRL
+  li r2, CMP_ARM0_CYC            ; canale 0: armato, sui cicli
+  li r5, CMP_ARM1                ; canale 1: armato, sui millisecondi
+  or r2, r2, r5
+  sw r2, 0(r3)
+  sti
+
+  li r6, 2
+attesa:
+  bne r11, r6, attesa            ; aspetta i due spari
+  cli
+  halt
+
+; L'ISR disarma il canale che ha sparato -- sparare non disarma, e a livello la
+; trap si ripresenterebbe al confine d'istruzione dopo -- e misura sulla base
+; giusta. Usa r7..r13, che main non tocca dopo l'armamento.
+isr:
+  mfcause r7
+  dumps r7                       ; 2 la prima volta, 3 la seconda
+
+  li r8, CAUSE_CMP0
+  bne r7, r8, ms
+
+  ; --- il canale 0: lo scarto in CICLI, e si vede ---
+  li r9, CLOCK_CYCLES
+  lw r9, 0(r9)
+  li r10, scad0
+  lw r10, 0(r10)
+  sub r9, r9, r10
+  dumps r9                       ; 8
+  li r12, CMP_ARM1               ; disarma il 0, lascia armato il 1
+  j fine
+
+ms:
+  ; --- il canale 1: lo stesso scarto in MILLISECONDI, e non si vede ---
+  li r9, CLOCK_MS
+  lw r9, 0(r9)
+  li r10, CMP1
+  lw r10, 0(r10)
+  sub r9, r9, r10
+  dumps r9                       ; 0
+  ; ...e quanti cicli sono passati davvero: due millisecondi
+  li r9, CLOCK_CYCLES
+  lw r9, 0(r9)
+  li r10, 100000
+  div r9, r9, r10
+  dumps r9                       ; 2
+  li r12, 0                      ; disarma tutto
+
+fine:
+  li r13, CMP_CTRL
+  sw r12, 0(r13)
+  addi r11, r11, 1
+  reti

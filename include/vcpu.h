@@ -249,7 +249,21 @@ typedef enum
   // in float. Il registro vettoriale porta BIT, non un tipo -- vload copia la
   // parola cosi' com'e' -- e vcvt la reinterpreta come int32 e la converte. E'
   // il modello di RVV (vfcvt.f.x.v). Solo vettoriale: e' l'unica che serve.
-  OP_VCVT    // a=vd, b=vs                    -> v[vd][i] = (float) (int32) bits(v[vs][i])
+  OP_VCVT,   // a=vd, b=vs                    -> v[vd][i] = (float) (int32) bits(v[vs][i])
+
+  // srai (29/09/2026, §3.73): lo shift aritmetico a destra, che mancava. `srli`
+  // fa scorrere il pattern a 64 bit in complemento a due, quindi su un negativo
+  // non e' una divisione: `srli` di -64 per 3 da' 2305843009213693944. Con `div`
+  // il quoziente e' giusto ma costa 20 cicli, e questo 1 -- e il posto dove
+  // serve e' la time line, che divide istanti in cicli e ha differenze negative
+  // per costruzione (uno scarto in ritardo e' negativo).
+  //
+  // NON E' `div` PER UNA POTENZA DI DUE, e la differenza e' l'arrotondamento:
+  // `srai` va verso meno infinito, `div` tronca verso zero. Coincidono sui
+  // multipli esatti (-64>>3 == -64/8 == -8) e non sugli altri (-65>>3 e' -9,
+  // -65/8 e' -8). Chi vuole il troncamento usa `div`; chi vuole il floor --
+  // che per un tempo e' quasi sempre la cosa giusta -- usa questa.
+  OP_SRAI    // a=rd, b=rs1, imm=n            -> r[rd] = r[rs1] >> n, col segno
 } OpCode;
 
 typedef struct

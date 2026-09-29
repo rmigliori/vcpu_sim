@@ -253,7 +253,11 @@ int cmp_load(const VCmp* c, int64_t addr, int32_t* out)
 {
   if (addr == CMP_CTRL)
   {
-    *out = (int32_t) c->armed;
+    // Armamento E base: cosi' un read-modify-write che arma un canale non
+    // azzera la base di un altro. (Che il read-modify-write sia di per se' una
+    // corsa fra la trap e la `sw` resta vero, ed e' il buco dichiarato in
+    // §3.74 dell'handoff: qui si evita almeno di perdere un bit per costruzione.)
+    *out = (int32_t) (c->armed | (c->cycles << CMP_CYCLES_SHIFT));
     return 1;
   }
   if (addr >= CMP_BASE && addr < CMP_BASE + CMP_CHANNELS * 4)
@@ -271,12 +275,13 @@ int cmp_store(VCmp* c, int64_t addr, int32_t value)
   // il silenzio e' il modo peggiore di dirlo.
   if (addr == CMP_CTRL)
   {
-    uint32_t validi = (CMP_CHANNELS >= 32) ? 0xFFFFFFFFu
-                                           : ((1u << CMP_CHANNELS) - 1u);
-    if ((uint32_t) value & ~validi)
+    uint32_t armabili = (1u << CMP_CHANNELS) - 1u;
+    uint32_t basi     = armabili << CMP_CYCLES_SHIFT;   // la base di ogni canale
+    if ((uint32_t) value & ~(armabili | basi))
       fprintf(stderr, "runtime error: CMP_CTRL, nessun canale oltre il %d\n",
               CMP_CHANNELS - 1);
-    c->armed = (uint32_t) value & validi;
+    c->armed  = (uint32_t) value & armabili;
+    c->cycles = ((uint32_t) value >> CMP_CYCLES_SHIFT) & armabili;
     return 1;
   }
 
@@ -291,16 +296,22 @@ int cmp_store(VCmp* c, int64_t addr, int32_t value)
   return 0;
 }
 
-// LA DIFFERENZA, MAI L'ORDINE. `(int32_t)(ms - scadenza) >= 0` in aritmetica
+// LA DIFFERENZA, MAI L'ORDINE. `(int32_t)(adesso - scadenza) >= 0` in aritmetica
 // wrappante: una scadenza gia' passata spara SUBITO invece di non sparare
 // mai, che e' cio' che succederebbe con `==`. I canali in ordine: vince il
 // primo, che e' il posto del foreground.
-int cmp_pending(const VCmp* c, int32_t ms)
+//
+// E "adesso" dipende dal CANALE: millisecondi o cicli (CMP_CYCLES). Il wrap e'
+// diverso -- 49 giorni e 43 secondi -- ma la formula e' la stessa, ed e' per
+// questo che la seconda base non costa un secondo percorso.
+int cmp_pending(const VCmp* c, int32_t ms, int32_t cycles)
 {
   for (int n = 0; n < CMP_CHANNELS; n++)
-    if ((c->armed & CMP_ARM(n)) &&
-        (int32_t) ((uint32_t) ms - (uint32_t) c->val[n]) >= 0)
-      return n;
+  {
+    if (!(c->armed & CMP_ARM(n))) continue;
+    int32_t adesso = (c->cycles & CMP_ARM(n)) ? cycles : ms;
+    if ((int32_t) ((uint32_t) adesso - (uint32_t) c->val[n]) >= 0) return n;
+  }
   return -1;
 }
 

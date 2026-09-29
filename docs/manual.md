@@ -63,10 +63,11 @@ programma solo la macchina è identica al ciclo a quella di prima.
 ```
  VMachine ── clock master ─┬─ /1 CPU ─────────── VCpu 0, VCpu 1: registri, pc, psw, timer privato
                            ├─ /1 periferiche ─── ADC_PERIOD
-                           └─ /100000 ms ─────── CLOCK_MS, comparatori
+                           ├─ /1 (la radice) ─── CLOCK_CYCLES, comparatori su base CICLI
+                           └─ /100000 ms ─────── CLOCK_MS,      comparatori su base MS
           ── bus ─┬─ RAM locale (1 MiB da 0, una per CPU)
-                  ├─ MMIO: tastiera, ADC (DMA), CLOCK_MS, spinlock,       della scheda
-                  │        distributore delle interruzioni
+                  ├─ MMIO: tastiera, ADC (DMA), CLOCK_MS, CLOCK_CYCLES,   della scheda
+                  │        spinlock, distributore delle interruzioni
                   │        comparatori, mailbox, marcatore                 uno per CPU
                   └─ RAM condivisa (64 KiB a 0x200000)
 ```
@@ -612,9 +613,10 @@ ping-pong lo fa il programma: avvia il blocco B mentre elabora A.
 
 **Il formato: I e Q alternati, una parola a 32 bit ciascuno**, a `ADC_ADDR + 8i`
 e `ADC_ADDR + 8i + 4`, col segno già esteso e i valori in `[-2048, 2047]`; fuori
-scala **satura**. Un ADC vero spesso impacchetta I e Q in 16+16 bit: qui
-spacchettarli vorrebbe `srai`, che manca, e allargare nella DMA è la
-semplificazione dichiarata. Per portarli in float c'è
+scala **satura**. Un ADC vero spesso impacchetta I e Q in 16+16 bit, e
+spacchettarli vorrebbe uno shift con segno: `srai` c'è dal 29/09/2026, ma
+allargare nella DMA resta la semplificazione dichiarata — la larghezza la decide
+il ferro, non chi legge. Per portarli in float c'è
 [`vcvt`](#43-manuale-delle-istruzioni), e un canale si carica con un `vload` a
 passo 8.
 
@@ -1251,6 +1253,7 @@ La colonna **Cicli** riporta il costo nel modello di timing (§6);
 | `addi` | `rd, rs1, imm` | `rd = rs1 + imm` | 1 |
 | `slli` | `rd, rs1, imm` | `rd = rs1 << imm` (shift logico a sinistra) | 1 |
 | `srli` | `rd, rs1, imm` | `rd = rs1 >> imm` (shift logico a destra, senza segno) | 1 |
+| `srai` | `rd, rs1, imm` | `rd = rs1 >> imm` (shift **aritmetico**: il segno si replica). Su un negativo è la divisione per `2^imm` col **floor** — `srli` darebbe il pattern letto senza segno, e `div` costa 20 cicli. Non è `div`: `srai` arrotonda verso meno infinito, `div` tronca verso zero, quindi `-65 >> 3` fa `-9` e `-65 / 8` fa `-8` | 1 |
 | `and` | `rd, rs1, rs2` | `rd = rs1 & rs2` (AND bit a bit) | 1 |
 | `or` | `rd, rs1, rs2` | `rd = rs1 \| rs2` (OR bit a bit) | 1 |
 | `xor` | `rd, rs1, rs2` | `rd = rs1 ^ rs2` (XOR bit a bit) | 1 |

@@ -1,0 +1,57 @@
+; tests/test_srai.vasm — `srai`, LO SHIFT ARITMETICO CHE MANCAVA (29/09/2026,
+; §3.73). A file singolo: il soggetto e' la MACCHINA.
+;
+; Perche' esiste: `srli` fa scorrere il pattern a 64 bit in complemento a due,
+; quindi su un negativo non e' una divisione -- di -64 per 3 da'
+; 2305843009213693944. Con `div` il quoziente e' giusto ma costa 20 cicli, e
+; questo 1. Il posto dove serve e' la time line, che divide istanti in cicli e ha
+; differenze NEGATIVE per costruzione: uno scarto in ritardo lo e'.
+;
+; --- I SEI NUMERI ---
+;   -8       -64 >> 3 con `srai`: il quoziente, col segno replicato
+;   -8       ...e -64 / 8 con `div`: COINCIDONO, ed e' l'equivalenza che conta
+;   2305843009213693944
+;            -64 >> 3 con `srli`: cosa succedeva prima. Non e' un numero
+;            sbagliato di poco, e' il pattern letto senza segno
+;   -9       -65 >> 3 con `srai`
+;   -8       ...e -65 / 8 con `div`: NON COINCIDONO, e va saputo
+;   8        64 >> 3: sui positivi le due sono la stessa cosa
+;
+; --- LE DUE NON SONO INTERCAMBIABILI, e il test lo dichiara ---
+; `srai` arrotonda verso MENO INFINITO, `div` TRONCA verso zero. Coincidono sui
+; multipli esatti e non sugli altri. Chi vuole il troncamento usa `div`; chi vuole
+; il floor -- che per un tempo e' quasi sempre la cosa giusta, perche' "quanti
+; periodi interi sono passati" e' una domanda col floor dentro -- usa `srai`.
+; Asserire "srai e div coincidono sempre" sarebbe stato comodo e falso: la prima
+; stesura di questo test lo faceva, e i due numeri -9 / -8 sono qui perche' non
+; lo faccia piu' nessuno.
+;
+; --- IL COSTO, misurato ---
+; Un programma con `li` + `srai` + `halt` costa 3 cicli, uno con `li` + `li` +
+; `div` + `halt` ne costa 23: `srai` 1, `div` 20.
+
+  .text
+  .global main
+
+main:
+  li r1, -64
+  li r2, 8
+
+  srai r3, r1, 3
+  dumps r3                 ; -8
+  div r4, r1, r2
+  dumps r4                 ; -8: coincidono
+
+  srli r5, r1, 3
+  dumps r5                 ; 2305843009213693944: cosa succedeva prima
+
+  li r6, -65
+  srai r7, r6, 3
+  dumps r7                 ; -9 (floor)
+  div r8, r6, r2
+  dumps r8                 ; -8 (trunc): NON coincidono
+
+  li r9, 64
+  srai r10, r9, 3
+  dumps r10                ; 8
+  halt
