@@ -298,6 +298,8 @@
 //
 //  ADC_ADDR, ADC_COUNT e ADC_PERIOD si rileggono; ADC_CTRL si scrive e basta.
 // ---------------------------------------------------------------------------
+// Dal 29/09/2026 la DMA scrive SOLO nella RAM condivisa: ADC_ADDR sta fra
+// SHARED_BASE e SHARED_BASE + SHARED_SIZE (qui sotto).
 #define ADC_ADDR     (MMIO_BASE + 0x40)
 #define ADC_COUNT    (MMIO_BASE + 0x44)
 #define ADC_PERIOD   (MMIO_BASE + 0x48)
@@ -310,6 +312,106 @@
 #define ADC_DONE_SHIFT  2   // ADC_STATUS >> 2 = blocchi finiti
 #define ADC_MAX         2047
 #define ADC_MIN        (-2048)
+
+// ---------------------------------------------------------------------------
+//  PIU' CPU: la RAM CONDIVISA, la MAILBOX e lo SPINLOCK  (29/09/2026, §3.79)
+//
+//  Ogni CPU ha la sua RAM LOCALE da 0 a MEM_SIZE, allo stesso indirizzo --
+//  fisicamente diverse, ognuna vede la propria -- e i programmi di una CPU
+//  sola restano identici. Le CPU si incontrano in un posto solo, esplicito:
+//
+//  SHARED_BASE .. + SHARED_SIZE   la RAM CONDIVISA, vista da tutte allo
+//                                 stesso indirizzo. Sopra i device, per la
+//                                 stessa ragione per cui i device stanno
+//                                 sopra la RAM: un indirizzo che esce dalla
+//                                 RAM locale finisce in un errore esplicito
+//                                 o in un device, mai nella memoria comune.
+//
+//  DICHIARATO, e su un chip vero sono i punti dolenti: NIENTE CACHE (una
+//  scrittura e' subito visibile all'altra CPU, nessuna coerenza da gestire)
+//  e ORDINE SEQUENZIALE (le scritture arrivano nell'ordine del programma,
+//  nessuna barriera). Il codice scritto qui e' corretto sulla macchina che
+//  lo garantisce.
+//
+//  --- LO SPINLOCK HARDWARE: il test-and-set sta nella periferica ---
+//  HWLOCK_BASE + 4n, n < HWLOCK_COUNT. LEGGERE e' il test-and-set: 0 = era
+//  libero e ADESSO E' TUO, 1 = occupato. SCRIVERE 0 lo rilascia. Il device
+//  ricorda chi lo possiede, e rilasciare un lock altrui e' un errore di
+//  costruzione. Non un'istruzione atomica: in un'AMP di core eterogenei le
+//  esclusive spesso non valgono fra core diversi, ed e' per questo che i SoC
+//  hanno il blocco hardware (hwspinlock in Linux). NON RICORSIVO: chi lo
+//  tiene e lo rilegge lo trova occupato, e il simulatore lo dice una volta.
+//
+//  LA REGOLA, che e' del programmatore: chi prende uno spinlock chiude PRIMA
+//  gli interrupt sulla propria CPU. Se no un'ISR sulla stessa CPU che cerca
+//  lo stesso lock gira per sempre aspettando il task che sta interrompendo.
+//
+//  --- LA MAILBOX: una FIFO di parole per CPU, e un interrupt ---
+//  Registri BANKED: tutte le CPU usano gli stessi indirizzi, e il bus sa chi
+//  fa l'accesso.
+//    MBOX_SEND    scrittura   spedisce una parola all'ALTRA CPU. A FIFO piena
+//                             e' IGNORATA e alza MBOX_OVERRUN su chi spedisce:
+//                             un errore di tempo, come l'ADC avviato mentre
+//                             acquisisce. Non blocca e non perde in silenzio
+//    MBOX_RECV    lettura     la prima parola della PROPRIA FIFO, e la toglie.
+//                             Leggere una FIFO vuota e' un errore di
+//                             costruzione, e da' 0
+//    MBOX_STATUS  lettura     bit 0..7 le parole nella PROPRIA FIFO;
+//                             MBOX_PEER_FULL la FIFO dell'altra e' piena;
+//                             MBOX_OVERRUN una mia spedizione e' andata persa
+//                             -- e la lettura lo abbassa
+//    MBOX_CTRL    lett./scr.  bit 0 MBOX_IE: la propria FIFO non vuota
+//                             interrompe. NASCE SPENTA, come la tastiera
+//  L'interrupt e' A LIVELLO: resta alzato finche' la propria FIFO non e'
+//  vuota, e lo abbassa la lettura. Porta una PAROLA e CONTA: dice quale
+//  messaggio, e due avvisi non si fondono in uno.
+//
+//  Con due CPU "l'altra" e' una sola. Con piu' CPU servira' un destinatario,
+//  e oggi non si scrive.
+// ---------------------------------------------------------------------------
+#define SHARED_BASE   ((int64_t) 0x200000)
+#define SHARED_SIZE   ((int64_t) 0x10000)     // 64 KiB
+
+#define MBOX_SEND     (MMIO_BASE + 0x60)
+#define MBOX_RECV     (MMIO_BASE + 0x64)
+#define MBOX_STATUS   (MMIO_BASE + 0x68)
+#define MBOX_CTRL     (MMIO_BASE + 0x6C)
+#define MBOX_DEPTH      4
+#define MBOX_COUNT_MASK 0xFF    // MBOX_STATUS, bit 0..7
+#define MBOX_PEER_FULL  0x100   // MBOX_STATUS, bit 8
+#define MBOX_OVERRUN    0x200   // MBOX_STATUS, bit 9
+#define MBOX_IE         1       // MBOX_CTRL, bit 0
+
+#define HWLOCK_BASE   (MMIO_BASE + 0x80)
+#define HWLOCK_COUNT    8
+
+// La causa della mailbox: dopo i comparatori, e ultima nelle priorita'.
+#define CAUSE_MBOX   (CAUSE_CMP + CMP_CHANNELS)
+
+// ---------------------------------------------------------------------------
+//  IL DISTRIBUTORE DELLE INTERRUZIONI  (29/09/2026, §3.79)
+//
+//  Le periferiche sono di tutte le CPU; le loro LINEE di interruzione vanno
+//  dove le si manda. Un registro di DESTINAZIONE per ogni sorgente condivisa,
+//  sul modello del distributore del GIC ARM:
+//
+//    INTD_TARGET + 4n   lettura/scrittura   la CPU a cui va la linea n
+//
+//  All'accensione tutte vanno alla CPU 0, quindi un programma di una CPU sola
+//  non se ne accorge. Una destinazione che non esiste e' un errore di
+//  costruzione, e non cambia niente.
+//
+//  MINIMO DI PROPOSITO: niente priorita' programmabili e niente maschere
+//  centrali. L'abilitazione resta nel device (KBD_CTRL), le priorita' restano
+//  l'ordine fisso dell'arbitraggio. Comparatori, timer e mailbox non passano
+//  di qui: sono gia' per CPU, come le interruzioni private dei core ARM. E
+//  l'ADC non ha una linea (§3.76): chi lo usa lo interroga.
+//
+//  Oggi le linee condivise sono una: la tastiera.
+// ---------------------------------------------------------------------------
+#define INTD_TARGET   (MMIO_BASE + 0xA0)
+#define INTD_KBD        0      // la linea della tastiera
+#define INTD_LINES      1
 
 // Un evento della traccia: "al ciclo N arriva il carattere c".
 typedef struct
@@ -557,8 +659,34 @@ typedef struct
   double   amp;
 } VAdc;
 
+// La mailbox di UNA CPU: la sua FIFO d'ingresso, e i suoi due bit. Chi
+// spedisce scrive nella FIFO dell'altra; l'overrun e' di chi ha spedito.
+typedef struct
+{
+  uint32_t fifo[MBOX_DEPTH];
+  int      head;             // la prossima da leggere
+  int      count;            // quante ce ne sono
+  unsigned char overrun;     // una MIA spedizione e' andata persa
+  unsigned char ie;          // la mia FIFO non vuota interrompe
+} VMbox;
+
+// Il distributore: per ogni linea condivisa, la CPU a cui va.
+typedef struct
+{
+  int target[INTD_LINES];
+} VIntd;
+
+// Lo spinlock hardware: per ogni lock, chi lo tiene (id + 1), 0 = libero, e
+// se la richiesta ricorsiva di chi lo tiene e' gia' stata detta.
+typedef struct
+{
+  int owner[HWLOCK_COUNT];
+  unsigned char detto[HWLOCK_COUNT];
+} VHwLock;
+
 // Il marcatore. La registrazione si accende da riga di comando; le sw dei tag
-// costano i loro cicli comunque, ed e' voluto.
+// costano i loro cicli comunque, ed e' voluto. Uno PER CPU (§3.79): il bus sa
+// chi fa l'accesso, e ogni CPU ha la sua registrazione.
 typedef struct
 {
   Marca     marche[MARCHE_MAX];
@@ -594,10 +722,28 @@ int  cmp_pending(const VCmp* c, int32_t ms);          // il canale, o -1
 
 // L'avvio di un'acquisizione e i campioni vogliono il CLOCK: il periodo e' in
 // tick periferiche, e l'istante del campione diventa un tempo in secondi.
+// La DMA scrive SOLO nella RAM CONDIVISA (29/09/2026): `shared` e' la sua
+// base, cioe' l'indirizzo SHARED_BASE. Nessuna periferica scrive nella RAM
+// privata di una CPU, e l'ADC non appartiene a nessuna: lo programma chi lo
+// usa, e il blocco lo vede chiunque.
 struct VClock;
 int  adc_load(VAdc* a, int64_t addr, int32_t* out);
 int  adc_store(VAdc* a, int64_t addr, int32_t value, uint64_t t, const struct VClock* ck);
-void adc_advance(VAdc* a, uint64_t t, const struct VClock* ck, uint8_t* mem);
+void adc_advance(VAdc* a, uint64_t t, const struct VClock* ck, uint8_t* shared);
 int  adc_set_signal(VAdc* a, const char* spec, char* err, size_t errsz);
+
+// La mailbox: `mine` e' quella della CPU che fa l'accesso, `peer` l'altra.
+int  mbox_load(VMbox* mine, const VMbox* peer, int64_t addr, int32_t* out);
+int  mbox_store(VMbox* mine, VMbox* peer, int64_t addr, int32_t value);
+int  mbox_irq(const VMbox* mine);
+
+// Il distributore: `ncpu` e' quante CPU ha la scheda, per rifiutare una
+// destinazione che non esiste.
+int  intd_load(const VIntd* d, int64_t addr, int32_t* out);
+int  intd_store(VIntd* d, int ncpu, int64_t addr, int32_t value);
+
+// Lo spinlock: `id` e' la CPU che fa l'accesso.
+int  hwlock_load(VHwLock* h, int id, int64_t addr, int32_t* out);
+int  hwlock_store(VHwLock* h, int id, int64_t addr, int32_t value);
 
 #endif // DEVICES_H

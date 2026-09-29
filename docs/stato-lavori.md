@@ -1,6 +1,8 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **29 settembre 2026** (§3.78 **verso più CPU**: AMP,
+> Ultimo aggiornamento: **29 settembre 2026** (§3.79 **la tappa 2**: due CPU,
+> RAM condivisa, spinlock e mailbox hardware, discusse e scritte, `test_amp`
+> rosso senza spinlock e senza overrun; §3.78 **verso più CPU**: AMP,
 > un processo solo, un clock master con divisori interi; la tappa 1 FATTA --
 > core, periferiche e scheda separati, identica al ciclo su 48 programmi;
 > §3.77 **la FFT**: `fft64` in
@@ -111,18 +113,21 @@
 
 > ### ▶ RIPRENDI DA QUI (29/09/2026 o dopo)
 >
-> **DOVE SIAMO RIMASTI.** Il 29/09 sono successe due cose. La FFT è **fatta e
-> vista rossa** (§3.77, commit `0c3db23`). Poi la strada è cambiata: **la
-> macchina diventa multi-CPU, asimmetrica (AMP)**, e il test grande si farà
-> sulla nuova architettura (§3.78). **La tappa 1 è fatta**: core, periferiche
-> e scheda separati, con il tempo che passa dalla CPU a un clock master con
-> divisori interi, e la macchina **identica al ciclo** a quella di prima
-> (`tools/equiv.py`: tracce e marche dei 48 programmi uguali a `HEAD`, visto
-> rosso due volte). `ctest` **55/55**, `--check` verde, le 20 impronte
-> identiche a `HEAD`. `git status` dice se è committato; il push resta
-> dell'utente, e da una sessione di Claude **non riesce per costruzione**
-> (§3.77). **Si riprende dalla tappa 2, che si DISCUTE prima**: la formula è
-> in §6.
+> **DOVE SIAMO RIMASTI.** Il 29/09 sono successe tre cose. La FFT è **fatta e
+> vista rossa** (§3.77, `0c3db23`). Poi la strada è cambiata: **la macchina
+> diventa multi-CPU, asimmetrica (AMP)**, e il test grande si farà sulla nuova
+> architettura. **La tappa 1** (§3.78, `f35abc9`): core, periferiche e scheda
+> separati, il tempo a un clock master con divisori interi, la macchina
+> identica al ciclo. **La tappa 2** (§3.79), discussa e poi scritta: **due
+> CPU**, RAM locale da 0 per ognuna e RAM condivisa a `0x200000`, spinlock e
+> mailbox hardware, il distributore delle interruzioni, la DMA solo nella RAM
+> condivisa, `run cpu0.vx cpu1.vx`. `test_amp` e `test_intd` visti rossi;
+> `ctest --timeout 60` **57/57**, `--check` verde, i programmi di prima
+> identici a `HEAD` tranne `adc_*` e `fft_*`, spostati alla RAM condivisa
+> (solo indirizzi, cicli uguali). `git status` dice
+> se è committato; il push resta dell'utente, e da una sessione di Claude
+> **non riesce per costruzione** (§3.77). **Si riprende dalla tappa 3, il
+> locator, che si DISCUTE prima**: la formula è in §6.
 >
 > **IL TEST DECISO IL 28/09 (§3.76).** Un super task con macchina a stati a
 > 1 ms, ADC **a blocchi**, FFT in float, e il risultato spedito con un
@@ -162,7 +167,7 @@
 >   fattuale
 > ```
 >
-> **ORDINE DI LETTURA: §3.78, §3.77, §3.76, poi §3.75, poi §3.74, poi §3.73, poi §3.72.**
+> **ORDINE DI LETTURA: §3.79, §3.78, §3.77, §3.76, poi §3.75, poi §3.74, poi §3.73, poi §3.72.**
 > Ognuna corregge la precedente in qualche punto, e leggerle al contrario fa
 > ripartire da posizioni ritirate. §3.76 (28/09) non ha codice: collega ogni
 > pezzo del disegno al suo predecessore in letteratura, e rimanda il gestore
@@ -3718,6 +3723,181 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.79 LA TAPPA 2 DISCUSSA: due CPU, RAM condivisa, spinlock e mailbox hardware (29/09/2026)
+
+**Discussione chiusa, prima di scrivere.** Le decisioni, nell'ordine dei punti
+di §6, e con l'esperienza dell'utente dove è stata lei a decidere:
+
+```
+1 LA MAPPA      RAM LOCALE di 1 MiB per CPU, da 0, allo STESSO indirizzo --
+                i programmi di oggi restano identici e girano su tutte e due
+                -- piu' una RAM CONDIVISA di 64 KiB a 0x200000, sopra i
+                device. E' lo schema delle architetture recenti dell'utente
+                (RAM locale + RAM condivisa). Le LINK PORT degli SHARC, che
+                l'utente ha usato, erano state la prima risposta: scambio di
+                messaggi su canali dedicati, il modello del transputer e dei
+                CSP di Hoare. Restano possibili come device, dopo.
+                DICHIARATO: niente cache (niente coerenza da gestire) e
+                ordine sequenziale delle scritture (niente barriere). Il
+                codice scritto qui e' corretto sulla macchina che lo
+                garantisce, non su un ARM con cache
+3 LA SINCRONIA  SPINLOCK HARDWARE (dell'utente): un device con 8 lock;
+                leggere = test-and-set (0 preso, 1 occupato), scrivere 0 =
+                rilascio, e il device ricorda il proprietario -- rilasciare
+                un lock altrui e' un errore di costruzione. Non un'istruzione
+                atomica nell'ISA: in un'AMP eterogenea le esclusive spesso
+                non valgono fra core diversi, per questo i SoC hanno il
+                blocco hardware (OMAP/Keystone, SEMA4 degli i.MX, hwspinlock
+                in Linux -- a memoria).
+                REGOLA DA SCRIVERE: chi prende uno spinlock chiude prima gli
+                interrupt SULLA PROPRIA CPU (lo spin_lock_irqsave di Linux),
+                e la sezione e' corta e limitata
+  L'AVVISO      MAILBOX HARDWARE con interrupt (dell'utente): una FIFO di 4
+                parole per direzione, registri BANKED per CPU (SEND va
+                all'altra, RECV legge la propria), interrupt a LIVELLO finche'
+                la propria non e' vuota, spedire a FIFO piena = ignorato +
+                OVERRUN (come l'ADC avviato mentre acquisisce). Porta una
+                parola: dice QUALE messaggio, e CONTA -- due doorbell si
+                fonderebbero in uno
+2 I DEVICE      TUTTI sul bus, visibili da tutte le CPU (correzione
+                dell'utente: "nei SoC l'hw e' visibile da tutte le CPU").
+                Per CPU, agli stessi indirizzi: i COMPARATORI (lo schema del
+                generic timer ARM: un contatore di sistema, un comparatore
+                per core), la mailbox, il timer (gia' del core). Della
+                scheda: CLOCK_MS, lo spinlock, la RAM condivisa, tastiera e
+                ADC. Gli interrupt di tastiera e ADC vanno alla CPU 0, FISSI
+                e dichiarati: un distributore alla GIC si aggiunge quando
+                serve. "Un device, un proprietario" e' una REGOLA DEL
+                PROGRAMMATORE, non della macchina. Priorita': comparatori,
+                timer, tastiera, mailbox.
+                IL MARCATORE: una registrazione PER CPU -- il bus sa chi fa
+                l'accesso, come lo STM di CoreSight che marca ogni scrittura
+                col suo iniziatore. Il formato non cambia
+4 IL TEMPO      avanza sempre la CPU piu' indietro; a PAREGGIO passa la CPU 0
+                (arbitro a priorita' fissa, dichiarato). Un'istruzione lunga
+                si esegue tutta quando parte: l'altra CPU ne vede gli effetti
+                fino a una durata d'istruzione PRIMA del vero -- dichiarato,
+                come la contesa del bus che non si modella. La corsa finisce
+                quando si fermano TUTTE le CPU
+5 I PROGRAMMI   `run a.vx b.vx`: a sulla CPU 0, b sulla CPU 1. Con un solo
+                programma la CPU 1 resta ferma e l'uscita e' IDENTICA a oggi.
+                Con due CPU il prefisso [cpuN] su TUTTE le righe, [cpu0]
+                compreso (osservazione dell'utente: la mia prima proposta lo
+                metteva solo sulla CPU 1, un'asimmetria senza motivo); con
+                una CPU nessun prefisso. Marche: un file, o uno per CPU,
+                ciascuno col suo nome. --debug solo con una CPU (una tabella
+                delle etichette sola), dichiarato
+```
+
+**Il test della tappa 2**: un contatore in RAM condivisa incrementato dalle due
+CPU sotto spinlock — **rosso senza spinlock**, perché gli incrementi si
+perdono — e una raffica di messaggi in mailbox oltre la profondità — **rosso
+senza overrun**. Due corse identiche, a prova del determinismo.
+
+**Scelta emersa guardando il codice, detta prima:** il lettore dei `dumps` di
+`ctest` accetta solo righe che cominciano col registro, quindi con due CPU una
+riga `[cpu1] r5 = 10` diventa il valore `cpu1:10`, e l'atteso dice anche chi
+ha stampato cosa.
+
+#### La tappa 2 SCRITTA, lo stesso giorno
+
+`NUM_CPU = 2`. La scheda ha due RAM locali (`ram[2][MEM_SIZE]`), la RAM
+condivisa, i comparatori, la mailbox e il marcatore per CPU, lo spinlock, la
+tastiera e l'ADC. Il bus sceglie la RAM **della CPU che accede**, o la
+condivisa, e ogni device banked riceve la CPU. Il ciclo principale sceglie
+la CPU più indietro (a pari tempo la 0), e arbitra le interruzioni di
+**quella** CPU: comparatori, timer, tastiera (solo CPU 0), mailbox. La DMA
+dell'ADC scrive nello spazio della CPU 0 — un `VDmaSpace` con la sua RAM
+locale e la condivisa — e un blocco non può stare a cavallo delle due. `run`
+accetta un `.vx` per CPU, i prefissi `[cpuN]` si accendono solo quando i
+programmi sono più d'uno, le statistiche escono per CPU con la frequenza della
+CPU (`hz / div_cpu`), e le marche vanno in un file per CPU (`rec.cpu0.txt`).
+
+**Scelta emersa scrivendo:** le costanti per i programmi in `hal/amp.vinc`,
+come `hal/adc.vinc` stamattina, in `vinc_hal`.
+
+**Il test** — `tests/test_amp0.vasm` sulla CPU 0, `tests/test_amp1.vasm` sulla
+CPU 1, senza kernel:
+
+| numero | cosa |
+|---|---|
+| `cpu0:768` | la raffica di 5 parole a una FIFO di 4: `PEER_FULL \| OVERRUN` |
+| `cpu1:10` | la CPU 1 riceve, a interrupt, 1+2+3+4 |
+| `cpu1:4` | quattro parole: la quinta è persa |
+| `cpu0:200` | il contatore in RAM condivisa, 100 incrementi per CPU sotto lo spinlock |
+
+**Passato al primo colpo, e visto rosso due volte:** senza spinlock il
+contatore dà **103** (97 incrementi persi: le `lw`/`addi`/`sw` delle due CPU si
+intrecciano); senza overrun lo stato dà **256**. Due corse con `--trace` (2.865
+righe) identiche byte per byte: il determinismo.
+
+**Provati a mano, fuori da `ctest`:** il rilascio con un valore diverso da 0,
+lo spinlock non rientrante, `MBOX_RECV` su FIFO vuota, il rilascio di un lock
+altrui dalla CPU 1 — quattro errori detti — e la DMA dell'ADC nella RAM
+condivisa, letta dalla CPU 1 (`I0² + Q0² = 1000529`).
+
+| verifica | esito |
+|---|---|
+| `ctest` | **56/56** |
+| i 48 programmi di prima, `tools/equiv.py` contro `HEAD` | **identici**: le sole differenze sono i file nuovi di `amp` |
+| impronte | le 20 di prima identiche, più `test_amp0` e `test_amp1` |
+| `--check`, build CMake e `Makefile` | verdi, nessun warning |
+
+#### Due correzioni dell'utente, prima del commit
+
+Due domande dell'utente («il DMA scrive solo in RAM condivisa?», «lo spinlock
+è ricorsivo?») hanno portato a tre cambiamenti, fatti prima di committare:
+
+```
+LO SPINLOCK NON E' RICORSIVO, e adesso lo DICE: chi lo tiene e lo rilegge lo
+  trova occupato, e girando ad aspettarlo aspetterebbe se stesso per sempre --
+  il simulatore restava appeso in silenzio. Ora un messaggio, una volta per
+  presa. La lettura resta 1
+LA DMA SCRIVE SOLO NELLA RAM CONDIVISA (dell'utente: "non mi piace" che una
+  periferica scriva nella RAM privata di una CPU). L'ADC non appartiene piu'
+  a nessuna CPU: lo programma chi lo usa, e siccome non ha una linea di
+  interruzione (§3.76) si puo' dare alla CPU 1 senza nient'altro. ADC_ADDR
+  fuori dalla RAM condivisa e' una configurazione impossibile.
+  MOVIMENTO DICHIARATO: test_adc e test_fft mettono il blocco a SHARED_BASE.
+  Nelle loro tracce cambiano solo gli indirizzi (il blocco da 4 a 0x200000,
+  e in test_fft i dati dopo di lui scalano di 512), i CICLI SONO IDENTICI
+  (15227 e 506), gli EXPECT non si muovono; l'impronta di test_fft si muove
+  in TEXT+DATA, con la symmap ferma
+IL DISTRIBUTORE DELLE INTERRUZIONI (dell'utente: "si potrebbero allocare le
+  periferiche a cpu diverse"). Minimo, sul modello del distributore del GIC:
+  un registro di destinazione per ogni linea condivisa (INTD_TARGET + 4n),
+  tutte alla CPU 0 all'accensione, una CPU inesistente e' un errore. Niente
+  priorita' programmabili, niente maschere centrali. Oggi la linea condivisa
+  e' una, la tastiera, e la marca del tasto va nella registrazione della CPU
+  a cui la linea va
+```
+
+Una mia svista di processo, da non ripetere: tolta la DMA nella RAM locale,
+ho lanciato `ctest` sapendo che `test_adc` e `test_fft` puntavano ancora lì — e
+i due test hanno aspettato per sempre un blocco che non arrivava. Fermato dopo
+dieci minuti. **Da allora `ctest --timeout 60`**, e i test nuovi che aspettano
+un evento hanno un'attesa limitata.
+
+**Il test del distributore** — `tests/test_intd0.vasm` manda la tastiera alla
+CPU 1, `tests/test_intd1.vasm` la arma e aspetta, con un tasto a 500 cicli:
+`cpu0:1 cpu1:97 cpu1:1` (la destinazione riletta, il carattere, la causa).
+Visto rosso ignorando il distributore: `cpu0:1 cpu1:0 cpu1:0`, la trap non
+arriva a nessuno. La marca del tasto finisce in `*.cpu1.*`, all'istante 500.
+
+| verifica, finale | esito |
+|---|---|
+| `ctest --timeout 60` | **57/57** |
+| `tools/equiv.py` contro `HEAD` | identici tutti tranne `adc_*` e `fft_*` (solo indirizzi, cicli uguali), più i file nuovi |
+| impronte | 19 identiche; `test_fft` mossa come dichiarato; nuove `test_amp0/1`, `test_intd0/1` |
+| `--check`, build CMake e `Makefile` | verdi, nessun warning |
+
+**Rimasto, e dichiarato:** i messaggi d'errore su `stderr` non hanno il
+prefisso `[cpuN]` — quelli dello spinlock nominano la CPU da sé, gli altri no.
+La mailbox conosce una sola «altra» CPU: con più di due servirà un
+destinatario.
 
 ---
 
@@ -11155,41 +11335,49 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 > diventare quello fra due CPU. Il suo criterio di fine sulle impronte («contro
 > un build pulito di HEAD, con `out`») è passato alla formula che segue.
 
-**PER RIPRENDERE dopo il 29/09 — la TAPPA 2 della macchina multi-CPU, che si DISCUTE prima:**
-```
-Leggi docs/stato-lavori.md: il riquadro RIPRENDI DA QUI, poi §3.78 PER
-INTERO -- le decisioni (AMP, un processo solo, il clock master), le
-quattro tappe, e com'e' fatta la tappa 1. Poi include/machine.h e
-include/devices.h: il contratto dei device e la scheda.
+> **E tolta la sera del 29/09, appena scaduta:** la formula «la TAPPA 2»,
+> scritta e consumata nella stessa sessione (§3.79). Il suo ordine dei punti ha
+> retto, e la discussione l'ha seguito, ma **non le risposte che mi
+> aspettavo**: l'utente ha portato prima le link port degli SHARC, poi la RAM
+> condivisa delle architetture recenti, poi lo spinlock e la mailbox hardware,
+> e ha corretto due mie proposte (i device cablati a una CPU sola, il prefisso
+> solo sulla CPU 1). Il criterio di fine — ogni programma a una CPU identico,
+> il test rosso, due corse identiche — ha funzionato alla lettera.
 
-La tappa 2 sono DUE CPU nella scheda. Niente e' deciso, e l'ordine della
-discussione conta perche' ogni punto si appoggia al precedente:
-  1. la MAPPA DI MEMORIA: RAM privata per CPU piu' una regione comune?
-     la privata allo stesso indirizzo per tutte (lo stesso kernel si linka
-     uguale) o una mappa unica dove ognuno vede l'altro a un offset (lo
-     spazio multiprocessore degli SHARC, che l'utente ha usato)?
-  2. DI CHI SONO I DEVICE: comparatori per CPU o della scheda? ADC e
-     tastiera a una CPU, o su un bus comune con l'instradamento degli IRQ?
-  3. COME PARLANO: un doorbell (un IRQ verso l'altra CPU) piu' la memoria
-     comune, o una mailbox hardware?
-  4. IL TEMPO: si fa avanzare la CPU piu' indietro. La contesa del bus non
-     si modella, e va DICHIARATA come la DMA che non ruba cicli. E il
-     pareggio fra due CPU allo stesso istante: chi passa prima? Lo decide
-     una regola scritta, e deve essere deterministica
-  5. UN PROGRAMMA PER CPU: la riga di comando con due .vx, e il loader. Il
-     locator vero e' la tappa 3: qui basta che due immagini si carichino.
+**PER RIPRENDERE dopo il 29/09 — la TAPPA 3, il LOCATOR, che si DISCUTE prima:**
+```
+Leggi docs/stato-lavori.md: il riquadro RIPRENDI DA QUI, poi §3.79 (la
+tappa 2: la mappa, e perche' la RAM condivisa riporta il locator) e §3.78
+(le quattro tappe). Poi in §5 il punto "C'e' un linker, non c'e' un
+locator", e src/toolchain.c -- il linker di oggi concatena in command
+order, due sezioni, nessuna regione, nessuna mappa.
+
+Il problema che la tappa 3 risolve: due programmi linkati separatamente,
+uno per CPU, devono mettersi d'accordo sull'indirizzo di cio' che sta in
+RAM CONDIVISA. Oggi test_amp lo fa a mano (SHARED_BASE + 0, + 4). Niente
+e' deciso. Da discutere, nell'ordine:
+  1. COME SI DICHIARA una variabile condivisa nel sorgente: una sezione
+     nuova (.shared?), accanto a .text e .data
+  2. CHI decide l'indirizzo: un file di collocazione con le REGIONI (RAM
+     locale, RAM condivisa) -- e se il formato somiglia a qualcosa che
+     l'utente conosce (il .ldf degli SHARC? uno script di GNU ld?)
+  3. COME DUE IMMAGINI SI METTONO D'ACCORDO: un oggetto comune linkato in
+     tutte e due, o un'immagine "condivisa" linkata una volta sola e letta
+     dalle altre. E chi la inizializza
+  4. LA MAPPA: il file che dice dove e' finito ogni simbolo. E' anche il
+     fronte che ND Satcom rende rilevante
 Si discute PRIMA di scrivere, e le scelte di forma che emergono scrivendo
 si dicono prima. Non scrivere oltre cio' che e' deciso.
 
-Prima di toccare niente: ctest 55/55, scheduler_facts --check verde, e la
-base di tools/equiv.py registrata con il simulatore di HEAD (il comando e'
-nell'intestazione dello script).
+Prima di toccare niente: ctest --timeout 60 57/57 (il timeout: un test che
+aspetta un evento che non arriva resta appeso, §3.79), scheduler_facts
+--check verde, e la base di tools/equiv.py col simulatore di HEAD.
 
-Alla fine: OGNI programma a una CPU IDENTICO al ciclo -- tools/equiv.py
-contro HEAD, vuoto -- e le 20 impronte identiche a un build pulito di
-HEAD (tools/fingerprint.sh con l'argomento `out`: da solo legge build/).
-Il primo programma a due CPU ha un test visto ROSSO, e il determinismo si
-prova: due corse dello stesso programma a due CPU, uscite identiche.
+Alla fine: ogni programma di oggi IDENTICO (tools/equiv.py contro HEAD)
+e le 24 impronte identiche a un build pulito di HEAD -- a meno che il
+locator cambi dove finiscono i dati, e allora si dice PRIMA quali
+impronte si muovono e perche'. test_amp riscritto con le variabili
+condivise dichiarate, e visto rosso.
 ```
 
 **E IN PARALLELO, senza dipendenze — la SECONDA BASE DEI TEMPI, e `srai` (15/09, deciso):**

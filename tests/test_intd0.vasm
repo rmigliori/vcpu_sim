@@ -1,0 +1,24 @@
+; tests/test_intd0.vasm — IL DISTRIBUTORE: il programma della CPU 0
+; (29/09/2026, §3.79).
+;
+; Gira con test_intd1.vasm sulla CPU 1 e con un tasto a 500 cicli (--kbd in
+; CMakeLists.txt). La CPU 0 fa una cosa sola: manda la linea della tastiera
+; alla CPU 1, e rilegge il registro.
+;
+;   1   la destinazione della linea INTD_KBD, riletta
+;
+; La CPU 0 non abilita gli interrupt: se il distributore venisse ignorato, la
+; trap del tasto non arriverebbe a nessuno, e lo dice la CPU 1.
+
+.include "hal/amp.vinc"
+
+  .text
+  .global main
+
+main:
+  li r1, INTD_TARGET       ; + 4 * INTD_KBD, che e' 0
+  li r2, 1
+  sw r2, 0(r1)
+  lw r5, 0(r1)
+  dumps r5                 ; 1
+  halt

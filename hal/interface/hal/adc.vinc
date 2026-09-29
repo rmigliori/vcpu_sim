@@ -12,6 +12,12 @@
 ; finiti in ADC_STATUS, e chi prende un blocco verifica che sia finito quello
 ; che aspetta.
 ;
+; --- LA DMA SCRIVE SOLO NELLA RAM CONDIVISA (29/09/2026) ---
+; ADC_ADDR punta dentro SHARED_BASE .. + SHARED_SIZE (hal/amp.vinc), e un
+; blocco che non ci sta tutto e' una configurazione impossibile. Nessuna
+; periferica scrive nella RAM privata di una CPU: l'ADC non e' di nessuna,
+; lo programma chi lo usa e il blocco lo vede chiunque.
+;
 ; --- IL FORMATO: I e Q alternati, una parola a 32 bit ciascuno ---
 ;     ADC_ADDR + 8*i      I del campione i
 ;     ADC_ADDR + 8*i + 4  Q del campione i
@@ -29,7 +35,8 @@
 ;     bit 1      ADC_OVERRUN   un avvio e' arrivato mentre acquisiva: IGNORATO
 ;     bit 2..31  i blocchi finiti dall'accensione (>> ADC_DONE_SHIFT)
 ; --------------------------------------------------------------------------
-.equ ADC_ADDR    0x100040        ; lettura/scrittura: dove scrivere il blocco
+.equ ADC_ADDR    0x100040        ; lettura/scrittura: dove scrivere il blocco,
+                                 ; SOLO nella RAM condivisa (hal/amp.vinc)
 .equ ADC_COUNT   0x100044        ; lettura/scrittura: N, campioni complessi
 .equ ADC_PERIOD  0x100048        ; lettura/scrittura: tick fra due campioni
 .equ ADC_CTRL    0x10004C        ; scrittura: ADC_START avvia

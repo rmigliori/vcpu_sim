@@ -24,8 +24,27 @@ void machine_init(VMachine* m)
   for (int i = 0; i < NUM_CPU; ++i)
   {
     vcpu_init(&m->cpu[i]);
-    m->cpu[i].m = m;
+    m->cpu[i].m      = m;
+    m->cpu[i].id     = i;
+    m->cpu[i].halted = 1;        // ferma finche' non riceve un programma
   }
+}
+
+// I prefissi stanno qui, e non si scrivono: una stringa per CPU.
+static const char* const g_tag[NUM_CPU] = { "[cpu0] ", "[cpu1] " };
+
+void machine_load(VMachine* m, int id, const Instr* prog, int prog_len, int64_t entry)
+{
+  VCpu* cpu = &m->cpu[id];
+  cpu->prog     = prog;
+  cpu->prog_len = prog_len;
+  cpu->pc       = entry;
+  cpu->halted   = 0;
+  m->ncpu += 1;
+  // CON PIU' CPU, IL PREFISSO SU TUTTE; con una sola nessuno, e l'uscita e'
+  // quella di sempre (§3.79).
+  if (m->ncpu > 1)
+    for (int i = 0; i < NUM_CPU; ++i) m->cpu[i].tag = g_tag[i];
 }
 
 uint64_t machine_now(const VMachine* m, const VCpu* cpu)
@@ -58,14 +77,23 @@ static int32_t clock_ms(const VMachine* m, uint64_t t)
   return (int32_t) (uint32_t) (t / m->clock.div_ms);
 }
 
+// L'altra CPU: con due, una sola (devices.h, la mailbox).
+static VMbox* mbox_peer(VMachine* m, const VCpu* cpu)
+{
+  return &m->mbox[(cpu->id + 1) % NUM_CPU];
+}
+
 static int32_t mmio_load(VMachine* m, VCpu* cpu, int64_t addr)
 {
   uint64_t t = machine_now(m, cpu);
   int32_t v;
-  if (kbd_load(&m->kbd, addr, &v)) return v;
-  if (addr == CLOCK_MS)            return clock_ms(m, t);
-  if (cmp_load(&m->cmp, addr, &v)) return v;
-  if (adc_load(&m->adc, addr, &v)) return v;
+  if (kbd_load(&m->kbd, addr, &v))                         return v;
+  if (addr == CLOCK_MS)                                    return clock_ms(m, t);
+  if (cmp_load(&m->cmp[cpu->id], addr, &v))                return v;
+  if (adc_load(&m->adc, addr, &v))                         return v;
+  if (mbox_load(&m->mbox[cpu->id], mbox_peer(m, cpu), addr, &v)) return v;
+  if (hwlock_load(&m->hwlock, cpu->id, addr, &v))          return v;
+  if (intd_load(&m->intd, addr, &v))                       return v;
 
   fprintf(stderr, "runtime error: MMIO load from unmapped register 0x%llx\n",
           (unsigned long long) addr);
@@ -75,63 +103,82 @@ static int32_t mmio_load(VMachine* m, VCpu* cpu, int64_t addr)
 static void mmio_store(VMachine* m, VCpu* cpu, int64_t addr, int32_t value)
 {
   uint64_t t = machine_now(m, cpu);
-  if (kbd_store(&m->kbd, addr, value))                    return;
-  if (cmp_store(&m->cmp, addr, value))                    return;
-  if (adc_store(&m->adc, addr, value, t, &m->clock))      return;
-  if (marker_store(&m->marker, cpu, t, addr, value))      return;
+  if (kbd_store(&m->kbd, addr, value))                          return;
+  if (cmp_store(&m->cmp[cpu->id], addr, value))                 return;
+  if (adc_store(&m->adc, addr, value, t, &m->clock))            return;
+  if (marker_store(&m->marker[cpu->id], cpu, t, addr, value))   return;
+  if (mbox_store(&m->mbox[cpu->id], mbox_peer(m, cpu), addr, value)) return;
+  if (hwlock_store(&m->hwlock, cpu->id, addr, value))           return;
+  if (intd_store(&m->intd, NUM_CPU, addr, value))               return;
 
   fprintf(stderr, "runtime error: MMIO store to read-only register 0x%llx\n",
           (unsigned long long) addr);
 }
 
-float machine_loadf(const VMachine* m, int64_t addr)
+// LA RAM: la LOCALE della CPU che fa l'accesso, da 0, o la CONDIVISA. Una
+// parola a cavallo di un confine non e' di nessuna delle due, e fuori da
+// entrambe e' l'errore di sempre. Torna NULL se l'indirizzo non e' RAM.
+static uint8_t* ram_ptr(VMachine* m, const VCpu* cpu, int64_t addr, int64_t len)
+{
+  if (addr >= 0 && addr + len <= (int64_t) MEM_SIZE)
+    return &m->ram[cpu->id][addr];
+  if (addr >= SHARED_BASE && addr + len <= SHARED_BASE + SHARED_SIZE)
+    return &m->shared[addr - SHARED_BASE];
+  return NULL;
+}
+
+float machine_loadf(const VMachine* m, const VCpu* cpu, int64_t addr)
 {
   float value = 0.0f;
-  if (addr < 0 || (uint64_t) addr + sizeof(value) > MEM_SIZE)
+  const uint8_t* p = ram_ptr((VMachine*) m, cpu, addr, sizeof(value));
+  if (!p)
   {
     fprintf(stderr, "runtime error: float load out of bounds at 0x%llx\n",
             (unsigned long long) addr);
     return 0.0f;
   }
-  memcpy(&value, &m->mem[addr], sizeof(value));
+  memcpy(&value, p, sizeof(value));
   return value;
 }
 
-void machine_storef(VMachine* m, int64_t addr, float value)
+void machine_storef(VMachine* m, const VCpu* cpu, int64_t addr, float value)
 {
-  if (addr < 0 || (uint64_t) addr + sizeof(value) > MEM_SIZE)
+  uint8_t* p = ram_ptr(m, cpu, addr, sizeof(value));
+  if (!p)
   {
     fprintf(stderr, "runtime error: float store out of bounds at 0x%llx\n",
             (unsigned long long) addr);
     return;
   }
-  memcpy(&m->mem[addr], &value, sizeof(value));
+  memcpy(p, &value, sizeof(value));
 }
 
 int32_t machine_load32(VMachine* m, VCpu* cpu, int64_t addr)
 {
   int32_t value = 0;
   if (is_mmio(addr)) return mmio_load(m, cpu, addr);
-  if (addr < 0 || (uint64_t) addr + sizeof(value) > MEM_SIZE)
+  const uint8_t* p = ram_ptr(m, cpu, addr, sizeof(value));
+  if (!p)
   {
     fprintf(stderr, "runtime error: word load out of bounds at 0x%llx\n",
             (unsigned long long) addr);
     return 0;
   }
-  memcpy(&value, &m->mem[addr], sizeof(value));
+  memcpy(&value, p, sizeof(value));
   return value;
 }
 
 void machine_store32(VMachine* m, VCpu* cpu, int64_t addr, int32_t value)
 {
   if (is_mmio(addr)) { mmio_store(m, cpu, addr, value); return; }
-  if (addr < 0 || (uint64_t) addr + sizeof(value) > MEM_SIZE)
+  uint8_t* p = ram_ptr(m, cpu, addr, sizeof(value));
+  if (!p)
   {
     fprintf(stderr, "runtime error: word store out of bounds at 0x%llx\n",
             (unsigned long long) addr);
     return;
   }
-  memcpy(&m->mem[addr], &value, sizeof(value));
+  memcpy(p, &value, sizeof(value));
 
   // Il canale MARK_EXEC: il possesso della CPU letto invece che dedotto.
   // Si annota il CAMBIO e non la scrittura, perche' il dispatcher riscrive
@@ -140,10 +187,10 @@ void machine_store32(VMachine* m, VCpu* cpu, int64_t addr, int32_t value)
   // marca per tick che non significa niente. Costa un confronto per store, e
   // zero istruzioni nel kernel. `current` e' quello del programma di QUESTA
   // CPU: il guardiano e' per CPU.
-  if (m->marker.on && addr == cpu->mark_current_addr && value != cpu->mark_current)
+  if (m->marker[cpu->id].on && addr == cpu->mark_current_addr && value != cpu->mark_current)
   {
     cpu->mark_current = value;
-    marker_mark(&m->marker, cpu, machine_now(m, cpu), MARK_EXEC, value);
+    marker_mark(&m->marker[cpu->id], cpu, machine_now(m, cpu), MARK_EXEC, value);
   }
 }
 
@@ -165,7 +212,7 @@ int machine_mark(VMachine* m, VCpu* cpu, int64_t port, int32_t value)
     fprintf(stderr, "mark: il canale %d e' RISERVATO alla macchina\n", canale);
     return -1;
   }
-  marker_mark(&m->marker, cpu, machine_now(m, cpu), canale, value);
+  marker_mark(&m->marker[cpu->id], cpu, machine_now(m, cpu), canale, value);
   return 0;
 }
 
@@ -332,7 +379,7 @@ static int dbg_prompt(VCpu* cpu, const Instr* prog, int prog_len, DbgState* dbg)
       if (dbg_resolve(a, &addr) != 0) { printf("bad address '%s'\n", a); continue; }
       int cnt = c ? atoi(c) : 8;
       printf("mem[0x%x] =", addr);
-      for (int i = 0; i < cnt; ++i) printf(" %g", machine_loadf(cpu->m, addr + (int64_t) i * 4));
+      for (int i = 0; i < cnt; ++i) printf(" %g", machine_loadf(cpu->m, cpu, addr + (int64_t) i * 4));
       printf("\n");
       continue;
     }
@@ -371,20 +418,37 @@ static int dbg_prompt(VCpu* cpu, const Instr* prog, int prog_len, DbgState* dbg)
 // ---------------------------------------------------------------------------
 //  Il ciclo principale
 //
-//  A ogni confine d'istruzione: i device avanzano fino all'istante della CPU,
-//  poi l'arbitraggio delle interruzioni, poi UNA istruzione. L'istruzione e'
-//  indivisibile, ed e' tutto cio' che serve perche' un evento che matura
-//  DENTRO un'istruzione si veda al confine dopo.
+//  A ogni passo: si sceglie la CPU PIU' INDIETRO nel tempo -- a pari istante
+//  la CPU 0, un arbitro a priorita' fissa (§3.79) -- i device avanzano fino al
+//  suo istante, poi l'arbitraggio delle SUE interruzioni, poi UNA sua
+//  istruzione. L'istruzione e' indivisibile, ed e' tutto cio' che serve
+//  perche' un evento che matura DENTRO un'istruzione si veda al confine dopo.
+//  Siccome si fa avanzare sempre la piu' indietro, il tempo dei device non
+//  torna mai indietro.
 //
-//  Una CPU, per ora. Con piu' CPU si fa avanzare sempre quella piu' indietro
-//  nel tempo, e i device si portano al suo istante: e' la tappa 2.
+//  DICHIARATO: un'istruzione lunga si esegue tutta quando parte, quindi
+//  l'altra CPU ne vede gli effetti in memoria fino a una durata d'istruzione
+//  PRIMA del vero. Come la contesa del bus, che non si modella.
 // ---------------------------------------------------------------------------
-void machine_run(VMachine* m, const Instr* prog, int prog_len, RunMode mode, int64_t entry)
+static int cpu_runnable(const VCpu* cpu)
 {
-  VCpu* cpu = &m->cpu[0];
-  cpu->pc     = entry;
-  cpu->halted = 0;
+  return !cpu->halted && cpu->pc >= 0 && cpu->pc < cpu->prog_len;
+}
 
+static VCpu* next_cpu(VMachine* m)
+{
+  VCpu* best = NULL;
+  for (int i = 0; i < NUM_CPU; ++i)
+  {
+    VCpu* c = &m->cpu[i];
+    if (!cpu_runnable(c)) continue;
+    if (!best || machine_now(m, c) < machine_now(m, best)) best = c;
+  }
+  return best;
+}
+
+void machine_run(VMachine* m, RunMode mode)
+{
   DbgState dbg;
   memset(&dbg, 0, sizeof dbg);
   dbg.stepping = (mode == RUN_DEBUG);   // stop on the very first instruction
@@ -392,16 +456,21 @@ void machine_run(VMachine* m, const Instr* prog, int prog_len, RunMode mode, int
   if (mode == RUN_DEBUG)
     printf("vcpu debugger: 'h' for help, 's' to step, 'c' to continue.\n");
 
-  while (!cpu->halted && cpu->pc >= 0 && cpu->pc < prog_len)
+  VCpu* cpu;
+  while ((cpu = next_cpu(m)) != NULL)
   {
     uint64_t t = machine_now(m, cpu);
+    VMarker* mk = &m->marker[cpu->id];
 
     // I device avanzano al confine d'istruzione come tutto il resto. Questo
     // NON e' una trap: aggiorna solo lo stato visibile in MMIO, quindi non
     // guarda PSW_IE e vale anche per un programma che gli interrupt non li
-    // abilita mai -- che e' precisamente il caso del polling.
-    kbd_advance(&m->kbd, t, &m->marker, cpu);
-    adc_advance(&m->adc, t, &m->clock, m->mem);
+    // abilita mai -- che e' precisamente il caso del polling. Il tasto si
+    // marca nella registrazione della CPU a cui il distributore manda la
+    // linea della tastiera, col SUO timbro.
+    int kt = m->intd.target[INTD_KBD];
+    kbd_advance(&m->kbd, t, &m->marker[kt], &m->cpu[kt]);
+    adc_advance(&m->adc, t, &m->clock, m->shared);   // la DMA: solo RAM condivisa
 
     // LA RICHIESTA, PRIMA DELLA CONSEGNA (15/09/2026). Il timer matura quando
     // il conto dei cicli raggiunge la scadenza, e questo non ha niente a che
@@ -430,23 +499,24 @@ void machine_run(VMachine* m, const Instr* prog, int prog_len, RunMode mode, int
       // la marca. Serve a dire se una richiesta e' andata PERSA -- due marche
       // consecutive che saltano un numero -- che con la sola sequenza di
       // istanti si potrebbe solo sospettare guardando le distanze.
-      marker_mark(&m->marker, cpu, t, MARK_TIMER, (int32_t) cpu->timer_seq);
+      marker_mark(mk, cpu, t, MARK_TIMER, (int32_t) cpu->timer_seq);
     }
 
-    // I COMPARATORI, PRIMI FRA LE SORGENTI (15/09/2026, §3.72). Il canale 0 e'
-    // il posto del battito del foreground, e un battito non deve derivare: e' lo
-    // stesso argomento con cui il timer batte la tastiera.
+    // I COMPARATORI, PRIMI FRA LE SORGENTI (15/09/2026, §3.72): quelli di
+    // QUESTA CPU. Il canale 0 e' il posto del battito del foreground, e un
+    // battito non deve derivare: e' lo stesso argomento con cui il timer batte
+    // la tastiera.
     //
     // Nessun bit di pending da azzerare qui: la condizione resta vera finche'
     // l'ISR non riprograma la scadenza o non disarma il canale. E' il protocollo
     // della tastiera -- l'azione utile chiude l'evento, non la trap.
     if (cpu->psw & PSW_IE)
     {
-      int scattato = cmp_pending(&m->cmp, clock_ms(m, t));
+      int scattato = cmp_pending(&m->cmp[cpu->id], clock_ms(m, t));
       if (scattato >= 0)
       {
         if (mode == RUN_TRACE)
-          printf("[pc=%3lld cyc=%6llu] -- cmp%d trap -> handler %lld\n",
+          printf("%s[pc=%3lld cyc=%6llu] -- cmp%d trap -> handler %lld\n", cpu->tag,
                  (long long) cpu->pc, (unsigned long long) cpu->cycles,
                  scattato, (long long) cpu->handler);
         vcpu_trap(cpu, CAUSE_CMP + scattato);
@@ -460,41 +530,55 @@ void machine_run(VMachine* m, const Instr* prog, int prog_len, RunMode mode, int
       cpu->timer_pending = 0;
       cpu->timer_next = cpu->cycles + (uint64_t) cpu->timer_period;
       if (mode == RUN_TRACE)
-        printf("[pc=%3lld cyc=%6llu] -- timer trap -> handler %lld\n",
+        printf("%s[pc=%3lld cyc=%6llu] -- timer trap -> handler %lld\n", cpu->tag,
                (long long) cpu->pc, (unsigned long long) cpu->cycles,
                (long long) cpu->handler);
       vcpu_trap(cpu, CAUSE_TIMER);
       continue;
     }
 
-    // LA TASTIERA, seconda sorgente (14/09/2026, §3.67). DOPO il timer e non
-    // prima: se sono pronte insieme vince il battito dello scheduler, che non
-    // deve derivare -- un carattere aspetta un tick senza che se ne accorga
-    // nessuno, un tick perso si vede su ogni scadenza.
+    // LA TASTIERA, seconda sorgente (14/09/2026, §3.67), e SOLO sulla CPU a
+    // cui il distributore la manda. DOPO il timer e non prima: se sono pronte insieme vince
+    // il battito dello scheduler, che non deve derivare -- un carattere
+    // aspetta un tick senza che se ne accorga nessuno, un tick perso si vede
+    // su ogni scadenza.
     //
     // A LIVELLO (kbd_irq): un'ISR che torna SENZA aver letto KBD_DATA ritrova
     // la trap subito, perche' il flag lo abbassa la lettura, non la trap. E' il
     // protocollo del device, non un caso limite.
-    if ((cpu->psw & PSW_IE) && kbd_irq(&m->kbd))
+    if (cpu->id == m->intd.target[INTD_KBD] && (cpu->psw & PSW_IE) && kbd_irq(&m->kbd))
     {
       if (mode == RUN_TRACE)
-        printf("[pc=%3lld cyc=%6llu] -- kbd trap -> handler %lld\n",
+        printf("%s[pc=%3lld cyc=%6llu] -- kbd trap -> handler %lld\n", cpu->tag,
                (long long) cpu->pc, (unsigned long long) cpu->cycles,
                (long long) cpu->handler);
       vcpu_trap(cpu, CAUSE_KBD);
       continue;
     }
 
-    const Instr* in = &prog[cpu->pc];
+    // LA MAILBOX, ultima (§3.79): un messaggio dall'altra CPU aspetta qualche
+    // istruzione, il battito no. A livello come la tastiera: resta alzata
+    // finche' la propria FIFO non e' vuota.
+    if ((cpu->psw & PSW_IE) && mbox_irq(&m->mbox[cpu->id]))
+    {
+      if (mode == RUN_TRACE)
+        printf("%s[pc=%3lld cyc=%6llu] -- mbox trap -> handler %lld\n", cpu->tag,
+               (long long) cpu->pc, (unsigned long long) cpu->cycles,
+               (long long) cpu->handler);
+      vcpu_trap(cpu, CAUSE_MBOX);
+      continue;
+    }
+
+    const Instr* in = &cpu->prog[cpu->pc];
 
     if (mode == RUN_DEBUG && (dbg.stepping || dbg_has_break(&dbg, (int) cpu->pc)))
     {
-      if (!dbg_prompt(cpu, prog, prog_len, &dbg)) return;
+      if (!dbg_prompt(cpu, cpu->prog, cpu->prog_len, &dbg)) return;
     }
     else if (mode == RUN_TRACE)
     {
       char dis[128];
-      printf("[pc=%3lld cyc=%6llu] %s\n",
+      printf("%s[pc=%3lld cyc=%6llu] %s\n", cpu->tag,
              (long long) cpu->pc, (unsigned long long) cpu->cycles,
              vcpu_disasm(in, dis, sizeof dis));
     }

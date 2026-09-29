@@ -9,6 +9,7 @@
 void vcpu_init(VCpu* cpu)
 {
   memset(cpu, 0, sizeof(*cpu));
+  cpu->tag = "";
   cpu->vl = 0;
   cpu->r[0] = 0;  // hardwired zero
 }
@@ -22,12 +23,12 @@ void vcpu_init(VCpu* cpu)
 // cui l'esecuzione li chiama.
 static float load_f32(const VCpu* cpu, int64_t addr)
 {
-  return machine_loadf(cpu->m, addr);
+  return machine_loadf(cpu->m, cpu, addr);
 }
 
 static void store_f32(VCpu* cpu, int64_t addr, float value)
 {
-  machine_storef(cpu->m, addr, value);
+  machine_storef(cpu->m, cpu, addr, value);
 }
 
 // NON prende un const VCpu*, e la ragione e' concettuale prima che tecnica:
@@ -489,28 +490,29 @@ static void execute(VCpu* cpu, const Instr* in)
         break;
       }
 
+      // Il prefisso della CPU (vcpu.h, `tag`): vuoto con una CPU sola.
       case OP_DUMPS:
-        printf("r%d = %lld\n", in->b, (long long) cpu->r[in->b]);
+        printf("%sr%d = %lld\n", cpu->tag, in->b, (long long) cpu->r[in->b]);
         break;
       case OP_DUMPF:
-        printf("f%d = %g\n", in->b, cpu->f[in->b]);
+        printf("%sf%d = %g\n", cpu->tag, in->b, cpu->f[in->b]);
         break;
       case OP_DUMPV:
-        printf("v%d [VL=%d] =", in->a, cpu->vl);
+        printf("%sv%d [VL=%d] =", cpu->tag, in->a, cpu->vl);
         for (int i = 0; i < cpu->vl; ++i) printf(" %g", cpu->v[in->a][i]);
         printf("\n");
         break;
       case OP_DUMPM:
       {
         int64_t base = cpu->r[in->b];
-        printf("mem[r%d=0x%llx] =", in->b, (unsigned long long) base);
+        printf("%smem[r%d=0x%llx] =", cpu->tag, in->b, (unsigned long long) base);
         for (int i = 0; i < in->imm; ++i)
           printf(" %g", load_f32(cpu, base + (int64_t) i * 4));
         printf("\n");
         break;
       }
       case OP_DUMPMASK:
-        printf("vmask [VL=%d] =", cpu->vl);
+        printf("%svmask [VL=%d] =", cpu->tag, cpu->vl);
         for (int i = 0; i < cpu->vl; ++i)
           printf(" %d", (int) ((cpu->vmask >> i) & 1));
         printf("\n");

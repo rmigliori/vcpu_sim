@@ -342,8 +342,13 @@ int adc_store(VAdc* a, int64_t addr, int32_t value, uint64_t t, const VClock* ck
   if (a->busy) { a->overrun = 1; return 1; }
   // Una configurazione impossibile invece e' un errore di COSTRUZIONE, come
   // un canale del comparatore che non esiste: si dice, e non si parte.
-  if (a->count <= 0 || a->period <= 0 || a->addr < 0 ||
-      (int64_t) a->addr + 8 * (int64_t) a->count > (int64_t) MEM_SIZE)
+  //
+  // LA DMA SCRIVE SOLO NELLA RAM CONDIVISA (decisione dell'utente, 29/09/2026):
+  // nessuna periferica scrive nella memoria privata di una CPU. Un blocco che
+  // non ci sta tutto dentro e' una configurazione impossibile.
+  int64_t fine = (int64_t) a->addr + 8 * (int64_t) a->count;
+  int in_shared = a->addr >= SHARED_BASE && fine <= SHARED_BASE + SHARED_SIZE;
+  if (a->count <= 0 || a->period <= 0 || !in_shared)
   {
     fprintf(stderr, "runtime error: ADC, configurazione impossibile "
                     "(addr 0x%x, count %d, period %d)\n",
@@ -374,7 +379,7 @@ static int32_t adc_quantizza(double x)
 // e li scrive in RAM -- la DMA, che non ruba cicli. Il tempo del campione e'
 // l'istante in cui e' PRESO (next), non quello in cui arriva in memoria -- il
 // segnale non sa niente di quanto era lunga l'istruzione in corso.
-void adc_advance(VAdc* a, uint64_t t, const VClock* ck, uint8_t* mem)
+void adc_advance(VAdc* a, uint64_t t, const VClock* ck, uint8_t* shared)
 {
   while (a->busy && t >= a->next)
   {
@@ -384,8 +389,9 @@ void adc_advance(VAdc* a, uint64_t t, const VClock* ck, uint8_t* mem)
     int32_t qv = adc_quantizza(a->amp * sin(fi));
 
     int64_t p = a->cur_addr + 8 * (int64_t) a->i;
-    memcpy(&mem[p],     &iv, sizeof iv);
-    memcpy(&mem[p + 4], &qv, sizeof qv);
+    uint8_t* dst = &shared[p - SHARED_BASE];
+    memcpy(dst,     &iv, sizeof iv);
+    memcpy(dst + 4, &qv, sizeof qv);
 
     a->i    += 1;
     a->next += (uint64_t) a->cur_period * ck->div_periph;
@@ -416,4 +422,148 @@ int adc_set_signal(VAdc* a, const char* spec, char* err, size_t errsz)
   a->freq = f;
   a->amp  = amp;
   return 0;
+}
+
+// ---------------------------------------------------------------------------
+//  La mailbox (29/09/2026, §3.79). Il perche' e il protocollo sono in
+//  devices.h, accanto ai registri.
+// ---------------------------------------------------------------------------
+int mbox_load(VMbox* mine, const VMbox* peer, int64_t addr, int32_t* out)
+{
+  if (addr == MBOX_STATUS)
+  {
+    uint32_t s = ((uint32_t) mine->count & MBOX_COUNT_MASK)
+               | (peer->count == MBOX_DEPTH ? MBOX_PEER_FULL : 0u)
+               | (mine->overrun ? MBOX_OVERRUN : 0u);
+    mine->overrun = 0;          // chi l'ha visto una volta l'ha visto
+    *out = (int32_t) s;
+    return 1;
+  }
+  if (addr == MBOX_RECV)
+  {
+    if (mine->count == 0)
+    {
+      fprintf(stderr, "runtime error: MBOX_RECV da una mailbox vuota\n");
+      *out = 0;
+      return 1;
+    }
+    *out = (int32_t) mine->fifo[mine->head];
+    mine->head   = (mine->head + 1) % MBOX_DEPTH;
+    mine->count -= 1;
+    return 1;
+  }
+  if (addr == MBOX_CTRL)
+  {
+    *out = mine->ie ? MBOX_IE : 0;
+    return 1;
+  }
+  return 0;
+}
+
+int mbox_store(VMbox* mine, VMbox* peer, int64_t addr, int32_t value)
+{
+  if (addr == MBOX_SEND)
+  {
+    if (peer->count == MBOX_DEPTH) { mine->overrun = 1; return 1; }
+    peer->fifo[(peer->head + peer->count) % MBOX_DEPTH] = (uint32_t) value;
+    peer->count += 1;
+    return 1;
+  }
+  if (addr == MBOX_CTRL)
+  {
+    mine->ie = (value & MBOX_IE) ? 1 : 0;
+    return 1;
+  }
+  return 0;
+}
+
+// A LIVELLO: la propria FIFO non vuota, e l'interrupt armato.
+int mbox_irq(const VMbox* mine)
+{
+  return mine->ie && mine->count > 0;
+}
+
+// ---------------------------------------------------------------------------
+//  Lo spinlock hardware (29/09/2026, §3.79)
+// ---------------------------------------------------------------------------
+static int hwlock_index(int64_t addr)
+{
+  if (addr < HWLOCK_BASE || addr >= HWLOCK_BASE + HWLOCK_COUNT * 4) return -1;
+  return (int) ((addr - HWLOCK_BASE) / 4);
+}
+
+// LEGGERE E' IL TEST-AND-SET: libero -> preso da chi legge, e torna 0.
+//
+// NON RICORSIVO: chi lo tiene e lo richiede lo trova occupato, e se gira ad
+// aspettarlo aspetta se stesso per sempre. La lettura resta 1, ma l'errore di
+// costruzione si DICE, una volta per presa: senza, il simulatore resterebbe
+// appeso in silenzio (osservazione dell'utente, 29/09/2026).
+int hwlock_load(VHwLock* h, int id, int64_t addr, int32_t* out)
+{
+  int n = hwlock_index(addr);
+  if (n < 0) return 0;
+  if (h->owner[n] == 0)
+  {
+    h->owner[n] = id + 1;
+    h->detto[n] = 0;
+    *out = 0;
+  }
+  else
+  {
+    if (h->owner[n] == id + 1 && !h->detto[n])
+    {
+      fprintf(stderr, "runtime error: spinlock %d richiesto dalla CPU %d, che lo tiene "
+                      "gia' (non e' ricorsivo)\n", n, id);
+      h->detto[n] = 1;
+    }
+    *out = 1;
+  }
+  return 1;
+}
+
+// SCRIVERE 0 LO RILASCIA, e solo chi lo tiene puo' farlo: rilasciare un lock
+// altrui, o scrivere altro che 0, e' un errore di costruzione e va detto.
+int hwlock_store(VHwLock* h, int id, int64_t addr, int32_t value)
+{
+  int n = hwlock_index(addr);
+  if (n < 0) return 0;
+  if (value != 0)
+    fprintf(stderr, "runtime error: spinlock %d, si rilascia scrivendo 0 (scritto %d)\n",
+            n, value);
+  else if (h->owner[n] != id + 1)
+    fprintf(stderr, "runtime error: spinlock %d rilasciato dalla CPU %d, che non lo tiene\n",
+            n, id);
+  else
+    h->owner[n] = 0;
+  return 1;
+}
+
+// ---------------------------------------------------------------------------
+//  Il distributore delle interruzioni (29/09/2026, §3.79): il perche' e' in
+//  devices.h, accanto ai registri.
+// ---------------------------------------------------------------------------
+static int intd_index(int64_t addr)
+{
+  if (addr < INTD_TARGET || addr >= INTD_TARGET + INTD_LINES * 4) return -1;
+  return (int) ((addr - INTD_TARGET) / 4);
+}
+
+int intd_load(const VIntd* d, int64_t addr, int32_t* out)
+{
+  int n = intd_index(addr);
+  if (n < 0) return 0;
+  *out = d->target[n];
+  return 1;
+}
+
+int intd_store(VIntd* d, int ncpu, int64_t addr, int32_t value)
+{
+  int n = intd_index(addr);
+  if (n < 0) return 0;
+  if (value < 0 || value >= ncpu)
+    fprintf(stderr, "runtime error: INTD, la linea %d non puo' andare alla CPU %d "
+                    "(la scheda ne ha %d)\n", n, value, ncpu);
+  else
+    d->target[n] = value;
+  return 1;
 }

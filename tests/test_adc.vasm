@@ -46,9 +46,12 @@
 .equ ADC_STATUS  0x100050
 .equ ADC_START    1
 
-  .data
-blocco: .word 0, 0, 0, 0, 0, 0, 0, 0     ; 4 campioni, I e Q alternati
-guardia: .word 0                          ; la parola dopo: deve restare 0
+; LA DMA SCRIVE SOLO NELLA RAM CONDIVISA (29/09/2026, §3.79), quindi il
+; blocco non sta piu' nei dati del programma: sta all'inizio della RAM
+; condivisa, che parte azzerata, e la guardia subito dopo.
+.equ SHARED_BASE 0x200000        ; hal/amp.vinc, ricopiato come i registri
+.equ BLOCCO      0x200000        ; 4 campioni, I e Q alternati: 32 byte
+.equ GUARDIA     0x200020        ; la parola dopo: deve restare 0
 
   .text
 main:
@@ -58,7 +61,7 @@ main:
 
   ; --- la configurazione, e l'avvio --------------------------------------
   li r1, ADC_ADDR
-  li r2, blocco
+  li r2, BLOCCO
   sw r2, 0(r1)
   li r1, ADC_COUNT
   li r2, 4
@@ -80,7 +83,7 @@ main:
   dumps r5                 ; 1: la lettura l'ha abbassato
 
   ; --- l'ultimo campione, prima: ancora vuoto -----------------------------
-  li r3, blocco
+  li r3, BLOCCO
   lw r6, 24(r3)            ; I3
   lw r7, 28(r3)            ; Q3
   mul r6, r6, r6
@@ -111,7 +114,7 @@ attesa:
 vuoto_dopo:
   dumps r5                 ; 0
 
-  li r4, guardia
+  li r4, GUARDIA
   lw r5, 0(r4)
   dumps r5                 ; 0
 

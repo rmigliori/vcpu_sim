@@ -243,6 +243,43 @@ vasm_check(adc_sat    MODE DUMPS EXPECT "0 1 3 1 1 4 0 0 0 4"
            ARGS --adc 0,3000
            SOURCE ${CMAKE_SOURCE_DIR}/tests/test_adc.vasm)
 
+# test_amp — DUE CPU (29/09/2026, §3.79). Due programmi, uno per CPU, sulla
+# stessa scheda: `run test_amp0.vx test_amp1.vx`. Il soggetto e' la MACCHINA
+# -- la RAM condivisa, lo spinlock hardware, la mailbox -- e niente kernel.
+#   cpu0:768   la raffica di 5 parole a una FIFO di 4: PEER_FULL | OVERRUN
+#   cpu1:10    la CPU 1 riceve, a interrupt, 1+2+3+4
+#   cpu1:4     ...quattro parole: la quinta e' persa
+#   cpu0:200   il contatore in RAM condivisa, 100 incrementi per CPU sotto
+#              lo spinlock: nessuno perso
+# L'ordine e' quello del tempo simulato, ed e' deterministico. Visto rosso
+# togliendo lo spinlock (il contatore perde incrementi) e l'overrun (256).
+vasm_object(t_amp0     SOURCE ${CMAKE_SOURCE_DIR}/tests/test_amp0.vasm
+                       INTERFACES vinc_hal)
+vasm_object(t_amp1     SOURCE ${CMAKE_SOURCE_DIR}/tests/test_amp1.vasm
+                       INTERFACES vinc_hal)
+vasm_program(test_amp0 OBJECTS t_amp0)
+vasm_program(test_amp1 OBJECTS t_amp1)
+get_target_property(_amp1_vx test_amp1 VASM_OUTPUT)
+vasm_check(amp        MODE DUMPS PROGRAM test_amp0 ARGS ${_amp1_vx}
+           EXPECT "cpu0:768 cpu1:10 cpu1:4 cpu0:200")
+
+# test_intd — IL DISTRIBUTORE DELLE INTERRUZIONI (29/09/2026, §3.79). La CPU 0
+# manda la linea della tastiera alla CPU 1, e un tasto a 500 cicli arriva la'.
+#   cpu0:1    la destinazione, riletta
+#   cpu1:97   il carattere, letto nell'ISR della CPU 1
+#   cpu1:1    la causa: CAUSE_KBD
+# L'attesa della CPU 1 e' limitata. Visto rosso ignorando il distributore:
+# "cpu0:1 cpu1:0 cpu1:0", la trap non arriva a nessuno.
+vasm_object(t_intd0    SOURCE ${CMAKE_SOURCE_DIR}/tests/test_intd0.vasm
+                       INTERFACES vinc_hal)
+vasm_object(t_intd1    SOURCE ${CMAKE_SOURCE_DIR}/tests/test_intd1.vasm
+                       INTERFACES vinc_hal)
+vasm_program(test_intd0 OBJECTS t_intd0)
+vasm_program(test_intd1 OBJECTS t_intd1)
+get_target_property(_intd1_vx test_intd1 VASM_OUTPUT)
+vasm_check(intd       MODE DUMPS PROGRAM test_intd0 ARGS ${_intd1_vx} --kbd 500:a
+           EXPECT "cpu0:1 cpu1:97 cpu1:1")
+
 # test_due_irq — LA SECONDA SORGENTE DI INTERRUZIONE (14/09/2026, §3.67).
 #
 # Fino a oggi la macchina ne aveva UNA, il timer, e la tastiera si interrogava.

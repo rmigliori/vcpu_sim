@@ -38,10 +38,14 @@
 ;   il bit reversal tolto (fft_brev = 2*i): il bin e il resto escono sbagliati
 
 .include "hal/adc.vinc"
+.include "hal/amp.vinc"
 .include "fft/fft.vinc"
 
+; Il blocco dell'ADC sta nella RAM CONDIVISA, perche' la DMA scrive solo li'
+; (29/09/2026, §3.79): 64 campioni complessi, I e Q alternati, 512 byte.
+.equ BLOCCO  SHARED_BASE
+
   .data
-blocco:  .space 512                       ; 64 campioni complessi, I e Q alternati
 re:      .space 256
 im:      .space 256
 indici:  .float 0, 1, 2, 3, 4, 5, 6, 7
@@ -59,7 +63,7 @@ indici:  .float 0, 1, 2, 3, 4, 5, 6, 7
 main:
   ; --- un blocco dall'ADC ---------------------------------------------------
   li r1, ADC_ADDR
-  li r2, blocco
+  li r2, BLOCCO
   sw r2, 0(r1)
   li r1, ADC_COUNT
   li r2, FFT_N
@@ -78,7 +82,7 @@ attesa:                    ; il CONTATORE, non il bit BUSY
   beq r5, r0, attesa
 
   ; --- la FFT ---------------------------------------------------------------
-  li r1, blocco
+  li r1, BLOCCO
   li r2, re
   li r3, im
   call fft64

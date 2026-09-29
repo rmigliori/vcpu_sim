@@ -55,18 +55,20 @@ Flusso di esecuzione:
 struttura della CPU conteneva tutto: memoria, device e tempo, che era il
 conto dei cicli della CPU. Adesso la scheda (`VMachine`) possiede un clock
 master (100 MHz) con un divisore intero per dominio — CPU, periferiche,
-millisecondi — la memoria, i device e le CPU (una, per ora). Ogni accesso di
+millisecondi — la memoria, i device e **due CPU** (§3.3). Ogni accesso di
 una CPU alla memoria o ai device passa dal bus della scheda, e i device
-ricevono il tempo come argomento, in tick master. Con i divisori a 1 la
-macchina è identica al ciclo a quella di prima: è la prima tappa verso più
-CPU (AMP).
+ricevono il tempo come argomento, in tick master. Con i divisori a 1 e un
+programma solo la macchina è identica al ciclo a quella di prima.
 
 ```
- VMachine ── clock master ─┬─ /1 CPU ─────────── VCpu 0: registri, pc, psw, timer privato
+ VMachine ── clock master ─┬─ /1 CPU ─────────── VCpu 0, VCpu 1: registri, pc, psw, timer privato
                            ├─ /1 periferiche ─── ADC_PERIOD
                            └─ /100000 ms ─────── CLOCK_MS, comparatori
-          ── bus ─┬─ RAM (1 MiB)
-                  └─ MMIO: tastiera, comparatori, ADC (DMA in RAM), marcatore
+          ── bus ─┬─ RAM locale (1 MiB da 0, una per CPU)
+                  ├─ MMIO: tastiera, ADC (DMA), CLOCK_MS, spinlock,       della scheda
+                  │        distributore delle interruzioni
+                  │        comparatori, mailbox, marcatore                 uno per CPU
+                  └─ RAM condivisa (64 KiB a 0x200000)
 ```
 
 ---
@@ -165,6 +167,21 @@ Le quattro statistiche finali:
 | `vector element ops` | somma degli elementi processati da tutte le op vettoriali (misura del lavoro SIMD) |
 | `cycles (timing model)` | cicli stimati dal modello di timing (vedi §6) |
 | `clock (Hz)` | la frequenza della macchina, **dichiarata accanto ai cicli** perché è ciò che li rende leggibili come tempo (§6.1). Qui: 94 cicli = 0,94 µs |
+
+**Due CPU, due programmi** (dal 29/09/2026, §3.3). `run` accetta un `.vx`
+per CPU, in ordine:
+
+```bash
+./build/vcpu_sim run cpu0.vx cpu1.vx [--trace] [--marks rec.txt] ...
+```
+
+Con un solo programma la CPU 1 resta ferma e l'uscita è esattamente quella di
+sempre. Con due, **ogni riga porta il prefisso della sua CPU** — `[cpu0]` e
+`[cpu1]`, le righe dei `dumps`, di `--trace` e le statistiche, che escono una
+volta per CPU — e le righe appaiono nell'ordine del tempo simulato. Con
+`--marks` le registrazioni sono una per CPU, col nome della CPU prima
+dell'estensione: `rec.cpu0.txt`, `rec.cpu1.txt`. `--debug` vuole un programma
+solo. I messaggi d'errore su `stderr` il prefisso ancora non ce l'hanno.
 
 **Codici di uscita:**
 
@@ -580,7 +597,7 @@ scrive in RAM, **con la DMA e senza la CPU**, un blocco di N campioni
 
 | Registro | Indirizzo | Accesso | Significato |
 |---|---|---|---|
-| `ADC_ADDR` | `0x100040` | lettura/scrittura | dove scrivere il blocco |
+| `ADC_ADDR` | `0x100040` | lettura/scrittura | dove scrivere il blocco: **solo nella RAM condivisa** (§3.3) |
 | `ADC_COUNT` | `0x100044` | lettura/scrittura | N, i campioni complessi del blocco |
 | `ADC_PERIOD` | `0x100048` | lettura/scrittura | i tick del clock periferiche fra un campione e il successivo (oggi divisore 1: cicli) |
 | `ADC_CTRL` | `0x10004C` | scrittura | bit 0 `ADC_START` = avvia l'acquisizione |
@@ -629,6 +646,100 @@ con tre segnali.
 I registri e i bit si prendono da `hal/adc.vinc` (dal 29/09/2026, in
 `vinc_hal`); `test_adc` se li ricopia perché gira a file singolo. Il primo
 consumatore del blocco è la FFT di §7.11.
+
+**La DMA scrive solo nella RAM condivisa** (dal 29/09/2026, §3.3): `ADC_ADDR`
+deve puntare fra `0x200000` e `0x20FFFF`, e un blocco che non ci sta tutto è
+una configurazione impossibile. Nessuna periferica scrive nella RAM privata di
+una CPU, e l'ADC non appartiene a nessuna: lo programma chi lo usa, e il blocco
+lo vede chiunque.
+
+### 3.3 Due CPU: RAM condivisa, spinlock e mailbox
+
+Dal 29/09/2026 la scheda ha **due CPU**, asimmetriche: ognuna col suo
+programma (`run cpu0.vx cpu1.vx`, §2.3) e il suo kernel, se ne ha uno. Con un
+programma solo la CPU 1 resta ferma e la macchina è identica a quella di una
+CPU.
+
+**La mappa.** Ogni CPU ha la sua **RAM locale** di 1 MiB **da 0**, allo stesso
+indirizzo: sono fisicamente due, e ognuna vede la propria, quindi un programma
+si linka uguale per l'una e per l'altra. Le CPU si incontrano nella **RAM
+condivisa**, 64 KiB a `0x200000`, sopra i device.
+
+| Registro | Indirizzo | Accesso | Significato |
+|---|---|---|---|
+| `MBOX_SEND` | `0x100060` | scrittura | una parola all'**altra** CPU; a FIFO piena è ignorata e alza `MBOX_OVERRUN` |
+| `MBOX_RECV` | `0x100064` | lettura | la prima parola della **propria** FIFO, e la toglie |
+| `MBOX_STATUS` | `0x100068` | lettura | bit 0..7 le parole nella propria FIFO; bit 8 `MBOX_PEER_FULL`; bit 9 `MBOX_OVERRUN` — **la lettura lo abbassa** |
+| `MBOX_CTRL` | `0x10006C` | lettura/scrittura | bit 0 `MBOX_IE`: la propria FIFO non vuota interrompe (causa 4) |
+| `HWLOCK_BASE + 4n` | `0x100080`.. | lettura/scrittura | lo spinlock `n` (0..7): **leggere** è il test-and-set (0 = era libero, ora è tuo; 1 = occupato), **scrivere 0** lo rilascia |
+
+**Tutti i device sono sul bus e visibili da tutte le CPU**, come in un SoC.
+Alcuni esistono una volta **per CPU** agli stessi indirizzi, e ognuna vede il
+suo: i **comparatori** (lo schema del generic timer ARM: un orologio di sistema
+comune, `CLOCK_MS`, e un comparatore per core), la **mailbox**, il **timer** di
+`settimer` (che è del core) e il **marcatore**, che fa una registrazione per
+CPU. Tastiera e ADC sono uno solo. **L'ADC scrive solo nella RAM condivisa**,
+quindi non appartiene a nessuna CPU: lo programma chi lo usa, e siccome non ha
+una linea di interruzione (si interroga il contatore) non serve altro per
+darlo alla CPU 1. **Un device, un proprietario** è una regola del
+programmatore, non della macchina: due CPU che leggono tutte e due `KBD_DATA`
+si rubano i caratteri, come su un chip vero.
+
+**Il distributore delle interruzioni** manda la linea di una periferica
+condivisa alla CPU scritta nel suo registro di destinazione, sul modello del
+distributore del GIC ARM. All'accensione tutte vanno alla CPU 0. Oggi la linea
+condivisa è una, la tastiera:
+
+| Registro | Indirizzo | Accesso | Significato |
+|---|---|---|---|
+| `INTD_TARGET + 4n` | `0x1000A0`.. | lettura/scrittura | la CPU a cui va la linea `n`; `INTD_KBD = 0` è la tastiera. Una CPU che non esiste è un errore |
+
+È minimo di proposito: l'abilitazione resta nel device (`KBD_CTRL`) e le
+priorità restano l'ordine fisso dell'arbitraggio. Comparatori, timer e mailbox
+non passano di lì, perché sono già per CPU. La marca del tasto va nella
+registrazione della CPU a cui la linea è mandata.
+
+**Lo spinlock hardware** mette l'atomicità nella periferica, non nell'ISA: in
+un'AMP di core eterogenei le istruzioni esclusive spesso non valgono fra core
+diversi, ed è per questo che i SoC hanno un blocco di spinlock. Il device
+ricorda chi tiene un lock: rilasciarne uno altrui è un errore, e il simulatore
+lo dice. **Non è ricorsivo**: chi lo tiene e lo rilegge lo trova occupato, e
+il simulatore avvisa una volta, perché girare ad aspettarlo vorrebbe dire
+aspettare se stessi per sempre. **Chi prende uno spinlock chiude prima gli interrupt
+sulla propria CPU**, altrimenti un'ISR sulla stessa CPU che cerca lo stesso lock
+gira per sempre.
+
+```asm
+spin:
+  lw   r9, 0(r7)          ; r7 = HWLOCK_BASE + 4n: test-and-set
+  bne  r9, r0, spin       ; 1 = occupato
+  ...                     ; la sezione, corta
+  sw   r0, 0(r7)          ; rilascio
+```
+
+**La mailbox** porta una parola e conta: dice *quale* messaggio, e due avvisi
+non si fondono in uno. L'interrupt è a livello, come quello della tastiera.
+
+**Il tempo.** Il simulatore fa avanzare sempre la CPU più indietro, e a pari
+istante la CPU 0: è un arbitro a priorità fissa, e rende ogni corsa
+deterministica.
+
+**Dichiarato, e su un chip vero sono i punti dolenti:**
+
+- **niente cache**, quindi niente coerenza da gestire: una scrittura in RAM
+  condivisa è subito visibile all'altra CPU;
+- **ordine sequenziale**: le scritture arrivano nell'ordine del programma, e
+  non servono barriere;
+- **nessuna contesa sul bus**: due CPU che accedono insieme non si rallentano;
+- un'istruzione si esegue tutta quando parte, quindi l'altra CPU ne vede gli
+  effetti fino a una durata d'istruzione prima del vero.
+
+Il codice scritto qui è corretto sulla macchina che garantisce tutte e quattro
+queste cose. Le costanti per i programmi stanno in `hal/amp.vinc`, e
+`tests/test_amp0.vasm` con `tests/test_amp1.vasm` sono l'esempio: un contatore
+in RAM condivisa sotto spinlock, e una raffica di messaggi oltre la profondità
+della FIFO. `tests/test_intd0.vasm` con `tests/test_intd1.vasm` mandano la
+tastiera alla CPU 1 attraverso il distributore.
 
 ---
 

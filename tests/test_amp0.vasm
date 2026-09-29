@@ -1,0 +1,64 @@
+; tests/test_amp0.vasm — DUE CPU: il programma della CPU 0 (29/09/2026, §3.79).
+;
+; Gira insieme a test_amp1.vasm sulla CPU 1: `vcpu_sim run test_amp0.vx
+; test_amp1.vx`. Il soggetto e' la MACCHINA -- la RAM condivisa, lo spinlock,
+; la mailbox -- quindi niente kernel e niente HAL: le costanti da hal/amp.vinc.
+;
+; --- COSA FA ---
+;   1. LA RAFFICA: cinque parole (1..5) alla CPU 1, la cui FIFO ne tiene
+;      quattro, mentre la CPU 1 non legge -- ha l'interrupt spento. La quinta
+;      va persa, e lo stato lo dice
+;   2. IL CONTATORE: cento incrementi di una parola in RAM condivisa, ognuno
+;      sotto lo spinlock 0. La CPU 1 fa lo stesso nello stesso momento
+;   3. aspetta il flag con cui la CPU 1 dice di aver finito, e legge il
+;      contatore
+;
+; --- I DUE NUMERI DELLA CPU 0 ---
+;   768   MBOX_STATUS dopo la raffica: MBOX_PEER_FULL (256) | MBOX_OVERRUN
+;         (512), e nessuna parola nella propria FIFO
+;   200   il contatore: 100 + 100, nessun incremento perso
+;
+; ROSSO senza lo spinlock (le due `spin` e i due rilasci tolti, qui e nella
+; CPU 1): lw/addi/sw delle due CPU si intrecciano e gli incrementi si perdono.
+; ROSSO senza l'overrun (la spedizione a FIFO piena ignorata in silenzio): 256.
+
+.include "hal/amp.vinc"
+
+  .text
+  .global main
+
+main:
+  ; --- 1. la raffica ------------------------------------------------------
+  li r1, MBOX_SEND
+  li r2, 1
+  li r3, 6
+raffica:
+  sw r2, 0(r1)
+  addi r2, r2, 1
+  bne r2, r3, raffica
+  li r1, MBOX_STATUS
+  lw r5, 0(r1)
+  dumps r5                 ; 768
+
+  ; --- 2. il contatore, sotto lo spinlock 0 ------------------------------
+  li r6, 100
+  li r7, HWLOCK_BASE
+  li r8, SHARED_BASE       ; +0 il contatore, +4 il flag della CPU 1
+giro:
+spin:
+  lw r9, 0(r7)             ; test-and-set: 0 = preso
+  bne r9, r0, spin
+  lw r10, 0(r8)
+  addi r10, r10, 1
+  sw r10, 0(r8)
+  sw r0, 0(r7)             ; rilascio
+  addi r6, r6, -1
+  bne r6, r0, giro
+
+  ; --- 3. aspetta la CPU 1 ------------------------------------------------
+attesa:
+  lw r9, 4(r8)
+  beq r9, r0, attesa
+  lw r5, 0(r8)
+  dumps r5                 ; 200
+  halt

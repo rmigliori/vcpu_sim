@@ -338,6 +338,14 @@ typedef struct
   uint64_t cycles;         // total cycles under the timing model
 
   struct VMachine* m;      // la scheda: memoria, device, clock
+
+  // Dal 29/09/2026 (tappa 2, §3.79): QUALE CPU, il SUO programma, e il
+  // prefisso delle sue righe d'uscita -- "" con una CPU sola, cosi' l'uscita
+  // resta identica a prima, "[cpuN] " su tutte quando le CPU sono piu' d'una.
+  int          id;
+  const char*  tag;
+  const Instr* prog;
+  int          prog_len;
 } VCpu;
 
 // ---------------------------------------------------------------------------

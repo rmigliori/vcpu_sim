@@ -78,19 +78,26 @@ static int parse_asm_flag(int argc, char** argv, int* i)
   return parse_define_flag(argc, argv, i);
 }
 
-// Le statistiche sono della CPU (0, finche' ce n'e' una); la frequenza e'
-// quella del clock master.
+// Le statistiche sono PER CPU, una per ogni CPU accesa, col suo prefisso
+// (vuoto con una CPU sola). La frequenza e' quella della CPU -- il master
+// diviso il suo divisore -- perche' i cicli qui sopra sono cicli di CPU.
 static void print_stats(const VMachine* m)
 {
-  const VCpu* cpu = &m->cpu[0];
-  printf("---- stats ----\n");
-  printf("instructions executed : %llu\n", (unsigned long long) cpu->instr_count);
-  printf("vector element ops     : %llu\n", (unsigned long long) cpu->vec_elem_ops);
-  printf("cycles (timing model)  : %llu\n", (unsigned long long) cpu->cycles);
-  // La frequenza accanto ai cicli, e non altrove: chi legge questi numeri per
-  // farne un tempo (tools/scheduler_facts.py) la trova qui, invece di tenerne
-  // una copia. E' lo stesso modello dei canali riservati nella registrazione.
-  printf("clock (Hz)             : %llu\n", (unsigned long long) m->clock.hz);
+  for (int i = 0; i < NUM_CPU; ++i)
+  {
+    const VCpu* cpu = &m->cpu[i];
+    if (!cpu->prog) continue;
+    const char* g = cpu->tag;
+    printf("%s---- stats ----\n", g);
+    printf("%sinstructions executed : %llu\n", g, (unsigned long long) cpu->instr_count);
+    printf("%svector element ops     : %llu\n", g, (unsigned long long) cpu->vec_elem_ops);
+    printf("%scycles (timing model)  : %llu\n", g, (unsigned long long) cpu->cycles);
+    // La frequenza accanto ai cicli, e non altrove: chi legge questi numeri per
+    // farne un tempo (tools/scheduler_facts.py) la trova qui, invece di tenerne
+    // una copia. E' lo stesso modello dei canali riservati nella registrazione.
+    printf("%sclock (Hz)             : %llu\n", g,
+           (unsigned long long) (m->clock.hz / m->clock.div_cpu));
+  }
 }
 
 // --- legacy path: assemble a .vasm and run it in memory --------------------
@@ -113,11 +120,11 @@ static const char* g_adc_spec = NULL;
 //  (un test che non linka il kernel), il canale dell'esecuzione resta vuoto e
 //  il resto funziona lo stesso.
 // ---------------------------------------------------------------------------
-static void marks_prepare(VMachine* m, const VImage* img)
+static void marks_prepare(VMachine* m, int id, const VImage* img)
 {
   if (!g_marche_out) return;
-  VCpu* cpu = &m->cpu[0];
-  m->marker.on = 1;
+  VCpu* cpu = &m->cpu[id];
+  m->marker[id].on = 1;
   for (int i = 0; i < img->sym_count; ++i)
     if (!img->symmap[i].is_code && strcmp(img->symmap[i].name, "current") == 0)
     {
@@ -134,7 +141,7 @@ static void marks_prepare_legacy(VMachine* m)
 {
   if (!g_marche_out) return;
   VCpu* cpu = &m->cpu[0];
-  m->marker.on = 1;
+  m->marker[0].on = 1;
   int64_t addr;
   if (assemble_symbol("current", &addr))
   {
@@ -145,12 +152,27 @@ static void marks_prepare_legacy(VMachine* m)
           MARK_EXEC);
 }
 
-static void marks_dump(const VMachine* m)
+// Il nome della registrazione di UNA CPU. Con una CPU sola e' quello dato;
+// con piu' CPU una per CPU, ciascuna col suo nome: ".cpuN" prima
+// dell'estensione ("rec.txt" -> "rec.cpu0.txt"), o in fondo se non ce n'e'.
+static void marks_name(const VMachine* m, int id, char* out, size_t sz)
 {
-  const VMarker* mk = &m->marker;
-  if (!g_marche_out) return;
-  FILE* f = fopen(g_marche_out, "w");
-  if (!f) { perror(g_marche_out); return; }
+  if (m->ncpu <= 1) { snprintf(out, sz, "%s", g_marche_out); return; }
+  const char* slash = strrchr(g_marche_out, '/');
+  const char* dot   = strrchr(g_marche_out, '.');
+  if (dot && (!slash || dot > slash) && dot != g_marche_out)
+    snprintf(out, sz, "%.*s.cpu%d%s", (int) (dot - g_marche_out), g_marche_out, id, dot);
+  else
+    snprintf(out, sz, "%s.cpu%d", g_marche_out, id);
+}
+
+static void marks_dump_one(const VMachine* m, int id)
+{
+  const VMarker* mk = &m->marker[id];
+  char name[1024];
+  marks_name(m, id, name, sizeof name);
+  FILE* f = fopen(name, "w");
+  if (!f) { perror(name); return; }
   // I canali della macchina li dichiara LA REGISTRAZIONE, in una forma che il
   // lettore possa leggere. Se se li scrivesse lui sarebbe una seconda verita' —
   // lo stesso difetto che marks.conf esiste per togliere di mezzo.
@@ -183,11 +205,19 @@ static void marks_dump(const VMachine* m)
             e->canale, e->valore, e->current, e->dato, e->ha_dato, e->in_trap);
   }
   fclose(f);
-  printf("marche: %d in %s", mk->len, g_marche_out);
+  printf("%smarche: %d in %s", m->cpu[id].tag, mk->len, name);
   if (mk->lost)
     printf("  (PERSE %llu: oltre il tetto di %d)",
            (unsigned long long) mk->lost, MARCHE_MAX);
   printf("\n");
+}
+
+// Una registrazione per ogni CPU accesa (§3.79).
+static void marks_dump(const VMachine* m)
+{
+  if (!g_marche_out) return;
+  for (int i = 0; i < NUM_CPU; ++i)
+    if (m->cpu[i].prog) marks_dump_one(m, i);
 }
 
 // Applica la traccia dopo machine_init, che azzera tutto. Ritorna 0 o 1.
@@ -225,7 +255,7 @@ static int cmd_legacy(const char* path, RunMode mode)
   machine_init(&m);
   if (apply_kbd_trace(&m) != 0) return 2;
   if (apply_adc_signal(&m) != 0) return 2;
-  int len = assemble(path, m.mem, prog, err, sizeof err);
+  int len = assemble(path, m.ram[0], prog, err, sizeof err);
   if (len < 0) { fprintf(stderr, "assemble error: %s\n", err); return 1; }
 
   // --marks VALE ANCHE QUI (14/09/2026, §3.68). Fino a oggi la registrazione
@@ -237,7 +267,8 @@ static int cmd_legacy(const char* path, RunMode mode)
   // Dev'essere DOPO assemble(): il canale 0 vuole l'indirizzo di `current`, e
   // quel simbolo esiste solo a assemblaggio fatto.
   marks_prepare_legacy(&m);
-  machine_run(&m, prog, len, mode, 0);
+  machine_load(&m, 0, prog, len, 0);
+  machine_run(&m, mode);
   marks_dump(&m);
   print_stats(&m);
   return 0;
@@ -415,7 +446,10 @@ static int cmd_ar(int argc, char** argv)
 // --- run: load and execute a .vx -------------------------------------------
 static int cmd_run(int argc, char** argv)
 {
-  const char* path = NULL;
+  // UN .vx PER CPU, in ordine (§3.79): il primo sulla CPU 0, il secondo sulla
+  // CPU 1. Con uno solo la CPU 1 resta ferma, e tutto e' come prima.
+  const char* paths[NUM_CPU];
+  int npaths = 0;
   RunMode mode = RUN_NORMAL;
   for (int i = 2; i < argc; ++i)
   {
@@ -424,42 +458,65 @@ static int cmd_run(int argc, char** argv)
     else if (strcmp(argv[i], "--kbd") == 0 && i + 1 < argc) g_kbd_spec = argv[++i];
     else if (strcmp(argv[i], "--adc") == 0 && i + 1 < argc) g_adc_spec = argv[++i];
     else if (strcmp(argv[i], "--marks") == 0 && i + 1 < argc) g_marche_out = argv[++i];
-    else path = argv[i];
+    else if (npaths < NUM_CPU) paths[npaths++] = argv[i];
+    else
+    {
+      fprintf(stderr, "run: al piu' %d programmi, uno per CPU ('%s' e' di troppo)\n",
+              NUM_CPU, argv[i]);
+      return 2;
+    }
   }
-  if (!path)
+  if (npaths == 0)
   {
-    fprintf(stderr, "usage: %s run <prog.vx> [--trace|--debug] [--kbd <ciclo:car,...>] [--adc <Hz>,<ampiezza>]"
-                    " [--marks <file>]\n", argv[0]);
+    fprintf(stderr, "usage: %s run <prog.vx> [<prog_cpu1.vx>] [--trace|--debug] [--kbd <ciclo:car,...>]"
+                    " [--adc <Hz>,<ampiezza>] [--marks <file>]\n", argv[0]);
+    return 2;
+  }
+  // Il debugger ha UNA tabella delle etichette: con due programmi i nomi si
+  // sovrapporrebbero. Limite dichiarato (§3.79).
+  if (mode == RUN_DEBUG && npaths > 1)
+  {
+    fprintf(stderr, "run: --debug vuole un programma solo\n");
     return 2;
   }
 
   static VMachine m;
-  static Instr prog[MAX_INSTR];
-  VImage* img = calloc(1, sizeof(VImage));
-  if (!img) { fprintf(stderr, "out of memory\n"); return 1; }
+  static Instr prog[NUM_CPU][MAX_INSTR];
+  VImage* img[NUM_CPU] = { NULL };
   char err[256] = {0};
-
   int rc = 1;
-  if (vx_read(path, img, err, sizeof err) != 0)
+
+  for (int i = 0; i < npaths; ++i)
   {
-    fprintf(stderr, "run error: %s\n", err);
-  }
-  else
-  {
-    machine_init(&m);
-    if (apply_kbd_trace(&m) != 0) { vimage_free(img); free(img); return 2; }
-    if (apply_adc_signal(&m) != 0) { vimage_free(img); free(img); return 2; }
-    marks_prepare(&m, img);
-    int len = 0;
-    int64_t entry = vx_load(img, m.mem, prog, &len);
-    machine_run(&m, prog, len, mode, entry);
-    marks_dump(&m);
-    print_stats(&m);
-    rc = 0;
+    img[i] = calloc(1, sizeof(VImage));
+    if (!img[i]) { fprintf(stderr, "out of memory\n"); goto fine; }
+    if (vx_read(paths[i], img[i], err, sizeof err) != 0)
+    {
+      fprintf(stderr, "run error: %s\n", err);
+      goto fine;
+    }
   }
 
-  vimage_free(img);
-  free(img);
+  machine_init(&m);
+  if (apply_kbd_trace(&m) != 0)  { rc = 2; goto fine; }
+  if (apply_adc_signal(&m) != 0) { rc = 2; goto fine; }
+  // All'indietro, e la CPU 0 per ultima: vx_load pubblica le etichette del
+  // SUO programma per --trace, e cosi' restano quelle della CPU 0.
+  for (int i = npaths - 1; i >= 0; --i)
+  {
+    marks_prepare(&m, i, img[i]);
+    int len = 0;
+    int64_t entry = vx_load(img[i], m.ram[i], prog[i], &len);
+    machine_load(&m, i, prog[i], len, entry);
+  }
+  machine_run(&m, mode);
+  marks_dump(&m);
+  print_stats(&m);
+  rc = 0;
+
+fine:
+  for (int i = 0; i < npaths; ++i)
+    if (img[i]) { vimage_free(img[i]); free(img[i]); }
   return rc;
 }
 
@@ -620,7 +677,7 @@ int main(int argc, char** argv)
             "usage: %s [--trace|--debug] [--kbd <ciclo:car,...>] [--adc <Hz>,<ampiezza>] [--marks <file>] [-I <dir>]... [-D <name>]... <program.vasm>\n"
             "       %s asm <in.vasm> -o <out.vo> [-I <dir>]... [-D <name>]...\n"
             "       %s ld  <a.vo|lib.va> ... [-e <sym>] -o <out.vx>\n"
-            "       %s run <prog.vx> [--trace|--debug] [--kbd <ciclo:car,...>] [--adc <Hz>,<ampiezza>] [--marks <file>]\n"
+            "       %s run <prog.vx> [<prog_cpu1.vx>] [--trace|--debug] [--kbd <ciclo:car,...>] [--adc <Hz>,<ampiezza>] [--marks <file>]\n"
             "       %s nm  [-n|-p] [-r] <file.vo|file.vx>\n"
             "       %s ar  <lib.va> <o1.vo> ...\n",
             argv[0], argv[0], argv[0], argv[0], argv[0], argv[0]);

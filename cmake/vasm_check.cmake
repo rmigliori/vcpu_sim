@@ -40,9 +40,14 @@ set(got "")
 
 if(mode STREQUAL "DUMPS")
   # Le righe di `dumps`: "r5 = 98", "f1 = 2.5". Tiene solo il valore, in ordine.
+  # Con piu' CPU ogni riga ha il prefisso della sua (§3.79), e il valore si
+  # tiene col nome della CPU: "[cpu1] r5 = 10" -> "cpu1:10". L'atteso dice cosi'
+  # anche CHI ha stampato cosa, nell'ordine del tempo simulato.
   foreach(line ${lines})
     if(line MATCHES "^[rfv][0-9]+ = (.+)$")
       list(APPEND got "${CMAKE_MATCH_1}")
+    elseif(line MATCHES "^\\[(cpu[0-9]+)\\] [rfv][0-9]+ = (.+)$")
+      list(APPEND got "${CMAKE_MATCH_1}:${CMAKE_MATCH_2}")
     endif()
   endforeach()
 elseif(mode STREQUAL "STATS")

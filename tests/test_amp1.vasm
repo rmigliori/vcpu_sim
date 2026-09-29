@@ -1,0 +1,67 @@
+; tests/test_amp1.vasm — DUE CPU: il programma della CPU 1 (29/09/2026, §3.79).
+;
+; Il compagno di test_amp0.vasm, che dice cosa si prova e perche'.
+;
+; --- COSA FA ---
+;   1. IL CONTATORE: cento incrementi sotto lo spinlock 0, con l'interrupt
+;      spento -- intanto la CPU 0 gli ha riempito la mailbox
+;   2. LA MAILBOX: accende l'interrupt, e l'ISR prende una parola per trap
+;      finche' la FIFO non e' vuota. L'interrupt e' a livello: la prima trap
+;      arriva subito, perche' la FIFO e' gia' piena
+;   3. dice alla CPU 0 di aver finito: un flag in RAM condivisa
+;
+; --- I DUE NUMERI DELLA CPU 1 ---
+;   10   la somma delle parole ricevute: 1 + 2 + 3 + 4. La quinta e' andata
+;        persa, ed e' la CPU 0 a saperlo
+;   4    quante
+;
+; L'ISR usa solo r11..r13, che il programma non tocca: niente contesto da
+; salvare, come nei test di macchina che installano il loro vettore.
+
+.include "hal/amp.vinc"
+
+  .text
+  .global main
+
+main:
+  ; --- 1. il contatore, sotto lo spinlock 0 ------------------------------
+  li r6, 100
+  li r7, HWLOCK_BASE
+  li r8, SHARED_BASE
+giro:
+spin:
+  lw r9, 0(r7)
+  bne r9, r0, spin
+  lw r10, 0(r8)
+  addi r10, r10, 1
+  sw r10, 0(r8)
+  sw r0, 0(r7)
+  addi r6, r6, -1
+  bne r6, r0, giro
+
+  ; --- 2. la mailbox, a interrupt -----------------------------------------
+  sethandler isr
+  li r11, 0                ; la somma
+  li r13, 0                ; quante
+  li r1, MBOX_CTRL
+  li r2, MBOX_IE
+  sw r2, 0(r1)
+  sti
+  li r3, 4
+scarica:
+  bne r13, r3, scarica
+  cli
+  dumps r11                ; 10
+  dumps r13                ; 4
+
+  ; --- 3. finito ----------------------------------------------------------
+  li r9, 1
+  sw r9, 4(r8)
+  halt
+
+isr:
+  li r12, MBOX_RECV
+  lw r12, 0(r12)           ; la prima parola, e la FIFO si accorcia
+  add r11, r11, r12
+  addi r13, r13, 1
+  reti

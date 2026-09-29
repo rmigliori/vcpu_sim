@@ -1,0 +1,46 @@
+; tests/test_intd1.vasm — IL DISTRIBUTORE: il programma della CPU 1
+; (29/09/2026, §3.79).
+;
+; La tastiera e' della scheda, visibile da tutte le CPU: la CPU 1 la arma
+; (KBD_CTRL) come farebbe la CPU 0, e aspetta la trap. L'attesa e' LIMITATA,
+; perche' se la linea non arrivasse -- il distributore ignorato -- il test
+; deve dirlo, non restare appeso.
+;
+;   97   il carattere letto nell'ISR: 'a', arrivato a 500 cicli
+;   1    la causa, CAUSE_KBD: e' la trap della tastiera, sulla CPU 1
+;
+; ROSSO col distributore ignorato (la linea sempre alla CPU 0): 0 0, perche'
+; la CPU 1 esce dall'attesa senza aver visto la trap.
+
+.include "hal/hal.vinc"
+.include "hal/kbd.vinc"
+
+  .text
+  .global main
+
+main:
+  sethandler isr
+  li r11, 0                ; la causa
+  li r12, 0                ; il carattere
+  li r13, 0                ; 1 = la trap e' arrivata
+  li r1, KBD_CTRL
+  li r2, KBD_IE
+  sw r2, 0(r1)
+  sti
+  li r6, 1000              ; l'attesa, limitata
+attesa:
+  bne r13, r0, arrivata
+  addi r6, r6, -1
+  bne r6, r0, attesa
+arrivata:
+  cli
+  dumps r12                ; 97
+  dumps r11                ; 1
+  halt
+
+isr:
+  mfcause r11
+  li r12, KBD_DATA
+  lw r12, 0(r12)           ; il carattere, e il flag si abbassa
+  li r13, 1
+  reti

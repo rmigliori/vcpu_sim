@@ -1,0 +1,51 @@
+; hal/amp.vinc — piu' CPU: la RAM condivisa, la mailbox, lo spinlock
+; (29/09/2026, §3.79).
+;
+; Il perche' e il protocollo di ognuno stanno in include/devices.h, accanto ai
+; registri; qui ci sono gli indirizzi e i bit, per i programmi.
+;
+; --- LA MAPPA ---
+; Ogni CPU ha la sua RAM LOCALE da 0, allo stesso indirizzo: un programma di
+; una CPU sola non cambia. Le CPU si incontrano solo nella RAM CONDIVISA, e
+; non ci sono cache ne' riordini: una scrittura e' subito visibile, nell'ordine
+; del programma. Su un chip vero questo NON e' garantito.
+;
+; --- LO SPINLOCK: leggere e' il test-and-set ---
+;   spin: lw   r9, 0(r7)        ; r7 = HWLOCK_BASE + 4n
+;         bne  r9, r0, spin     ; 1 = occupato; 0 = era libero, ed e' tuo
+;         ...                   ; la sezione: CORTA
+;         sw   r0, 0(r7)        ; rilascio: si scrive 0, e solo chi lo tiene
+; Prima di prenderlo, chi usa gli interrupt li chiude sulla propria CPU.
+;
+; --- LA MAILBOX: registri BANKED, gli stessi indirizzi per tutte le CPU ---
+; MBOX_SEND spedisce all'ALTRA CPU; MBOX_RECV legge dalla propria FIFO. A
+; FIFO piena la spedizione e' ignorata e alza MBOX_OVERRUN su chi spedisce;
+; leggere MBOX_STATUS lo abbassa. L'interrupt (CAUSE_MBOX) e' a livello:
+; resta finche' la propria FIFO non e' vuota.
+; --------------------------------------------------------------------------
+.equ SHARED_BASE  0x200000       ; la RAM condivisa
+.equ SHARED_SIZE  0x10000        ; 64 KiB
+
+.equ MBOX_SEND    0x100060       ; scrittura: una parola all'altra CPU
+.equ MBOX_RECV    0x100064       ; lettura: la prima della propria FIFO
+.equ MBOX_STATUS  0x100068       ; lettura: i bit qui sotto
+.equ MBOX_CTRL    0x10006C       ; lettura/scrittura: MBOX_IE
+.equ MBOX_DEPTH       4
+.equ MBOX_COUNT_MASK  0xFF       ; MBOX_STATUS, bit 0..7: parole nella propria
+.equ MBOX_PEER_FULL   0x100      ; MBOX_STATUS, bit 8: la FIFO dell'altra e' piena
+.equ MBOX_OVERRUN     0x200      ; MBOX_STATUS, bit 9: una mia spedizione persa
+.equ MBOX_IE          1          ; MBOX_CTRL, bit 0
+
+.equ HWLOCK_BASE  0x100080       ; lo spinlock n sta a HWLOCK_BASE + 4n
+.equ HWLOCK_COUNT     8
+
+.equ CAUSE_MBOX       4          ; `mfcause` dopo una trap della mailbox
+
+; --- IL DISTRIBUTORE DELLE INTERRUZIONI ---
+; Le periferiche sono di tutte le CPU; la LINEA di interruzione di una
+; periferica condivisa va alla CPU scritta nel suo registro di destinazione.
+; All'accensione tutte alla CPU 0. Oggi la linea condivisa e' una: la
+; tastiera. L'ADC una linea non ce l'ha.
+.equ INTD_TARGET  0x1000A0       ; la linea n: INTD_TARGET + 4n
+.equ INTD_KBD         0          ; la linea della tastiera
+.equ INTD_LINES       1
