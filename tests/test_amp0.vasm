@@ -21,8 +21,17 @@
 ; ROSSO senza lo spinlock (le due `spin` e i due rilasci tolti, qui e nella
 ; CPU 1): lw/addi/sw delle due CPU si intrecciano e gli incrementi si perdono.
 ; ROSSO senza l'overrun (la spedizione a FIFO piena ignorata in silenzio): 256.
+;
+; --- LE DUE PAROLE CONDIVISE SONO DICHIARATE, dal 29/09 (la tappa 3) ---
+; `contatore` e `pronto` stanno in tests/test_amp_shared.vasm, linkato in tutte
+; e due le immagini, e il loro indirizzo lo decide la regione SHARED del file di
+; collocazione. Fino a ieri erano SHARED_BASE + 0 e + 4 scritti a mano qui e
+; nella CPU 1, con l'accordo nei commenti.
 
 .include "hal/amp.vinc"
+
+  .extern contatore
+  .extern pronto
 
   .text
   .global main
@@ -43,7 +52,8 @@ raffica:
   ; --- 2. il contatore, sotto lo spinlock 0 ------------------------------
   li r6, 100
   li r7, HWLOCK_BASE
-  li r8, SHARED_BASE       ; +0 il contatore, +4 il flag della CPU 1
+  li r8, contatore         ; l'indirizzo viene dal file di collocazione
+  li r4, pronto
 giro:
 spin:
   lw r9, 0(r7)             ; test-and-set: 0 = preso
@@ -57,7 +67,7 @@ spin:
 
   ; --- 3. aspetta la CPU 1 ------------------------------------------------
 attesa:
-  lw r9, 4(r8)
+  lw r9, 0(r4)
   beq r9, r0, attesa
   lw r5, 0(r8)
   dumps r5                 ; 200

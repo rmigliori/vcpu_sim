@@ -337,9 +337,10 @@ ispezionare con `cat`. I dettagli del formato sono in
 |---|---|
 | `vcpu_sim asm <in.vasm> -o <out.vo> [-I <dir>]... [-D <nome>]...` | assembla un modulo in un **oggetto rilocabile**; `-I` aggiunge una cartella alla ricerca di `.include` (§4.2.2), `-D` definisce un nome per `.ifdef` (§4.2.3) |
 | `vcpu_sim ar <lib.va> <o1.vo> ...` | raccoglie oggetti in una **libreria** |
-| `vcpu_sim ld <a.vo\|lib.va> ... [-e <sym>] -o <out.vx>` | **linka** oggetti e librerie in un eseguibile |
-| `vcpu_sim run <prog.vx> [--trace\|--debug]` | **carica ed esegue** un eseguibile |
-| `vcpu_sim nm [-n\|-p] [-r] <file.vo\|file.vx>` | elenca i **simboli** di un oggetto o eseguibile |
+| `vcpu_sim ld <a.vo\|lib.va> ... [-e <sym>] [-T <board.vld>] [-p <cpu>] [-M <out.map>] -o <out.vx>` | **linka** oggetti e librerie in un eseguibile. `-T` è il **file di collocazione** (le regioni di memoria e dove va ogni sezione), `-p` il blocco `PROCESSOR` da usare, `-M` scrive la **mappa** |
+| `vcpu_sim ld --verbose` | stampa il file di collocazione **incorporato**, cioè quello che `ld` usa senza `-T` |
+| `vcpu_sim run <prog.vx> [<prog_cpu1.vx>] [--trace\|--debug]` | **carica ed esegue** un eseguibile (uno per CPU) |
+| `vcpu_sim nm [-n\|-p] [-r] <file.vo\|file.vx>` | elenca i **simboli** di un oggetto o eseguibile: `T` codice, `D` dati, `S` RAM condivisa, `U` indefinito (maiuscolo = globale) |
 
 > **Compatibilità:** il percorso classico `vcpu_sim <programma.vasm>` (§2.3) resta
 > invariato e continua a fare assemblaggio + esecuzione in memoria. La toolchain
@@ -772,6 +773,7 @@ loop:   setvl r4, r3      ; 'loop' = indice di questa istruzione
 |---|---|---|
 | `.text` | `.text` | passa alla sezione codice (default) |
 | `.data` | `.data` | passa alla sezione dati |
+| `.shared` | `.shared` | passa alla sezione della **RAM condivisa** (più CPU). Si **riserva** e non si inizializza — `.word`/`.float` lì dentro sono un errore — e i suoi simboli sono **globali per definizione**, senza `.global`. Vuole il linker: in un file singolo è un errore, perché l'indirizzo lo decide il file di collocazione (§4.2.7) |
 | `.float` | `.float a, b, c, ...` | scrive i valori come float (4 byte l'uno) e avanza il puntatore dati |
 | `.word` | `.word a, b, c, ...` | scrive interi con segno a 32 bit (4 byte l'uno); accetta decimale o esadecimale (`0x...`) |
 | `.space` | `.space N` | riserva `N` elementi (`N*4` byte) senza inizializzarli |
@@ -1186,6 +1188,48 @@ fermano `ld` («duplicate global 'super_tcb'»).
 
 Vive solo in `.data`, e vuole `tcb/tcb.vinc` incluso: cerca `TCB.size` e
 `TCB.nopreempt` fra le costanti, e senza di loro è un errore.
+
+#### 4.2.7 `.shared`: le variabili che due CPU si scambiano
+
+Con più CPU ognuna ha la sua **RAM locale** da 0, e si incontrano in una **RAM
+condivisa** (`hal/amp.vinc`). Il problema che `.shared` risolve: due programmi
+linkati **separatamente**, uno per CPU, devono concordare sull'indirizzo di ciò
+che sta in mezzo — e se l'accordo è scritto in due posti, divergono in silenzio.
+
+Si dichiarano una volta, in un oggetto linkato in **tutte e due** le immagini:
+
+```asm
+  .shared
+contatore:  .space 1      ; una parola
+pronto:     .space 1
+```
+
+e chi le usa le importa come qualunque altro simbolo esterno:
+
+```asm
+  .extern contatore
+  ...
+  li r8, contatore        ; l'indirizzo viene dal file di collocazione
+```
+
+Tre regole, e ognuna ha la sua ragione:
+
+- **non si inizializza.** `.space` e `.res` sì, `.word` e `.float` no. Se le due
+  immagini portassero entrambe il valore iniziale lo scriverebbero due volte
+  nella stessa RAM, e su hardware vero l'ordine dei caricamenti — e quale CPU è
+  già partita — deciderebbe chi vince. Il valore iniziale, se serve, lo scrive
+  **una** CPU in codice e l'altra aspetta un flag;
+- **i simboli sono globali per definizione**, senza `.global`: la sezione dice già
+  che il dato sta nella RAM che l'altra CPU vede. Da cui una rete gratis: la
+  stessa variabile dichiarata da due oggetti della **stessa** immagine ferma `ld`
+  con `duplicate global`;
+- **vuole il linker.** L'indirizzo lo decide la regione `SHARED` del file di
+  collocazione (`vcpu_sim ld --verbose` per vedere quello incorporato), e un
+  programma a file singolo non ne ha uno: lì `.shared` è un errore che lo dice.
+
+E `run`, con due programmi, **confronta** ciò che i due `.symmap` dichiarano di
+condiviso — nomi, indirizzi, dimensioni — e rifiuta due immagini che non sono
+d'accordo, prima di far partire le CPU.
 
 ### 4.3 Manuale delle istruzioni
 

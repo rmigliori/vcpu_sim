@@ -34,6 +34,7 @@ add_executable(vcpu_sim
   src/devices.c
   src/machine.c
   src/toolchain.c
+  src/locator.c
   src/assembler.c
   src/main.c)
 target_include_directories(vcpu_sim PRIVATE include)
@@ -253,15 +254,38 @@ vasm_check(adc_sat    MODE DUMPS EXPECT "0 1 3 1 1 4 0 0 0 4"
 #              lo spinlock: nessuno perso
 # L'ordine e' quello del tempo simulato, ed e' deterministico. Visto rosso
 # togliendo lo spinlock (il contatore perde incrementi) e l'overrun (256).
+#
+# E dal 29/09 (la tappa 3) le due parole in RAM condivisa sono DICHIARATE:
+# t_amp_shared non ha codice, dichiara `contatore` e `pronto` in .shared, ed e'
+# linkato in TUTTE E DUE le immagini -- una sorgente di verita' invece di
+# SHARED_BASE + 0 e + 4 scritti a mano nei due sorgenti. L'indirizzo lo decide
+# la regione SHARED del file di collocazione, e `run` verifica che le due
+# immagini siano d'accordo prima di far partire le CPU.
 vasm_object(t_amp0     SOURCE ${CMAKE_SOURCE_DIR}/tests/test_amp0.vasm
                        INTERFACES vinc_hal)
 vasm_object(t_amp1     SOURCE ${CMAKE_SOURCE_DIR}/tests/test_amp1.vasm
                        INTERFACES vinc_hal)
-vasm_program(test_amp0 OBJECTS t_amp0)
-vasm_program(test_amp1 OBJECTS t_amp1)
+vasm_object(t_amp_shared SOURCE ${CMAKE_SOURCE_DIR}/tests/test_amp_shared.vasm)
+vasm_program(test_amp0 OBJECTS t_amp0 t_amp_shared)
+vasm_program(test_amp1 OBJECTS t_amp1 t_amp_shared)
 get_target_property(_amp1_vx test_amp1 VASM_OUTPUT)
 vasm_check(amp        MODE DUMPS PROGRAM test_amp0 ARGS ${_amp1_vx}
            EXPECT "cpu0:768 cpu1:10 cpu1:4 cpu0:200")
+
+# E il controllo dell'accordo, VISTO ROSSO: test_amp1 linkato con una .shared in
+# cui `contatore` e' di due parole invece di una. Tutto assembla e tutto linka --
+# i nomi e l'ordine sono gli stessi -- ma `pronto` finisce quattro byte piu'
+# avanti, e la CPU 0 aspetterebbe per sempre un flag a un indirizzo dove nessuno
+# scrive. `run` lo dice prima di far partire le CPU, ed e' per questo che nel
+# .vx c'e' la DIMENSIONE e non solo l'indirizzo: qui la prima cosa che non
+# combacia e' la dimensione di `contatore`.
+vasm_object(t_amp_shared_larga SOURCE ${CMAKE_SOURCE_DIR}/tests/test_amp_shared_larga.vasm)
+vasm_program(test_amp1_larga   OBJECTS t_amp1 t_amp_shared_larga)
+get_target_property(_amp1l_vx test_amp1_larga VASM_OUTPUT)
+get_target_property(_amp0_vx  test_amp0 VASM_OUTPUT)
+add_test(NAME locator_disaccordo COMMAND vcpu_sim run ${_amp0_vx} ${_amp1l_vx})
+set_tests_properties(locator_disaccordo PROPERTIES
+                     PASS_REGULAR_EXPRESSION "variabile condivisa 'contatore' e' a 2097152 \\(4 byte\\).*e a 2097152 \\(8 byte\\)")
 
 # test_intd — IL DISTRIBUTORE DELLE INTERRUZIONI (29/09/2026, §3.79). La CPU 0
 # manda la linea della tastiera alla CPU 1, e un tasto a 500 cicli arriva la'.
@@ -418,6 +442,79 @@ add_test(NAME supertask_asm
          COMMAND_EXPAND_LISTS)
 set_tests_properties(supertask_asm PROPERTIES
                      PASS_REGULAR_EXPRESSION "the super task is at most one")
+
+# ---------------------------------------------------------------------------
+#  IL FILE DI COLLOCAZIONE (29/09/2026, la tappa 3). Il perche' e la forma
+#  stanno in cima a include/locator.h.
+#
+#  Il primo test e' il solo POSITIVO, e dice la cosa che conta di questa fetta:
+#  un file scritto a mano che dichiara il layout di sempre da' un .vx IDENTICO
+#  BYTE PER BYTE a quello linkato senza -T. Cioe' le basi sono uscite dal C e
+#  sono entrate in un file senza che nessun programma si muova -- ed e' anche la
+#  prova che il file incorporato (`ld --verbose`) e tests/vld/board.vld
+#  dichiarano la stessa cosa. Il soggetto e' `multi`, che sono DUE moduli:
+#  la concatenazione dentro una regione e' esercitata.
+#
+#  Gli altri cinque PASSANO SE IL LINKER RIFIUTA, e il rifiuto si legge nel
+#  messaggio e non nell'exit code -- un `ld` che fallisse per un'altra ragione
+#  passerebbe per buono (e' il metodo dei due test del super task, qui sopra).
+#  Ognuno e' una regola che la macchina impone e che il file puo' violare:
+#
+#    codice_spostato   ORIGIN di una regione CODE diverso da 0: il PC indicizza
+#                      prog[] da zero, quindi l'immagine non sarebbe caricabile
+#    dato_a_zero       ORIGIN 0 su una regione DATA: e' il guard del NULL, che
+#                      fino a oggi era una costante C dentro il linker
+#    regione_ignota    una sezione collocata in una regione non dichiarata
+#    stretta           una regione che TRABOCCA. Per i dati non era controllato
+#                      affatto: la somma dei moduli non la guardava nessuno, e
+#                      vx_load copia data_count byte in un buffer di MEM_SIZE
+#    sovrapposte       due regioni dello STESSO spazio che si sovrappongono
+# ---------------------------------------------------------------------------
+set(VLD ${CMAKE_SOURCE_DIR}/tests/vld)
+add_custom_command(
+  OUTPUT  ${CMAKE_BINARY_DIR}/multi_vld.vx
+  COMMAND vcpu_sim ld ${VASM_BINARY_DIR}/multi_main.vo ${VASM_BINARY_DIR}/multi_saxpy.vo
+          -T ${VLD}/board.vld -p cpu0 -o ${CMAKE_BINARY_DIR}/multi_vld.vx
+  DEPENDS vcpu_sim multi ${VLD}/board.vld
+  COMMENT "ld   multi_vld.vx (-T board.vld)"
+  VERBATIM)
+add_custom_target(multi_via_vld ALL DEPENDS ${CMAKE_BINARY_DIR}/multi_vld.vx)
+add_test(NAME locator_identico
+         COMMAND ${CMAKE_COMMAND} -E compare_files
+                 ${VASM_BINARY_DIR}/multi.vx ${CMAKE_BINARY_DIR}/multi_vld.vx)
+
+# Le due regole di .shared, viste rosse. La prima e' il "non si inizializza": un
+# valore iniziale portato da due immagini si scriverebbe due volte. La seconda e'
+# che un programma a FILE SINGOLO non passa dal linker, quindi non ha un file di
+# collocazione -- e l'indirizzo di una variabile condivisa lo decide quello:
+# meglio dirlo che collocarla a caso.
+add_test(NAME locator_shared_init
+         COMMAND vcpu_sim asm ${CMAKE_SOURCE_DIR}/tests/test_shared_init.vasm
+                 -o ${CMAKE_BINARY_DIR}/shared_init.vo)
+set_tests_properties(locator_shared_init PROPERTIES
+                     PASS_REGULAR_EXPRESSION "la RAM condivisa non si inizializza")
+add_test(NAME locator_shared_legacy
+         COMMAND vcpu_sim ${CMAKE_SOURCE_DIR}/tests/test_amp_shared.vasm)
+set_tests_properties(locator_shared_legacy PROPERTIES
+                     PASS_REGULAR_EXPRESSION "[.]shared vuole il linker")
+
+foreach(caso codice_spostato dato_a_zero regione_ignota stretta sovrapposte)
+  add_test(NAME locator_${caso}
+           COMMAND vcpu_sim ld ${VASM_BINARY_DIR}/multi_main.vo ${VASM_BINARY_DIR}/multi_saxpy.vo
+                   -T ${VLD}/${caso}.vld -o ${CMAKE_BINARY_DIR}/locator_${caso}.vx)
+endforeach()
+set_tests_properties(locator_codice_spostato PROPERTIES
+                     PASS_REGULAR_EXPRESSION "regione CODE 'PM' ha ORIGIN 4: puo' essere solo 0")
+set_tests_properties(locator_dato_a_zero PROPERTIES
+                     PASS_REGULAR_EXPRESSION "regione DATA 'LOCAL' ha ORIGIN 0: l'indirizzo 0 resta NULL")
+set_tests_properties(locator_regione_ignota PROPERTIES
+                     PASS_REGULAR_EXPRESSION "sezione '.data' va nella regione 'SCRATCHPAD', che non e' dichiarata")
+set_tests_properties(locator_stretta PROPERTIES
+                     # Non il numero di istruzioni di `multi`: qui si asserisce
+                     # che il traboccamento si VEDA, non quanto e' grande multi.
+                     PASS_REGULAR_EXPRESSION "regione 'PM' trabocca: [0-9]+ istruzioni, ne tiene 4")
+set_tests_properties(locator_sovrapposte PROPERTIES
+                     PASS_REGULAR_EXPRESSION "regioni 'LOCAL' e 'BUFFER' si sovrappongono")
 
 vasm_check(kbd        MODE DUMPS EXPECT "0 294 0 3 121"
            IFLAGS -I$<TARGET_PROPERTY:vinc_hal,INTERFACE_INCLUDE_DIRECTORIES>

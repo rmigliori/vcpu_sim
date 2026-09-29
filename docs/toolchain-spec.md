@@ -45,6 +45,15 @@ La macchina ha **due spazi separati**:
 | Codice | **indice istruzione** (`pc`) | array `Instr prog[]`     | `text_base` (indice)    |
 | Dati   | **byte**     | `cpu->mem[]` (1 MiB, byte-addressable) | `data_base` (indirizzo) |
 
+> **Dal 29/09/2026 le basi non sono più cablate nel linker**: le legge da un
+> **file di collocazione** (`include/locator.h`), che dichiara le regioni di
+> memoria con la loro **unità** — `CODE` in istruzioni, `DATA` in byte — e in
+> quale regione va ogni sezione. Senza `-T` si usa quello **incorporato**, che si
+> stampa con `vcpu_sim ld --verbose` e i cui numeri vengono dalle costanti della
+> macchina. Da qui anche la terza sezione, `.shared` (§3.1), che è ciò per cui il
+> file esiste: due immagini linkate separatamente devono concordare su dove sta
+> ciò che vive in RAM condivisa.
+
 > Nota didattica: nella CPU reale il `pc` conta byte; qui il `pc` è un **indice
 > di istruzione**. Perciò il codice si riloca sommando un *offset di indice*, i
 > dati sommando un *indirizzo base*. Sono due aritmetiche diverse → due tipi di
@@ -53,12 +62,33 @@ La macchina ha **due spazi separati**:
 Valore finale di un simbolo, calcolato dal linker:
 
 ```
-S.is_code == 1  ->  valore = text_base(modulo_di_S) + S.offset
-S.is_code == 0  ->  valore = data_base(modulo_di_S) + S.offset
+S.section == text    ->  valore = text_base(modulo_di_S)   + S.offset
+S.section == data    ->  valore = data_base(modulo_di_S)   + S.offset
+S.section == shared  ->  valore = shared_base(modulo_di_S) + S.offset
 ```
 
 dove `S.offset` è la posizione **relativa al modulo** (indice istruzione entro
-il proprio `.text`, oppure byte entro il proprio `.data`).
+il proprio `.text`, oppure byte entro il proprio `.data` / `.shared`), e le tre
+basi vengono dall'origine della regione che il file di collocazione assegna a
+quella sezione.
+
+### 2.1 `.shared`: la RAM condivisa
+
+Una terza sezione, per i dati che **più CPU vedono** (`RSEC_SHARED`). Due regole,
+e stanno in cima a `include/toolchain.h`:
+
+- **non si inizializza.** Si riserva con `.space` / `.res`; un `.word` o un
+  `.float` dentro `.shared` è un **errore di assemblaggio**. Due immagini che
+  portassero entrambe il valore iniziale lo scriverebbero due volte nella stessa
+  RAM, e l'ordine dei caricamenti deciderebbe chi vince. Il valore iniziale, se
+  serve, lo scrive **una** CPU in codice e l'altra aspetta un flag;
+- **un simbolo in `.shared` è globale per definizione.** La sezione dice già che
+  il dato sta nella RAM che l'altra CPU vede: pretendere anche il `.global`
+  sarebbe dichiarare due volte lo stesso fatto. Un `.global` scritto comunque
+  concorda e non può divergere, perché una direttiva `.local` non esiste.
+
+Un programma a **file singolo** non passa dal linker, quindi non ha un file di
+collocazione: `.shared` lì è un errore che lo dice.
 
 ---
 
@@ -80,6 +110,11 @@ Regole:
 - Un simbolo può essere dichiarato `.global` *e* definito nello stesso modulo
   (caso normale dell'export). L'ordine di dichiarazione/definizione è libero
   (l'assembler è già a due passi).
+- Un simbolo definito in **`.shared`** è `global` **per definizione**, senza
+  direttiva (§2.1). Da cui una rete gratis: se due oggetti della **stessa**
+  immagine dichiarassero la stessa variabile condivisa, il link si fermerebbe con
+  `duplicate global`. Fra le **due** immagini di due CPU non è un errore — è
+  l'accordo.
 
 ---
 
@@ -136,10 +171,13 @@ VO1                              ; magic + versione formato
 0020: 00 00 b4 42 00 00 c8 42
 ; forma compatta per zeri da .space:  .zero <n>
 
-.symtab 3                        ; nome  sez   offset  binding  is_code
-sum      text  0       global   1
-arr      data  0       local    0
-printf   ----  -       extern   -        ; indefinito: sez/offset non significativi
+.shared 8                        ; byte RISERVATI in .shared (assente se 0)
+
+.symtab 4                        ; nome  sez   offset  dim  binding  is_code
+sum      text  0       12  global   1
+arr      data  0       40  local    0
+cont     shared 0      4   global   0     ; .shared: globale per definizione
+printf   ----  -       -   extern   -     ; indefinito: sez/offset non significativi
 
 .reloc 2                         ; tipo   site_idx  simbolo  addend
 R_ADDR   0        arr      0               ; patch prog[0].imm  = addr(arr)+0
@@ -158,8 +196,19 @@ R_CODE   2        loop     0               ; patch prog[2].target = idx(loop)+0
 - **`.data`**: immagine byte del modulo (non più scritta direttamente in
   `cpu->mem`, ma in un buffer del modulo). Le run di zeri prodotte da `.space`
   possono usare la forma compatta `.zero <n>` per non gonfiare il file.
-- **`.symtab`**: per ogni simbolo `nome | sezione | offset | binding | is_code`.
-  Gli `extern` hanno sezione/offset non significativi (`----` / `-`).
+- **`.shared`**: quanti **byte** il modulo riserva in RAM condivisa. Non c'è
+  contenuto: `.shared` non si inizializza (§2.1). La riga è assente se sono 0.
+- **`.symtab`**: per ogni simbolo
+  `nome | sezione | offset | dimensione | binding | is_code`.
+  Gli `extern` hanno sezione/offset/dimensione non significativi (`----` / `-`).
+  - la **dimensione** è in byte per i dati e in istruzioni per il codice. Per un
+    dato è la distanza dal simbolo seguente, chiusa alla fine della sezione — un
+    numero che solo l'assembler ha, perché dedurlo dopo per differenza sbaglia
+    sull'**ultimo** simbolo, che è proprio quello di cui si vuole sapere se ci
+    sta. Per il **codice** vale solo per una procedura dichiarata con
+    `.proc`/`.endproc`, che ha una fine: un'etichetta qualunque ha `0`, cioè
+    «non si sa», perché la distanza fino all'etichetta seguente è l'estensione di
+    un blocco e non di una funzione.
 - **`.reloc`**: `tipo | indice_istruzione | nome_simbolo | addend`.
 
 ---
@@ -182,11 +231,14 @@ VX1                              ; magic + versione
 .data 80                         ; immagine dati finale (concatenazione moduli)
 0000: ...
 
-.symmap 4                        ; mappa GLOBALE: nome  valore  is_code
-main     0        1
-saxpy    5        1
-arr      0        0
-out      40       0
+.shared 2097152 8                ; base e byte della RAM condivisa (assente se 0)
+
+.symmap 5                        ; mappa GLOBALE: nome  sez  valore  dim  is_code
+main     text    0      -   1
+saxpy    text    5      12  1
+arr      data    0      40  0
+out      data    40     4   0
+cont     shared  2097152 4  0
 
 .end
 ```
@@ -196,8 +248,16 @@ out      40       0
 - **`.entry`**: indice istruzione da cui parte l'esecuzione (`cpu->pc`).
 - **`.text` / `.data`**: immagini finali. Il loader copia `.data` in `cpu->mem`
   a partire dall'indirizzo base (0) e carica `.text` in `prog[]`.
-- **`.symmap`**: solo simboli **globali** risolti; alimenta `nm` (Fase 2) e i
-  breakpoint per nome nel debugger.
+- **`.symmap`**: solo simboli **globali** risolti; alimenta `nm` (Fase 2), i
+  breakpoint per nome nel debugger, la **mappa** (`ld -M`) e il confronto fra le
+  immagini di due CPU.
+  - **sezione** e **dimensione** ci sono dal 29/09/2026, e la prima serve a
+    `run`: con due programmi confronta il sottoinsieme `shared` dei due
+    `.symmap` — stessi nomi, stessi indirizzi, stesse dimensioni — e **rifiuta**
+    due immagini che non sono d'accordo, invece di lasciare che il disaccordo si
+    presenti più tardi come un dato che si corrompe. Dedurre «questo simbolo è
+    condiviso» dal suo indirizzo sarebbe una convenzione che nessuno garantisce.
+  - la dimensione `-` vuol dire «non si sa» (vedi `.symtab`).
 
 ---
 

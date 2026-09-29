@@ -1,0 +1,9 @@
+# Due regioni dello STESSO spazio che si sovrappongono. Fra spazi diversi non e'
+# un errore: un'istruzione 8 e un byte 8 non sono lo stesso posto.
+MEMORY
+{
+  PM     : CODE  ORIGIN = 0,     LENGTH = 4096
+  LOCAL  : DATA  ORIGIN = 4,     LENGTH = 0xFFFFC
+  BUFFER : DATA  ORIGIN = 0x800, LENGTH = 0x1000
+}
+SECTIONS { .text > PM  .data > LOCAL }

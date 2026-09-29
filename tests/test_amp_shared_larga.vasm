@@ -1,0 +1,21 @@
+; tests/test_amp_shared_larga.vasm — LO STESSO ACCORDO, SCRITTO DIVERSO: serve a
+; vedere ROSSO il controllo che confronta le due immagini (29/09/2026, tappa 3).
+;
+; E' test_amp_shared.vasm con `contatore` di DUE parole invece di una. Nient'altro
+; cambia: i nomi sono gli stessi, l'ordine e' lo stesso, e i due sorgenti si
+; assemblano e si linkano tutti e due senza un errore.
+;
+; Ma `pronto` finisce a SHARED_BASE + 8 invece di + 4, e allora la CPU 0 aspetta
+; un flag a un indirizzo dove la CPU 1 non scrive mai: il programma non
+; terminerebbe, e il motivo sarebbe invisibile. `run` lo dice PRIMA di far
+; partire le CPU, confrontando il sottoinsieme condiviso dei due symmap -- ed e'
+; per questo che nel .vx c'e' la DIMENSIONE, e non solo l'indirizzo: qui la
+; prima cosa che non combacia e' proprio la dimensione di `contatore`.
+;
+; E' la specie di errore che l'accordo in un posto solo rende improbabile e non
+; impossibile: due immagini che linkano due versioni diverse dello stesso
+; oggetto condiviso.
+
+  .shared
+contatore:  .space 2      ; DUE parole: e' la differenza
+pronto:     .space 1

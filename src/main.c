@@ -334,15 +334,46 @@ static int cmd_ld(int argc, char** argv)
 {
   const char* out   = NULL;
   const char* entry = NULL;
+  const char* script = NULL;    // -T: il file di collocazione
+  const char* cpu    = NULL;    // -p: quale blocco PROCESSOR
+  const char* map    = NULL;    // -M: dove scrivere la mappa
   const char* ins[LD_MAX];
   int nin = 0;
   for (int i = 2; i < argc; ++i)
   {
     if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) out = argv[++i];
     else if (strcmp(argv[i], "-e") == 0 && i + 1 < argc) entry = argv[++i];
+    else if (strcmp(argv[i], "-T") == 0 && i + 1 < argc) script = argv[++i];
+    else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) cpu = argv[++i];
+    else if (strcmp(argv[i], "-M") == 0 && i + 1 < argc) map = argv[++i];
+    else if (strcmp(argv[i], "--verbose") == 0)
+    {
+      // Come `ld --verbose` di GNU: il file incorporato si legge, invece di
+      // essere un layout che si scopre soltanto sbagliandolo.
+      fputs(loc_builtin(), stdout);
+      return 0;
+    }
     else if (nin < LD_MAX) ins[nin++] = argv[i];
   }
-  if (nin == 0 || !out) { fprintf(stderr, "usage: %s ld <a.vo|lib.va> ... [-e <sym>] -o <out.vx>\n", argv[0]); return 2; }
+  if (nin == 0 || !out)
+  {
+    fprintf(stderr, "usage: %s ld <a.vo|lib.va> ... [-e <sym>] [-T <board.vld>] [-p <cpu>]"
+                    " [-M <out.map>] -o <out.vx>\n"
+                    "       %s ld --verbose     (stampa il file di collocazione incorporato)\n",
+            argv[0], argv[0]);
+    return 2;
+  }
+
+  // Il file di collocazione: quello passato con -T, o quello incorporato.
+  Locator loc;
+  LocScope scope;
+  {
+    char lerr[256] = {0};
+    int lrc = script ? loc_read(script, &loc, lerr, sizeof lerr)
+                     : loc_parse(loc_builtin(), "<incorporato>", &loc, lerr, sizeof lerr);
+    if (lrc != 0 || loc_resolve(&loc, cpu, &scope, lerr, sizeof lerr) != 0)
+    { fprintf(stderr, "ld error: %s\n", lerr); return 1; }
+  }
 
   // Explicit objects are always linked; archive members are pulled in on demand.
   VObject* expl = calloc(LD_MAX, sizeof(VObject)); int nexpl = 0;
@@ -409,9 +440,11 @@ static int cmd_ld(int argc, char** argv)
   for (int e = 0; e < nexpl; ++e) list[nlink++] = &expl[e];
   for (int k = 0; k < nmemb; ++k) if (incl[k]) list[nlink++] = &memb[k];
 
-  if (link_objects(list, nlink, img, entry, err, sizeof err) != 0)
+  if (link_objects(list, nlink, img, entry, &scope, err, sizeof err) != 0)
     fprintf(stderr, "ld error: %s\n", err);
   else if (vx_write(out, img, err, sizeof err) != 0)
+    fprintf(stderr, "ld error: %s\n", err);
+  else if (map && map_write(map, img, &scope, err, sizeof err) != 0)
     fprintf(stderr, "ld error: %s\n", err);
   else
     rc = 0;
@@ -497,6 +530,17 @@ static int cmd_run(int argc, char** argv)
     }
   }
 
+  // Le due immagini sono d'accordo su cio' che sta in RAM condivisa? L'accordo
+  // viene dal file di collocazione letto da tutti e due i link, e qui si
+  // verifica che sia davvero cosi': un disaccordo si vede ADESSO, invece di
+  // presentarsi piu' tardi come un dato che si corrompe.
+  for (int i = 1; i < npaths; ++i)
+    if (shared_agree(img[0], img[i], paths[0], paths[i], err, sizeof err) != 0)
+    {
+      fprintf(stderr, "run error: %s\n", err);
+      goto fine;
+    }
+
   machine_init(&m);
   if (apply_kbd_trace(&m) != 0)  { rc = 2; goto fine; }
   if (apply_adc_signal(&m) != 0) { rc = 2; goto fine; }
@@ -532,11 +576,13 @@ static int peek_magic(const char* path, char* out, size_t sz)
   return ok ? 0 : -1;
 }
 
-// nm-style type letter: uppercase = global. T code, D data, U undefined.
+// nm-style type letter: uppercase = global. T code, D data, S shared (la RAM
+// CONDIVISA, dal 29/09), U undefined. Un simbolo condiviso e' globale per
+// definizione, quindi la 's' minuscola non esce mai -- ed e' voluto.
 static char nm_type(int section, int binding, int is_code)
 {
   if (section == RSEC_NONE || binding == BIND_EXTERN) return 'U';
-  char c = is_code ? 't' : 'd';
+  char c = section == RSEC_SHARED ? 's' : is_code ? 't' : 'd';
   return (binding == BIND_GLOBAL) ? (char) toupper((unsigned char) c) : c;
 }
 

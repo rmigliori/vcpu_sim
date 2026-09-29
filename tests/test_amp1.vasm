@@ -15,10 +15,16 @@
 ;        persa, ed e' la CPU 0 a saperlo
 ;   4    quante
 ;
+; Le due parole condivise -- `contatore` e `pronto` -- sono dichiarate in
+; tests/test_amp_shared.vasm, linkato in tutte e due le immagini (la tappa 3).
+;
 ; L'ISR usa solo r11..r13, che il programma non tocca: niente contesto da
 ; salvare, come nei test di macchina che installano il loro vettore.
 
 .include "hal/amp.vinc"
+
+  .extern contatore
+  .extern pronto
 
   .text
   .global main
@@ -27,7 +33,7 @@ main:
   ; --- 1. il contatore, sotto lo spinlock 0 ------------------------------
   li r6, 100
   li r7, HWLOCK_BASE
-  li r8, SHARED_BASE
+  li r8, contatore         ; l'indirizzo viene dal file di collocazione
 giro:
 spin:
   lw r9, 0(r7)
@@ -55,8 +61,9 @@ scarica:
   dumps r13                ; 4
 
   ; --- 3. finito ----------------------------------------------------------
+  li r4, pronto
   li r9, 1
-  sw r9, 4(r8)
+  sw r9, 0(r4)
   halt
 
 isr:

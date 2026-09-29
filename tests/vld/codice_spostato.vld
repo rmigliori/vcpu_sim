@@ -1,0 +1,8 @@
+# Il codice non si sposta: il PC indicizza prog[] da zero, quindi un'immagine
+# col testo basato altrove non sarebbe caricabile. ERRORE, non una bugia.
+MEMORY
+{
+  PM    : CODE  ORIGIN = 4, LENGTH = 4096
+  LOCAL : DATA  ORIGIN = 4, LENGTH = 0xFFFFC
+}
+SECTIONS { .text > PM  .data > LOCAL }

@@ -27,14 +27,23 @@ static int next_line(FILE* fp, char* buf, size_t sz)
 
 static const char* rsec_name(int s)
 {
-  return s == RSEC_TEXT ? "text" : s == RSEC_DATA ? "data" : "----";
+  return s == RSEC_TEXT ? "text" : s == RSEC_DATA ? "data"
+       : s == RSEC_SHARED ? "shared" : "----";
 }
 
 static int rsec_parse(const char* t)
 {
   if (strcmp(t, "text") == 0) return RSEC_TEXT;
   if (strcmp(t, "data") == 0) return RSEC_DATA;
+  if (strcmp(t, "shared") == 0) return RSEC_SHARED;
   return RSEC_NONE;
+}
+
+// Il nome della sezione come lo scrive un sorgente, per i messaggi e la mappa.
+static const char* rsec_dot(int s)
+{
+  return s == RSEC_TEXT ? ".text" : s == RSEC_DATA ? ".data"
+       : s == RSEC_SHARED ? ".shared" : "(nessuna)";
 }
 
 static const char* bind_name(int b)
@@ -138,16 +147,20 @@ int vo_write(const char* path, const VObject* obj, char* err, size_t errsz)
   fprintf(fp, "\n.data %lld\n", (long long) obj->data_count);
   write_data(fp, obj->data, obj->data_count);
 
+  if (obj->shared_count > 0)
+    fprintf(fp, "\n.shared %lld\n", (long long) obj->shared_count);
+
   fprintf(fp, "\n.symtab %d\n", obj->sym_count);
-  fprintf(fp, "; name section offset binding is_code\n");
+  fprintf(fp, "; name section offset size binding is_code\n");
   for (int i = 0; i < obj->sym_count; ++i)
   {
     const ObjSym* s = &obj->syms[i];
     if (s->section == RSEC_NONE)
-      fprintf(fp, "%s ---- - %s -\n", s->name, bind_name(s->binding));
+      fprintf(fp, "%s ---- - - %s -\n", s->name, bind_name(s->binding));
     else
-      fprintf(fp, "%s %s %lld %s %d\n", s->name, rsec_name(s->section),
-              (long long) s->offset, bind_name(s->binding), s->is_code);
+      fprintf(fp, "%s %s %lld %lld %s %d\n", s->name, rsec_name(s->section),
+              (long long) s->offset, (long long) s->size,
+              bind_name(s->binding), s->is_code);
   }
 
   fprintf(fp, "\n.reloc %d\n", obj->reloc_count);
@@ -210,18 +223,23 @@ static int vo_read_stream(FILE* fp, VObject* obj, const char* path, char* err, s
       if (read_data(fp, &obj->data, count, err, errsz) != 0) goto fail;
       obj->data_count = count;
     }
+    else if (strcmp(tag, ".shared") == 0)
+    {
+      obj->shared_count = count;
+    }
     else if (strcmp(tag, ".symtab") == 0)
     {
       for (int i = 0; i < (int) count; ++i)
       {
         if (!next_line(fp, line, sizeof line)) { snprintf(err, errsz, "'%s': truncated symtab", path); goto fail; }
-        char name[64], sec[16], bind[16], off[32], isc[8];
-        if (sscanf(line, "%63s %15s %31s %15s %7s", name, sec, off, bind, isc) != 5)
+        char name[64], sec[16], bind[16], off[32], sz[32], isc[8];
+        if (sscanf(line, "%63s %15s %31s %31s %15s %7s", name, sec, off, sz, bind, isc) != 6)
         { snprintf(err, errsz, "'%s': bad symtab row %d", path, i); goto fail; }
         ObjSym* s = &obj->syms[obj->sym_count++];
         snprintf(s->name, sizeof(s->name), "%s", name);
         s->section = rsec_parse(sec);
         s->offset  = (off[0] == '-') ? 0 : strtoll(off, NULL, 10);
+        s->size    = (sz[0]  == '-') ? 0 : strtoll(sz,  NULL, 10);
         s->binding = bind_parse(bind);
         s->is_code = (isc[0] == '-') ? -1 : (int) strtol(isc, NULL, 10);
       }
@@ -334,20 +352,68 @@ fail:
 // ===========================================================================
 
 int link_objects(const VObject* const* objs, int nobj, VImage* img,
-                 const char* entry_name, char* err, size_t errsz)
+                 const char* entry_name, const LocScope* loc,
+                 char* err, size_t errsz)
 {
   memset(img, 0, sizeof(*img));
 
-  // 1. Assign per-module bases (command order).
-  int64_t text_base[64], data_base[64];
+  // 1. Assign per-module bases (command order) INSIDE the region each section
+  // is placed in. Until the 29/09 the two bases were cabled here -- code from
+  // 0, data from NULL_GUARD -- and neither the 1 MiB limit of the data nor the
+  // reason for the guard was written anywhere a person would look. Now they are
+  // facts of the memory map, and this reads them (see locator.h).
+  const LocRegion* rtext = loc_section_region(loc, ".text");
+  const LocRegion* rdata = loc_section_region(loc, ".data");
+  if (!rtext) { snprintf(err, errsz, "nessuna regione per .text nel file di collocazione"); return -1; }
+  if (!rdata) { snprintf(err, errsz, "nessuna regione per .data nel file di collocazione"); return -1; }
+  if (rtext->unit != LOC_CODE)
+  { snprintf(err, errsz, ".text va in '%s', che e' una regione DATA", rtext->name); return -1; }
+  if (rdata->unit != LOC_DATA)
+  { snprintf(err, errsz, ".data va in '%s', che e' una regione CODE", rdata->name); return -1; }
+
+  // La regione condivisa serve solo se qualcuno ci mette qualcosa: un programma
+  // di una CPU sola non deve dichiararla.
+  int64_t shared_total = 0;
+  for (int m = 0; m < nobj; ++m) shared_total += objs[m]->shared_count;
+  const LocRegion* rshared = loc_section_region(loc, ".shared");
+  if (shared_total > 0 && !rshared)
+  { snprintf(err, errsz, "c'e' una .shared ma il file di collocazione non le da' una regione"); return -1; }
+  if (rshared && rshared->unit != LOC_DATA)
+  { snprintf(err, errsz, ".shared va in '%s', che e' una regione CODE", rshared->name); return -1; }
+
+  int64_t text_base[64], data_base[64], shared_base[64];
   if (nobj > 64) { snprintf(err, errsz, "too many objects (max 64)"); return -1; }
-  // Data starts above the guard word: address 0 must stay NULL, so that no
-  // object can ever be confused with a null pointer (see NULL_GUARD in vcpu.h).
-  int64_t tcur = 0, dcur = NULL_GUARD;
+  int64_t tcur = rtext->origin, dcur = rdata->origin;
+  int64_t scur = rshared ? rshared->origin : 0;
   for (int m = 0; m < nobj; ++m)
   {
     text_base[m] = tcur; tcur += objs[m]->text_count;
     data_base[m] = dcur; dcur += objs[m]->data_count;
+    shared_base[m] = scur; scur += objs[m]->shared_count;
+  }
+  if (rshared && scur > rshared->origin + rshared->length)
+  {
+    snprintf(err, errsz, "la regione '%s' trabocca: %lld byte condivisi, ne tiene %lld",
+             rshared->name, (long long) (scur - rshared->origin), (long long) rshared->length);
+    return -1;
+  }
+  img->shared_base  = rshared ? rshared->origin : 0;
+  img->shared_count = shared_total;
+  // Il traboccamento di una regione e' un errore del link, non una scrittura
+  // oltre il bordo. Per i dati non era controllato affatto: la somma dei moduli
+  // non la guardava nessuno, e vx_load copia data_count byte in un buffer di
+  // MEM_SIZE.
+  if (tcur > rtext->origin + rtext->length)
+  {
+    snprintf(err, errsz, "la regione '%s' trabocca: %lld istruzioni, ne tiene %lld",
+             rtext->name, (long long) (tcur - rtext->origin), (long long) rtext->length);
+    return -1;
+  }
+  if (dcur > rdata->origin + rdata->length)
+  {
+    snprintf(err, errsz, "la regione '%s' trabocca: %lld byte di dati, ne tiene %lld",
+             rdata->name, (long long) (dcur - rdata->origin), (long long) rdata->length);
+    return -1;
   }
   if (tcur > MAX_INSTR) { snprintf(err, errsz, "linked code too large (%lld instr)", (long long) tcur); return -1; }
 
@@ -364,7 +430,10 @@ int link_objects(const VObject* const* objs, int nobj, VImage* img,
       ObjSym* g = &img->symmap[img->sym_count++];
       snprintf(g->name, sizeof(g->name), "%s", s->name);
       g->section = s->section;
-      g->offset  = (s->section == RSEC_TEXT ? text_base[m] : data_base[m]) + s->offset;
+      g->offset  = (s->section == RSEC_TEXT   ? text_base[m]
+                  : s->section == RSEC_SHARED ? shared_base[m]
+                                              : data_base[m]) + s->offset;
+      g->size    = s->size;
       g->binding = BIND_GLOBAL;
       g->is_code = s->is_code;
     }
@@ -406,7 +475,9 @@ int link_objects(const VObject* const* objs, int nobj, VImage* img,
       }
       if (d)
       {
-        value = (d->section == RSEC_TEXT ? text_base[m] : data_base[m]) + d->offset;
+        value = (d->section == RSEC_TEXT   ? text_base[m]
+               : d->section == RSEC_SHARED ? shared_base[m]
+                                           : data_base[m]) + d->offset;
         is_code = d->is_code;
       }
       else
@@ -485,11 +556,21 @@ int vx_write(const char* path, const VImage* img, char* err, size_t errsz)
   fprintf(fp, "\n.data %lld\n", (long long) img->data_count);
   write_data(fp, img->data, img->data_count);
 
+  if (img->shared_count > 0)
+    fprintf(fp, "\n.shared %lld %lld\n",
+            (long long) img->shared_base, (long long) img->shared_count);
+
+  // La SEZIONE e la DIMENSIONE, dal 29/09 (la tappa 3). La sezione perche' un
+  // simbolo condiviso va distinto da uno locale, e dedurlo dall'indirizzo
+  // (>= la base della RAM condivisa) sarebbe una convenzione che nessuno
+  // garantisce; la dimensione perche' e' cio' che una mappa deve dire.
   fprintf(fp, "\n.symmap %d\n", img->sym_count);
-  fprintf(fp, "; name value is_code\n");
+  fprintf(fp, "; name section value size is_code\n");
   for (int i = 0; i < img->sym_count; ++i)
-    fprintf(fp, "%s %lld %d\n", img->symmap[i].name,
-            (long long) img->symmap[i].offset, img->symmap[i].is_code);
+    fprintf(fp, "%s %s %lld %lld %d\n", img->symmap[i].name,
+            rsec_name(img->symmap[i].section),
+            (long long) img->symmap[i].offset,
+            (long long) img->symmap[i].size, img->symmap[i].is_code);
 
   fprintf(fp, "\n.end\n");
   fclose(fp);
@@ -535,20 +616,29 @@ int vx_read(const char* path, VImage* img, char* err, size_t errsz)
       if (read_data(fp, &img->data, count, err, errsz) != 0) goto fail;
       img->data_count = count;
     }
+    else if (strcmp(tag, ".shared") == 0)
+    {
+      long long base = 0, n = 0;
+      if (sscanf(line, "%31s %lld %lld", tag, &base, &n) != 3)
+      { snprintf(err, errsz, "'%s': bad .shared row", path); goto fail; }
+      img->shared_base  = base;
+      img->shared_count = n;
+    }
     else if (strcmp(tag, ".symmap") == 0)
     {
       for (int i = 0; i < (int) count; ++i)
       {
         if (!next_line(fp, line, sizeof line)) { snprintf(err, errsz, "'%s': truncated symmap", path); goto fail; }
-        char name[64]; long long value; int isc;
-        if (sscanf(line, "%63s %lld %d", name, &value, &isc) != 3)
+        char name[64], sec[16]; long long value, size; int isc;
+        if (sscanf(line, "%63s %15s %lld %lld %d", name, sec, &value, &size, &isc) != 5)
         { snprintf(err, errsz, "'%s': bad symmap row %d", path, i); goto fail; }
         ObjSym* s = &img->symmap[img->sym_count++];
         snprintf(s->name, sizeof(s->name), "%s", name);
         s->offset  = value;
+        s->size    = size;
         s->is_code = isc;
         s->binding = BIND_GLOBAL;
-        s->section = isc ? RSEC_TEXT : RSEC_DATA;
+        s->section = rsec_parse(sec);
       }
     }
   }
@@ -561,6 +651,130 @@ fail:
   img->data = NULL;
   fclose(fp);
   return -1;
+}
+
+// ===========================================================================
+//  LA MAPPA (29/09/2026, la tappa 3)
+//
+//  Cio' che una mappa deve dire, e nelle mappe vere c'e': in quale REGIONE sta
+//  ogni cosa, quanto ne resta, e per ogni simbolo la SEZIONE, l'indirizzo e la
+//  DIMENSIONE. Le due colonne che il .vx ha guadagnato lo stesso giorno sono
+//  esattamente queste due: la mappa non calcola niente per conto suo, riporta.
+//
+//  Gli indirizzi sono nell'unita' della regione -- istruzioni nel codice, byte
+//  nei dati -- e la colonna lo dice, perche' su una macchina Harvard
+//  l'istruzione 8 e il byte 8 non sono lo stesso posto.
+// ===========================================================================
+static int64_t region_used(const VImage* img, const LocRegion* r, int section)
+{
+  if (section == RSEC_TEXT)   return img->text_count - r->origin;
+  if (section == RSEC_SHARED) return img->shared_count;
+  return img->data_count - r->origin;
+}
+
+int map_write(const char* path, const VImage* img, const LocScope* loc,
+              char* err, size_t errsz)
+{
+  FILE* fp = fopen(path, "w");
+  if (!fp) { snprintf(err, errsz, "cannot write '%s'", path); return -1; }
+
+  fprintf(fp, "# la mappa di '%s'\n\n", path);
+  fprintf(fp, "REGIONI\n");
+  fprintf(fp, "%-10s %-6s %10s %10s %10s %10s\n",
+          "regione", "unita'", "origine", "capienza", "usato", "libero");
+  for (int i = 0; i < loc->place_count; ++i)
+  {
+    const LocRegion* r = loc_region(loc, loc->places[i].region);
+    if (!r) continue;
+    int sec = rsec_parse(loc->places[i].name + 1);   // ".data" -> "data"
+    int64_t used = sec == RSEC_NONE ? 0 : region_used(img, r, sec);
+    if (used < 0) used = 0;
+    fprintf(fp, "%-10s %-6s %10lld %10lld %10lld %10lld   %s\n",
+            r->name, r->unit == LOC_CODE ? "istr" : "byte",
+            (long long) r->origin, (long long) r->length,
+            (long long) used, (long long) (r->length - used),
+            loc->places[i].name);
+  }
+
+  fprintf(fp, "\nSIMBOLI\n");
+  fprintf(fp, "%-8s %12s %8s  %s\n", "sezione", "indirizzo", "dim", "nome");
+  // Per sezione, e dentro la sezione per indirizzo: una mappa si legge
+  // scorrendo la memoria, non l'ordine in cui il linker ha incontrato i nomi.
+  const int order[3] = { RSEC_TEXT, RSEC_DATA, RSEC_SHARED };
+  for (int k = 0; k < 3; ++k)
+  {
+    // Selezione per indirizzo crescente, O(n^2) su n <= 512: la mappa si scrive
+    // una volta per link, e un ordinamento in piu' non merita una struttura.
+    int64_t prev = INT64_MIN;
+    for (;;)
+    {
+      const ObjSym* best = NULL;
+      for (int i = 0; i < img->sym_count; ++i)
+      {
+        const ObjSym* s = &img->symmap[i];
+        if (s->section != order[k]) continue;
+        if (s->offset <= prev) continue;
+        if (!best || s->offset < best->offset) best = s;
+      }
+      if (!best) break;
+      prev = best->offset;
+      // Gli alias -- piu' nomi sullo stesso indirizzo -- si stampano tutti.
+      for (int i = 0; i < img->sym_count; ++i)
+      {
+        const ObjSym* s = &img->symmap[i];
+        if (s->section != order[k] || s->offset != prev) continue;
+        // Dimensione 0 = NON SI SA, e si stampa "-": un'etichetta di codice che
+        // non sia una procedura dichiarata non ha una fine, e un numero al suo
+        // posto sarebbe l'estensione di un blocco spacciata per una funzione.
+        char dim[24];
+        if (s->size > 0) snprintf(dim, sizeof dim, "%lld", (long long) s->size);
+        else             snprintf(dim, sizeof dim, "-");
+        fprintf(fp, "%-8s %12lld %8s  %s\n", rsec_dot(s->section),
+                (long long) s->offset, dim, s->name);
+      }
+    }
+  }
+
+  fprintf(fp, "\n.entry %lld\n", (long long) img->entry);
+  fclose(fp);
+  return 0;
+}
+
+int shared_agree(const VImage* a, const VImage* b, const char* na, const char* nb,
+                 char* err, size_t errsz)
+{
+  const ObjSym* sa[MAX_SYMBOLS]; int n_a = 0;
+  const ObjSym* sb[MAX_SYMBOLS]; int n_b = 0;
+  for (int i = 0; i < a->sym_count; ++i)
+    if (a->symmap[i].section == RSEC_SHARED) sa[n_a++] = &a->symmap[i];
+  for (int i = 0; i < b->sym_count; ++i)
+    if (b->symmap[i].section == RSEC_SHARED) sb[n_b++] = &b->symmap[i];
+
+  if (n_a != n_b)
+  {
+    snprintf(err, errsz, "'%s' dichiara %d variabili condivise, '%s' ne dichiara %d: "
+                         "le due immagini non vengono dallo stesso file di collocazione",
+             na, n_a, nb, n_b);
+    return -1;
+  }
+  for (int i = 0; i < n_a; ++i)
+  {
+    if (strcmp(sa[i]->name, sb[i]->name) != 0)
+    {
+      snprintf(err, errsz, "la variabile condivisa %d si chiama '%s' in '%s' e '%s' in '%s'",
+               i, sa[i]->name, na, sb[i]->name, nb);
+      return -1;
+    }
+    if (sa[i]->offset != sb[i]->offset || sa[i]->size != sb[i]->size)
+    {
+      snprintf(err, errsz, "la variabile condivisa '%s' e' a %lld (%lld byte) in '%s' "
+                           "e a %lld (%lld byte) in '%s'",
+               sa[i]->name, (long long) sa[i]->offset, (long long) sa[i]->size, na,
+               (long long) sb[i]->offset, (long long) sb[i]->size, nb);
+      return -1;
+    }
+  }
+  return 0;
 }
 
 int64_t vx_load(const VImage* img, uint8_t* mem, Instr* prog, int* prog_len)

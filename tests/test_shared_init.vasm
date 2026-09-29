@@ -1,0 +1,19 @@
+; tests/test_shared_init.vasm — .shared NON SI INIZIALIZZA, e l'assembler lo dice
+; (29/09/2026, la tappa 3). Questo file NON deve assemblare.
+;
+; Il perche' sta in toolchain.h, su RSEC_SHARED: se le due immagini portassero
+; entrambe il valore iniziale lo scriverebbero due volte nella stessa RAM, e su
+; hardware vero l'ordine dei due caricamenti -- e quale CPU e' gia' partita --
+; deciderebbe chi vince. Qui i caricamenti avvengono tutti prima che una CPU
+; parta, quindi sarebbe innocuo E sbagliato.
+;
+; Chi ha bisogno di un valore diverso da zero lo scrive in codice da UNA CPU, e
+; l'altra aspetta un flag: e' cio' che fanno test_amp0 e test_amp1 con `pronto`.
+
+  .shared
+contatore:  .word 0       ; <- l'errore: si riserva con .space, non con .word
+
+  .text
+  .global main
+main:
+  halt

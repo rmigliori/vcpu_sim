@@ -2,6 +2,7 @@
 #define TOOLCHAIN_H
 
 #include "vcpu.h"
+#include "locator.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -11,7 +12,20 @@
 // ---------------------------------------------------------------------------
 
 typedef enum { BIND_LOCAL, BIND_GLOBAL, BIND_EXTERN } Binding;
-typedef enum { RSEC_TEXT = 0, RSEC_DATA = 1, RSEC_NONE = -1 } RSection;
+// RSEC_SHARED: la RAM CONDIVISA (29/09/2026, la tappa 3). Due differenze dalle
+// altre due, e sono le regole decise prima di scriverla:
+//   - NON SI INIZIALIZZA. Due immagini che portassero entrambe il valore
+//     iniziale lo scriverebbero due volte, e su hardware vero l'ordine dei due
+//     caricamenti deciderebbe chi vince. Chi ha bisogno di un valore lo scrive
+//     in codice da una CPU, e l'altra aspetta un flag -- e' cio' che fa
+//     test_amp, ed e' la pratica dell'AMP vera. Quindi .shared RISERVA e basta:
+//     .word dentro .shared e' un errore di assemblaggio
+//   - UN SIMBOLO CONDIVISO E' GLOBALE PER DEFINIZIONE (dell'utente). La sezione
+//     dice gia' che il dato sta nella RAM che l'altra CPU vede; pretendere
+//     anche il .global sarebbe dichiarare due volte lo stesso fatto, e un
+//     simbolo in .shared invisibile fuori dal suo oggetto e' una
+//     contraddizione nei termini, non solo una cosa inutile
+typedef enum { RSEC_TEXT = 0, RSEC_DATA = 1, RSEC_SHARED = 2, RSEC_NONE = -1 } RSection;
 // R_ADDR: address-of a symbol into imm; the linker picks the value by is_code
 // (instruction index for code, byte address for data) -> works for both kinds.
 typedef enum { R_CODE, R_DATA, R_ADDR } RelocType;
@@ -21,7 +35,13 @@ typedef struct
 {
   char    name[64];
   int     section;   // RSection; RSEC_NONE for undefined (extern)
-  int64_t offset;    // instruction index (text) or byte offset (data)
+  int64_t offset;    // instruction index (text) or byte offset (data/shared)
+  // Quanto occupa: istruzioni nel testo, byte nei dati. Lo calcola l'assembler
+  // come distanza dal simbolo SEGUENTE nella stessa sezione, chiusa alla fine
+  // della sezione -- che e' un dato che solo lui ha. Dedurlo dopo, per
+  // differenza, sbaglia sistematicamente sull'ultimo simbolo. Due etichette
+  // sullo stesso indirizzo (un alias) hanno la stessa dimensione.
+  int64_t size;
   int     binding;   // Binding
   int     is_code;   // 1 code, 0 data, -1 unknown (extern)
 } ObjSym;
@@ -42,6 +62,7 @@ typedef struct
   int      text_count;
   uint8_t* data;         // heap; size == data_count (NULL if empty)
   int64_t  data_count;
+  int64_t  shared_count; // byte RISERVATI in .shared: nessun contenuto (vedi RSEC_SHARED)
   ObjSym   syms[MAX_SYMBOLS];
   int      sym_count;
   ObjReloc relocs[MAX_INSTR];
@@ -55,6 +76,8 @@ typedef struct
   int      text_count;
   uint8_t* data;         // heap; size == data_count (NULL if empty)
   int64_t  data_count;
+  int64_t  shared_base;  // dove comincia la RAM CONDIVISA per questa immagine
+  int64_t  shared_count; // byte riservati: non c'e' contenuto da caricare
   ObjSym   symmap[MAX_SYMBOLS];  // globals only, resolved (value in .offset)
   int      sym_count;
   int64_t  entry;        // entry instruction index
@@ -93,13 +116,28 @@ int  va_write(const char* path, const char* const* member_paths, int nmemb,
 int  va_read(const char* path, VObject* objs, char names[][64], int* count,
              int maxobj, char* err, size_t errsz);
 
-// Link 'nobj' objects (in command order) into an image. Returns 0 or -1.
+// Link 'nobj' objects (in command order) into an image, placing each section in
+// the region the locator gives it. Returns 0 or -1.
 int  link_objects(const VObject* const* objs, int nobj, VImage* img,
-                  const char* entry_name, char* err, size_t errsz);
+                  const char* entry_name, const LocScope* loc,
+                  char* err, size_t errsz);
 void vimage_free(VImage* img);
 
 int  vx_write(const char* path, const VImage* img, char* err, size_t errsz);
 int  vx_read(const char* path, VImage* img, char* err, size_t errsz);
+
+// La MAPPA: dove e' finito ogni simbolo, quanto occupa, e quanto resta di ogni
+// regione. Le mappe vere hanno la sezione e la dimensione, e questa le ha.
+int  map_write(const char* path, const VImage* img, const LocScope* loc,
+               char* err, size_t errsz);
+
+// Le due immagini si mettono d'accordo? Confronta il sottoinsieme CONDIVISO dei
+// due symmap: stessi nomi, stessi indirizzi, stesse dimensioni, nello stesso
+// ordine. L'accordo viene dal file di collocazione letto da tutti e due i link,
+// e questo e' il controllo che dice se e' davvero cosi' -- al caricamento,
+// invece di presentarsi come un dato che si corrompe.
+int  shared_agree(const VImage* a, const VImage* b, const char* na, const char* nb,
+                  char* err, size_t errsz);
 
 // Load a linked image: fills prog[], copies data into 'mem' (la memoria della
 // scheda), sets *prog_len, returns the entry instruction index.

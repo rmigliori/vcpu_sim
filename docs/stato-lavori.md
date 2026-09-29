@@ -1,6 +1,11 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **29 settembre 2026** (§3.79 **la tappa 2**: due CPU,
+> Ultimo aggiornamento: **29 settembre 2026** (§3.80 **la tappa 3**: il
+> locator -- un file di collocazione con le regioni e l'unità dichiarata, la
+> sezione `.shared` che non si inizializza e i cui simboli sono globali per
+> definizione, la mappa con sezione e dimensione, e `run` che rifiuta due
+> immagini non d'accordo. `ctest --timeout 60` 66/66, le impronte del symmap
+> mosse **tutte** e per un motivo dichiarato; §3.79 **la tappa 2**: due CPU,
 > RAM condivisa, spinlock e mailbox hardware, discusse e scritte, `test_amp`
 > rosso senza spinlock e senza overrun; §3.78 **verso più CPU**: AMP,
 > un processo solo, un clock master con divisori interi; la tappa 1 FATTA --
@@ -113,31 +118,40 @@
 
 > ### ▶ RIPRENDI DA QUI (29/09/2026 o dopo)
 >
-> **DOVE SIAMO RIMASTI.** Il 29/09 sono successe tre cose. La FFT è **fatta e
-> vista rossa** (§3.77, `0c3db23`). Poi la strada è cambiata: **la macchina
-> diventa multi-CPU, asimmetrica (AMP)**, e il test grande si farà sulla nuova
-> architettura. **La tappa 1** (§3.78, `f35abc9`): core, periferiche e scheda
-> separati, il tempo a un clock master con divisori interi, la macchina
-> identica al ciclo. **La tappa 2** (§3.79), discussa e poi scritta: **due
-> CPU**, RAM locale da 0 per ognuna e RAM condivisa a `0x200000`, spinlock e
-> mailbox hardware, il distributore delle interruzioni, la DMA solo nella RAM
-> condivisa, `run cpu0.vx cpu1.vx`. `test_amp` e `test_intd` visti rossi;
-> `ctest --timeout 60` **57/57**, `--check` verde, i programmi di prima
-> identici a `HEAD` tranne `adc_*` e `fft_*`, spostati alla RAM condivisa
-> (solo indirizzi, cicli uguali). `git status` dice
-> se è committato; il push resta dell'utente, e da una sessione di Claude
-> **non riesce per costruzione** (§3.77). **Si riprende dalla tappa 3, il
-> locator, che si DISCUTE prima**: la formula è in §6.
+> **DOVE SIAMO RIMASTI.** Il 29/09 la strada è cambiata: **la macchina diventa
+> multi-CPU, asimmetrica (AMP)**, e il test grande si farà sulla nuova
+> architettura. Tre tappe su quattro sono **fatte**. **La tappa 1** (§3.78,
+> `f35abc9`): core, periferiche e scheda separati, il tempo a un clock master
+> con divisori interi, la macchina identica al ciclo. **La tappa 2** (§3.79,
+> `e29e2bd`): **due CPU**, RAM locale da 0 per ognuna e RAM condivisa a
+> `0x200000`, spinlock e mailbox hardware, il distributore delle interruzioni,
+> la DMA solo nella RAM condivisa, `run cpu0.vx cpu1.vx`. **La tappa 3**
+> (§3.80), discussa e poi scritta: **il locator** — un file di collocazione con
+> le regioni e l'**unità dichiarata** (`CODE` in istruzioni, `DATA` in byte,
+> come il PM/DM del `.ldf`), un blocco `PROCESSOR` che dice solo ciò che
+> differisce, la sezione **`.shared`** che si riserva e non si inizializza e i
+> cui simboli sono **globali per definizione**, la **mappa** con sezione e
+> dimensione, e `run` che **rifiuta** due immagini non d'accordo su ciò che sta
+> in RAM condivisa. `test_amp` non ha più `SHARED_BASE + 0` e `+ 4` scritti a
+> mano: le due parole sono dichiarate in un oggetto linkato in tutte e due le
+> immagini. `ctest --timeout 60` **66/66**, `--check` verde (ma **`--check out`**:
+> vedi la trappola in fondo a §3.80), tracce identiche a `HEAD` tranne `amp`, e
+> le **impronte del symmap mosse tutte** per la colonna della sezione e quella
+> della dimensione — TEXT+DATA ferme tranne `test_amp0/1`, il cui sorgente è
+> cambiato. `git status` dice se è committato; il push resta dell'utente, e da
+> una sessione di Claude **non riesce per costruzione** (§3.77).
+> **Si riprende dalla tappa 4, il test grande**: la formula è in §6.
 >
-> **IL TEST DECISO IL 28/09 (§3.76).** Un super task con macchina a stati a
-> 1 ms, ADC **a blocchi**, FFT in float, e il risultato spedito con un
-> messaggio a un task asincrono. **Quattro pezzi FATTI**: i float a 32 bit
+> **IL TEST DECISO IL 28/09 (§3.76), CHE ADESSO È LA TAPPA 4.** Un super task con
+> macchina a stati a 1 ms, ADC **a blocchi**, FFT in float, e il risultato spedito
+> con un messaggio a un task asincrono. **Quattro pezzi FATTI**: i float a 32 bit
 > (`test_fctx`), `vcvt`, **l'ADC a 12 bit I e Q avviato dalla time line**
 > (`test_adc`) e **la FFT** (`fft64` in `dsp/`, `test_fft`: 7.663 cicli, il 7,7%
-> di un millisecondo). Tutti visti rossi. **Il resto si fa dopo le tappe 2 e 3
-> della macchina multi-CPU** (§3.78): i nodi del messaggio, i task asincroni e
-> il test intero sono la tappa 4, col foreground su una CPU e il background
-> sull'altra.
+> di un millisecondo). Tutti visti rossi. Le tappe 1, 2 e 3 della macchina
+> multi-CPU sono fatte, quindi **non c'è più niente davanti**: restano i nodi del
+> messaggio e i task asincroni, col foreground su una CPU e il background
+> sull'altra, e la time line **aspetta ancora la sua tabella** — istanti, budget,
+> i due modi — che è un dato dell'utente e non si inventa.
 >
 > **Il 28/09**, per chi ne cerca le tracce: i float a 32 bit, `vcvt` e l'ADC,
 > committati in `6818a80` (§3.76).
@@ -167,7 +181,7 @@
 >   fattuale
 > ```
 >
-> **ORDINE DI LETTURA: §3.79, §3.78, §3.77, §3.76, poi §3.75, poi §3.74, poi §3.73, poi §3.72.**
+> **ORDINE DI LETTURA: §3.80, §3.79, §3.78, §3.77, §3.76, poi §3.75, poi §3.74, poi §3.73, poi §3.72.**
 > Ognuna corregge la precedente in qualche punto, e leggerle al contrario fa
 > ripartire da posizioni ritirate. §3.76 (28/09) non ha codice: collega ogni
 > pezzo del disegno al suo predecessore in letteratura, e rimanda il gestore
@@ -3723,6 +3737,198 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.80 LA TAPPA 3: IL LOCATOR, e l'accordo in un posto solo (29/09/2026)
+
+**Discussione prima, nell'ordine dei quattro punti di §6, e le decisioni sono
+dell'utente dove lo dice.**
+
+```
+1 COME SI DICHIARA   una sezione .shared accanto a .text e .data. E NON SI
+                     INIZIALIZZA (mia, accettata: "basta saperlo"): due
+                     immagini che portassero entrambe il valore iniziale lo
+                     scriverebbero due volte nella stessa RAM, e l'ordine dei
+                     caricamenti deciderebbe chi vince. Qui i caricamenti
+                     avvengono tutti prima che una CPU parta, quindi sarebbe
+                     innocuo E sbagliato. Il valore iniziale lo scrive UNA CPU
+                     in codice e l'altra aspetta un flag -- e' cio' che
+                     test_amp faceva gia', ed e' remoteproc/OpenAMP
+2 CHI DECIDE         un file di collocazione. La forma e' del .ldf degli SHARC,
+  L'INDIRIZZO        che l'utente ha usato: un file per la SCHEDA con un
+                     blocco PROCESSOR, non uno per immagine -- due file per due
+                     CPU identiche sarebbero due dichiarazioni dello stesso
+                     fatto, e il fatto duplicato sarebbe proprio quello su cui
+                     i due link si devono mettere d'accordo. La sintassi e'
+                     quella del linker script di GNU, che e' la piu'
+                     riconoscibile. E L'UNITA' E' DICHIARATA (dell'utente: "mi
+                     sembra la scelta piu' completa"): CODE in istruzioni, DATA
+                     in byte, com'e' il PM/DM del .ldf -- perche' questa
+                     macchina e' Harvard e una regione in byte per il codice
+                     dichiarerebbe una cosa falsa
+  L'EREDITA'         un blocco PROCESSOR dice SOLO cio' che differisce, un
+                     blocco vuoto e' legale, e l'assenza vale "come la scheda".
+                     Serve a non duplicare niente il giorno in cui le CPU sono
+                     identiche, che e' oggi: il file della tappa 3 non ha
+                     nessun blocco che dica qualcosa
+3 COME DUE IMMAGINI  l'accordo sta NEL FILE DI COLLOCAZIONE, non nei due link:
+  SI METTONO         una sorgente di verita' invece di due che si assomigliano.
+  D'ACCORDO          Le variabili si dichiarano in un oggetto solo, linkato in
+                     tutte e due le immagini. E il controllo c'e' (dell'utente:
+                     "la firma come dici tu la terrei"), perche' "dovrebbe
+                     essere impossibile" non e' una prova
+4 LA MAPPA           regioni con usato e libero, e ogni simbolo con SEZIONE e
+                     DIMENSIONE (dell'utente: "nelle mappe che conosco io ci
+                     sono size e sezione"). E il link che FALLISCE quando una
+                     regione trabocca
+```
+
+**Due cose che ho proposto male, e come sono finite.**
+
+La prima e' dell'utente e **e' migliore della mia**: che tutto ciò che è definito
+in `.shared` sia **globale per definizione**. Io avevo proposto che un `.shared`
+locale fosse un errore di build — cioè pretendere il `.global` e *rilevare* la
+divergenza. Ma la sezione dice già che il dato sta nella RAM che l'altra CPU
+vede, quindi chiedere anche il `.global` è dichiarare due volte lo stesso fatto,
+e la versione dell'utente rende la divergenza **inesprimibile** invece di
+segnalarla. Un `.global` scritto per abitudine concorda e non può divergere: una
+direttiva `.local` non esiste. In regalo, `duplicate global` diventa l'errore
+giusto per due oggetti della **stessa** immagine che dichiarano la stessa
+variabile — e fra le due immagini non è un errore, è l'accordo.
+
+Il caso che sembra un controesempio — la RAM condivisa usata come
+**allocazione** e non come comunicazione, una CPU che ci mette roba sua — non
+chiede un legame diverso: chiede una **sezione** diversa (`.scratch` in una
+regione dentro la RAM condivisa), perché «dove sta» è della regione e «con chi si
+condivide» è della sezione. E lì il blocco `PROCESSOR` troverebbe il suo primo
+cliente vero: due scratch private devono avere origini **diverse**, o si
+scrivono addosso.
+
+La seconda era mia, e la ho corretta da solo prima di scriverla: avevo proposto
+«il linker mette nel `.vx` una **firma** del layout condiviso», che è una seconda
+dichiarazione di un fatto che il `.vx` già porta nel `.symmap`. Ciò che mancava
+non era la firma, era la **colonna della sezione** — senza di lei l'unico modo di
+riconoscere un simbolo condiviso sarebbe dedurlo dall'indirizzo, cioè una
+convenzione che nessuno garantisce. Con la colonna, «la firma» è il confronto del
+sottoinsieme condiviso dei due `.symmap`, e non c'è nessun dato nuovo.
+
+#### La prima fetta: le basi escono dal C, e nessun programma si muove
+
+`include/locator.h` e `src/locator.c` — un tokenizzatore piatto e tre produzioni,
+`MEMORY`, `SECTIONS`, `PROCESSOR`. Il linker non ha più basi cablate: legge la
+regione di ogni sezione e concatena **dentro** la regione. `ld` impara `-T`, `-p`
+e `--verbose`.
+
+Il default **non è un ramo in C**: è un `.vld` scritto nella sua stessa lingua,
+passato allo stesso parser, e i suoi numeri vengono da `MAX_INSTR`,
+`NULL_GUARD`, `MEM_SIZE`, `SHARED_BASE`, `SHARED_SIZE` — così il file
+incorporato non è una copia della mappa di memoria, è quella. Si legge con
+`ld --verbose`, come il default script di GNU ld.
+
+Quattro cose cambiano posto senza cambiare valore: `NULL_GUARD` e `MAX_INSTR`
+diventano `ORIGIN` e `LENGTH` di una regione; il traboccamento del codice
+diventa quello di una regione qualunque; e **il traboccamento dei dati esiste**
+— non era controllato **affatto**, la somma dei moduli non la guardava nessuno e
+`vx_load` copia `data_count` byte in un buffer di `MEM_SIZE`.
+
+Sei test, uno positivo e cinque che passano **se il linker rifiuta**, ognuno con
+il suo messaggio visto prima di scriverlo nel `PASS_REGULAR_EXPRESSION`:
+
+```
+locator_identico          un .vld scritto a mano col layout di sempre da' un
+                          .vx IDENTICO BYTE PER BYTE a quello linkato senza
+                          -T, su `multi`, che sono DUE moduli
+locator_codice_spostato   ORIGIN != 0 su una regione CODE: il PC indicizza
+                          prog[] da zero, l'immagine non sarebbe caricabile
+locator_dato_a_zero       ORIGIN 0 su una regione DATA: il guard del NULL
+locator_regione_ignota    una sezione in una regione non dichiarata
+locator_stretta           una regione che trabocca
+locator_sovrapposte       due regioni dello stesso spazio sovrapposte
+```
+
+In `locator_stretta` il numero di istruzioni di `multi` **non** è nell'atteso:
+l'asserzione è che il traboccamento si veda, non quanto è grande `multi`.
+
+| verifica, dopo la prima fetta | esito |
+|---|---|
+| `ctest --timeout 60` | **63/63** (57 + 6) |
+| impronte, contro il build pulito di `HEAD` | **25 su 25 identiche** |
+| `tools/equiv.py` contro `HEAD` | tracce e marche **identiche**, 50 programmi |
+
+Le impronte ferme sono il punto: le basi sono uscite dal C e sono entrate in un
+file, e nessun programma si è mosso di un byte.
+
+#### La seconda fetta: `.shared`, la mappa, e il confronto fra le due immagini
+
+`RSEC_SHARED` nel `.vo` e nel `.vx`, `ObjSym.size`, la sezione `.shared`
+nell'assembler (che **riserva**: `.word` là dentro è un errore), il globale
+implicito, la regione condivisa nel linker, `nm` con la lettera `S`, `ld -M` che
+scrive la mappa, e `run` che con due programmi confronta il sottoinsieme
+condiviso dei due `.symmap` prima di far partire le CPU.
+
+`test_amp` riscritto: `contatore` e `pronto` stanno in
+`tests/test_amp_shared.vasm`, un oggetto **senza codice** linkato in tutte e due
+le immagini, e i due sorgenti li importano con `.extern`. Fino a stamattina erano
+`SHARED_BASE + 0` e `+ 4` scritti a mano nei due file, con l'accordo nei
+commenti.
+
+**Visto rosso**, e il test c'è: `test_amp1_larga` linka una `.shared` in cui
+`contatore` è di **due** parole. Tutto assembla e tutto linka — i nomi e l'ordine
+sono gli stessi — ma `pronto` finisce quattro byte più avanti e la CPU 0
+aspetterebbe per sempre un flag dove nessuno scrive. `run` lo dice prima di
+partire, ed **è per questo che nel `.vx` c'è la dimensione e non solo
+l'indirizzo**: la prima cosa che non combacia è la dimensione di `contatore`.
+Più le due regole di `.shared` viste rosse: `.word` dentro `.shared`
+(`locator_shared_init`) e `.shared` a file singolo (`locator_shared_legacy`).
+
+**Un difetto che la mappa ha stanato appena scritta, e che era mio:** la prima
+versione dava la dimensione di **ogni** simbolo come distanza da quello
+seguente, e sul codice quel numero mente — diceva `main: 3 istruzioni` per un
+`main` che ne ha **26**, perché fra i due c'era un'etichetta interna. La distanza
+fino all'etichetta seguente è l'estensione di un **blocco**, non di una funzione.
+Adesso una procedura dichiarata con `.proc`/`.endproc` ha la sua dimensione
+**esatta** (la sa `close_and_emit_proc`, che ha appena emesso prologo, corpo ed
+epilogo), un'etichetta qualunque ha `0`, e la mappa lo stampa `-` — «non si sa» —
+invece di inventare un numero. Verificato su `test_tmgr`: `enqueue_tail_s` 16,
+`tmgr_init` 11, `pcb0..pcb3` 16 byte l'uno, e tutte le etichette non-procedura
+`-`.
+
+**I MOVIMENTI DICHIARATI, e sono due:**
+
+```
+le 25 impronte del SYMMAP si muovono TUTTE, ed e' la colonna della sezione piu'
+  quella della dimensione: TEXT+DATA restano identiche su tutti i programmi
+  tranne i due qui sotto
+test_amp0 e test_amp1 si muovono in TEXT+DATA, perche' il loro SORGENTE e'
+  cambiato: una `li` in piu' e i simboli condivisi al posto degli offset a
+  mano. Nelle tracce cambia solo `amp.out`, tutti gli altri 49 programmi sono
+  identici byte per byte
+```
+
+| verifica, finale | esito |
+|---|---|
+| `ctest --timeout 60` | **66/66** (57 + 9) |
+| `tools/equiv.py` contro `HEAD` | identici tutti tranne `amp` (dichiarato), più i file nuovi |
+| impronte | TEXT+DATA ferme tranne `test_amp0/1`; i 25 symmap mossi come dichiarato; nuova `test_amp1_larga` |
+| `--check`, build CMake e `Makefile` | verdi, nessun warning |
+
+**Una trappola che ho preso in pieno, e non è del codice:**
+`tools/scheduler_facts.py --check` **senza argomenti** legge `build/`, che è la
+cartella del `Makefile` e non quella di CMake — e un `make clean` ci ha
+cancellato dentro un albero CMake stantio, per cui `--check` ha detto «il conf
+nomina test che il build non ha» di test che ci sono tutti. Con `--check out` è
+verde. È **la stessa specie** del difetto di `fingerprint.sh` scoperto stamattina
+(§3.77): uno strumento il cui default non è la cartella in cui il progetto
+costruisce. Lì si è visto perché mancava una riga; qui perché ne mancavano dieci.
+Il default va spostato, e non l'ho fatto: è un lavoro di cinque minuti che
+cambia il comportamento di uno strumento, e va deciso.
+
+**Rimasto, e dichiarato:** `.align` non c'è (era il primo dei tre pezzi di §5, e
+lo rende obbligatorio una macchina vettoriale), e le sezioni restano **tre e
+fisse** — non c'è `.section nome` arbitraria. La mappa non verifica che una
+regione sia davvero coperta da RAM sulla scheda: un `.vld` che mettesse `SHARED`
+a `0x300000` passerebbe, e sarebbe un controllo del caricamento.
 
 ---
 
@@ -10674,26 +10880,28 @@ Cosa manca per salire davvero: i tipi ci sono sulla **memoria** ma non sui
 l'allocazione dei registri — che qui non serve solo perché le variabili vive sono
 quelle tenute a mano in `r1`/`r2`/`r3` per convenzione.
 
-**2. C'è un linker, non c'è un locator.** [`toolchain.c:336`](../src/toolchain.c#L336)
-assegna le basi dei moduli «*in command order*», concatena, risolve i simboli e
-rialloca. Due sezioni cablate, `text` e `data`; nessuna nozione di regione di
-memoria, nessun allineamento, nessun controllo di traboccamento, nessuna mappa in
-uscita. Su una macchina con memorie a costi diversi — scratchpad veloce, finestra
-DMA, program memory — nessuna delle tre cose che servono è esprimibile.
+**2. C'è un linker, e dal 29/09 c'è un locator — ma non è finito.**
+[`toolchain.c:336`](../src/toolchain.c#L336) assegnava le basi dei moduli «*in
+command order*» con le basi **cablate in C**: due sezioni, `text` e `data`,
+nessuna nozione di regione, nessun allineamento, nessun controllo di
+traboccamento, nessuna mappa. Dei tre pezzi elencati qui sotto **il terzo è
+fatto** (§3.80): un file di collocazione con le regioni e la loro **unità**, il
+link che **fallisce** quando una regione trabocca, e un `.map` (`ld -M`) che dice
+dove è finito ogni simbolo, quanto occupa e quanto spazio resta.
 
-I tre pezzi, nell'ordine in cui converrebbe farli:
+I due che restano:
 
 - **`.align N`**, e la garanzia che il linker non rompa l'allineamento quando
   concatena i moduli — oggi lo farebbe, perché la base del modulo successivo è la
   fine del precedente. È il pezzo che una macchina **vettoriale** rende
   obbligatorio, ed è piccolo abbastanza da provare su di esso la disciplina dei
   `.vx` byte per byte;
-- **`.section nome`** al posto dei due nomi cablati: è il prerequisito di tutto
-  il resto (senza un nome un modulo non può dire dove vuole finire) ed è il più
-  invasivo, perché tocca assembler, formato `.vo` e linker;
-- **regioni e mappa**: un file di collocazione che dichiara le memorie, il link
-  che **fallisce** se una regione trabocca invece di scrivere oltre, e un `.map`
-  che dice dove è finito ogni simbolo e quanto spazio resta.
+- **`.section nome`** arbitraria. Le sezioni sono **tre e fisse** (`.text`,
+  `.data`, `.shared`): la terza è arrivata con la RAM condivisa, che è il cliente
+  che l'ha richiesta, ma un modulo ancora non può *nominare* dove vuole finire. È
+  il pezzo più invasivo, perché tocca assembler, formato `.vo` e linker — e il
+  locator ormai lo aspetta, perché una regione in più (uno scratchpad, una
+  finestra DMA) oggi non ha una sezione che la sappia nominare.
 
 Due clienti già pronti nel kernel, che tengono il lavoro fuori dall'astratto: gli
 **stack dei task** (una regione propria, riempita di un pattern per misurare il
@@ -10726,14 +10934,20 @@ servono i numeri della macchina.
 > ### Si fa con `ctest`, ed è l'unico modo che resta (§3.17, §3.24)
 >
 > ```bash
-> cmake -B out -S . && cmake --build out -j && ctest --test-dir out
+> cmake -B out -S . && cmake --build out -j && ctest --test-dir out --timeout 60
 > ```
 >
-> 39 test: le tre invarianti storiche, i test mirati (`queue`, `pool`,
+> Il **`--timeout`** dal 29/09 (§3.79), e non è pignoleria: un test che aspetta un
+> evento che non arriva resta appeso in silenzio, ed è già costato dieci minuti.
+>
+> **66 test** (39 il 14/09, 57 la mattina del 29/09): le tre invarianti storiche,
+> i test mirati (`queue`, `pool`,
 > `timeout`, `mailbox`, `scheduler`, `block`, `chain`, `tmgr`, `tmgr_marks`,
 > `semaphore`, `mutex`, `coop`, `events`, `vectors`, più
 > `proc`/`include`/`epsw`/`kbd`/`ifdef_off`/`ifdef_on` sulla toolchain e
-> sulla macchina), i **quattro `trace_*`** che ESEGUONO la pagina di traccia
+> sulla macchina), i due `amp` e `intd` a **due CPU** (§3.79), i **nove** del
+> locator (§3.80 — uno positivo e otto che passano *se la toolchain rifiuta*),
+> i **quattro `trace_*`** che ESEGUONO la pagina di traccia
 > sotto `gjs` (§3.49 — opzionali: senza `gjs` non esistono), e i 13 programmi di
 > `standalone/` che devono continuare a girare da soli. I numeri
 > attesi stanno **ognuno accanto al programma che lo produce** — nel
@@ -10760,7 +10974,7 @@ servono i numeri della macchina.
 >
 > ```bash
 > ctest --test-dir out -R queue --output-on-failure  # un test solo, con l'output
-> ctest --test-dir out -N                            # elenca i 39 senza eseguirli
+> ctest --test-dir out -N                            # li elenca senza eseguirli
 > cmake --build out -j --verbose                     # i comandi asm/ld esatti
 > ```
 >
@@ -11344,40 +11558,50 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 > solo sulla CPU 1). Il criterio di fine — ogni programma a una CPU identico,
 > il test rosso, due corse identiche — ha funzionato alla lettera.
 
-**PER RIPRENDERE dopo il 29/09 — la TAPPA 3, il LOCATOR, che si DISCUTE prima:**
+> **E tolta la sera del 29/09, appena scaduta:** la formula «la TAPPA 3, il
+> LOCATOR, che si DISCUTE prima», scritta e consumata nella stessa sessione
+> (§3.80). Il suo ordine dei quattro punti ha retto e la discussione l'ha
+> seguito, e il suo «si discute PRIMA di scrivere» ha prodotto la cosa migliore
+> della sessione: l'utente ha **sostituito** la mia regola sul legame dei simboli
+> condivisi con una migliore (globali per definizione, invece di «un `.shared`
+> locale è un errore»), e l'ha fatto rispondendo a una domanda, non correggendo
+> del codice già scritto. Il criterio sulle impronte era scritto nella forma
+> giusta — «a meno che il locator cambi dove finiscono i dati, e allora si dice
+> PRIMA quali impronte si muovono e perché» — e infatti si sono mosse, per una
+> ragione che la formula non prevedeva (le due colonne nuove del `.symmap`) e che
+> è stata dichiarata prima di toccare il formato.
+
+**PER RIPRENDERE dopo il 29/09 — la TAPPA 4, IL TEST GRANDE, che ASPETTA UN DATO DELL'UTENTE:**
 ```
-Leggi docs/stato-lavori.md: il riquadro RIPRENDI DA QUI, poi §3.79 (la
-tappa 2: la mappa, e perche' la RAM condivisa riporta il locator) e §3.78
-(le quattro tappe). Poi in §5 il punto "C'e' un linker, non c'e' un
-locator", e src/toolchain.c -- il linker di oggi concatena in command
-order, due sezioni, nessuna regione, nessuna mappa.
+Leggi docs/stato-lavori.md: il riquadro RIPRENDI DA QUI, poi §3.76 (il test
+deciso il 28/09, e i predecessori di ogni pezzo), poi §3.74 (il disegno del
+foreground: la macchina a stati e' un TASK, le attivita' sono PROCEDURE, e
+pending letto alla chiamata di wait) e §3.78 (le quattro tappe: questa e'
+l'ultima).
 
-Il problema che la tappa 3 risolve: due programmi linkati separatamente,
-uno per CPU, devono mettersi d'accordo sull'indirizzo di cio' che sta in
-RAM CONDIVISA. Oggi test_amp lo fa a mano (SHARED_BASE + 0, + 4). Niente
-e' deciso. Da discutere, nell'ordine:
-  1. COME SI DICHIARA una variabile condivisa nel sorgente: una sezione
-     nuova (.shared?), accanto a .text e .data
-  2. CHI decide l'indirizzo: un file di collocazione con le REGIONI (RAM
-     locale, RAM condivisa) -- e se il formato somiglia a qualcosa che
-     l'utente conosce (il .ldf degli SHARC? uno script di GNU ld?)
-  3. COME DUE IMMAGINI SI METTONO D'ACCORDO: un oggetto comune linkato in
-     tutte e due, o un'immagine "condivisa" linkata una volta sola e letta
-     dalle altre. E chi la inizializza
-  4. LA MAPPA: il file che dice dove e' finito ogni simbolo. E' anche il
-     fronte che ND Satcom rende rilevante
-Si discute PRIMA di scrivere, e le scelte di forma che emergono scrivendo
-si dicono prima. Non scrivere oltre cio' che e' deciso.
+LE TAPPE 1, 2 E 3 SONO FATTE, quindi non c'e' piu' niente davanti -- e il
+MECCANISMO c'e' tutto dal 27/09 (.interrupt, il dispatch diretto, WAIT:
+§3.75). Cio' che manca e' POLITICA e DATI:
+  - i NODI DEL MESSAGGIO (erano il passo del mattino del 29/09, rimandati
+    qui): il ping-pong fra foreground e background, che in AMP puo'
+    diventare la MAILBOX fra le due CPU invece di una coda in RAM
+  - i TASK ASINCRONI sulla CPU 1
+  - la MACCHINA A STATI della time line, che e' DISEGNATA e non scritta
 
-Prima di toccare niente: ctest --timeout 60 57/57 (il timeout: un test che
-aspetta un evento che non arriva resta appeso, §3.79), scheduler_facts
---check verde, e la base di tools/equiv.py col simulatore di HEAD.
+E QUI SI FERMA, perche' la macchina a stati aspetta una TABELLA DI TIME
+LINE VERA -- istanti, budget, i due modi -- che e' un dato
+dell'APPLICAZIONE e non si inventa per poterla provare. Chiederla e' il
+primo passo, non l'ultimo: senza, si scrive un esempio e si chiama test.
 
-Alla fine: ogni programma di oggi IDENTICO (tools/equiv.py contro HEAD)
-e le 24 impronte identiche a un build pulito di HEAD -- a meno che il
-locator cambi dove finiscono i dati, e allora si dice PRIMA quali
-impronte si muovono e perche'. test_amp riscritto con le variabili
-condivise dichiarate, e visto rosso.
+Prima di toccare niente: ctest --timeout 60 66/66 (il timeout: un test che
+aspetta un evento che non arriva resta appeso, §3.79), python3
+tools/scheduler_facts.py --check OUT (con l'argomento: senza, legge build/,
+che e' la cartella del Makefile -- §3.80), e la base di tools/equiv.py col
+simulatore di HEAD.
+
+Alla fine: ogni programma di oggi IDENTICO (tools/equiv.py contro HEAD) e
+le 26 impronte identiche a un build pulito di HEAD -- questa tappa AGGIUNGE
+programmi, non ne muove. Se una si muove, si dice PRIMA quale e perche'.
 ```
 
 **E IN PARALLELO, senza dipendenze — la SECONDA BASE DEI TEMPI, e `srai` (15/09, deciso):**
@@ -11428,11 +11652,12 @@ potenza di due: devono coincidere, e costare 1 ciclo invece di 20).
 NON toccare settimer, e non toccare il kernel. Il `timer_next` che
 slitta resta com'e': commento corretto, codice no.
 
-Alla fine: ctest tutto verde -- 55 il 29/09, piu' i test nuovi -- scheduler_facts
---check verde, e le 20 impronte INVARIATE (test_fft e' la ventesima dal
-29/09), confrontate con un build pulito di HEAD e con `out` come argomento
-dello script (§3.77: da solo legge build/, stantia). Se `srai` le muove,
-e' finita in mezzo all'enum invece che in coda.
+Alla fine: ctest tutto verde -- 66 la sera del 29/09, piu' i test nuovi --
+scheduler_facts --check verde (con `out` come ARGOMENTO: senza, legge build/,
+che e' la cartella del Makefile -- §3.80), e le 26 impronte INVARIATE,
+confrontate con un build pulito di HEAD e con `out` come argomento dello
+script (§3.77: da solo legge build/, stantia). Se `srai` le muove, e' finita
+in mezzo all'enum invece che in coda.
 ```
 
 **E PRIMA, O DOPO — il RESPIRO nel nucleo fattuale (non fatto il 15/09):**

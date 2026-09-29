@@ -1,0 +1,23 @@
+; tests/test_amp_shared.vasm — LE VARIABILI IN RAM CONDIVISA, dichiarate una
+; volta sola (29/09/2026, la tappa 3).
+;
+; Questo oggetto non ha codice: dichiara soltanto cio' che le due CPU si
+; scambiano, e viene linkato in TUTTE E DUE le immagini. E' li' che sta
+; l'accordo -- una sorgente di verita', non due che si assomigliano -- e
+; l'indirizzo non e' scritto da nessuna parte qui dentro: lo decide la regione
+; SHARED del file di collocazione (`vcpu_sim ld --verbose`).
+;
+; Prima della tappa 3 le stesse due parole erano SHARED_BASE + 0 e + 4 scritte a
+; mano nei due sorgenti, e l'accordo stava nei commenti.
+;
+; --- DUE REGOLE DI .shared, e si vedono qui ---
+; NON SI INIZIALIZZA: si riserva con .space, e un .word qui dentro e' un errore
+; di assemblaggio. Il valore iniziale, se serve, lo scrive UNA CPU in codice e
+; l'altra aspetta -- ed e' quello che fa `pronto`.
+; I SIMBOLI SONO GLOBALI PER DEFINIZIONE: niente .global, perche' .shared lo
+; dice gia'. Se questo oggetto finisse due volte nella stessa immagine, `ld` si
+; fermerebbe con "duplicate global 'contatore'".
+
+  .shared
+contatore:  .space 1      ; una parola: i 100+100 incrementi sotto lo spinlock
+pronto:     .space 1      ; il flag con cui la CPU 1 dice di aver finito

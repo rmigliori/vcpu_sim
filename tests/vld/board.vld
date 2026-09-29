@@ -1,0 +1,25 @@
+# tests/vld/board.vld — la scheda, scritta a mano (29/09/2026, la tappa 3).
+#
+# Dichiara lo STESSO layout del file incorporato (`vcpu_sim ld --verbose`), e
+# serve a provare che -T passa per la stessa strada: il .vx che ne esce e'
+# confrontato byte per byte con quello linkato senza -T (test locator_identico).
+#
+# Le due CPU non hanno niente di diverso da dire, quindi i loro blocchi sono
+# VUOTI -- si potrebbero omettere del tutto, e sono qui perche' un blocco vuoto
+# e' legale ed e' il posto dove un giorno si dira' "questa CPU no".
+MEMORY
+{
+  PM     : CODE  ORIGIN = 0,        LENGTH = 4096      # in ISTRUZIONI
+  LOCAL  : DATA  ORIGIN = 4,        LENGTH = 0xFFFFC   # 4 = il guard del NULL
+  SHARED : DATA  ORIGIN = 0x200000, LENGTH = 0x10000   # la RAM CONDIVISA
+}
+
+SECTIONS
+{
+  .text > PM
+  .data > LOCAL
+  .shared > SHARED
+}
+
+PROCESSOR cpu0 { }
+PROCESSOR cpu1 { }

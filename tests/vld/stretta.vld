@@ -1,0 +1,9 @@
+# Una regione che TRABOCCA: 4 istruzioni per un programma che ne ha di piu'.
+# E' il controllo che prima non c'era -- per i dati non c'era affatto, e
+# vx_load copiava data_count byte in un buffer di MEM_SIZE.
+MEMORY
+{
+  PM    : CODE  ORIGIN = 0, LENGTH = 4
+  LOCAL : DATA  ORIGIN = 4, LENGTH = 0xFFFFC
+}
+SECTIONS { .text > PM  .data > LOCAL }

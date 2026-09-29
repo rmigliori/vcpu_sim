@@ -1,0 +1,8 @@
+# Una collocazione che nomina una regione che non esiste. Il controllo vuole la
+# vista intera -- l'eredita' potrebbe aggiungerla -- quindi sta in loc_resolve.
+MEMORY
+{
+  PM    : CODE  ORIGIN = 0, LENGTH = 4096
+  LOCAL : DATA  ORIGIN = 4, LENGTH = 0xFFFFC
+}
+SECTIONS { .text > PM  .data > SCRATCHPAD }

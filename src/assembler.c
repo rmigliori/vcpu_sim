@@ -18,6 +18,7 @@ typedef struct
   int     is_code;   // code label (value = instr index) vs data label (address)
   int     section;   // RSection (object assembly only)
   int     binding;   // Binding   (object assembly only)
+  int64_t size;      // istruzioni o byte; la calcola sym_sizes() alla fine
 } Symbol;
 
 static Symbol g_symbols[MAX_SYMBOLS];
@@ -54,8 +55,53 @@ static int add_symbol(const char* name, int64_t value, int is_code, char* err, s
   g_symbols[g_symbol_count].is_code = is_code;
   g_symbols[g_symbol_count].section = is_code ? RSEC_TEXT : RSEC_DATA;
   g_symbols[g_symbol_count].binding = BIND_LOCAL;
+  g_symbols[g_symbol_count].size    = 0;   // la calcola sym_sizes(), in coda
   g_symbol_count += 1;
   return 0;
+}
+
+// Un simbolo nella RAM CONDIVISA. La sezione non si deriva da is_code come le
+// altre due, e il legame non si aspetta un `.global`: e' GLOBALE PER
+// DEFINIZIONE, perche' .shared dice gia' che il dato sta nella RAM che l'altra
+// CPU vede, e chiederlo due volte sarebbe due dichiarazioni dello stesso fatto
+// (vedi RSEC_SHARED in toolchain.h). Un `.global` scritto per abitudine su di
+// lui CONCORDA e non puo' divergere: una direttiva `.local` non esiste.
+static int add_shared_symbol(const char* name, int64_t value, char* err, size_t errsz)
+{
+  if (add_symbol(name, value, 0, err, errsz) != 0) return -1;
+  int idx = g_symbol_count - 1;
+  g_symbols[idx].section = RSEC_SHARED;
+  g_symbols[idx].binding = BIND_GLOBAL;
+  return 0;
+}
+
+// La DIMENSIONE di un simbolo di DATO: la distanza dal successivo nella stessa
+// sezione, chiusa alla fine della sezione. La fine la sa solo l'assembler --
+// dedurre per differenza dopo, da una tabella, sbaglia sull'ultimo simbolo, che
+// e' proprio quello di cui si vuole sapere se ci sta. Piu' nomi sullo stesso
+// indirizzo (un alias) ricevono la stessa dimensione.
+//
+// NON si usa sul CODICE, e la ragione e' che li' quel numero mentirebbe: la
+// distanza fino all'etichetta seguente e' l'estensione di un blocco, non di una
+// funzione, e in un programma con etichette interne darebbe "main: 3
+// istruzioni" per un main che ne ha 26. Una procedura dichiarata con .proc la
+// sua dimensione ce l'ha esatta, e la scrive close_and_emit_proc(); le altre
+// etichette di codice restano a 0, che vuol dire "non si sa", e la mappa lo
+// stampa come "-" invece di inventare un numero.
+static void sym_sizes(int section, int64_t section_end)
+{
+  for (int i = 0; i < g_symbol_count; ++i)
+  {
+    if (g_symbols[i].section != section) continue;
+    int64_t next = section_end;
+    for (int j = 0; j < g_symbol_count; ++j)
+    {
+      if (j == i || g_symbols[j].section != section) continue;
+      if (g_symbols[j].value > g_symbols[i].value && g_symbols[j].value < next)
+        next = g_symbols[j].value;
+    }
+    g_symbols[i].size = next > g_symbols[i].value ? next - g_symbols[i].value : 0;
+  }
 }
 
 // Vedi la dichiarazione in vcpu.h. Solo simboli di DATO: `current` e' una
@@ -846,7 +892,7 @@ static int encode(char** toks, int n, Instr* out, char* err, size_t errsz)
 // ---------------------------------------------------------------------------
 //  Assembler driver: two passes over the source file.
 // ---------------------------------------------------------------------------
-enum { SEC_TEXT, SEC_DATA };
+enum { SEC_TEXT, SEC_DATA, SEC_SHARED };
 
 static char* g_code_lines[MAX_INSTR];  // text-section lines kept for pass 2
 static int   g_code_count;
@@ -1046,6 +1092,13 @@ static int close_and_emit_proc(char* err, size_t errsz)
   if (emit_synth_line("lw r15, 0(r14)", err, errsz) != 0) return -1;
   if (emit_synth_line("addi r14, r14, 4", err, errsz) != 0) return -1;
   if (emit_synth_line(epilogue_line, err, errsz) != 0) return -1;
+
+  // La DIMENSIONE della procedura, che adesso e' nota per esatto: prologo, corpo
+  // ed epilogo sono emessi. Un'etichetta di codice qualunque non ha una
+  // dimensione -- l'assembler sa dove COMINCIA, non dove finisce cio' che c'e'
+  // sotto -- e una PROCEDURA ce l'ha perche' ha dichiarato la sua fine.
+  int pidx = find_symbol_idx(g_proc_name);
+  if (pidx >= 0) g_symbols[pidx].size = g_code_count - g_symbols[pidx].value;
 
   g_proc_active = 0;
   return 1;
@@ -1859,6 +1912,16 @@ int assemble(const char* path, uint8_t* mem, Instr* prog, char* err, size_t errs
     {
       if (strcmp(first, ".text") == 0) { section = SEC_TEXT; }
       else if (strcmp(first, ".data") == 0) { section = SEC_DATA; }
+      // Un programma a file singolo non passa dal linker, quindi non ha un file
+      // di collocazione -- e l'indirizzo di una variabile condivisa lo decide
+      // quello. Dirlo invece di collocarla a caso: la RAM condivisa serve a due
+      // CPU che si mettono d'accordo, e l'accordo e' un lavoro del link.
+      else if (strcmp(first, ".shared") == 0)
+      {
+        snprintf(err, errsz, "line %d: .shared vuole il linker -- assembla con `asm` e "
+                             "linka con `ld`, che e' chi legge il file di collocazione", lineno);
+        inc_cleanup(&inc); fclose(fp); return -1;
+      }
       else if (strcmp(first, ".include") == 0)
       {
         if (k + 1 >= n) { snprintf(err, errsz, "line %d: .include needs a file", lineno); inc_cleanup(&inc); fclose(fp); return -1; }
@@ -2065,9 +2128,10 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
 
   char    line[512];
   char*   toks[64];
-  int     section  = SEC_TEXT;
-  int64_t data_ptr = 0;
-  int     lineno   = 0;
+  int     section    = SEC_TEXT;
+  int64_t data_ptr   = 0;
+  int64_t shared_ptr = 0;     // .shared: si riserva, non si emette
+  int     lineno     = 0;
 
   // .include: file stack (bottom = top-level file, kept open for fclose(fp)).
   IncState inc;
@@ -2097,8 +2161,15 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
     {
       char name[64];
       snprintf(name, sizeof(name), "%.*s", (int) (len - 1), toks[0]);
-      int64_t value = (section == SEC_DATA) ? data_ptr : g_code_count;
-      if (add_symbol(name, value, section == SEC_TEXT, err, errsz) != 0) goto fail;
+      if (section == SEC_SHARED)
+      {
+        if (add_shared_symbol(name, shared_ptr, err, errsz) != 0) goto fail;
+      }
+      else
+      {
+        int64_t value = (section == SEC_DATA) ? data_ptr : g_code_count;
+        if (add_symbol(name, value, section == SEC_TEXT, err, errsz) != 0) goto fail;
+      }
       k = 1;
     }
     if (k >= n) continue;
@@ -2108,6 +2179,7 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
     {
       if (strcmp(first, ".text") == 0) { section = SEC_TEXT; }
       else if (strcmp(first, ".data") == 0) { section = SEC_DATA; }
+      else if (strcmp(first, ".shared") == 0) { section = SEC_SHARED; }
       else if (strcmp(first, ".include") == 0)
       {
         if (k + 1 >= n) { snprintf(err, errsz, "line %d: .include needs a file", lineno); goto fail; }
@@ -2134,39 +2206,45 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
         for (int i = k + 1; i < n && nextern < MAX_SYMBOLS; ++i)
           snprintf(externs[nextern++], 64, "%s", toks[i]);
       }
-      else if (strcmp(first, ".float") == 0)
+      // .shared RISERVA e non inizializza (vedi RSEC_SHARED in toolchain.h):
+      // un valore iniziale portato da due immagini si scriverebbe due volte, e
+      // l'ordine dei caricamenti deciderebbe chi vince.
+      else if (strcmp(first, ".float") == 0 || strcmp(first, ".word") == 0)
       {
-        for (int i = k + 1; i < n; ++i)
+        if (section == SEC_SHARED)
         {
-          float val = strtof(toks[i], NULL);
-          if ((uint64_t) data_ptr + 4 > MEM_SIZE)
-          {
-            snprintf(err, errsz, "line %d: data overflow", lineno);
-            goto fail;
-          }
-          memcpy(&data[data_ptr], &val, 4);
-          data_ptr += 4;
+          snprintf(err, errsz, "line %d: '%s' dentro .shared: la RAM condivisa non si "
+                               "inizializza -- riservala con .space o .res, e scrivi il "
+                               "valore iniziale da una CPU sola", lineno, first);
+          goto fail;
         }
-      }
-      else if (strcmp(first, ".word") == 0)
-      {
+        int is_float = strcmp(first, ".float") == 0;
         for (int i = k + 1; i < n; ++i)
         {
-          int32_t val = (int32_t) strtoll(toks[i], NULL, 0);
           if ((uint64_t) data_ptr + 4 > MEM_SIZE)
           {
             snprintf(err, errsz, "line %d: data overflow", lineno);
             goto fail;
           }
-          memcpy(&data[data_ptr], &val, 4);
+          if (is_float)
+          {
+            float val = strtof(toks[i], NULL);
+            memcpy(&data[data_ptr], &val, 4);
+          }
+          else
+          {
+            int32_t val = (int32_t) strtoll(toks[i], NULL, 0);
+            memcpy(&data[data_ptr], &val, 4);
+          }
           data_ptr += 4;
         }
       }
       else if (strcmp(first, ".space") == 0)
       {
         if (k + 1 >= n) { snprintf(err, errsz, "line %d: .space needs a count", lineno); goto fail; }
-        data_ptr += (int64_t) atoll(toks[k + 1]) * 4;
-        if ((uint64_t) data_ptr > MEM_SIZE) { snprintf(err, errsz, "line %d: data overflow", lineno); goto fail; }
+        int64_t* p = (section == SEC_SHARED) ? &shared_ptr : &data_ptr;
+        *p += (int64_t) atoll(toks[k + 1]) * 4;
+        if ((uint64_t) *p > MEM_SIZE) { snprintf(err, errsz, "line %d: data overflow", lineno); goto fail; }
       }
       else if (strcmp(first, ".res") == 0)
       {
@@ -2175,8 +2253,9 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
         char fq[80]; snprintf(fq, sizeof fq, "%s.size", toks[k + 1]);
         int64_t sz;
         if (!find_const(fq, &sz)) { snprintf(err, errsz, "line %d: unknown struct '%s'", lineno, toks[k + 1]); goto fail; }
-        data_ptr += sz;
-        if ((uint64_t) data_ptr > MEM_SIZE) { snprintf(err, errsz, "line %d: data overflow", lineno); goto fail; }
+        int64_t* p = (section == SEC_SHARED) ? &shared_ptr : &data_ptr;
+        *p += sz;
+        if ((uint64_t) *p > MEM_SIZE) { snprintf(err, errsz, "line %d: data overflow", lineno); goto fail; }
       }
       else
       {
@@ -2275,7 +2354,13 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
   }
   g_obj_mode = 0;
 
-  obj->text_count = g_code_count;
+  obj->text_count   = g_code_count;
+  obj->shared_count = shared_ptr;
+
+  // Le dimensioni dei dati: adesso che le sezioni sono chiuse si sa dove
+  // finiscono. Il codice no -- vedi il commento su sym_sizes().
+  sym_sizes(RSEC_DATA,   data_ptr);
+  sym_sizes(RSEC_SHARED, shared_ptr);
 
   // Copy symbols into the object.
   for (int i = 0; i < g_symbol_count; ++i)
@@ -2284,6 +2369,7 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
     snprintf(s->name, sizeof(s->name), "%.63s", g_symbols[i].name);
     s->section = g_symbols[i].section;
     s->offset  = g_symbols[i].value;
+    s->size    = g_symbols[i].size;
     s->binding = g_symbols[i].binding;
     s->is_code = g_symbols[i].is_code;
   }
