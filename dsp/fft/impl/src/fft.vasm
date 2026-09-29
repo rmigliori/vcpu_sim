@@ -1,0 +1,100 @@
+; dsp/fft/impl/src/fft.vasm — FFT complessa a 64 punti, radix 2 (29/09/2026).
+;
+; Decimation in time di Cooley-Tukey: l'ingresso in ordine bit-reversed,
+; l'uscita in ordine naturale. Il contratto e' in fft/fft.vinc, le tabelle e
+; il loro perche' in tools/fft_tables.py.
+;
+; --- IL BIT REVERSAL E' UN GATHER ---
+; I campioni dell'ADC sono I0 Q0 I1 Q1 ...: prima della FFT vanno separati
+; per canale E messi in ordine bit-reversed. Una vloadx sul blocco con gli
+; indici 2*rev6(i) fa le due cose insieme -- il 2 salta le Q -- e sulle Q la
+; stessa tabella con la base spostata di 4 byte. Costa 12+2P contro i 12+P
+; della vload a passo 8 che sostituisce: 64 cicli per canale. I DSP
+; classici (ADSP-2100, TMS320) il bit reversal lo fanno nel generatore di
+; indirizzi a costo zero; qui e' una tabella, e l'istruzione resta generale.
+;
+; --- OGNI STADIO PASSA DALLA MEMORIA, ed e' la macchina a volerlo ---
+; La farfalla accoppia la corsia i con la i+h, e l'ISA non ha permutazioni fra
+; corsie dentro un registro: le spostano solo gather e scatter. Quindi ogni
+; stadio raccoglie le meta' alta e bassa, calcola, e le riscrive sugli stessi
+; indici. 32 farfalle per stadio, VL = 32, sei stadi.
+;
+; In place, e si puo' perche' dentro uno stadio OGNI LETTURA DI UN ARRAY
+; PRECEDE LE SUE SCRITTURE: b (re e im) si raccoglie per primo, a_re prima di
+; scrivere re, a_im prima di scrivere im -- e scrivere re non tocca im.
+;
+; --- LA FARFALLA, e gli otto registri che bastano esattamente ---
+;     t = b * W                 a' = a + t        b' = a - t
+;
+;   v0 alto   v1 basso = alto + h (vadds)
+;   v2 b_re   v3 b_im   v4 W_re   v5 W_im
+;   v6 t_re = b_re W_re - b_im W_im
+;   v7 t_im = b_re W_im + b_im W_re   (b_re e' morto: v2 fa da appoggio)
+;   poi v2..v5 si riciclano per a e per i due risultati
+;
+; Convenzione registri: r1..r3 argomenti (fft/fft.vinc), r4..r8 scratch, f1 = h.
+
+.include "fft/fft.vinc"
+
+  .data
+.include "fft_tables.vinc"
+
+  .text
+  .global fft64
+
+fft64:
+  ; --- ingresso: bit reversal + deinterleave + vcvt, un canale alla volta --
+  li r4, FFT_N
+  setvl r4, r4
+  li r5, fft_brev
+  vload v0, r5             ; 2*rev6(i)
+  vloadx v1, r1, v0        ; le I in ordine bit-reversed, ancora bit di interi
+  vcvt v1, v1
+  vstore v1, r2
+  addi r6, r1, 4
+  vloadx v1, r6, v0        ; le Q: stessa tabella, base alla parola dopo
+  vcvt v1, v1
+  vstore v1, r3
+
+  ; --- sei stadi, h = 1, 2, 4 ... 32 --------------------------------------
+  li r4, 32
+  setvl r4, r4
+  li r5, fft_top
+  li r6, fft_wre
+  li r7, fft_wim
+  fli f1, 1.0              ; h
+  li r8, 6
+stadio:
+  vload v0, r5             ; alto
+  vadds v1, v0, f1         ; basso = alto + h
+  vloadx v2, r2, v1        ; b_re
+  vloadx v3, r3, v1        ; b_im
+  vload v4, r6             ; W_re
+  vload v5, r7             ; W_im
+
+  vmul v6, v2, v4
+  vmul v7, v3, v5
+  vsub v6, v6, v7          ; t_re
+  vmul v7, v2, v5
+  vmul v2, v3, v4
+  vadd v7, v7, v2          ; t_im
+
+  vloadx v2, r2, v0        ; a_re
+  vadd v3, v2, v6
+  vstorex v3, r2, v0       ; re[alto]  = a_re + t_re
+  vsub v3, v2, v6
+  vstorex v3, r2, v1       ; re[basso] = a_re - t_re
+
+  vloadx v4, r3, v0        ; a_im
+  vadd v5, v4, v7
+  vstorex v5, r3, v0       ; im[alto]  = a_im + t_im
+  vsub v5, v4, v7
+  vstorex v5, r3, v1       ; im[basso] = a_im - t_im
+
+  addi r5, r5, 128         ; 32 float per tabella e per stadio
+  addi r6, r6, 128
+  addi r7, r7, 128
+  fadd f1, f1, f1
+  addi r8, r8, -1
+  bne r8, r0, stadio
+  ret

@@ -1,0 +1,26 @@
+; fft/fft.vinc — la FFT complessa a 64 punti sul blocco dell'ADC (29/09/2026).
+;
+; --- IL CONTRATTO ---
+;     call fft64      r1 = il blocco dell'ADC: FFT_N campioni, I e Q ALTERNATI,
+;                          interi a 32 bit (hal/adc.vinc)
+;                     r2 = re[FFT_N]   float, scritti dalla FFT
+;                     r3 = im[FFT_N]   float, scritti dalla FFT
+;
+; All'uscita re/im sono X[k] in ordine NATURALE, k = 0..63, SENZA
+; normalizzazione: un fasore di ampiezza A che fa k giri interi nel blocco da'
+; |X[k]| = A * FFT_N. La trasformata e' la DIRETTA, W = exp(-2 pi i / N): una
+; frequenza positiva cade in k, una negativa in N-k.
+;
+; I buffer d'uscita sono del CHIAMANTE. La FFT non possiede memoria sua oltre
+; alle tabelle costanti: la destinazione puo' essere un nodo di messaggio, e
+; allora il risultato non si copia.
+;
+; --- I REGISTRI ---
+; Foglia. Usa r4..r8, f1 e TUTTI i registri vettoriali, e lascia VL a 32. Non
+; tocca r14 ne' r15.
+;
+; --- PERCHE' 64 E NON N ---
+; 64 e' VLMAX: tutto il blocco sta in un registro per parte. Un N generico
+; vorrebbe lo strip-mining, e non serve a nessuno.
+; --------------------------------------------------------------------------
+.equ FFT_N  64

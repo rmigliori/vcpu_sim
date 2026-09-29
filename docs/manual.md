@@ -607,6 +607,10 @@ segno, e con I e Q si vede: una frequenza negativa fa girare il fasore al
 contrario. Senza `--adc` si campiona zero. `tests/test_adc.vasm` gira tre volte,
 con tre segnali.
 
+I registri e i bit si prendono da `hal/adc.vinc` (dal 29/09/2026, in
+`vinc_hal`); `test_adc` se li ricopia perché gira a file singolo. Il primo
+consumatore del blocco è la FFT di §7.11.
+
 ---
 
 ## 4. Il linguaggio assembly
@@ -1884,6 +1888,48 @@ sono NON-FOGLIA: salvano `r15` e conservano la `psw` sullo stack attraverso la
 chiamata alla raw. `irq_save`/`irq_restore` usano `r5` e non toccano `r1`/`r2`,
 quindi gli argomenti (e il valore di ritorno di `dequeue_head`) restano intatti.
 Le ISR e il boot usano le raw; il **task** usa i wrapper `_s`.
+
+### 7.11 La FFT sul blocco dell'ADC (`dsp/fft/` + `dsp/test/test_fft.vasm`)
+
+Una FFT complessa a 64 punti, radix 2, **decimation in time** di Cooley–Tukey:
+ingresso in ordine bit-reversed, uscita in ordine naturale. È una libreria,
+`lib_fft`, e il contratto sta in `dsp/fft/interface/fft/fft.vinc`:
+
+```asm
+  li   r1, blocco          ; 64 campioni dell'ADC, I e Q alternati, interi
+  li   r2, re              ; re[64]: float, li scrive la FFT
+  li   r3, im              ; im[64]
+  call fft64               ; X[k] in ordine naturale, senza normalizzazione
+```
+
+I buffer d'uscita sono del chiamante, e un fasore di ampiezza A con k giri
+interi nel blocco dà `|X[k]| = A·64`. La trasformata è la diretta, quindi una
+frequenza negativa cade in `64 − k`. Costa **7.663 cicli** dal `call` al
+ritorno, misurati con `--trace`: il 7,7% di un millisecondo.
+
+Tre cose che la macchina impone, e che valgono per qualunque algoritmo che
+permuti dati fra corsie:
+
+- **il bit reversal è un gather.** Una `vloadx` sul blocco con gli indici
+  `2·rev6(i)` separa le I dalle Q (il 2 salta la parola della Q) e le mette in
+  ordine bit-reversed in un colpo; sulle Q la stessa tabella con la base a +4.
+  Poi `vcvt`. I DSP classici hanno l'indirizzamento bit-reversed nel
+  generatore di indirizzi; qui è una tabella, e costa 64 cicli per canale in
+  più della `vload` a passo 8 che sostituisce;
+- **ogni stadio passa dalla memoria.** La farfalla accoppia la corsia `i` con
+  la `i+h`, e l'ISA non ha permutazioni dentro un registro: le fanno solo
+  gather e scatter. Ogni stadio raccoglie alti e bassi, calcola, e riscrive
+  sugli stessi indici, in place — si può perché dentro uno stadio ogni lettura
+  di un array precede le sue scritture;
+- **gli indici sono float.** `vloadx`/`vstorex` troncano a intero il valore
+  float della corsia (§7.4), quindi anche le tabelle di indici sono `.float`.
+
+Le tabelle (bit reversal, indici alti per stadio, twiddle per stadio) le genera
+`tools/fft_tables.py` in `dsp/fft/impl/src/fft_tables.vinc`, che si committa e
+non si modifica a mano. Il test gira due volte, `--adc 78125,1000` e
+`--adc -78125,1000`: con `ADC_PERIOD = 100` un bin vale 15.625 Hz e 78.125 Hz
+sono cinque bin esatti, quindi `5 64 0` e `59 64 0` — il bin del picco, il
+picco in migliaia, il massimo degli altri bin in migliaia.
 
 ---
 

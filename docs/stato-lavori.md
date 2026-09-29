@@ -1,6 +1,12 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **27 settembre 2026** (§3.75 **il meccanismo è
+> Ultimo aggiornamento: **29 settembre 2026** (§3.77 **la FFT**: `fft64` in
+> `dsp/`, radix 2 in decimation in time, il bit reversal fuso nel gather
+> dall'ADC e ogni stadio che passa dalla memoria perché l'ISA non permuta le
+> corsie. `5 64 0` e `59 64 0`, visti rossi due volte, 7.663 cicli. E
+> `fingerprint.sh` che legge la cartella sbagliata per default);
+> il **28/09**: §3.76 i predecessori, i float a 32 bit, `vcvt` e l'ADC;
+> il **27/09**: §3.75 **il meccanismo è
 > scritto**: `.interrupt`, il dispatch diretto `sched_isr_exit_to` e la coppia
 > `WAIT`, con la **sveglia persa vista rossa** togliendo il contatore; e il
 > **super task**, deciso dall'utente: mentre gira lo scheduler non sceglie,
@@ -100,23 +106,27 @@
 
 ## 0. STATO ATTUALE — DA DOVE SI RIPRENDE
 
-> ### ▶ RIPRENDI DA QUI (28/09/2026 o dopo)
+> ### ▶ RIPRENDI DA QUI (29/09/2026 o dopo)
 >
-> **DOVE SIAMO RIMASTI.** Tutto il lavoro del 28/09 è **committato** in un
-> commit solo, su `master`, e **NON pushato**: il push si fa quando l'utente lo
-> chiede. `git status -sb` dice di quanto `master` è avanti su `origin`.
-> `ctest` **53/53**, `--check` verde, `tools/fingerprint.sh` con le 18 impronte
-> di prima **invariate** più la nuova di `test_fctx`. **Si riprende dalla FFT**,
-> e la formula è in §6.
+> **DOVE SIAMO RIMASTI.** La FFT è **fatta e vista rossa** (§3.77). `ctest`
+> **55/55**, `--check` verde, le **19 impronte di `HEAD` invariate** più la nuova
+> di `test_fft` — confrontate contro un build pulito di `HEAD`, perché
+> `tools/fingerprint.sh` per default legge `build/`, che è stantia (§3.77).
+> `git status` dice se il lavoro del 29/09 è committato; il push resta
+> dell'utente, e da una sessione di Claude **non riesce per costruzione**
+> (`origin` è via SSH con passphrase, §3.77). **Si riprende dai nodi del
+> messaggio**, e la formula è in §6.
 >
-> **28/09: IL PROSSIMO PASSO È DECISO, ed è un TEST (§3.76).** Un super task
-> con macchina a stati a 1 ms, ADC **a blocchi**, FFT in float, e il risultato
-> spedito con un messaggio a un task asincrono. **Tre prerequisiti FATTI**: i
-> float a 32 bit (erano `double`, un interrupt li arrotondava: `test_fctx`),
-> `vcvt` (la prima conversione intero → float dell'ISA) e **l'ADC a 12 bit, I e
-> Q, avviato dalla time line, senza interrupt** (`test_adc`, tre corse). Tutti
-> visti rossi. Restano, in quest'ordine: **la FFT** (da sola, come procedura),
-> poi i nodi del messaggio (ping-pong?) e i task asincroni.
+> **IL TEST DECISO IL 28/09 (§3.76).** Un super task con macchina a stati a
+> 1 ms, ADC **a blocchi**, FFT in float, e il risultato spedito con un
+> messaggio a un task asincrono. **Quattro pezzi FATTI**: i float a 32 bit
+> (`test_fctx`), `vcvt`, **l'ADC a 12 bit I e Q avviato dalla time line**
+> (`test_adc`) e **la FFT** (`fft64` in `dsp/`, `test_fft`: 7.663 cicli, il 7,7%
+> di un millisecondo). Tutti visti rossi. Restano, in quest'ordine: **i nodi del
+> messaggio** (ping-pong?), poi i task asincroni, poi il test intero.
+>
+> **Il 28/09**, per chi ne cerca le tracce: i float a 32 bit, `vcvt` e l'ADC,
+> committati in `6818a80` (§3.76).
 >
 > **Il 27/09**, per chi ne cerca le tracce: il meccanismo del foreground e il
 > super task, committati in `10bf10f` (§3.75).
@@ -143,7 +153,7 @@
 >   fattuale
 > ```
 >
-> **ORDINE DI LETTURA: §3.76, poi §3.75, poi §3.74, poi §3.73, poi §3.72.**
+> **ORDINE DI LETTURA: §3.77, §3.76, poi §3.75, poi §3.74, poi §3.73, poi §3.72.**
 > Ognuna corregge la precedente in qualche punto, e leggerle al contrario fa
 > ripartire da posizioni ritirate. §3.76 (28/09) non ha codice: collega ogni
 > pezzo del disegno al suo predecessore in letteratura, e rimanda il gestore
@@ -3702,6 +3712,131 @@ il contratto scritto.
 
 ---
 
+### 3.77 LA FFT: il bit reversal è un gather, e ogni stadio passa dalla memoria (29/09/2026)
+
+**Fatto, e visto rosso.** `fft64` in una libreria nuova, `lib_fft`, sotto una
+cartella nuova, `dsp/`. Il test `dsp/test/test_fft.vasm` gira due volte:
+`fft_pos` **`5 64 0`** e `fft_neg` **`59 64 0`**. `ctest` **55/55**,
+`--check` verde, **le 19 impronte di `HEAD` invariate** più la nuova di
+`test_fft`. La FFT misurata: **7.663 cicli** dal `call` al ritorno, il 7,7% di
+un millisecondo; la stima a conti era circa 7.500.
+
+#### La forma, discussa prima di scrivere
+
+```
+radix 2, DECIMATION IN TIME   ingresso bit-reversed, uscita naturale.
+  (Cooley-Tukey)              Stockham (autosort) toglie il bit reversal
+                              ma vuole due buffer: qui non serve, perche'
+                              il riordino lo fa gia' il gather d'ingresso
+N = 64 = VLMAX                fft64, non N generico: un registro per parte
+OGNI STADIO DALLA MEMORIA     l'ISA non permuta corsie dentro un registro;
+                              gather degli alti e dei bassi, farfalla,
+                              scatter sugli stessi indici. VL = 32, 6 stadi.
+                              Otto registri vettoriali, bastano ESATTAMENTE
+BIT REVERSAL + DEINTERLEAVE   una vloadx sul blocco dell'ADC con indici
+  IN UN GATHER (utente: ok)   2*rev6(i); le Q con la base a +4. Poi vcvt.
+                              La FFT prende il blocco GREZZO: sa com'e'
+                              fatto l'ADC, ed e' il prezzo
+I TWIDDLE PER STADIO          contigui, una vload (12+P) invece di un
+                              gather (12+2P). Il basso = alto + h, con vadds
+GLI INDICI IN .float          vloadx/vstorex troncano il FLOAT della corsia
+```
+
+> **Una mia frase corretta in sessione, su domanda dell'utente** (*«intendi
+> che il bit reversal è hw?»*): avevo scritto che fondere il bit reversal nel
+> gather costava **zero**. Non è vero: il gather costa `12 + 2P`, la `vload` a
+> passo 8 che sostituisce `12 + P`, quindi **64 cicli per canale**, 128 in
+> tutto. Economico, non gratuito. **L'utente ha usato i DSP Analog Devices**:
+> l'indirizzamento bit-reversed nel generatore di indirizzi (ADSP-2100, e i
+> TMS320 di TI) lo conosce dal ferro. Qui non lo si aggiunge: il gather con la
+> tabella fa la stessa cosa e resta un'istruzione generale.
+
+#### Le scelte emerse leggendo il codice, dette PRIMA di scrivere
+
+- **`hal/adc.vinc`**: l'ADC non aveva un header, a differenza di `kbd.vinc` e
+  `clock.vinc`, e `test_adc` si ricopia le costanti perché gira a file singolo.
+  Il primo programma linkato che lo usa è `test_fft`. In `vinc_hal`; nessun
+  programma esistente lo include, quindi niente si muove. `test_adc` resta com'è.
+- **`dsp/` e non `generic/fft/`**: il criterio di `generic/` (non nomina lo
+  scheduler) la FFT lo soddisfa, ma lì dentro ci sono strutture del kernel. Ne
+  eredita la regola: niente di `dsp/` nomina `rtos/`. `lib_fft` non ha `LINK`.
+- **i buffer d'uscita sono del chiamante**: `fft64(r1 = blocco, r2 = re, r3 = im)`.
+  Il prossimo passo ne ha bisogno: la destinazione potrà essere il nodo del
+  messaggio, **senza copia**.
+- **le tabelle generate e committate**: `tools/fft_tables.py` scrive
+  `dsp/fft/impl/src/fft_tables.vinc`. Niente `--check`: una tabella stantia fa
+  sbagliare lo spettro, e `test_fft` lo vede. Il `.vinc` è **privato** di
+  `impl/src/` ma dichiarato come interfaccia (`vinc_fft_tables`), perché è
+  l'unico modo in cui CMake sa che `fft.vasm` ne dipende. Non c'era un
+  precedente di include privato nell'albero: questo è il primo.
+
+Un difetto del generatore trovato prima di assemblare: `cos(π/2)` in double
+esce `6.1e-17`, non 0. Gli zeri esatti adesso restano zeri. E le tabelle sono
+state verificate **prima** del codice, simulando in Python lo stesso algoritmo
+con gli stessi indici: picco in 5, ampiezza 64, altri bin a 1e-8.
+
+#### Il test, e i due giri che l'ISA impone
+
+Con `ADC_PERIOD = 100` si ha fs = 1 MHz e un bin di 15.625 Hz; **78.125 Hz sono
+cinque bin esatti**, quindi niente dispersione. I tre numeri non dipendono dalla
+fase, che è quella del tempo assoluto (§3.76):
+
+| numero | valore | perché |
+|---|---|---|
+| il bin del picco | 5 / 59 | la frequenza, e N−k con la negativa |
+| il picco in migliaia | 64 | A·N = 1000·64 |
+| il massimo degli altri bin, in migliaia | 0 | la dispersione. È il numero che dà forza al test: una FFT sbagliata può ancora azzeccare il bin |
+
+L'ISA non ha **confronti float** né **conversioni float → intero**:
+
+- **l'argmax**: `vredmax`, poi `vmseq` contro il massimo in `vsplat`, `vmerge`
+  con un vettore 0..63, `vredmin`;
+- **l'arrotondamento**: `x + 1,5·2²³ − 1,5·2²³`, il numero magico che arrotonda
+  un float32 all'intero. **Funziona solo perché i registri `f` sono a 32 bit dal
+  28/09**: coi double di prima sarebbe servito 1,5·2⁵². `dumpf` di un intero lo
+  stampa esatto.
+
+**Visto rosso due volte**, mutando la tabella generata e rigenerandola poi
+dallo script (stesso hash dell'originale):
+
+| mutazione | `fft_pos` | `fft_neg` |
+|---|---|---|
+| twiddle coniugati | `59 64 0` | `5 64 0` — lo spettro si specchia, picco e resto puliti: lo prende la COPPIA di corse |
+| bit reversal tolto (`2·i`) | `44 34 26` | `20 34 26` |
+
+#### ⚠ `tools/fingerprint.sh` legge `build/`, e `ctest` compila in `out/`
+
+Il primo confronto delle impronte è uscito identico **e non provava niente**:
+lo script ha per default `BUILD=build`, una cartella vecchia che nessuno
+ricompila, e baseline e verifica leggevano gli stessi `.vx` stantii. Lo ha
+tradito la riga di `test_fft`, che doveva comparire e non c'era. Il confronto
+vero:
+
+```bash
+git worktree add --detach <tmp>/head HEAD
+(cd <tmp>/head && cmake -B out -S . && cmake --build out -j)
+tools/fingerprint.sh <tmp>/head/out > head.txt
+tools/fingerprint.sh out            > nuovo.txt      # e il build di out/ a exit 0
+diff head.txt nuovo.txt                               # solo la riga nuova
+```
+
+Cioè 19 invariate più `test_fft.vx`. **Le formule di §6 che dicono «impronte
+invariate» vanno lette così**: contro un build pulito di `HEAD`, con
+l'argomento `out`.
+
+#### Fuori dal progetto, ma nella stessa sessione
+
+Il push del 28/09 falliva col token HTTPS scaduto. `origin` adesso è
+**`git@github.com:rmigliori/vcpu_sim.git`**: la chiave c'era già ed era
+registrata, e il `master` di allora (`6818a80`) è pushato. Da una sessione di
+Claude `fetch` e `push` falliscono **per costruzione** (la chiave ha una
+passphrase, e l'agent è escluso in `~/.ssh/config`): non è un token da
+rigenerare. E c'è un secondo remote, **`pi`**, sulla Raspberry di casa:
+append-only (niente force-push, niente cancellazioni) tramite un utente
+`git-shell`. Il push resta dell'utente, su tutti e due.
+
+---
+
 ### 3.76 I PREDECESSORI: ogni pezzo ha un nome, la combinazione no (28/09/2026)
 
 **Sessione di sola discussione, nessun codice.** Due esiti: il gestore dei
@@ -3937,9 +4072,9 @@ mosso.
 **Cosa resta prima di scrivere il test:**
 
 - ~~**l'ADC a blocchi nella macchina**~~ — **FATTO**, qui sopra;
-- **la FFT**: complessa, a 64 punti, sui campioni I/Q convertiti con `vcvt`. Il
+- ~~**la FFT**: complessa, a 64 punti, sui campioni I/Q convertiti con `vcvt`. Il
   bin del picco è derivabile dal segnale (`--adc`), e con la frequenza negativa
-  cade in N−k;
+  cade in N−k~~ — **FATTO il 29/09**, §3.77;
 - **i nodi del messaggio al background**: il risultato è un prestito dal
   foreground, e §3.74 dice che il pool sparisce da lì. La forma classica è un
   ping-pong di due nodi, e la tabella deve dimostrare che due bastano. Cosa
@@ -10323,6 +10458,7 @@ Le sequenze attese, per chi deve leggerle senza aprire il build:
 | `proc` — `.proc`/`.endproc` (§3.6) | `100 200 300` | `CMakeLists.txt` |
 | `include` — `-I` e idempotenza (§3.16, §3.24) | `24 16 16 512 1` | `CMakeLists.txt` |
 | `epsw` — `mfepsw`/`mtepsw` (§3.19) | `1 0 0 7` | `CMakeLists.txt` |
+| `fft_pos` / `fft_neg` — bin del picco, picco e resto in migliaia (§3.77) | `5 64 0` / `59 64 0` | `dsp/test/` |
 
 Più i 13 programmi di `standalone/`, per cui si verifica che nessuno vada in
 errore, non cosa stampano.
@@ -10840,26 +10976,44 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 > di §3.74 restano scritte nella forma vecchia» è stata la prima cosa corretta
 > quel giorno: le due frasi hanno adesso la loro nota RITIRATA.
 
-**PER RIPRENDERE dopo il 28/09 — il prossimo passo è la FFT:**
+> **E tolta il 29/09, appena scaduta:** la formula «il prossimo passo è la
+> FFT», fatta nella sessione dopo quella che l'aveva scritta (§3.77). Ha
+> funzionato: «la forma si discute PRIMA» ha fatto emergere l'unica frase
+> sbagliata della sessione (il bit reversal «a costo zero») prima di scrivere
+> una riga, e «le scelte che emergono si dicono prima» ha portato allo scoperto
+> quattro scelte che non erano della FFT (`hal/adc.vinc`, `dsp/`, i buffer del
+> chiamante, il `.vinc` privato). **Il criterio sulle impronte era vero ma
+> ingannevole**: «tools/fingerprint.sh con le 19 impronte INVARIATE» si è
+> soddisfatto su una cartella stantia, perché lo script per default legge
+> `build/`. L'ha scoperto la riga di `test_fft` che mancava. Da qui la forma
+> nuova del criterio, qui sotto.
+>
+> Conteneva anche «il PUSH: se ho già rinnovato il token, riprova», e il
+> problema era già risolto nella stessa giornata passando `origin` a SSH.
+
+**PER RIPRENDERE dopo il 29/09 — il prossimo passo sono i NODI DEL MESSAGGIO:**
 ```
-Leggi docs/stato-lavori.md: il riquadro RIPRENDI DA QUI, poi §3.76 PER
-INTERO -- il piano del test, e i tre prerequisiti fatti: i float a 32
-bit, vcvt, l'ADC. Poi docs/manual.md §3.2 (l'ADC) e la riga di vcvt.
+Leggi docs/stato-lavori.md: il riquadro RIPRENDI DA QUI, poi §3.77 (la
+FFT, e perche' i suoi buffer d'uscita sono del chiamante), poi in §3.76
+l'elenco "Cosa resta prima di scrivere il test", poi in §3.74 dove dice
+che il pool sparisce dal foreground.
 
-Il prossimo passo e' DECISO: la FFT complessa a 64 punti sui campioni
-I/Q dell'ADC, convertiti con vcvt. DA SOLA, come procedura, prima del
-super task e del messaggio al background. La sua forma -- radix-2, il
-bit reversal col gather, i twiddle in tabella, dove sta il test -- si
-discute PRIMA di scrivere, e le scelte di forma che emergono scrivendo
-si dicono prima.
+Il prossimo passo e' portare il risultato della FFT dal super task a un
+task asincrono. NON e' deciso come: la forma classica e' un PING-PONG di
+due nodi, e la tabella deve DIMOSTRARE che due bastano. Cosa succede se
+il consumatore resta indietro e' una decisione di POLITICA, dell'utente.
+E prima di proporre quali task asincroni, guarda se test_mondo e' il
+punto di partenza. Si discute PRIMA di scrivere, e le scelte di forma
+che emergono scrivendo si dicono prima.
 
-Prima di toccare niente: ctest 53/53 e scheduler_facts --check verde.
+Prima di toccare niente: ctest 55/55 e scheduler_facts --check verde.
 
-Alla fine: il picco nel bin k derivato dal segnale --adc (la frequenza
-scelta perche' il blocco contenga k periodi interi) e in N-k con la
-frequenza negativa; il test visto ROSSO; tools/fingerprint.sh con le 19
-impronte esistenti INVARIATE -- la FFT aggiunge un programma, non ne
-muove.
+Alla fine: il test visto ROSSO, e le impronte confrontate con un build
+PULITO DI HEAD in un worktree, passando `out` allo script (il comando e'
+in §3.77): tools/fingerprint.sh da solo legge build/, che e' stantia, e
+direbbe "invariate" su file vecchi. Le 20 di oggi (test_fft e' la
+ventesima) restano ferme, a meno che la forma decisa tocchi il kernel --
+e allora si dice PRIMA quali si muovono e perche'.
 ```
 
 **E IN PARALLELO, senza dipendenze — la SECONDA BASE DEI TEMPI, e `srai` (15/09, deciso):**
@@ -10908,10 +11062,11 @@ potenza di due: devono coincidere, e costare 1 ciclo invece di 20).
 NON toccare settimer, e non toccare il kernel. Il `timer_next` che
 slitta resta com'e': commento corretto, codice no.
 
-Alla fine: ctest tutto verde -- 53 il 28/09, piu' i test nuovi -- scheduler_facts
---check verde, e tools/fingerprint.sh con le 19 impronte INVARIATE
-(test_fctx e' la diciannovesima dal 28/09). Se `srai` le muove, e' finita
-in mezzo all'enum invece che in coda.
+Alla fine: ctest tutto verde -- 55 il 29/09, piu' i test nuovi -- scheduler_facts
+--check verde, e le 20 impronte INVARIATE (test_fft e' la ventesima dal
+29/09), confrontate con un build pulito di HEAD e con `out` come argomento
+dello script (§3.77: da solo legge build/, stantia). Se `srai` le muove,
+e' finita in mezzo all'enum invece che in coda.
 ```
 
 **E PRIMA, O DOPO — il RESPIRO nel nucleo fattuale (non fatto il 15/09):**

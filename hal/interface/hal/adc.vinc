@@ -1,0 +1,43 @@
+; hal/adc.vinc — l'ADC a 12 bit, I e Q, a blocchi (28/09/2026).
+;
+; Il device c'e' dal 28/09 (vcpu.h, manual.md §3.2), e fino al 29/09 le sue
+; costanti non avevano un header: test_adc gira a file singolo e se le
+; ricopia, di proposito. Questo file nasce col primo programma LINKATO che
+; usa l'ADC, test_fft, e servira' al super task.
+;
+; --- CHI AVVIA L'ACQUISIZIONE: la time line, non un clock suo ---
+; Una scrittura ad ADC_CTRL dice "acquisisci ADC_COUNT campioni a ADC_ADDR, uno
+; ogni ADC_PERIOD cicli". Il ping-pong lo fa il programma: avvia il blocco B
+; mentre elabora A. NESSUN INTERRUPT: al suo posto un CONTATORE dei blocchi
+; finiti in ADC_STATUS, e chi prende un blocco verifica che sia finito quello
+; che aspetta.
+;
+; --- IL FORMATO: I e Q alternati, una parola a 32 bit ciascuno ---
+;     ADC_ADDR + 8*i      I del campione i
+;     ADC_ADDR + 8*i + 4  Q del campione i
+; Col segno gia' esteso, in [ADC_MIN, ADC_MAX]; fuori scala SATURA. Sono
+; INTERI: per il float c'e' vcvt, e un canale si prende con un vload a passo 8
+; o con un gather.
+;
+; --- IL BLOCCO SI RIEMPIE NEL TEMPO ---
+; Il campione i e' preso a  avvio + (i+1)*ADC_PERIOD. Leggere il blocco prima
+; che il contatore lo dia finito vuol dire leggerne meta'.
+;
+; --- ADC_STATUS, e la lettura abbassa l'overrun ---
+;     bit 0      ADC_BUSY      sta acquisendo
+;     bit 1      ADC_OVERRUN   un avvio e' arrivato mentre acquisiva: IGNORATO
+;     bit 2..31  i blocchi finiti dall'accensione (>> ADC_DONE_SHIFT)
+; --------------------------------------------------------------------------
+.equ ADC_ADDR    0x100040        ; lettura/scrittura: dove scrivere il blocco
+.equ ADC_COUNT   0x100044        ; lettura/scrittura: N, campioni complessi
+.equ ADC_PERIOD  0x100048        ; lettura/scrittura: cicli fra due campioni
+.equ ADC_CTRL    0x10004C        ; scrittura: ADC_START avvia
+.equ ADC_STATUS  0x100050        ; lettura: i bit qui sopra
+
+.equ ADC_START       1           ; ADC_CTRL, bit 0
+.equ ADC_BUSY        1           ; ADC_STATUS, bit 0
+.equ ADC_OVERRUN     2           ; ADC_STATUS, bit 1
+.equ ADC_DONE_SHIFT  2           ; ADC_STATUS >> 2 = blocchi finiti
+
+.equ ADC_MAX      2047
+.equ ADC_MIN     -2048

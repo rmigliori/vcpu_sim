@@ -1,0 +1,128 @@
+; dsp/test/test_fft.vasm — LA FFT SUL BLOCCO DELL'ADC (29/09/2026).
+;
+; Un blocco di 64 campioni dall'ADC, fft64, e tre numeri sullo spettro. Gira
+; DUE volte (--adc in dsp/test/CMakeLists.txt), con la frequenza positiva e
+; con la negativa.
+;
+; --- IL SEGNALE, scelto perche' il bin sia DERIVABILE ---
+; ADC_PERIOD = 100 cicli a 100 MHz: fs = 1 MHz, e un bin e' fs/64 = 15625 Hz.
+; Con f = 5 * 15625 = 78125 Hz il blocco contiene ESATTAMENTE 5 periodi, e
+; tutta l'energia cade in un bin solo: niente dispersione da finestra.
+;
+;   +78125 Hz  ->  bin 5
+;   -78125 Hz  ->  bin 64 - 5 = 59
+;
+; --- I TRE NUMERI, e perche' non dipendono dalla fase ---
+; La fase del segnale e' quella del tempo ASSOLUTO, e dipende dal ciclo in cui
+; parte l'ADC (test_adc lo spiega). I moduli no.
+;
+;   bin     l'indice del modulo massimo: 5, o 59
+;   picco   |X[k]| in migliaia: A * N = 1000 * 64 = 64000 -> 64
+;   resto   il massimo degli ALTRI 63 bin, in migliaia: 0. E' il numero che
+;           da' forza al test: una FFT sbagliata puo' ancora mettere il picco
+;           nel bin giusto, ma non lascia puliti gli altri. Resta solo la
+;           quantizzazione a 12 bit, qualche unita'
+;
+; --- DUE GIRI, perche' l'ISA non ha confronti float ne' float -> intero ---
+; L'ARGMAX: vredmax da' il massimo ma non dove sta. vmseq contro il massimo in
+; vsplat marca la corsia, vmerge ci mette l'indice (0..63 da `indici`) e 1000
+; altrove, e vredmin lo tira fuori.
+; L'ARROTONDAMENTO: x + 1.5*2^23 - 1.5*2^23 arrotonda un float32 all'intero,
+; perche' a quella grandezza il passo del float32 e' 1. Funziona perche' i
+; registri f sono a 32 bit dal 28/09 (§3.76): coi double di prima sarebbe
+; servito 1.5*2^52. Un intero in float, dumpf lo stampa esatto.
+;
+; --- ROSSO, sulla FFT mutata ---
+;   i twiddle coniugati (fft_wim di segno opposto): lo spettro si specchia, e
+;   il bin esce 59 nella corsa positiva e 5 nella negativa
+;   il bit reversal tolto (fft_brev = 2*i): il bin e il resto escono sbagliati
+
+.include "hal/adc.vinc"
+.include "fft/fft.vinc"
+
+  .data
+blocco:  .space 512                       ; 64 campioni complessi, I e Q alternati
+re:      .space 256
+im:      .space 256
+indici:  .float 0, 1, 2, 3, 4, 5, 6, 7
+         .float 8, 9, 10, 11, 12, 13, 14, 15
+         .float 16, 17, 18, 19, 20, 21, 22, 23
+         .float 24, 25, 26, 27, 28, 29, 30, 31
+         .float 32, 33, 34, 35, 36, 37, 38, 39
+         .float 40, 41, 42, 43, 44, 45, 46, 47
+         .float 48, 49, 50, 51, 52, 53, 54, 55
+         .float 56, 57, 58, 59, 60, 61, 62, 63
+
+  .text
+  .global main
+
+main:
+  ; --- un blocco dall'ADC ---------------------------------------------------
+  li r1, ADC_ADDR
+  li r2, blocco
+  sw r2, 0(r1)
+  li r1, ADC_COUNT
+  li r2, FFT_N
+  sw r2, 0(r1)
+  li r1, ADC_PERIOD
+  li r2, 100
+  sw r2, 0(r1)
+  li r1, ADC_CTRL
+  li r2, ADC_START
+  sw r2, 0(r1)
+
+  li r10, ADC_STATUS
+attesa:                    ; il CONTATORE, non il bit BUSY
+  lw r5, 0(r10)
+  srli r5, r5, ADC_DONE_SHIFT
+  beq r5, r0, attesa
+
+  ; --- la FFT ---------------------------------------------------------------
+  li r1, blocco
+  li r2, re
+  li r3, im
+  call fft64
+
+  ; --- |X|^2 su tutti i bin -------------------------------------------------
+  li r4, FFT_N
+  setvl r4, r4
+  li r2, re
+  li r3, im
+  vload v0, r2
+  vload v1, r3
+  vmul v0, v0, v0
+  vmul v1, v1, v1
+  vadd v0, v0, v1          ; |X[k]|^2
+
+  ; --- il bin: l'argmax ------------------------------------------------------
+  vredmax f1, v0
+  vsplat v2, f1
+  vmseq v0, v2             ; vmask = la corsia del massimo
+  li r5, indici
+  vload v3, r5
+  fli f2, 1000.0
+  vsplat v4, f2
+  vmerge v5, v3, v4        ; l'indice dove c'e' il massimo, 1000 altrove
+  vredmin f3, v5
+  dumpf f3                 ; 5, o 59
+
+  ; --- il picco, in migliaia -------------------------------------------------
+  fli f6, 12582912.0       ; 1.5 * 2^23
+  fli f7, 0.001
+  fsqrt f4, f1
+  fmul f4, f4, f7
+  fadd f4, f4, f6
+  fsub f4, f4, f6
+  dumpf f4                 ; 64
+
+  ; --- il resto: il massimo degli altri bin, in migliaia ---------------------
+  fli f5, 0.0
+  vsplat v6, f5
+  vmerge v6, v6, v0        ; il picco a zero, gli altri come sono
+  vredmax f5, v6
+  fsqrt f5, f5
+  fmul f5, f5, f7
+  fadd f5, f5, f6
+  fsub f5, f5, f6
+  dumpf f5                 ; 0
+  halt

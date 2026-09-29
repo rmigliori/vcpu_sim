@@ -131,6 +131,7 @@ add_subdirectory(hal/impl)
 
 add_subdirectory(generic)
 add_subdirectory(rtos)
+add_subdirectory(dsp)
 
 # ---------------------------------------------------------------------------
 #  Cio' che non e' l'RTOS: gli esempi del simulatore.
