@@ -1,6 +1,11 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **29 settembre 2026, sera** (§3.81 **la seconda base
+> Ultimo aggiornamento: **30 settembre 2026** (§3.82 **la tabella della tappa
+> 4**, sola discussione: tre modi CAL → ACQ → TRACK coi loro fallimenti, lo
+> sweep coi suoi numeri e la quota scalata a 90 km, la finestra di ricezione
+> che si CALCOLA col tracker alfa/beta invece di leggersi, e il lavoro di
+> macchina che viene prima — un trasmettitore e un eco nell'ADC);
+> il **29/09 sera**: §3.81 **la seconda base
 > dei tempi e `srai`**: `CLOCK_CYCLES`, il bit di base per canale in
 > `CMP_CTRL`, `srai` in coda all'enum; `bases` misura 8 cicli di consegna che
 > in ms sono 0. `ctest --timeout 60` 68/68, impronte 26/26 ferme. E
@@ -147,6 +152,17 @@
 > una sessione di Claude **non riesce per costruzione** (§3.77).
 > **Si riprende dalla tappa 4, il test grande**: la formula è in §6.
 >
+> **IL 30/09 (§3.82): LA TABELLA C'È.** Tre modi — calibrazione (alfa/beta sul
+> fronte di salita, 5 sweep), acquisizione (Barker-5 sui cinque blocchi),
+> tracking (FFT a ogni sweep) — coi fallimenti decisi dall'utente, e lo sweep coi
+> numeri scelti da me: gate 1,5 m, finestra 64 gate, PRI 1 ms, TX 50 µs, T/R 10
+> µs, round trip 600 µs (quota **scalata** a 90 km). **La finestra di ricezione
+> si calcola a ogni sweep** dal tracker: corregge §3.74 per metà. **Prima del
+> test c'è lavoro di MACCHINA, e la forma è DECISA:** un trasmettitore con
+> l'accecamento a `0x54..0x5C`, e l'eco generato da un'**applicazione Linux
+> separata** in lockstep — il tempo resta del simulatore. **Si parte dal passo
+> 1, il trasmettitore.**
+>
 > **E LA SERA DEL 29/09 (§3.81): la seconda base dei tempi e `srai`, FATTE.**
 > `CLOCK_CYCLES` a `MMIO_BASE + 0x30` (il clock master, non i cicli della CPU),
 > un bit per canale in `CMP_CTRL` che dice su quale base confronta, e `srai` in
@@ -196,7 +212,7 @@
 >   fattuale
 > ```
 >
-> **ORDINE DI LETTURA: §3.81, §3.80, §3.79, §3.78, §3.77, §3.76, poi §3.75, poi §3.74, poi §3.73, poi §3.72.**
+> **ORDINE DI LETTURA: §3.82, §3.81, §3.80, §3.79, §3.78, §3.77, §3.76, poi §3.75, poi §3.74, poi §3.73, poi §3.72.**
 > Ognuna corregge la precedente in qualche punto, e leggerle al contrario fa
 > ripartire da posizioni ritirate. §3.76 (28/09) non ha codice: collega ogni
 > pezzo del disegno al suo predecessore in letteratura, e rimanda il gestore
@@ -3753,6 +3769,254 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.82 LA TABELLA DELLA TAPPA 4: lo sweep, tre modi, e un tracker in anello chiuso (30/09/2026)
+
+**Sessione di sola discussione, nessun codice.** È il dato che la tappa 4
+aspettava, e che §0 diceva di chiedere per primo: la **tabella della time
+line**. L'utente ha dato il dominio, e ha lasciato a me i numeri dello sweep e
+i criteri; ogni numero qui sotto è **scelto**, e dove è scalato lo dice.
+
+#### Le decisioni dell'utente
+
+```
+tre MODI      CALIBRAZIONE (5 sweep) -> ACQUISIZIONE (5 sweep) -> TRACKING (FFT)
+CAL           un filtro ALFA/BETA che pulisce il clutter; misura il FRONTE DI
+              SALITA dell'eco CAMPIONATO DIRETTAMENTE (non la frequenza di un
+              eco demodulato: la FFT non serve al tracker)
+ACQ           raffinamento con un BARKER: correlazione sui CINQUE BLOCCHI
+il bersaglio  l'ACQUA
+i fallimenti  CAL fallisce   -> resta in CAL
+              ACQ fallisce   -> torna in CAL
+              TRACK fallisce -> si ricomincia DA CAPO
+il chirp      si progetta tenendo conto che dal TX non si passa all'RX
+              all'istante: "riesci a invertire immediatamente la corsa di un
+              autobus?" -- la commutazione T/R ha un tempo, e lo paga ogni sweep
+```
+
+#### La conseguenza che corregge §3.74: una parte della time line è CALCOLATA
+
+§3.74 diceva che gli istanti si **leggono** da una tabella, `base_frame +
+offset[i]`. Resta vero per il **TX**, che ha un ritmo fisso. Non per la
+**finestra di ricezione**: si apre dove si **stima** che torni l'eco, e la
+stima è l'uscita dell'alfa/beta. Il filtro dello sweep k decide dove ascoltare
+allo sweep k+1: è il **range tracker** degli altimetri, in anello chiuso.
+
+Ciò che §3.74 voleva salvare si salva lo stesso: `t0 + τ̂ − W/2` è un istante
+**assoluto**, non una somma sull'«adesso», e non deriva. Ma la tabella non
+contiene più tutto.
+
+#### Lo sweep: i numeri, scelti da me su delega
+
+```
+clock          100 MHz, c'e' gia'      1 campione = 10 ns
+ADC_PERIOD     1                       1 GATE = c * 10 ns / 2 = 1,5 m
+finestra W     64 gate = 640 ns        96 m in quota, e i 64 punti della FFT
+PRI            1 ms = 100.000 cicli    il periodo del super task del 28/09
+TX  (Ttx)      50 us                   da t0
+T/R (Tsw)      10 us                   ricevitore pronto a t0 + 60 us
+round trip τ   600 us = 60.000 cicli   quota 90 km  <- SCALATA
+elaborazione   fino a ~77 us           la FFT misurata, 7.663 cicli (§3.77)
+```
+
+In un periodo: TX 0–50 µs, commutazione fino a 60, finestra attorno a 600,
+elaborazione finita entro ~680, TX dopo a 1000. Oltre il **90%** va al
+background, come sul ferro (§3.74: il tempo morto lo mette la fisica).
+
+**La quota è scalata, e il motivo è la traccia.** A 800 km il round trip è
+5,33 ms, ~533.000 cicli per sweep. Ma già a 90 km un test nominale (5 + 5 + 1
+sweep) fa **1,1 milioni di cicli per CPU**: con la traccia a 35 byte per
+istruzione (misurato su `test_clock`: 600.013 righe, 21.000.246 byte) e due
+CPU sono **~77 MB**, sopra il **tetto di 64 MB** di `tools/equiv.py` (§3.81).
+Quindi questi test il tetto lo superano comunque: va alzato per loro, o
+`equiv.py` li confronta in un altro modo. **Da decidere quando si arriva lì.**
+Sotto 1 ms non si scende: la FFT da sola ne occupa 77 µs. Il simulatore fa
+~20 milioni di istruzioni al secondo, quindi il tempo di esecuzione non è il
+problema.
+
+**La velocità del bersaglio è ESAGERATA apposta:** 0,25 gate per sweep, cioè
+375 m/s. Una velocità verticale realistica (decine di m/s, **a memoria**) in 1
+ms muove l'eco di centimetri: in 5 sweep il termine beta non verrebbe mai
+messo alla prova.
+
+**Lo sfasamento iniziale:** l'eco cade a 10 gate dal centro della prima
+finestra, dentro la finestra. Cercarlo fuori (la ricerca d'acquisizione di un
+altimetro vero) è **fuori dal perimetro**, ed è dichiarato.
+
+#### L'alfa/beta in 5 sweep: una scoperta del conto, fatto PRIMA di scriverlo
+
+Partendo da una stima iniziale e velocità zero **non converge in 5 sweep**:
+con 10 gate di errore iniziale i residui al quinto sweep stanno ancora a 2–3
+gate, perché beta scambia l'errore di posizione per velocità (simulato con
+alfa 0,5 / 0,6 / 0,7). Converge con l'**inizializzazione a due punti**:
+
+```
+sweep 1     posizione = prima misura
+sweep 2     velocita' = differenza delle due misure
+sweep 3..5  il filtro: alfa = 0,6, beta = alfa^2/(2 - alfa) ~ 0,26
+            (Benedict-Bordner, citato a memoria)
+```
+
+Su cinque semi di rumore con σ = 0,2 gate i tre residui stanno sempre sotto
+**0,9 gate**. Il conto era in Python, non nel simulatore: va rifatto sulla
+macchina, ed è il test.
+
+#### I criteri: delegati a me, e confermati
+
+```
+CAL passa        i tre residui (sweep 3..5) sotto 1 gate. Una misura con
+                 residuo oltre 3 gate e' CLUTTER: si scarta, e CAL fallisce
+ACQ passa        il TX di ogni sweep porta un segno del Barker-5 (+ + + - +);
+                 i 5 blocchi si sommano pesati col codice, gate per gate, e il
+                 picco supera una soglia sul rumore E cade entro +-1 gate dalla
+                 stima del tracker
+TRACK            una FFT sul blocco di OGNI sweep, e il risultato va con un
+                 messaggio al background (il test del 28/09)
+TRACK fallisce   fronte di salita non trovato, o residuo oltre 3 gate, per 2
+                 sweep DI FILA
+```
+
+**Le transizioni, come le ho lette io** (dette all'utente, non smentite):
+«torna in CAL» e «da capo» differiscono per **dove resta la finestra**. Dopo un
+fallimento di CAL o di ACQ resta dove l'ha portata il tracker, e il filtro si
+reinizializza; dopo un fallimento di TRACK torna alla **posizione a priori**, e
+si azzera tutto.
+
+**Una semplificazione dichiarata:** correlare sui cinque blocchi presuppone che
+la fase dell'eco resti stabile per 5 ms. Sull'acqua vera non è scontato; nel
+modello lo sarà.
+
+#### Il lavoro di MACCHINA che viene prima del test: la FORMA, decisa
+
+Come l'ADC e `vcvt` il 28/09: simulatore, non kernel. **Disegnato da me su
+delega** («questo non è proprio la mia tazza di tè»), discusso punto per punto
+e approvato; l'unica decisione che è dell'utente è la sua: **il mondo è
+un'applicazione Linux separata**.
+
+**Il criterio: la macchina è una cosa, il mondo un'altra.** Sul ferro i pezzi
+sono tre, e i due apparati non si conoscono:
+
+```
+TX (macchina)  --antenna-->  il MARE (mondo)  --antenna-->  ADC (macchina)
+```
+
+**1. Il TRASMETTITORE**, nel buco libero dopo l'ADC (`0x54..0x5C`, verificato
+sulla mappa di `devices.h` dopo la collisione di §3.81):
+
+```
+TX_LEN     0x54  lett./scritt.  durata del chirp, tick periferiche (5000 = 50 us)
+TX_CTRL    0x58  scrittura      bit 0 TX_START, bit 1 TX_NEG (il segno Barker)
+TX_STATUS  0x5C  lettura        bit 0 TX_ON; bit 1 TX_BLIND, abbassato dalla lettura
+```
+
+La durata del chirp è un **registro** perché il chirp lo progetta il programma
+(l'utente); la commutazione T/R è una **costante della scheda**, 10 µs, perché
+è del ferro. Un avvio col TX acceso è ignorato e alza un overrun: la regola
+dell'ADC, nella stessa forma.
+
+**L'ACCECAMENTO, accettato:** un campione preso col TX acceso o entro Tsw dalla
+fine esce **saturato**, e alza `TX_BLIND`. Il bit sta nel trasmettitore e non in
+`ADC_STATUS` apposta: lì dal bit 2 in su c'è il contatore dei blocchi, e un bit
+nuovo lo sposterebbe rompendo i test dell'ADC di oggi.
+
+**2. L'ECO: lo genera un'APPLICAZIONE LINUX SEPARATA** (idea dell'utente). È la
+copia del **simulatore di bersaglio** da banco, che riceve il TX da un
+accoppiatore e rimette l'eco nel ricevitore. Scartati il modulo C dentro il
+simulatore (funzionava, ma il mondo non si sostituisce senza toccare la
+macchina) e una terza CPU simulata (il mondo girerebbe coi cicli della macchina,
+e peserebbe sulla traccia).
+
+**LA REGOLA: IL TEMPO È DEL SIMULATORE.** Il manuale l'aveva già scritta per la
+tastiera: *«un secondo alimentatore che legga `stdin` da un thread vivrebbe nel
+tempo di parete e non sarebbe riproducibile»*. Quindi **lockstep**: il
+simulatore domanda, aspetta la risposta, e va avanti; l'applicazione è una
+**funzione pura** della domanda — niente orologio, niente casualità non seminata.
+È la co-simulazione (a memoria). Il protocollo, testo su stdin/stdout:
+
+```
+--eco-cmd "<comando>"            il simulatore lo lancia; con --adc e' un errore
+TX <istante> <segno>             a ogni TX, senza risposta
+BLOCCO <istante_1> <periodo> <n> all'avvio di un blocco; risposta: n righe "I Q"
+```
+
+Uno scambio per blocco. Chiedere il blocco intero all'avvio presuppone che nessun
+TX partito durante il blocco abbia l'eco nel blocco stesso: con 640 ns è
+impossibile, e un TX a finestra aperta è accecamento comunque. Un'applicazione
+che muore o risponde male è un **errore del simulatore**. `--adc` resta in C
+com'è: la sinusoide non ha bisogno di un mondo, e tre test la usano.
+
+**Il modello dell'acqua** (`tools/`, in Python), per ogni campione all'istante t:
+
+```
+il ritardo del TX k    τ_k = 2 (R0 + v t_k) / (c - v)   ESATTO per il moto
+                       lineare: l'impulso tocca l'acqua a meta' viaggio
+dove cade il campione  x = c (t - t_k - τ_k) / 2   in metri; 0 = META' del fronte
+l'inviluppo            a(x) = A * (1 + erf(x / (sqrt2 σf))) / 2 * exp(-max(x,0) / L)
+                       erf: il fronte (Brown, a memoria: le quote del mare sono
+                       gaussiane, il fronte ne e' l'integrale); σf = lo stato
+                       del mare. exp: la CODA, che serve -- senza, il plateau
+                       dura per sempre e ogni eco entra in tutte le finestre dopo
+I, Q                   a * s_k * cos φ0,  a * s_k * sin φ0;  s_k = +-1, il Barker
+la SOMMA               su TUTTI i TX recenti, non sull'ultimo: l'eco di seconda
+                       passata deve poter esistere (mi ero sbagliato io, e l'ho
+                       detto)
+il clutter             un impulso gaussiano largo un gate, ampiezza B, d metri
+                       prima dell'eco vero, al TX indicato: un falso fronte
+la perdita             ai TX indicati il contributo e' zero
+il rumore              gaussiano su I e su Q, da un HASH di (seme, t, canale) e
+                       Box-Muller: funzione del TEMPO, non della storia. Con un
+                       generatore che avanza, spostare una finestra di un ciclo
+                       cambierebbe il rumore di tutti gli sweep dopo
+alla fine              arrotondato e saturato a 12 bit, come oggi
+```
+
+Al 50% dell'ampiezza x vale esattamente 0, quindi il test **sa** in che gate
+cade il fronte: `(t_k + τ_k − avvio) / periodo`. **Ma quel numero lo calcola il
+test per conto suo**, non il modulo Python: se il modello sbaglia, mondo e
+oracolo sbaglierebbero insieme e il test resterebbe verde.
+
+**La scena**, in un file:
+
+```
+quota 90000   velocita 375   ampiezza 1000   fronte 4.5   coda 1000
+fase 0.785    rumore 20      seme 1
+clutter 3 -6 1500       al TX n. 3, un falso fronte 6 m prima
+perdita 14 16           dal TX 14 al 16 l'eco non c'e'
+```
+
+Gli eventi si contano in **numero di TX**, non in tempo: il mondo reagisce alle
+trasmissioni. Con L = 1000 m il plateau scende del 9% nella finestra di 96 m, e
+l'eco è sparito dopo ~70 µs, molto prima del TX dopo.
+
+**NON modellati, e dichiarati:** lo **speckle** (sull'acqua vera ogni campione ha
+ampiezza di Rayleigh, ed è per questo che gli altimetri mediano molti eco: senza,
+un eco solo è già pulito); il **Doppler** (a 375 m/s in banda Ku la fase
+girerebbe di decine di kHz, **a memoria**: con la fase fissa la correlazione sui
+cinque blocchi funziona per costruzione, sul ferro no); i **lobi laterali**
+della risposta all'impulso compresso.
+
+**3. `equiv.py`: i primi 64 MB e uno SHA-256 del flusso intero.** Memoria e
+disco costanti, e due tracce diverse oltre il tetto danno hash diversi, quindi
+`diff -rq` le vede ancora. Un programma appeso lo ferma il timeout.
+
+**L'ORDINE, un pezzo alla volta, ognuno visto ROSSO:**
+
+```
+1  il trasmettitore e l'accecamento   file singolo. Rosso: senza accecamento
+                                      una finestra aperta presto e' pulita
+2  il mondo esterno e l'eco           file singolo: un TX, una finestra, il
+                                      fronte nel gate CALCOLATO dal test.
+                                      Rosso: ritardo contato da zero invece
+                                      che dal TX
+3  equiv.py con l'hash
+4  la macchina a stati                e li' i BUDGET, proposti dai costi
+                                      misurati e fatti decidere
+```
+
+Alla fine di ognuno: gli altri 68 test identici e le impronte ferme. Il
+trasmettitore aggiunge registri, non opcode: nessuna impronta dovrebbe muoversi.
 
 ---
 
@@ -11702,29 +11966,43 @@ Leggi docs/stato-lavori.md e riprendi da lì.
 > ragione che la formula non prevedeva (le due colonne nuove del `.symmap`) e che
 > è stata dichiarata prima di toccare il formato.
 
-**PER RIPRENDERE dopo il 29/09 — la TAPPA 4, IL TEST GRANDE, che ASPETTA UN DATO DELL'UTENTE:**
+> **E tolta il 30/09, appena scaduta:** la formula «la TAPPA 4, che ASPETTA UN
+> DATO DELL'UTENTE». Il suo «chiederla è il primo passo» ha funzionato: la
+> tabella è arrivata al primo giro di domande (§3.82), e con dentro cose che
+> nessun esempio inventato avrebbe avuto — il tempo di commutazione T/R, un
+> terzo modo, e una finestra di ricezione che si calcola invece di leggersi.
+> Diceva ancora «66/66»: dalla sera del 29/09 i test sono 68.
+
+**PER RIPRENDERE dopo il 30/09 — la TAPPA 4, PASSO 1: IL TRASMETTITORE (la forma è DECISA):**
 ```
-Leggi docs/stato-lavori.md: il riquadro RIPRENDI DA QUI, poi §3.76 (il test
-deciso il 28/09, e i predecessori di ogni pezzo), poi §3.74 (il disegno del
-foreground: la macchina a stati e' un TASK, le attivita' sono PROCEDURE, e
-pending letto alla chiamata di wait) e §3.78 (le quattro tappe: questa e'
-l'ultima).
+Leggi docs/stato-lavori.md: il riquadro RIPRENDI DA QUI, poi §3.82 per
+intero (LA TABELLA, e sotto la FORMA della macchina e del mondo, con
+l'ordine dei quattro passi), poi §3.76 (l'ADC del 28/09, che il TX
+affianca) e il riquadro dell'ADC in include/devices.h.
 
-LE TAPPE 1, 2 E 3 SONO FATTE, quindi non c'e' piu' niente davanti -- e il
-MECCANISMO c'e' tutto dal 27/09 (.interrupt, il dispatch diretto, WAIT:
-§3.75). Cio' che manca e' POLITICA e DATI:
-  - i NODI DEL MESSAGGIO (erano il passo del mattino del 29/09, rimandati
-    qui): il ping-pong fra foreground e background, che in AMP puo'
-    diventare la MAILBOX fra le due CPU invece di una coda in RAM
-  - i TASK ASINCRONI sulla CPU 1
-  - la MACCHINA A STATI della time line, che e' DISEGNATA e non scritta
+IL PASSO 1: il TRASMETTITORE e l'ACCECAMENTO, e SOLO quelli. Registri a
+0x54/0x58/0x5C come scritti in §3.82; Tsw costante della scheda, 10 us.
+Il mondo esterno NON si scrive ancora: e' il passo 2. Senza mondo l'ADC
+campiona zero (o la sinusoide di --adc), e l'accecamento si vede lo
+stesso: un campione accecato e' SATURATO, non zero.
 
-E QUI SI FERMA, perche' la macchina a stati aspetta una TABELLA DI TIME
-LINE VERA -- istanti, budget, i due modi -- che e' un dato
-dell'APPLICAZIONE e non si inventa per poterla provare. Chiederla e' il
-primo passo, non l'ultimo: senza, si scrive un esempio e si chiama test.
+Il TX avvisera' il mondo (passo 2): lasciare il punto in cui lo fara',
+senza inventarne l'interfaccia prima del passo 2.
 
-Prima di toccare niente: ctest --timeout 60 66/66 (il timeout: un test che
+IL TEST a file singolo, il soggetto e' la macchina: una finestra aperta
+DENTRO l'accecamento esce saturata e alza TX_BLIND; una aperta DOPO no; la
+lettura di TX_STATUS abbassa il bit; un avvio col TX acceso alza
+l'overrun. VISTO ROSSO togliendo l'accecamento.
+
+I numeri attesi si MISURANO, non si calcolano per adattarli (§3.81). Le
+mutazioni si annullano con un Edit inverso, non con git checkout su un
+file sporco (§3.81).
+
+DOPO, nell'ordine di §3.82: il mondo esterno, equiv.py con l'hash, la
+macchina a stati coi BUDGET (proposti dai costi misurati, fatti decidere),
+i nodi del messaggio, i task asincroni sulla CPU 1.
+
+Prima di toccare niente: ctest --timeout 60 68/68 (il timeout: un test che
 aspetta un evento che non arriva resta appeso, §3.79), python3
 tools/scheduler_facts.py --check OUT (con l'argomento: senza, legge build/,
 che e' la cartella del Makefile -- §3.80), e la base di tools/equiv.py col
