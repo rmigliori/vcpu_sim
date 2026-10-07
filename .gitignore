@@ -17,3 +17,8 @@ out/
 # `git status`. (Ce n'e' uno TRACCIATO dal commit di trace.py, col nome di
 # prima del rename: questa riga non lo tocca, va tolto dall'indice a parte.)
 __pycache__/
+
+# Le pagine di grafici GENERATE (07/10/2026, §3.84): si rifanno con
+# tools/grafici_tappa4.py, e quella con Chart.js incorporato pesa 225 KB di
+# cui quattro quinti sono la libreria.
+docs/grafici/

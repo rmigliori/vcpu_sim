@@ -3879,6 +3879,34 @@ Le uscite di guasto, provate a mano su `test_eco`:
 | impronte | **26/26 identiche** |
 | `tools/equiv.py` contro `4d3f024` | i 55 programmi di prima **identici**; nuovo solo `eco`, che fa girare anche il mondo ed esce 0 |
 
+#### Dopo il commit: l'alfa/beta e il Barker-5 in grafici
+
+Richiesti dall'utente prima di continuare, e diventati uno strumento:
+**`tools/grafici_tappa4.py`** scrive una pagina con la calibrazione (posizione e
+residui su cinque semi), la risposta al gradino e alla rampa, l'autocorrelazione
+del Barker-5 e l'integrazione coerente dei cinque blocchi. È una simulazione in
+Python della politica, non la macchina; l'eco del Barker però viene da
+`tools/mare.py` vero. Con `--chartjs <file>` incorpora Chart.js e si apre senza
+rete; la pagina generata (`docs/grafici/`) **non sta in git**.
+
+Rifare i conti ha corretto una frase di §3.82:
+
+```
+due punti, alfa 0,6     residuo peggiore degli sweep 3..5, cinque semi: 0,81
+                        gate -- "sotto 0,9" regge
+da zero                 al quinto sweep 2,3-2,9 gate con alfa 0,5 e 0,6, ma
+                        1,4-2,0 con alfa 0,7: "2-3 gate" valeva per due alfa
+                        su tre. Sopra la soglia comunque, e la conclusione resta
+il filtro a regime      gradino di 4 gate: sorpasso del 13%, rientro in ~8
+                        sweep. Rampa di 1 gate a sweep: ritardo fino a 0,46
+                        gate, poi zero
+Barker sui 5 blocchi    rumore 20,8 -> 9,3 nella media decodificata, cioe' /√5;
+                        senza decodifica l'eco vale 3/5
+```
+
+**Al passo 4 si rigenera e si confronta** con ciò che la macchina a stati
+misura davvero.
+
 #### Dove si riprende
 
 Dal **passo 3 di §3.82: `equiv.py` con i primi 64 MB e uno SHA-256 del flusso

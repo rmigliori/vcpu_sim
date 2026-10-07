@@ -1,0 +1,267 @@
+<!doctype html>
+<!-- tools/grafici_tappa4.template.html: lo riempie tools/grafici_tappa4.py
+     (§3.84). I due segnaposto sono CHARTJS e DATI. -->
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alfa/beta e Barker-5</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: una colonna di lettura da banco prove; ogni grafico e' una "traccia" con didascalia e numeri sotto. */
+:root {
+  --bg: #f6f7f8; --surface: #fcfcfb; --fg: #14181c; --fg-2: #4a5159; --muted: #858b92;
+  --grid: #e1e3e4; --axis: #c3c6c9; --ring: rgba(20,24,28,0.10);
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --soglia: #d03b3b;
+  --f-head: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1215; --surface: #171a1d; --fg: #f2f4f5; --fg-2: #c0c5ca; --muted: #8a9096;
+  --grid: #272b2f; --axis: #3a3f44; --ring: rgba(255,255,255,0.10);
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --soglia: #e66767; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f1215; --surface: #171a1d; --fg: #f2f4f5; --fg-2: #c0c5ca; --muted: #8a9096;
+  --grid: #272b2f; --axis: #3a3f44; --ring: rgba(255,255,255,0.10);
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --soglia: #e66767; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font: 15px/1.6 var(--f-body); }
+main { max-width: 860px; margin: 0 auto; padding-inline: 16px; padding-block: 32px 64px; display: grid; gap: 40px; }
+header { display: grid; gap: 8px; }
+.eyebrow { font: 500 12px/1.2 var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+h1 { font: 600 clamp(28px, 5vw, 38px)/1.1 var(--f-head); margin: 0; text-wrap: balance; }
+h2 { font: 600 22px/1.2 var(--f-head); margin: 0; text-wrap: balance; }
+h3 { font: 500 15px/1.3 var(--f-body); margin: 0; color: var(--fg); }
+p { margin: 0; max-width: 68ch; color: var(--fg-2); }
+p strong { color: var(--fg); font-weight: 500; }
+section { display: grid; gap: 16px; }
+.trace { background: var(--surface); border: 1px solid var(--ring); border-radius: 6px; padding: 16px; display: grid; gap: 10px; min-width: 0; }
+.chart { position: relative; height: 280px; }
+.chart.short { height: 220px; }
+.pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.cap { font-size: 13px; color: var(--fg-2); }
+.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px 28px; }
+.fact { display: grid; gap: 2px; }
+.fact .k { font: 500 11px/1.2 var(--f-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.fact .v { font: 500 20px/1.2 var(--f-mono); }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.seg span { font-size: 13px; color: var(--fg-2); margin-right: 4px; }
+.seg button { font: 500 13px var(--f-mono); padding: 4px 12px; border-radius: 4px; border: 1px solid var(--axis); background: transparent; color: var(--fg); cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.seg button:focus-visible, summary:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+details { font-size: 13px; color: var(--fg-2); }
+summary { cursor: pointer; color: var(--fg); }
+.tbl { overflow-x: auto; margin-top: 8px; }
+table { border-collapse: collapse; font: 13px var(--f-mono); font-variant-numeric: tabular-nums; }
+th, td { padding: 4px 12px; text-align: right; border-bottom: 1px solid var(--grid); }
+th { color: var(--muted); font-weight: 500; }
+td.bad { color: var(--soglia); }
+.code { font: 500 26px/1 var(--f-mono); letter-spacing: .3em; }
+.note { border-left: 2px solid var(--axis); padding-left: 12px; }
+</style>
+
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">vcpu_sim · tappa 4 · §3.82</div>
+    <h1>Alfa/beta e Barker-5</h1>
+    <p>Come si comportano il tracker della calibrazione e il codice dell'acquisizione con i numeri decisi il 30/09: un gate è 1,5 m, cioè un campione a 100 MHz; uno sweep è 1 ms; il bersaglio sale di 0,25 gate a sweep. È una simulazione in Python, fatta prima di scrivere la macchina a stati: l'eco del Barker viene dal modello vero, <span class="num">tools/mare.py</span>.</p>
+  </header>
+
+  <section>
+    <h2>Calibrazione: il tracker alfa/beta</h2>
+    <p>Il filtro parte con la finestra a 10 gate dall'eco. <strong>Da zero</strong> (posizione a priori, velocità nulla) β scambia l'errore di posizione per velocità, e in cinque sweep non converge. <strong>A due punti</strong> (sweep 1 la posizione, sweep 2 la velocità come differenza) il filtro vero lavora solo dagli sweep 3–5, e lì i residui stanno sotto 1 gate. α = 0,6 e β = α²/(2 − α) ≈ 0,257; misure con rumore σ = 0,2 gate.</p>
+    <div class="seg" role="group" aria-label="Seme del rumore">
+      <span>Seme del rumore</span>
+      <button type="button" data-seed="1" aria-pressed="true">1</button>
+      <button type="button" data-seed="2" aria-pressed="false">2</button>
+      <button type="button" data-seed="3" aria-pressed="false">3</button>
+      <button type="button" data-seed="4" aria-pressed="false">4</button>
+      <button type="button" data-seed="5" aria-pressed="false">5</button>
+    </div>
+    <div class="trace">
+      <h3>Posizione dell'eco, in gate</h3>
+      <div class="chart"><canvas id="c-cal" aria-label="Posizione vera, misure e stime del tracker per sweep"></canvas></div>
+      <div class="cap">La calibrazione usa gli sweep 1–5; il grafico prosegue fino al 12 per far vedere dove va ciascuna stima.</div>
+    </div>
+    <div class="trace">
+      <h3>Residuo (misura − predizione), in gate</h3>
+      <div class="chart"><canvas id="c-res" aria-label="Residui del tracker per sweep, con la soglia di un gate"></canvas></div>
+      <div class="facts">
+        <div class="fact"><span class="k">peggiore 3–5, due punti</span><span class="v" id="f-due">–</span></div>
+        <div class="fact"><span class="k">peggiore 3–5, da zero α 0,6</span><span class="v" id="f-zero">–</span></div>
+        <div class="fact"><span class="k">criterio CAL</span><span class="v">|r| &lt; 1</span></div>
+      </div>
+      <details>
+        <summary>I residui degli sweep 3–5 su tutti e cinque i semi</summary>
+        <div class="tbl"><table id="t-res"></table></div>
+      </details>
+    </div>
+    <p class="note">Una precisazione su §3.82: «da zero i residui al quinto sweep stanno ancora a 2–3 gate» vale per α 0,5 e 0,6. Con α 0,7 scendono a 1,4–2,0: più vicini, ma sempre sopra la soglia.</p>
+  </section>
+
+  <section>
+    <h2>Le due risposte classiche, a regime</h2>
+    <p>Lo stesso filtro, già convergente e senza rumore. Al <strong>gradino</strong> (l'eco salta di 4 gate) la stima supera il bersaglio del 13% e rientra in circa otto sweep. Alla <strong>rampa</strong> (1 gate a sweep, quattro volte la velocità del test) insegue con un ritardo che arriva a 0,46 gate e poi si annulla: è il motivo per cui c'è β.</p>
+    <div class="pair">
+      <div class="trace">
+        <h3>Gradino di 4 gate allo sweep 4</h3>
+        <div class="chart short"><canvas id="c-step" aria-label="Risposta al gradino"></canvas></div>
+      </div>
+      <div class="trace">
+        <h3>Rampa di 1 gate a sweep dallo sweep 4</h3>
+        <div class="chart short"><canvas id="c-ramp" aria-label="Risposta alla rampa"></canvas></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Acquisizione: il Barker-5 sui cinque blocchi</h2>
+    <p>Ogni TX porta un segno del codice, e i cinque blocchi si sommano pesati con lo stesso codice, gate per gate. L'eco, che ha il segno del suo TX, si somma in fase cinque volte; il rumore, che non ha segno, cresce solo di √5.</p>
+    <div class="code" aria-label="Il codice: più più più meno più">+ + + − +</div>
+    <div class="trace">
+      <h3>Autocorrelazione del codice</h3>
+      <div class="chart short"><canvas id="c-acf" aria-label="Autocorrelazione aperiodica del Barker-5"></canvas></div>
+      <div class="cap">Lo spostamento <span class="num">m</span> è un eco che arriva nella finestra <span class="num">m</span> sweep dopo il suo TX, per esempio un'eco di seconda passata. Il picco vale 5 e i lobi al più 1: un eco fuori posto pesa al più un quinto.</div>
+    </div>
+    <div class="trace">
+      <h3>I cinque blocchi decodificati e la loro media, proiettati sulla fase dell'eco</h3>
+      <div class="chart"><canvas id="c-int" aria-label="Integrazione coerente dei cinque blocchi"></canvas></div>
+      <div class="facts">
+        <div class="fact"><span class="k">rumore, un blocco</span><span class="v">20,8</span></div>
+        <div class="fact"><span class="k">rumore, media dei 5</span><span class="v">9,3</span></div>
+        <div class="fact"><span class="k">atteso, 20,8 / √5</span><span class="v">9,3</span></div>
+      </div>
+      <div class="cap">Scena con ampiezza 40 e rumore 20, apposta: con la scena di §3.82 (ampiezza 1000) l'eco sovrasta il rumore già in un blocco solo e il guadagno non si vedrebbe. Bersaglio a 375 m/s; la finestra è centrata sul ritardo vero di ogni sweep, cioè un tracker ideale. Senza decodifica la somma vale 3/5 dell'eco: il segno del quarto TX la toglie.</div>
+    </div>
+  </section>
+</main>
+
+<!--CHARTJS-->
+<script>
+const DATA = /*DATI*/null;
+const fmt = (v, d = 2) => v == null ? "–" : v.toLocaleString("it-IT", { minimumFractionDigits: d, maximumFractionDigits: d });
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const sweeps = Array.from({ length: 12 }, (_, i) => String(i + 1));
+let seed = "1";
+let charts = [];
+
+// Le icone della legenda le disegniamo noi: quella di Chart.js e' una linea
+// piena anche per una serie tratteggiata, e il tratteggio e' l'informazione.
+const icone = new Map();
+function icona(ds) {
+  const dot = ds.showLine === false;
+  const dash = (ds.borderDash || []).join(",");
+  const w = Math.max(ds.borderWidth || 2, 1.5);
+  const key = [ds.borderColor, ds.backgroundColor, dot, dash, w].join("|");
+  if (icone.has(key)) return icone.get(key);
+  const body = dot
+    ? `<circle cx="14" cy="6" r="4" fill="${ds.backgroundColor}"/>`
+    : `<line x1="1" y1="6" x2="27" y2="6" stroke="${ds.borderColor}" stroke-width="${w}"${dash ? ` stroke-dasharray="${dash}"` : ""}/>`;
+  const img = new Image(28, 12);
+  img.onload = () => charts.forEach(c => c.update("none"));
+  img.src = "data:image/svg+xml," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="28" height="12">${body}</svg>`);
+  icone.set(key, img);
+  return img;
+}
+
+function base(xTitle, yTitle) {
+  const grid = css("--grid"), muted = css("--muted");
+  return {
+    responsive: true, maintainAspectRatio: false, animation: false,
+    interaction: { mode: "index", intersect: false },
+    plugins: {
+      legend: { position: "top", align: "start", labels: { usePointStyle: true, pointStyleWidth: 38, boxHeight: 12, padding: 16, color: css("--fg-2"),
+        generateLabels: chart => chart.data.datasets.map((ds, i) => ({
+          text: ds.label, pointStyle: icona(ds), hidden: !chart.isDatasetVisible(i), datasetIndex: i,
+          fontColor: css("--fg-2"), lineWidth: 0, strokeStyle: "transparent", fillStyle: "transparent" })),
+        filter: it => !it.text.startsWith("_") } },
+      tooltip: { backgroundColor: css("--surface"), titleColor: css("--fg"), bodyColor: css("--fg-2"), borderColor: css("--axis"), borderWidth: 1,
+        filter: it => !it.dataset.label.startsWith("_") && it.raw != null,
+        callbacks: { label: c => ` ${c.dataset.label}: ${fmt(c.raw)}` } }
+    },
+    scales: {
+      x: { title: { display: true, text: xTitle, color: muted }, grid: { color: grid, drawTicks: false }, border: { color: css("--axis") }, ticks: { color: muted } },
+      y: { title: { display: true, text: yTitle, color: muted }, grid: { color: grid, drawTicks: false }, border: { display: false }, ticks: { color: muted } }
+    }
+  };
+}
+const line = (label, data, color, extra = {}) => ({ label, data, borderColor: color, backgroundColor: color, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0, ...extra });
+
+function render() {
+  charts.forEach(c => c.destroy());
+  charts = [];
+  Chart.defaults.font.family = css("--f-body");
+  Chart.defaults.color = css("--fg-2");
+  const c = DATA.cal[seed], s1 = css("--s1"), s2 = css("--s2"), s3 = css("--s3"), s4 = css("--s4"), muted = css("--muted"), fg2 = css("--fg-2");
+
+  charts.push(new Chart(document.getElementById("c-cal"), { type: "line", options: base("sweep", "gate"), data: { labels: sweeps, datasets: [
+    line("posizione vera", c.true, muted, { borderDash: [6, 4] }),
+    line("misura", c.z, fg2, { showLine: false, pointRadius: 4, pointHoverRadius: 6, pointStyle: "circle", backgroundColor: fg2, borderColor: css("--surface"), borderWidth: 1 }),
+    line("stima, due punti", c.est2, s1),
+    line("stima, da zero", c.est0, s2)
+  ] } }));
+
+  const soglia = css("--soglia");
+  charts.push(new Chart(document.getElementById("c-res"), { type: "line", options: base("sweep", "gate"), data: { labels: sweeps, datasets: [
+    line("due punti, α 0,6", c.res2, s1, { pointRadius: 3 }),
+    line("da zero, α 0,5", DATA.ing5[seed], s3),
+    line("da zero, α 0,6", c.res0, s2),
+    line("da zero, α 0,7", DATA.ing7[seed], s4),
+    line("soglia ±1 gate", sweeps.map(() => 1), soglia, { borderWidth: 1, borderDash: [3, 3], pointHoverRadius: 0 }),
+    line("_soglia", sweeps.map(() => -1), soglia, { borderWidth: 1, borderDash: [3, 3], pointHoverRadius: 0 })
+  ] } }));
+
+  const t = ["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16"];
+  for (const [id, d] of [["c-step", DATA.gradino], ["c-ramp", DATA.rampa]])
+    charts.push(new Chart(document.getElementById(id), { type: "line", options: base("sweep", "gate"), data: { labels: t, datasets: [
+      line("vero", d[0], muted, { borderDash: [6, 4] }),
+      line("stima", d[1], s1)
+    ] } }));
+
+  const acf = DATA.autocorr, lags = [-4, -3, -2, -1, 0, 1, 2, 3, 4];
+  const o = base("spostamento m, in sweep", "correlazione");
+  o.plugins.legend.display = false;
+  o.interaction = { mode: "nearest", intersect: true };
+  o.scales.y.max = 5; o.scales.y.ticks.stepSize = 1;
+  charts.push(new Chart(document.getElementById("c-acf"), { type: "bar", options: o, data: { labels: lags.map(String), datasets: [{
+    label: "correlazione", data: lags.map(l => acf[Math.abs(l)]), backgroundColor: s1, borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: "bottom", maxBarThickness: 36, minBarLength: 2
+  }] }, }));
+
+  const g = Array.from({ length: 64 }, (_, i) => String(i));
+  const ds = DATA.barker.blocks.map((b, k) => line(k === 0 ? "un blocco decodificato (×5)" : "_blocco " + (k + 1), b, muted, { borderWidth: 1 }));
+  ds.push(line("media dei cinque, decodificata", DATA.barker.avg, s1, { borderWidth: 2.5 }));
+  ds.push(line("media senza decodifica", DATA.barker.plain, s2));
+  charts.push(new Chart(document.getElementById("c-int"), { type: "line", options: base("gate nella finestra", "ampiezza (I cos φ + Q sin φ)"), data: { labels: g, datasets: ds } }));
+
+  const worst = k => Math.max(...[2, 3, 4].map(i => Math.abs(DATA.cal[seed][k][i])));
+  document.getElementById("f-due").textContent = fmt(worst("res2"));
+  document.getElementById("f-zero").textContent = fmt(worst("res0"));
+}
+
+function table() {
+  let h = "<thead><tr><th>seme</th><th>due punti 3</th><th>4</th><th>5</th><th>da zero 3</th><th>4</th><th>5</th></tr></thead><tbody>";
+  for (const s of ["1", "2", "3", "4", "5"]) {
+    const c = DATA.cal[s];
+    const cell = v => `<td${Math.abs(v) >= 1 ? ' class="bad"' : ""}>${fmt(v)}</td>`;
+    h += `<tr><td>${s}</td>${[2, 3, 4].map(i => cell(c.res2[i])).join("")}${[2, 3, 4].map(i => cell(c.res0[i])).join("")}</tr>`;
+  }
+  document.getElementById("t-res").innerHTML = h + "</tbody>";
+}
+
+document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => {
+  seed = b.dataset.seed;
+  document.querySelectorAll(".seg button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+  render();
+}));
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+new MutationObserver(render).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+table();
+render();
+</script>
+</body>
+</html>
