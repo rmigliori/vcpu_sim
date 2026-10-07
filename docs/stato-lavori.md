@@ -1,6 +1,6 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **7 ottobre 2026** (§3.85 **`equiv.py` oltre il
+> Ultimo aggiornamento: **7 ottobre 2026, sera** (la ripresa riscritta in §0; §3.85 **`equiv.py` oltre il
 > tetto**, il passo 3: i primi 64 MB su disco e uno SHA-256 del flusso intero,
 > visto rosso con una `srai` a 2 cicli dopo i 64 MB; e prima §3.84 **il mondo esterno e
 > l'eco**, il passo 2: `tools/mare.py` in lockstep via `--eco-cmd`, la riga
@@ -137,9 +137,62 @@
 
 ## 0. STATO ATTUALE — DA DOVE SI RIPRENDE
 
-> ### ▶ RIPRENDI DA QUI (29/09/2026 o dopo)
+> ### ▶ RIPRENDI DA QUI (07/10/2026 o dopo)
 >
-> **DOVE SIAMO RIMASTI.** Il 29/09 la strada è cambiata: **la macchina diventa
+> **DOVE SIAMO.** La macchina AMP è finita (tappe 1–3, 29/09) e della tappa 4,
+> il test grande dell'altimetro, sono fatti i primi tre passi su quattro, tutti
+> il 07/10 e tutti visti rossi:
+>
+> ```
+> passo 1  il trasmettitore e l'accecamento        §3.83   4d3f024
+> passo 2  il mondo esterno: tools/mare.py in       §3.84   a8c57b7
+>          lockstep via --eco-cmd, test_eco
+>          (e i grafici alfa/beta e Barker:        §3.84   cd4883a
+>          tools/grafici_tappa4.py)
+> passo 3  equiv.py oltre i 64 MB: lo SHA-256      §3.85   974e9e6
+> ```
+>
+> `ctest --timeout 60` **70/70**, impronte **26/26** ferme dal 30/09. Tutto
+> pushato su GitHub e sulla Pi fino a `974e9e6`.
+>
+> **IL PROSSIMO È IL PASSO 4, LA MACCHINA A STATI**, ed è diverso dai tre di
+> prima: dentro ci sono **decisioni dell'utente**. Cosa c'è già e cosa no:
+>
+> ```
+> il disegno         §3.82 (la tabella: tre modi, fallimenti, sweep, criteri)
+>                    e §3.74 (la macchina a stati e' un task svegliato da
+>                    .interrupt, le attivita' sono procedure, WAIT)
+> il meccanismo      FATTO in §3.75: .interrupt, sched_isr_exit_to, WAIT,
+>                    .supertask
+> la macchina        FATTA: ADC, FFT (dsp/), TX, mondo, due CPU, mailbox
+> i BUDGET           NON decisi: §3.82 vuole che si PROPONGANO dai costi
+>                    misurati (la FFT: 7.663 cicli) e li decida l'utente
+> i registri del TX  non ancora in hal/: ci vanno adesso (hal/tx.vinc,
+>                    come hal/adc.vinc)
+> la scena del test  da scrivere: tests/eco_piatto.scena ha velocita' zero;
+>                    il tracker vuole quella di §3.82 (375 m/s, rumore 20,
+>                    clutter, perdite)
+> il confronto       rigenerare tools/grafici_tappa4.py e metterlo accanto
+>                    ai numeri veri della macchina
+> ```
+>
+> **Aperti e piccoli, nessuno urgente:** l'immediato degli shift fuori da 0..63
+> (§3.81: la proposta è rifiutarlo in assembler, decide l'utente); `out/rosso/`,
+> 321 MB dell'esperimento di §3.85, da cancellare se non serve; in
+> `~/.ssh/config` il blocco `Host pi` dice ancora `HostName dietpi4`, e finché
+> non diventa `dietpi4cloud` il push sulla Pi vuole
+> `git -c core.sshCommand="ssh -o HostName=dietpi4cloud" push pi master`.
+>
+> **LA FORMULA PER RIPRENDERE**, da incollare all'inizio della sessione:
+>
+> ```
+> Leggi docs/stato-lavori.md, §0 e poi §3.85, §3.84, §3.83, §3.82.
+> Riprendiamo dal passo 4 della tappa 4, la macchina a stati: prima di
+> scrivere codice proponimi i budget delle attivita' dai costi misurati,
+> e discutiamoli.
+> ```
+>
+> **IL 29/09, per chi ne cerca le tracce.** Il 29/09 la strada è cambiata: **la macchina diventa
 > multi-CPU, asimmetrica (AMP)**, e il test grande si farà sulla nuova
 > architettura. Tre tappe su quattro sono **fatte**. **La tappa 1** (§3.78,
 > `f35abc9`): core, periferiche e scheda separati, il tempo a un clock master
