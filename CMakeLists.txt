@@ -33,6 +33,7 @@ add_executable(vcpu_sim
   src/vcpu.c
   src/devices.c
   src/machine.c
+  src/mondo.c
   src/toolchain.c
   src/locator.c
   src/assembler.c
@@ -254,6 +255,18 @@ vasm_check(adc_sat    MODE DUMPS EXPECT "0 1 3 1 1 4 0 0 0 4"
 # pulito vuol dire (0, 0), accecato (2047, 2047).
 vasm_check(tx         MODE DUMPS EXPECT "0 200 1 5 1 4 2 0 0 0 11 11"
            SOURCE ${CMAKE_SOURCE_DIR}/tests/test_tx.vasm)
+
+# test_eco — L'ECO DAL MONDO ESTERNO (07/10/2026, §3.84).
+#
+# Il mondo e' un processo a parte, tools/mare.py, in lockstep col simulatore.
+# Un TX, una finestra, l'acqua ferma a 90 km senza rumore: il fronte cade a
+# tau = 2 * 90000 / c = 60.041,5 tick dal TX, quindi il primo campione oltre
+# meta' ampiezza e' a 60042 -- il conto e' fatto a mano, non dal mondo. Poi il
+# segno di I (il TX parte con TX_NEG) e TX_STATUS, pulito. Visto rosso col
+# ritardo contato da zero invece che dal TX.
+vasm_check(eco        MODE DUMPS EXPECT "60042 -1 0"
+           ARGS --eco-cmd "python3 ${CMAKE_SOURCE_DIR}/tools/mare.py ${CMAKE_SOURCE_DIR}/tests/eco_piatto.scena"
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_eco.vasm)
 
 # test_amp — DUE CPU (29/09/2026, §3.79). Due programmi, uno per CPU, sulla
 # stessa scheda: `run test_amp0.vx test_amp1.vx`. Il soggetto e' la MACCHINA

@@ -1,6 +1,10 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **7 ottobre 2026** (§3.83 **il trasmettitore e
+> Ultimo aggiornamento: **7 ottobre 2026** (§3.84 **il mondo esterno e
+> l'eco**, il passo 2: `tools/mare.py` in lockstep via `--eco-cmd`, la riga
+> `CLOCK`, il mondo che restituisce valori reali e l'ADC che quantizza,
+> `test_eco` che misura il fronte a 60.042 tick dal TX indipendentemente dalla
+> forma del file; `ctest` 70/70, impronte 26/26, tracce identiche; e prima, §3.83 **il trasmettitore e
 > l'accecamento**, il passo 1 della tappa 4: tre registri a `0x54..0x5C`,
 > l'overrun al bit 2, il campione accecato a 2047 su I e Q, la commutazione T/R
 > della scheda a 10 µs; `test_tx` visto rosso due volte, `ctest` 69/69,
@@ -157,10 +161,11 @@
 > una sessione di Claude **non riesce per costruzione** (§3.77).
 > **Si riprende dalla tappa 4, il test grande**: la formula è in §6.
 >
-> **IL 07/10 (§3.83): IL PASSO 1 È FATTO.** Il trasmettitore e l'accecamento,
-> come disegnati in §3.82, più le due cose che il disegno lasciava aperte
-> (l'overrun al bit 2 di `TX_STATUS`, il campione accecato a 2047 su I e Q).
-> **Si riprende dal passo 2: il mondo esterno e l'eco.** Ancora aperto e non
+> **IL 07/10 (§3.83, §3.84): I PASSI 1 E 2 SONO FATTI.** Il trasmettitore e
+> l'accecamento (§3.83); il mondo esterno, `tools/mare.py` lanciato con
+> `--eco-cmd` e in lockstep col simulatore, e `test_eco` che trova il fronte a
+> 60.042 tick dal TX (§3.84). **Si riprende dal passo 3: `equiv.py` con
+> l'hash**, poi la macchina a stati. Ancora aperto e non
 > urgente: l'immediato degli shift fuori da 0..63 (§3.81). La proposta è
 > rifiutarlo in assembler, e la decisione è dell'utente.
 >
@@ -224,7 +229,7 @@
 >   fattuale
 > ```
 >
-> **ORDINE DI LETTURA: §3.83, §3.82, §3.81, §3.80, §3.79, §3.78, §3.77, §3.76, poi §3.75, poi §3.74, poi §3.73, poi §3.72.**
+> **ORDINE DI LETTURA: §3.84, §3.83, §3.82, §3.81, §3.80, §3.79, §3.78, §3.77, §3.76, poi §3.75, poi §3.74, poi §3.73, poi §3.72.**
 > Ognuna corregge la precedente in qualche punto, e leggerle al contrario fa
 > ripartire da posizioni ritirate. §3.76 (28/09) non ha codice: collega ogni
 > pezzo del disegno al suo predecessore in letteratura, e rimanda il gestore
@@ -3781,6 +3786,105 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.84 IL MONDO ESTERNO E L'ECO: il passo 2 della tappa 4 (07/10/2026, seconda parte)
+
+Il secondo passo di §3.82, nella stessa sessione del primo. Il disegno era là;
+qui ci sono le tre cose che mancavano per scriverlo, cosa è stato scritto, e
+come è stato visto rosso.
+
+#### Le tre cose che mancavano
+
+```
+CLOCK <hz>        il mondo riceveva istanti in tick senza sapere quanto vale
+                  un tick. Prima riga del protocollo, mandata all'avvio.
+                  Gli istanti restano INTERI: il rumore e' un hash di
+                  (seme, t), esatto su un intero. Proposta, accettata
+chi collega       un processo non e' una periferica: src/mondo.c e' della
+                  SCHEDA, e machine.c annuncia i TX e chiede i blocchi.
+                  Nessun device sa che fuori c'e' un processo. Deciso da me
+                  sulla delega di §3.82, e detto
+l'oracolo         il programma non sa in che ciclo cade una sua sw. Ma la
+                  STESSA coppia "lw CLOCK_CYCLES; sw" davanti al TX e
+                  davanti all'ADC rende ESATTA la differenza delle due
+                  letture (lo scarto e' il costo di una sw, uguale le due
+                  volte). Il numero stampato e' il fronte misurato dal TX,
+                  (avvio - tx) + j + 1, e non dipende dalla forma del file.
+                  Proposta, accettata
+```
+
+**E una correzione di §3.82, mia e dichiarata:** là il modello diceva «alla
+fine arrotondato e saturato a 12 bit». Qui il mondo restituisce **valori
+reali**, e arrotondare e saturare resta all'ADC (`adc_quantizza`). È il criterio
+stesso di §3.82, «la macchina è una cosa, il mondo un'altra»: la quantizzazione
+è del convertitore, non del mare.
+
+#### Cosa è stato scritto
+
+```
+tools/mare.py        il mondo, in Python: la scena, il protocollo, il modello
+                     di §3.82 (ritardo esatto per il moto lineare, erf e
+                     coda, somma su TUTTI i TX, clutter, perdite, rumore da
+                     splitmix64 + Box-Muller). Funzione pura. Errore = exit 1
+include/mondo.h,     fork + exec di /bin/sh -c, due pipe, SIGPIPE ignorato.
+src/mondo.c          Un guasto si dice UNA volta, col motivo
+devices.h/.c         VAdc.eco[]: il segnale del blocco, fisso (un blocco non
+                     supera la RAM condivisa); adc_advance lo quantizza.
+                     L'accecamento resta prima di tutto
+machine.c            adc_store_mondo, tx_store_mondo: il collegamento.
+                     Un mondo guasto FERMA TUTTE LE CPU
+main.c               --eco-cmd nei due percorsi; con --adc e' un errore
+                     (exit 2); a fine corsa mondo_chiudi, e un mondo guasto
+                     o uscito male da' exit 1
+tests/eco_piatto     acqua ferma a 90 km, rumore zero
+tests/test_eco       un TX con TX_NEG da cycle 10.000, una finestra di 64
+                     gate a ~60.008 dal TX
+manual.md            §2.3 e §3.2, "Il mondo esterno"
+```
+
+#### Il test, i rossi e la prova di robustezza
+
+`60042 -1 0`: il fronte a 60.042 tick dal TX (τ = 2 · 90.000 / c = 60.041,5
+tick, il conto è a mano nel sorgente e nel CMake), il segno di I sul fronte
+(il TX parte con `TX_NEG`), `TX_STATUS` pulito.
+
+| prova | uscita |
+|---|---|
+| mondo mutato: ritardo contato da zero invece che dal TX | `-939984 -1 0`: il fronte esce dalla finestra |
+| simulatore mutato: il segno del TX perso in `mondo_tx` | `60042 1 0` |
+| `ATTESA` a 59.990, 60.000, 60.030 (la finestra spostata) | sempre `60042 -1 0`, verde |
+
+**Il primo rosso era debole, e il test è cambiato per questo.** Con il TX a
+ciclo ~26, come nella prima stesura, «da zero invece che dal TX» sbagliava di
+26 tick: rosso, ma di poco. Adesso il programma aspetta il ciclo 10.000 prima
+di trasmettere, e lo stesso errore porta il fronte fuori dalla finestra.
+
+Le uscite di guasto, provate a mano su `test_eco`:
+
+| comando | risultato |
+|---|---|
+| scena inesistente | `mare: scena: ...`, poi `runtime error: mondo: e' morto a meta' di un blocco`, exit 1 |
+| `cat` (risponde con le domande) | `runtime error: mondo: risposta senza I`, exit 1 |
+| `head -n 2` (muore dopo il TX) | `e' morto a meta' di un blocco`, exit 1 |
+| `--adc` insieme a `--eco-cmd` | rifiutato, exit 2 |
+
+#### Le verifiche
+
+| cosa | risultato |
+|---|---|
+| build CMake e Makefile | nessun warning |
+| `ctest --timeout 60` | **70/70** (69 + `eco`) |
+| impronte | **26/26 identiche** |
+| `tools/equiv.py` contro `4d3f024` | i 55 programmi di prima **identici**; nuovo solo `eco`, che fa girare anche il mondo ed esce 0 |
+
+#### Dove si riprende
+
+Dal **passo 3 di §3.82: `equiv.py` con i primi 64 MB e uno SHA-256 del flusso
+intero**, poi il passo 4, la macchina a stati. Il test di oggi gira con
+velocità zero: il termine `v·t_k` del ritardo e il beta del tracker li
+metteranno alla prova i test del passo 4.
 
 ---
 

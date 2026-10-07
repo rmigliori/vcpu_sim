@@ -1,0 +1,8 @@
+# tests/eco_piatto.scena -- l'acqua FERMA e senza rumore (07/10/2026, §3.84)
+#
+# La scena del primo test dell'eco: velocita' zero, quindi il ritardo e' lo
+# stesso per ogni TX, tau = 2 * 90000 / c = 600,415 us; e rumore zero, quindi
+# il fronte cade dove dice il conto. Il conto lo fa test_eco.vasm per conto suo,
+# non questo file e non tools/mare.py.
+quota 90000   velocita 0   ampiezza 1000   fronte 4.5   coda 1000
+fase 0.785    rumore 0     seme 1

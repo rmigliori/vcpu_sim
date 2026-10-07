@@ -29,6 +29,7 @@
 
 #include "vcpu.h"
 #include "devices.h"
+#include "mondo.h"
 
 // Due CPU, asimmetriche (§3.79): ognuna col suo programma e la sua RAM
 // locale. Con un programma solo la CPU 1 resta ferma, e la macchina e'
@@ -61,6 +62,7 @@ typedef struct VMachine
   VKbd     kbd;                      // la sua linea: dove dice intd
   VAdc     adc;                      // DMA solo nella RAM condivisa
   VTx      tx;                       // e il trasmettitore che lo acceca
+  VMondo   mondo;                    // fuori dalla scheda: --eco-cmd (§3.84)
   int      ncpu;                     // quante CPU hanno un programma
 } VMachine;
 

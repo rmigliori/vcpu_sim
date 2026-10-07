@@ -1,0 +1,145 @@
+; tests/test_eco.vasm — L'ECO DAL MONDO ESTERNO (07/10/2026, §3.84).
+;
+; Un TX, una finestra, e il fronte dove dice la fisica. Gira con
+; --eco-cmd "python3 tools/mare.py tests/eco_piatto.scena": l'acqua ferma a
+; 90 km, senza rumore. A file singolo come test_tx: il soggetto e' la macchina
+; col suo mondo.
+;
+; --- L'ORACOLO LO CALCOLA IL TEST, non il mondo ---
+; Se l'oracolo venisse dal modello, mondo e oracolo sbaglierebbero insieme e il
+; test resterebbe verde (§3.82). Il conto, a mano:
+;
+;     tau = 2 * 90000 / 299792458 = 600,415 us = 60.041,5 tick a 100 MHz
+;
+; e il fronte e' il punto a META' ampiezza, quindi il primo campione oltre 500
+; (ampiezza 1000) e' quello preso a 60.042 tick dal TX.
+;
+; --- COME SI MISURA "DAL TX", al ciclo ---
+; Il programma non sa in che ciclo cade una sua `sw`: sa leggere CLOCK_CYCLES
+; prima o dopo. Ma se la lettura e la `sw` sono le STESSE due istruzioni prima
+; del TX e prima dell'ADC, lo scarto fra lettura e `sw` e' lo stesso -- il
+; costo di una `sw` -- e la DIFFERENZA delle due letture e' esatta. Da cui:
+;
+;     istante del campione j, dal TX  =  (avvio - tx) + j + 1
+;
+; (il campione j e' preso a avvio + (j+1) * ADC_PERIOD, e qui il periodo e' 1).
+; Non dipende da quante istruzioni ci sono nel file, ne' da dove l'attesa fa
+; cadere la finestra.
+;
+; --- I NUMERI ---
+;  60042   l'istante del fronte, dal TX
+;     -1   il segno di I sul fronte: il TX parte con TX_NEG, e il segno deve
+;          arrivare al mondo e tornare nell'eco. Con la fase a 0,785 rad I e Q
+;          hanno il segno del TX
+;      0   TX_STATUS: la finestra e' lontana dal TX, niente accecamento
+;
+; Visto rosso, sul mondo mutato: il ritardo contato da ZERO invece che dal TX
+; (il fronte esce dalla finestra, e il primo numero diventa negativo); e sul
+; simulatore mutato, col segno del TX perso per strada (-1 diventa 1). E
+; verde con la finestra spostata: ATTESA a 59990, 60000 e 60030 da' sempre
+; 60042, che e' la prova che il numero non dipende dalla forma del file.
+
+.equ TX_LEN      0x100054        ; da devices.h, ricopiati come in test_tx
+.equ TX_CTRL     0x100058
+.equ TX_STATUS   0x10005C
+.equ TX_START_NEG 3              ; TX_START | TX_NEG
+
+.equ ADC_ADDR    0x100040
+.equ ADC_COUNT   0x100044
+.equ ADC_PERIOD  0x100048
+.equ ADC_CTRL    0x10004C
+.equ ADC_STATUS  0x100050
+.equ ADC_START    1
+
+.equ CLOCK_CYCLES 0x100030
+
+.equ BLOCCO      0x200000        ; 64 campioni: 512 byte
+.equ PARTENZA    10000           ; il ciclo prima del quale il TX non parte
+.equ ATTESA      60008           ; il fronte cade circa a meta' finestra
+.equ SOGLIA      250000          ; (1000 / 2)^2: meta' ampiezza, al quadrato
+
+  .text
+main:
+  li r1, TX_LEN
+  li r2, 5000                    ; 50 us
+  sw r2, 0(r1)
+  li r1, ADC_ADDR
+  li r2, BLOCCO
+  sw r2, 0(r1)
+  li r1, ADC_COUNT
+  li r2, 64
+  sw r2, 0(r1)
+  li r1, ADC_PERIOD
+  li r2, 1
+  sw r2, 0(r1)
+
+  li r1, CLOCK_CYCLES
+  li r11, TX_CTRL
+  li r12, TX_START_NEG
+  li r13, ADC_CTRL
+  li r14, ADC_START
+
+  ; --- il TX non parte a zero ----------------------------------------------
+  ; Un ritardo contato dall'accensione invece che dal TX sbaglia di quanto vale
+  ; l'istante del TX: a ciclo ~26, dove partiva la prima stesura, il rosso era
+  ; di 26 tick. Da 10.000 il fronte esce dalla finestra.
+  li r2, PARTENZA
+partenza:
+  lw r3, 0(r1)
+  blt r3, r2, partenza
+
+  ; --- il TX: la lettura e la sw, in quest'ordine -------------------------
+  lw r9, 0(r1)
+  sw r12, 0(r11)
+
+  ; --- l'attesa: grossolana, e non importa ---------------------------------
+  li r2, ATTESA
+attesa_eco:
+  lw r3, 0(r1)
+  sub r3, r3, r9
+  blt r3, r2, attesa_eco
+
+  ; --- l'ADC: la STESSA lettura e la stessa sw ------------------------------
+  lw r10, 0(r1)
+  sw r14, 0(r13)
+
+  li r1, ADC_STATUS
+blocco_finito:
+  lw r2, 0(r1)
+  srli r2, r2, 2
+  beq r2, r0, blocco_finito
+
+  ; --- il primo campione oltre meta' ampiezza ------------------------------
+  li r3, BLOCCO
+  li r4, 0                       ; j
+  li r5, 64
+  li r6, SOGLIA
+cerca:
+  lw r7, 0(r3)                   ; I
+  lw r8, 4(r3)                   ; Q
+  mul r2, r7, r7
+  mul r12, r8, r8
+  add r2, r2, r12
+  blt r2, r6, avanti
+  j trovato
+avanti:
+  addi r3, r3, 8
+  addi r4, r4, 1
+  bne r4, r5, cerca
+  li r4, -1000000                ; non trovato: un numero che non passa
+trovato:
+  sub r2, r10, r9                ; avvio - tx
+  add r2, r2, r4
+  addi r2, r2, 1
+  dumps r2                       ; 60042
+
+  li r2, 1
+  blt r0, r7, segno
+  li r2, -1
+segno:
+  dumps r2                       ; -1
+
+  li r1, TX_STATUS
+  lw r2, 0(r1)
+  dumps r2                       ; 0
+  halt

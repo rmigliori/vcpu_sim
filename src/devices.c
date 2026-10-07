@@ -404,6 +404,13 @@ void adc_advance(VAdc* a, uint64_t t, const VClock* ck, uint8_t* shared, VTx* tx
       iv = qv = ADC_MAX;
       tx->blind = 1;
     }
+    else if (a->eco_on)
+    {
+      // Il mondo esterno ha gia' risposto per tutto il blocco: qui si
+      // converte e basta, perche' arrotondare e saturare e' dell'ADC.
+      iv = adc_quantizza(a->eco[2 * a->i]);
+      qv = adc_quantizza(a->eco[2 * a->i + 1]);
+    }
     else
     {
       double ts = (double) a->next / (double) ck->hz;

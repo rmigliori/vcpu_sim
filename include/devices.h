@@ -763,6 +763,11 @@ typedef struct
   uint32_t done;             // i blocchi finiti
   double   freq;             // il mondo (--adc): Hz col segno
   double   amp;
+  // Il mondo ESTERNO (--eco-cmd, §3.84): il segnale all'antenna per il blocco
+  // in corso, I e Q alternati, che la scheda chiede al mondo all'avvio. Un
+  // blocco non e' piu' grande della RAM condivisa, quindi l'array e' fisso.
+  unsigned char eco_on;
+  double   eco[2 * (SHARED_SIZE / 8)];
 } VAdc;
 
 // Il trasmettitore. Si ricorda gli ULTIMI DUE TX, non uno: il tempo di una

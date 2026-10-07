@@ -109,6 +109,9 @@ static const char* g_marche_out = NULL;
 // Il segnale dell'ADC (--adc), stesso percorso della traccia: e' il MONDO,
 // e sta fuori dalla macchina come i tasti premuti.
 static const char* g_adc_spec = NULL;
+// Il mondo esterno (--eco-cmd, §3.84): un processo che produce l'eco. Esclude
+// --adc, perche' all'antenna arriva un segnale solo.
+static const char* g_eco_cmd = NULL;
 
 // ---------------------------------------------------------------------------
 //  Il marcatore: accensione e scarico.
@@ -246,6 +249,32 @@ static int apply_adc_signal(VMachine* m)
   return 0;
 }
 
+// Il mondo esterno, lanciato dopo machine_init come la traccia. Ritorna 0 o 1.
+static int apply_eco(VMachine* m)
+{
+  char err[256] = {0};
+  if (!g_eco_cmd) return 0;
+  if (g_adc_spec)
+  {
+    fprintf(stderr, "--eco-cmd e --adc insieme: all'antenna arriva un segnale solo\n");
+    return 1;
+  }
+  if (mondo_avvia(&m->mondo, g_eco_cmd, m->clock.hz, err, sizeof err) != 0)
+  {
+    fprintf(stderr, "%s\n", err);
+    mondo_chiudi(&m->mondo);
+    return 1;
+  }
+  m->adc.eco_on = 1;
+  return 0;
+}
+
+// Alla fine della corsa: un mondo guasto, o uscito male, la invalida.
+static int close_eco(VMachine* m)
+{
+  return mondo_chiudi(&m->mondo) != 0 ? 1 : 0;
+}
+
 static int cmd_legacy(const char* path, RunMode mode)
 {
   static VMachine m;
@@ -267,11 +296,12 @@ static int cmd_legacy(const char* path, RunMode mode)
   // Dev'essere DOPO assemble(): il canale 0 vuole l'indirizzo di `current`, e
   // quel simbolo esiste solo a assemblaggio fatto.
   marks_prepare_legacy(&m);
+  if (apply_eco(&m) != 0) return 2;
   machine_load(&m, 0, prog, len, 0);
   machine_run(&m, mode);
   marks_dump(&m);
   print_stats(&m);
-  return 0;
+  return close_eco(&m);
 }
 
 // --- asm: .vasm -> .vo -----------------------------------------------------
@@ -490,6 +520,7 @@ static int cmd_run(int argc, char** argv)
     else if (strcmp(argv[i], "--debug") == 0) mode = RUN_DEBUG;
     else if (strcmp(argv[i], "--kbd") == 0 && i + 1 < argc) g_kbd_spec = argv[++i];
     else if (strcmp(argv[i], "--adc") == 0 && i + 1 < argc) g_adc_spec = argv[++i];
+    else if (strcmp(argv[i], "--eco-cmd") == 0 && i + 1 < argc) g_eco_cmd = argv[++i];
     else if (strcmp(argv[i], "--marks") == 0 && i + 1 < argc) g_marche_out = argv[++i];
     else if (npaths < NUM_CPU) paths[npaths++] = argv[i];
     else
@@ -502,7 +533,7 @@ static int cmd_run(int argc, char** argv)
   if (npaths == 0)
   {
     fprintf(stderr, "usage: %s run <prog.vx> [<prog_cpu1.vx>] [--trace|--debug] [--kbd <ciclo:car,...>]"
-                    " [--adc <Hz>,<ampiezza>] [--marks <file>]\n", argv[0]);
+                    " [--adc <Hz>,<ampiezza> | --eco-cmd <comando>] [--marks <file>]\n", argv[0]);
     return 2;
   }
   // Il debugger ha UNA tabella delle etichette: con due programmi i nomi si
@@ -544,6 +575,7 @@ static int cmd_run(int argc, char** argv)
   machine_init(&m);
   if (apply_kbd_trace(&m) != 0)  { rc = 2; goto fine; }
   if (apply_adc_signal(&m) != 0) { rc = 2; goto fine; }
+  if (apply_eco(&m) != 0)        { rc = 2; goto fine; }
   // All'indietro, e la CPU 0 per ultima: vx_load pubblica le etichette del
   // SUO programma per --trace, e cosi' restano quelle della CPU 0.
   for (int i = npaths - 1; i >= 0; --i)
@@ -556,7 +588,7 @@ static int cmd_run(int argc, char** argv)
   machine_run(&m, mode);
   marks_dump(&m);
   print_stats(&m);
-  rc = 0;
+  rc = close_eco(&m);
 
 fine:
   for (int i = 0; i < npaths; ++i)
@@ -703,6 +735,7 @@ int main(int argc, char** argv)
     else if (strcmp(argv[i], "--debug") == 0) mode = RUN_DEBUG;
     else if (strcmp(argv[i], "--kbd") == 0 && i + 1 < argc) g_kbd_spec = argv[++i];
     else if (strcmp(argv[i], "--adc") == 0 && i + 1 < argc) g_adc_spec = argv[++i];
+    else if (strcmp(argv[i], "--eco-cmd") == 0 && i + 1 < argc) g_eco_cmd = argv[++i];
     else if (strcmp(argv[i], "--marks") == 0 && i + 1 < argc) g_marche_out = argv[++i];
     // UN'OPZIONE SCONOSCIUTA E' UN ERRORE, non il nome del programma
     // (14/09/2026, §3.68). Qui c'era un `else path = argv[i]` che prendeva
@@ -720,10 +753,10 @@ int main(int argc, char** argv)
   if (!path)
   {
     fprintf(stderr,
-            "usage: %s [--trace|--debug] [--kbd <ciclo:car,...>] [--adc <Hz>,<ampiezza>] [--marks <file>] [-I <dir>]... [-D <name>]... <program.vasm>\n"
+            "usage: %s [--trace|--debug] [--kbd <ciclo:car,...>] [--adc <Hz>,<ampiezza> | --eco-cmd <comando>] [--marks <file>] [-I <dir>]... [-D <name>]... <program.vasm>\n"
             "       %s asm <in.vasm> -o <out.vo> [-I <dir>]... [-D <name>]...\n"
             "       %s ld  <a.vo|lib.va> ... [-e <sym>] -o <out.vx>\n"
-            "       %s run <prog.vx> [<prog_cpu1.vx>] [--trace|--debug] [--kbd <ciclo:car,...>] [--adc <Hz>,<ampiezza>] [--marks <file>]\n"
+            "       %s run <prog.vx> [<prog_cpu1.vx>] [--trace|--debug] [--kbd <ciclo:car,...>] [--adc <Hz>,<ampiezza> | --eco-cmd <comando>] [--marks <file>]\n"
             "       %s nm  [-n|-p] [-r] <file.vo|file.vx>\n"
             "       %s ar  <lib.va> <o1.vo> ...\n",
             argv[0], argv[0], argv[0], argv[0], argv[0], argv[0]);

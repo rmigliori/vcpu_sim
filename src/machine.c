@@ -112,13 +112,47 @@ static int32_t mmio_load(VMachine* m, VCpu* cpu, int64_t addr)
   return 0;
 }
 
+// Un mondo guasto ferma la scheda: la corsa non vale piu', e continuare
+// produrrebbe numeri che sembrano un risultato (§3.84).
+static void ferma_tutte(VMachine* m)
+{
+  for (int i = 0; i < NUM_CPU; ++i) m->cpu[i].halted = 1;
+}
+
+// IL MONDO LO COLLEGA LA SCHEDA, non i device (§3.84): il trasmettitore e
+// l'ADC non sanno che fuori c'e' un processo. Un TX partito si annuncia; un
+// blocco avviato chiede i suoi campioni tutti insieme, che e' lecito perche'
+// nessun TX partito durante il blocco puo' avere l'eco nel blocco stesso
+// (§3.82: con 640 ns e' impossibile, e un TX a finestra aperta acceca comunque).
+static int adc_store_mondo(VMachine* m, int64_t addr, int32_t value, uint64_t t)
+{
+  VAdc* a = &m->adc;
+  int era = a->busy;
+  if (!adc_store(a, addr, value, t, &m->clock)) return 0;
+  if (m->mondo.on && !era && a->busy)
+    if (mondo_blocco(&m->mondo, a->next, (uint64_t) a->cur_period * m->clock.div_periph,
+                     a->cur_count, a->eco) != 0)
+      ferma_tutte(m);
+  return 1;
+}
+
+static int tx_store_mondo(VMachine* m, int64_t addr, int32_t value, uint64_t t)
+{
+  uint32_t n = m->tx.n;
+  if (!tx_store(&m->tx, addr, value, t, &m->clock)) return 0;
+  if (m->mondo.on && m->tx.n != n)
+    if (mondo_tx(&m->mondo, m->tx.start[0], m->tx.neg) != 0)
+      ferma_tutte(m);
+  return 1;
+}
+
 static void mmio_store(VMachine* m, VCpu* cpu, int64_t addr, int32_t value)
 {
   uint64_t t = machine_now(m, cpu);
   if (kbd_store(&m->kbd, addr, value))                          return;
   if (cmp_store(&m->cmp[cpu->id], addr, value))                 return;
-  if (adc_store(&m->adc, addr, value, t, &m->clock))            return;
-  if (tx_store(&m->tx, addr, value, t, &m->clock))              return;
+  if (adc_store_mondo(m, addr, value, t))                       return;
+  if (tx_store_mondo(m, addr, value, t))                        return;
   if (marker_store(&m->marker[cpu->id], cpu, t, addr, value))   return;
   if (mbox_store(&m->mbox[cpu->id], mbox_peer(m, cpu), addr, value)) return;
   if (hwlock_store(&m->hwlock, cpu->id, addr, value))           return;

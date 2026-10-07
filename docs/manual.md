@@ -128,12 +128,13 @@ stanno in [`cmake/vasm.cmake`](../cmake/vasm.cmake).
 ### 2.3 Eseguire un programma
 
 ```bash
-./build/vcpu_sim [--trace|--debug] [--kbd <ciclo:car,...>] [--adc <Hz>,<ampiezza>] <programma.vasm>
+./build/vcpu_sim [--trace|--debug] [--kbd <ciclo:car,...>] [--adc <Hz>,<ampiezza> | --eco-cmd <comando>] <programma.vasm>
 ```
 
 Senza flag esegue il programma normalmente. `--trace` e `--debug` sono descritti
 in §2.4; `--kbd` alimenta la tastiera con una traccia a cicli ed è descritto in
-§3.1; `--adc` dà all'ADC il suo segnale ed è descritto in §3.2.
+§3.1; `--adc` dà all'ADC il suo segnale ed è descritto in §3.2, come
+`--eco-cmd`, che al posto del segnale mette un mondo esterno.
 
 C'è una quarta opzione, disponibile solo su `run`: **`--marche <file>`** scrive
 la registrazione del *marcatore* — i tag che il programma piazza scrivendo nei
@@ -687,6 +688,36 @@ Nessun interrupt: chi trasmette è la time line, e sa quando.
 userà per il segno dell'eco. `tests/test_tx.vasm` prova lo stato, l'overrun e
 l'accecamento, compresa la commutazione. I registri non sono ancora in
 `hal/`: ci andranno col primo programma che li usa con le interfacce.
+
+#### Il mondo esterno: l'eco da un altro processo
+
+Dal 07/10/2026 il segnale all'antenna può venire da **un'applicazione
+separata**, al posto della sinusoide di `--adc` (i due insieme sono un errore):
+
+```bash
+vcpu_sim --eco-cmd "python3 tools/mare.py tests/eco_piatto.scena" tests/test_eco.vasm
+```
+
+Il simulatore lancia il comando con `/bin/sh -c` e ci parla su stdin/stdout, in
+**lockstep**: domanda, aspetta la risposta, va avanti. Il tempo resta del
+simulatore, e il mondo è una funzione pura delle domande, quindi la corsa è
+riproducibile come con `--kbd`. Il protocollo, con gli istanti in tick del
+clock master:
+
+| Riga | Quando | Risposta |
+|---|---|---|
+| `CLOCK <hz>` | una volta, all'avvio | nessuna |
+| `TX <istante> <segno>` | a ogni TX, segno `+1` o `-1` (`TX_NEG`) | nessuna |
+| `BLOCCO <istante_1> <periodo> <n>` | all'avvio di un blocco dell'ADC | `n` righe `I Q` |
+
+I e Q tornano **reali**: arrotondare e saturare è dell'ADC. I campioni accecati
+dal trasmettitore escono saturati comunque. Un mondo che muore, o risponde
+male, è un **guasto del simulatore**: lo dice, le CPU si fermano e l'uscita è 1.
+
+Il mondo che c'è è [`tools/mare.py`](../tools/mare.py), l'eco dell'acqua per un
+altimetro: il ritardo di ogni TX, un fronte (`erf`) e una coda esponenziale, la
+somma su tutti i TX, il clutter, le perdite e il rumore seminato. La scena sta
+in un file, e il modello è descritto in testa al sorgente.
 
 ### 3.3 Due CPU: RAM condivisa, spinlock e mailbox
 
