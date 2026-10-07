@@ -46,8 +46,25 @@ file a blocchi e si ferma a TETTO byte; la piu' grande legittima era 21 MB
 (clock.out). Anche la cartella delle uscite conta: /tmp e' tmpfs, cioe' RAM.
 Un'uscita troncata finisce con "--- troncata a TETTO byte ---", cosi' un
 programma appeso si riconosce invece di sembrare solo diverso.
+
+--- OLTRE IL TETTO, L'HASH (07/10/2026, §3.85) ---
+Il tetto rendeva il confronto CIECO dopo i primi 64 MB: il programma veniva
+ucciso li', e due simulatori diversi solo da quel punto in poi davano due file
+identici -- "stessa macchina" detto di due macchine diverse. Le tracce della
+macchina a stati (tappa 4) arrivano a ~77 MB, quindi il buco avrebbe morso al
+primo uso vero. Adesso il flusso si legge fino alla fine e passa tutto da uno
+SHA-256: su disco restano i primi TETTO byte, che servono a chi deve leggere
+DOVE due tracce divergono, e in coda la lunghezza e l'impronta del flusso
+intero, che dicono SE divergono. La riga c'e' solo oltre il tetto: sotto, il
+file e' gia' il flusso intero, e le uscite restano quelle di prima byte per
+byte. Un programma appeso non lo ferma piu' il tetto ma il timer dei 120
+secondi, e lo dice ("--- fermato dopo 120 secondi ---").
+
+Visto rosso il 07/10, prima di fidarsi: un programma da ~80 MB di traccia con
+una sola `srai` in fondo, e un simulatore in cui `srai` costa 2 cicli invece
+di 1. Il confronto di prima diceva "identici"; questo no.
 """
-import os, re, shlex, subprocess, sys, tempfile, threading
+import hashlib, os, re, shlex, subprocess, sys, tempfile, threading
 
 TETTO = 64 << 20                                      # byte di stdout per programma
 
@@ -79,22 +96,29 @@ for num, cmd in re.findall(r"^(\d+): Test command: (.*)$", txt, re.M):
   with open(os.path.join(outdir, name + ".out"), "wb") as f, \
        tempfile.TemporaryFile() as err:
     p = subprocess.Popen(new, stdout=subprocess.PIPE, stderr=err, cwd=outdir)
-    orologio = threading.Timer(120, p.kill)           # appeso senza stampare
+    scaduto = threading.Event()
+    def ferma():                                      # appeso: lo ferma il tempo
+      scaduto.set()
+      p.kill()
+    orologio = threading.Timer(120, ferma)
     orologio.start()
-    n, troncata = 0, False
+    # Il flusso si legge TUTTO e passa TUTTO dall'hash; su disco ne vanno i
+    # primi TETTO byte. Memoria e disco costanti, a qualunque lunghezza.
+    impronta = hashlib.sha256()
+    n = 0
     for blocco in iter(lambda: p.stdout.read(1 << 16), b""):
-      if n + len(blocco) > TETTO:
+      impronta.update(blocco)
+      if n < TETTO:
         f.write(blocco[:TETTO - n])
-        troncata = True
-        p.kill()
-        break
-      f.write(blocco)
       n += len(blocco)
     p.stdout.close()
     rc = p.wait()
     orologio.cancel()
-    if troncata:
-      f.write(b"\n--- troncata a %d byte ---\n" % TETTO)
+    if n > TETTO:
+      f.write(b"\n--- troncata a %d byte; il flusso intero: %d byte, sha256 %s ---\n"
+              % (TETTO, n, impronta.hexdigest().encode()))
+    if scaduto.is_set():
+      f.write(b"--- fermato dopo 120 secondi ---\n")
     err.seek(0)
     f.write(b"--- stderr ---\n" + err.read(TETTO))
     f.write(b"--- exit %d ---\n" % rc)

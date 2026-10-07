@@ -1,6 +1,8 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **7 ottobre 2026** (§3.84 **il mondo esterno e
+> Ultimo aggiornamento: **7 ottobre 2026** (§3.85 **`equiv.py` oltre il
+> tetto**, il passo 3: i primi 64 MB su disco e uno SHA-256 del flusso intero,
+> visto rosso con una `srai` a 2 cicli dopo i 64 MB; e prima §3.84 **il mondo esterno e
 > l'eco**, il passo 2: `tools/mare.py` in lockstep via `--eco-cmd`, la riga
 > `CLOCK`, il mondo che restituisce valori reali e l'ADC che quantizza,
 > `test_eco` che misura il fronte a 60.042 tick dal TX indipendentemente dalla
@@ -161,11 +163,11 @@
 > una sessione di Claude **non riesce per costruzione** (§3.77).
 > **Si riprende dalla tappa 4, il test grande**: la formula è in §6.
 >
-> **IL 07/10 (§3.83, §3.84): I PASSI 1 E 2 SONO FATTI.** Il trasmettitore e
+> **IL 07/10 (§3.83, §3.84, §3.85): I PASSI 1, 2 E 3 SONO FATTI.** Il trasmettitore e
 > l'accecamento (§3.83); il mondo esterno, `tools/mare.py` lanciato con
 > `--eco-cmd` e in lockstep col simulatore, e `test_eco` che trova il fronte a
-> 60.042 tick dal TX (§3.84). **Si riprende dal passo 3: `equiv.py` con
-> l'hash**, poi la macchina a stati. Ancora aperto e non
+> 60.042 tick dal TX (§3.84); `equiv.py` che vede oltre i 64 MB (§3.85).
+> **Si riprende dal passo 4: la macchina a stati.** Ancora aperto e non
 > urgente: l'immediato degli shift fuori da 0..63 (§3.81). La proposta è
 > rifiutarlo in assembler, e la decisione è dell'utente.
 >
@@ -229,7 +231,7 @@
 >   fattuale
 > ```
 >
-> **ORDINE DI LETTURA: §3.84, §3.83, §3.82, §3.81, §3.80, §3.79, §3.78, §3.77, §3.76, poi §3.75, poi §3.74, poi §3.73, poi §3.72.**
+> **ORDINE DI LETTURA: §3.85, §3.84, §3.83, §3.82, §3.81, §3.80, §3.79, §3.78, §3.77, §3.76, poi §3.75, poi §3.74, poi §3.73, poi §3.72.**
 > Ognuna corregge la precedente in qualche punto, e leggerle al contrario fa
 > ripartire da posizioni ritirate. §3.76 (28/09) non ha codice: collega ogni
 > pezzo del disegno al suo predecessore in letteratura, e rimanda il gestore
@@ -3786,6 +3788,58 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.85 `equiv.py` OLTRE IL TETTO: il passo 3 della tappa 4 (07/10/2026, terza parte)
+
+Il tetto dei 64 MB (§3.81) rendeva il confronto **cieco** oltre quel punto:
+`equiv.py` uccideva il programma lì, e due simulatori diversi solo dopo davano
+due file identici. Le tracce della macchina a stati arrivano a ~77 MB (§3.82),
+quindi il buco avrebbe morso al primo uso vero.
+
+**La correzione è quella decisa in §3.82.** Il flusso si legge tutto e passa
+tutto da uno SHA-256; su disco restano i primi 64 MB, e in coda la lunghezza e
+l'impronta del flusso intero. Memoria e disco costanti. **La riga c'è solo
+oltre il tetto** (decisione mia, detta): sotto, il file è già il flusso intero,
+e le uscite restano identiche a quelle di prima. Un programma appeso lo ferma il
+timer dei 120 secondi, che adesso lo **dice** in coda all'uscita.
+
+Spiegato all'utente prima di scriverlo, perché non era chiaro a cosa servisse
+l'hash: è un'impronta, come il CRC in coda a un frame. Dice *se* due tracce
+differiscono, non *dove*; il *dove* lo dicono i primi 64 MB. E perché `/tmp` è
+in RAM: è il default di Ubuntu 26.04 (`tmp.mount`), non del progetto; le uscite
+grandi stanno già in `out/`, e l'hash servirebbe anche con `/tmp` su disco,
+perché il problema è la dimensione.
+
+#### Visto rosso, fuori dal repository (`out/rosso/`, non versionato)
+
+```
+il programma     un giro da 1.500.000 iterazioni e UNA srai in fondo:
+                 105.500.338 byte di traccia
+il mutante       srai costa 2 cicli invece di 1: la traccia cambia solo
+                 nelle ultime righe, oltre i 64 MB
+equiv di HEAD    buono e mutante IDENTICI -- il buco
+equiv nuovo      DIVERSI: stessa lunghezza, sha256 f63f4feb... contro
+                 e116c8bf...
+```
+
+#### Le verifiche
+
+| cosa | risultato |
+|---|---|
+| i 56 programmi di `ctest`, `equiv.py` nuovo contro quello di `HEAD` | **identici byte per byte**: nessuna traccia di oggi supera il tetto (la più grande è 21 MB) |
+| un programma appeso (`j main`) | fermato a **120,18 s**: 5.364.293.632 byte di traccia, tutti nell'hash; `python3` a **19 MB** di memoria, su disco i 64 MB; in coda `--- fermato dopo 120 secondi ---` e `--- exit -9 ---` |
+
+**Il prezzo, dichiarato:** prima un programma appeso moriva al tetto, in pochi
+secondi; adesso costa i 120 secondi del timer e qualche GB passato dall'hash.
+Memoria e disco restano fermi, ed è quello che contava dopo l'OOM del 29/09.
+
+#### Dove si riprende
+
+Dal **passo 4 di §3.82: la macchina a stati**, con i budget proposti dai costi
+misurati e fatti decidere all'utente. `tools/grafici_tappa4.py` (§3.84) va
+rigenerato e confrontato con ciò che la macchina misura.
 
 ---
 
