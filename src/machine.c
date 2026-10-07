@@ -21,6 +21,8 @@ void machine_init(VMachine* m)
   m->clock.div_cpu    = 1;
   m->clock.div_periph = 1;
   m->clock.div_ms     = CPU_HZ / 1000ULL;
+  // La commutazione T/R e' del ferro: microsecondi, in tick master (§3.83).
+  m->tx.tsw           = TX_TR_US * (CPU_HZ / 1000000ULL);
   for (int i = 0; i < NUM_CPU; ++i)
   {
     vcpu_init(&m->cpu[i]);
@@ -100,6 +102,7 @@ static int32_t mmio_load(VMachine* m, VCpu* cpu, int64_t addr)
   if (addr == CLOCK_CYCLES)                                return clock_cycles(t);
   if (cmp_load(&m->cmp[cpu->id], addr, &v))                return v;
   if (adc_load(&m->adc, addr, &v))                         return v;
+  if (tx_load(&m->tx, addr, t, &v))                        return v;
   if (mbox_load(&m->mbox[cpu->id], mbox_peer(m, cpu), addr, &v)) return v;
   if (hwlock_load(&m->hwlock, cpu->id, addr, &v))          return v;
   if (intd_load(&m->intd, addr, &v))                       return v;
@@ -115,6 +118,7 @@ static void mmio_store(VMachine* m, VCpu* cpu, int64_t addr, int32_t value)
   if (kbd_store(&m->kbd, addr, value))                          return;
   if (cmp_store(&m->cmp[cpu->id], addr, value))                 return;
   if (adc_store(&m->adc, addr, value, t, &m->clock))            return;
+  if (tx_store(&m->tx, addr, value, t, &m->clock))              return;
   if (marker_store(&m->marker[cpu->id], cpu, t, addr, value))   return;
   if (mbox_store(&m->mbox[cpu->id], mbox_peer(m, cpu), addr, value)) return;
   if (hwlock_store(&m->hwlock, cpu->id, addr, value))           return;
@@ -479,7 +483,7 @@ void machine_run(VMachine* m, RunMode mode)
     // linea della tastiera, col SUO timbro.
     int kt = m->intd.target[INTD_KBD];
     kbd_advance(&m->kbd, t, &m->marker[kt], &m->cpu[kt]);
-    adc_advance(&m->adc, t, &m->clock, m->shared);   // la DMA: solo RAM condivisa
+    adc_advance(&m->adc, t, &m->clock, m->shared, &m->tx);   // la DMA: solo RAM condivisa
 
     // LA RICHIESTA, PRIMA DELLA CONSEGNA (15/09/2026). Il timer matura quando
     // il conto dei cicli raggiunge la scadenza, e questo non ha niente a che

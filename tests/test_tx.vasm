@@ -1,0 +1,190 @@
+; tests/test_tx.vasm — IL TRASMETTITORE E L'ACCECAMENTO (07/10/2026, §3.83).
+;
+; A file singolo come test_adc: il soggetto e' la MACCHINA. Gira senza --adc,
+; quindi un campione pulito vale (0, 0) e uno accecato (2047, 2047): non si
+; confondono.
+;
+; --- I NUMERI ---
+;    0   TX_STATUS prima di tutto: spento, niente accecato, niente overrun
+;  200   TX_LEN si rilegge
+;    1   subito dopo l'avvio: TX_ON
+;    5   un secondo avvio col TX acceso: IGNORATO, e ON | OVERRUN
+;    1   riletto: l'overrun l'ha abbassato la lettura di prima
+;    4   il blocco A, aperto SUBITO dopo il TX: quattro campioni accecati su
+;        quattro. Il primo cade col TX acceso, gli altri tre DOPO la fine del
+;        TX ma dentro la commutazione T/R -- e' questo che prova la
+;        commutazione: senza, sarebbe 1 (il conto e' quello del blocco C)
+;    2   TX_STATUS dopo il blocco A: il TX e' finito, e BLIND e' alzato
+;    0   riletto: la lettura l'ha abbassato
+;    0   il blocco B, aperto quando la commutazione e' finita: pulito
+;    0   TX_STATUS: niente da dire
+;   11   il blocco C, 16 campioni a cavallo della fine della commutazione:
+;        quanti sono accecati
+;   11   ...e l'indice del primo pulito. Uguale al conto vuol dire che gli
+;        accecati sono un PREFISSO: si esce dall'accecamento una volta sola,
+;        e non a tratti
+;
+; --- PERCHE' 11 NON DIPENDE DALLA FORMA DEL FILE ---
+; Il TX parte all'istante s, e la commutazione finisce a s + 200 + 1000 (TX_LEN
+; piu' 10 us). L'ADC parte a s + d, e il campione k (da 1) e' preso a
+; s + d + 100 k: e' accecato se d + 100 k < 1200, cioe' k <= 11 per qualunque
+; d fra 1 e 99. Le poche istruzioni fra le due `sw` stanno li' dentro con
+; largo margine; aggiungerne qualcuna non cambia il numero.
+;
+; Visti rossi, sul simulatore mutato: senza l'accecamento il blocco A esce
+; pulito (0 invece di 4) e TX_STATUS non alza BLIND; senza la commutazione T/R
+; -- accecato solo col TX acceso -- il blocco A da' 1 e il blocco C 1.
+;
+; NON PROVATO, e dichiarato: il secondo TX ricordato dal device (devices.h,
+; VTx). Serve a un campione preso fra il confine d'istruzione e un avvio che
+; cade nella coda del TX di prima, e un test che lo centrasse dipenderebbe dal
+; ciclo esatto di ogni istruzione.
+
+.equ TX_LEN      0x100054        ; li dichiara devices.h; qui sono ricopiati
+.equ TX_CTRL     0x100058        ; perche' il test gira a file singolo, come
+.equ TX_STATUS   0x10005C        ; test_adc
+.equ TX_START     1
+
+.equ ADC_ADDR    0x100040
+.equ ADC_COUNT   0x100044
+.equ ADC_PERIOD  0x100048
+.equ ADC_CTRL    0x10004C
+.equ ADC_STATUS  0x100050
+.equ ADC_START    1
+
+.equ CLOCK_CYCLES 0x100030
+
+.equ BLOCCO_A    0x200000        ; 4 campioni:  32 byte
+.equ BLOCCO_B    0x200020        ; 4 campioni:  32 byte
+.equ BLOCCO_C    0x200040        ; 16 campioni: 128 byte
+
+  .text
+main:
+  li r10, TX_STATUS
+  li r11, TX_CTRL
+  li r12, TX_START         ; vale 1, come ADC_START: un registro per tutti e due
+  li r13, ADC_CTRL
+
+  lw r5, 0(r10)
+  dumps r5                 ; 0
+
+  li r1, TX_LEN
+  li r2, 200               ; 2 us
+  sw r2, 0(r1)
+  lw r5, 0(r1)
+  dumps r5                 ; 200
+
+  ; --- il blocco A: configurato PRIMA, cosi' fra il TX e l'ADC ci sono due
+  ;     istruzioni sole ------------------------------------------------------
+  li r1, ADC_ADDR
+  li r2, BLOCCO_A
+  sw r2, 0(r1)
+  li r1, ADC_COUNT
+  li r2, 4
+  sw r2, 0(r1)
+  li r1, ADC_PERIOD
+  li r2, 100
+  sw r2, 0(r1)
+
+  sw r12, 0(r11)           ; il TX
+  sw r12, 0(r13)           ; e subito l'ADC
+  li r1, CLOCK_CYCLES
+  lw r14, 0(r1)            ; un istante DOPO l'avvio del TX: basta per aspettare
+
+  lw r5, 0(r10)
+  dumps r5                 ; 1: ON
+  sw r12, 0(r11)           ; un secondo avvio, col TX acceso
+  lw r5, 0(r10)
+  dumps r5                 ; 5: ON | OVERRUN
+  lw r5, 0(r10)
+  dumps r5                 ; 1
+
+  li r4, 1
+  call aspetta_blocchi
+  li r3, BLOCCO_A
+  li r4, 4
+  call conta_accecati
+  dumps r5                 ; 4
+
+  lw r5, 0(r10)
+  dumps r5                 ; 2: BLIND
+  lw r5, 0(r10)
+  dumps r5                 ; 0
+
+  ; --- il blocco B: dopo la fine della commutazione ------------------------
+  li r1, CLOCK_CYCLES
+  li r2, 1200              ; TX_LEN + 10 us
+fine_tr:
+  lw r3, 0(r1)
+  sub r3, r3, r14
+  blt r3, r2, fine_tr
+
+  li r1, ADC_ADDR
+  li r2, BLOCCO_B
+  sw r2, 0(r1)
+  sw r12, 0(r13)
+  li r4, 2
+  call aspetta_blocchi
+  li r3, BLOCCO_B
+  li r4, 4
+  call conta_accecati
+  dumps r5                 ; 0
+  lw r5, 0(r10)
+  dumps r5                 ; 0
+
+  ; --- il blocco C: a cavallo della fine -----------------------------------
+  li r1, ADC_ADDR
+  li r2, BLOCCO_C
+  sw r2, 0(r1)
+  li r1, ADC_COUNT
+  li r2, 16
+  sw r2, 0(r1)
+
+  sw r12, 0(r11)           ; il TX
+  sw r12, 0(r13)           ; e subito l'ADC
+
+  li r4, 3
+  call aspetta_blocchi
+  li r3, BLOCCO_C
+  li r4, 16
+  call conta_accecati
+  dumps r5                 ; 11
+  dumps r6                 ; 11
+  halt
+
+; Aspetta che i blocchi finiti siano r4: il CONTATORE di ADC_STATUS, come in
+; test_adc.
+aspetta_blocchi:
+  li r1, ADC_STATUS
+attesa:
+  lw r2, 0(r1)
+  srli r2, r2, 2
+  bne r2, r4, attesa
+  ret
+
+; r3 = il blocco, r4 = i campioni. Torna in r5 quanti sono accecati -- 2047
+; su I E su Q -- e in r6 l'indice del primo che non lo e' (r4 se nessuno).
+conta_accecati:
+  li r5, 0
+  li r6, -1
+  li r7, 0                 ; l'indice
+  li r8, 2047
+  li r9, -1
+conta:
+  lw r1, 0(r3)
+  lw r2, 4(r3)
+  bne r1, r8, pulito
+  bne r2, r8, pulito
+  addi r5, r5, 1
+  j avanti
+pulito:
+  bne r6, r9, avanti       ; il primo pulito l'abbiamo gia'
+  mov r6, r7
+avanti:
+  addi r3, r3, 8
+  addi r7, r7, 1
+  bne r7, r4, conta
+  bne r6, r9, fatto
+  mov r6, r4
+fatto:
+  ret

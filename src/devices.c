@@ -390,14 +390,27 @@ static int32_t adc_quantizza(double x)
 // e li scrive in RAM -- la DMA, che non ruba cicli. Il tempo del campione e'
 // l'istante in cui e' PRESO (next), non quello in cui arriva in memoria -- il
 // segnale non sa niente di quanto era lunga l'istruzione in corso.
-void adc_advance(VAdc* a, uint64_t t, const VClock* ck, uint8_t* shared)
+//
+// Un campione preso col TX acceso, o entro la commutazione T/R, esce
+// SATURATO su tutti e due i canali (§3.83): il ricevitore e' abbagliato, e il
+// segnale non c'entra.
+void adc_advance(VAdc* a, uint64_t t, const VClock* ck, uint8_t* shared, VTx* tx)
 {
   while (a->busy && t >= a->next)
   {
-    double ts  = (double) a->next / (double) ck->hz;
-    double fi  = 2.0 * M_PI * a->freq * ts;
-    int32_t iv = adc_quantizza(a->amp * cos(fi));
-    int32_t qv = adc_quantizza(a->amp * sin(fi));
+    int32_t iv, qv;
+    if (tx_blinds(tx, a->next))
+    {
+      iv = qv = ADC_MAX;
+      tx->blind = 1;
+    }
+    else
+    {
+      double ts = (double) a->next / (double) ck->hz;
+      double fi = 2.0 * M_PI * a->freq * ts;
+      iv = adc_quantizza(a->amp * cos(fi));
+      qv = adc_quantizza(a->amp * sin(fi));
+    }
 
     int64_t p = a->cur_addr + 8 * (int64_t) a->i;
     uint8_t* dst = &shared[p - SHARED_BASE];
@@ -432,6 +445,62 @@ int adc_set_signal(VAdc* a, const char* spec, char* err, size_t errsz)
   }
   a->freq = f;
   a->amp  = amp;
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+//  Il trasmettitore (07/10/2026, §3.83). Il perche' e' in devices.h, accanto
+//  ai registri.
+// ---------------------------------------------------------------------------
+static int tx_on(const VTx* x, uint64_t t)
+{
+  return x->n > 0 && t < x->end[0];
+}
+
+// Leggere lo stato abbassa BLIND e OVERRUN: chi l'ha visto una volta l'ha
+// visto, come ADC_STATUS. TX_ON invece e' il tempo, e non si abbassa.
+int tx_load(VTx* x, int64_t addr, uint64_t t, int32_t* out)
+{
+  if (addr == TX_STATUS)
+  {
+    *out = (tx_on(x, t) ? TX_ON : 0)
+         | (x->blind ? TX_BLIND : 0)
+         | (x->overrun ? TX_OVERRUN : 0);
+    x->blind   = 0;
+    x->overrun = 0;
+    return 1;
+  }
+  if (addr == TX_LEN) { *out = x->len; return 1; }
+  return 0;
+}
+
+int tx_store(VTx* x, int64_t addr, int32_t value, uint64_t t, const VClock* ck)
+{
+  if (addr == TX_LEN) { x->len = value; return 1; }
+  if (addr != TX_CTRL) return 0;
+
+  if (!(value & TX_START)) return 1;
+  if (tx_on(x, t)) { x->overrun = 1; return 1; }
+  if (x->len <= 0)
+  {
+    fprintf(stderr, "runtime error: TX, durata impossibile (len %d)\n", x->len);
+    return 1;
+  }
+  x->start[1] = x->start[0];
+  x->end[1]   = x->end[0];
+  x->start[0] = t;
+  x->end[0]   = t + (uint64_t) x->len * ck->div_periph;
+  x->neg      = (value & TX_NEG) ? 1 : 0;
+  x->n       += 1;
+  return 1;
+}
+
+// Dal primo istante del TX alla fine della commutazione, esclusa: alla fine
+// esatta il ricevitore e' pronto.
+int tx_blinds(const VTx* x, uint64_t ts)
+{
+  for (uint32_t k = 0; k < 2 && k < x->n; ++k)
+    if (ts >= x->start[k] && ts < x->end[k] + x->tsw) return 1;
   return 0;
 }
 

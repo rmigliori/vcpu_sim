@@ -244,6 +244,17 @@ vasm_check(adc_sat    MODE DUMPS EXPECT "0 1 3 1 1 4 0 0 0 4"
            ARGS --adc 0,3000
            SOURCE ${CMAKE_SOURCE_DIR}/tests/test_adc.vasm)
 
+# test_tx — IL TRASMETTITORE E L'ACCECAMENTO (07/10/2026, §3.83).
+#
+# Un campione preso col TX acceso o entro la commutazione T/R (10 us) esce
+# saturato, e alza TX_BLIND. Tre blocchi: A subito dopo il TX, tutto accecato
+# (4); B a commutazione finita, pulito (0); C a cavallo della fine, 11
+# accecati in testa e poi puliti. Visto rosso togliendo l'accecamento (A
+# pulito) e togliendo la sola commutazione (A e C danno 1). Senza --adc:
+# pulito vuol dire (0, 0), accecato (2047, 2047).
+vasm_check(tx         MODE DUMPS EXPECT "0 200 1 5 1 4 2 0 0 0 11 11"
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_tx.vasm)
+
 # test_amp — DUE CPU (29/09/2026, §3.79). Due programmi, uno per CPU, sulla
 # stessa scheda: `run test_amp0.vx test_amp1.vx`. Il soggetto e' la MACCHINA
 # -- la RAM condivisa, lo spinlock hardware, la mailbox -- e niente kernel.

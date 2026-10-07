@@ -60,6 +60,7 @@ typedef struct VMachine
   VIntd    intd;                     // dove vanno le linee condivise
   VKbd     kbd;                      // la sua linea: dove dice intd
   VAdc     adc;                      // DMA solo nella RAM condivisa
+  VTx      tx;                       // e il trasmettitore che lo acceca
   int      ncpu;                     // quante CPU hanno un programma
 } VMachine;
 

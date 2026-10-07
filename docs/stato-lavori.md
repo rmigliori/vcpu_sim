@@ -1,6 +1,11 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **30 settembre 2026** (§3.82 **la tabella della tappa
+> Ultimo aggiornamento: **7 ottobre 2026** (§3.83 **il trasmettitore e
+> l'accecamento**, il passo 1 della tappa 4: tre registri a `0x54..0x5C`,
+> l'overrun al bit 2, il campione accecato a 2047 su I e Q, la commutazione T/R
+> della scheda a 10 µs; `test_tx` visto rosso due volte, `ctest` 69/69,
+> impronte 26/26 e tracce di `HEAD` identiche su 54 programmi);
+> il **30/09**: §3.82 **la tabella della tappa
 > 4**, sola discussione: tre modi CAL → ACQ → TRACK coi loro fallimenti, lo
 > sweep coi suoi numeri e la quota scalata a 90 km, la finestra di ricezione
 > che si CALCOLA col tracker alfa/beta invece di leggersi, e il lavoro di
@@ -152,6 +157,13 @@
 > una sessione di Claude **non riesce per costruzione** (§3.77).
 > **Si riprende dalla tappa 4, il test grande**: la formula è in §6.
 >
+> **IL 07/10 (§3.83): IL PASSO 1 È FATTO.** Il trasmettitore e l'accecamento,
+> come disegnati in §3.82, più le due cose che il disegno lasciava aperte
+> (l'overrun al bit 2 di `TX_STATUS`, il campione accecato a 2047 su I e Q).
+> **Si riprende dal passo 2: il mondo esterno e l'eco.** Ancora aperto e non
+> urgente: l'immediato degli shift fuori da 0..63 (§3.81). La proposta è
+> rifiutarlo in assembler, e la decisione è dell'utente.
+>
 > **IL 30/09 (§3.82): LA TABELLA C'È.** Tre modi — calibrazione (alfa/beta sul
 > fronte di salita, 5 sweep), acquisizione (Barker-5 sui cinque blocchi),
 > tracking (FFT a ogni sweep) — coi fallimenti decisi dall'utente, e lo sweep coi
@@ -212,7 +224,7 @@
 >   fattuale
 > ```
 >
-> **ORDINE DI LETTURA: §3.82, §3.81, §3.80, §3.79, §3.78, §3.77, §3.76, poi §3.75, poi §3.74, poi §3.73, poi §3.72.**
+> **ORDINE DI LETTURA: §3.83, §3.82, §3.81, §3.80, §3.79, §3.78, §3.77, §3.76, poi §3.75, poi §3.74, poi §3.73, poi §3.72.**
 > Ognuna corregge la precedente in qualche punto, e leggerle al contrario fa
 > ripartire da posizioni ritirate. §3.76 (28/09) non ha codice: collega ogni
 > pezzo del disegno al suo predecessore in letteratura, e rimanda il gestore
@@ -3769,6 +3781,93 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.83 IL TRASMETTITORE E L'ACCECAMENTO: il passo 1 della tappa 4 (07/10/2026)
+
+Il primo dei quattro passi di §3.82, scritto come era stato disegnato. Prima
+del codice, la linea di base rifatta dopo una settimana ferma: `ctest` 68/68,
+impronte 26, tracce di `HEAD` su 54 programmi in `out/eq_head` (su disco e non
+in `/tmp`, che è tmpfs).
+
+#### Le due cose che il disegno lasciava aperte, decise dall'utente
+
+```
+l'overrun del TX       il disegno diceva "alza un overrun, come l'ADC" ma
+                       TX_STATUS aveva solo ON e BLIND: va al BIT 2. Sopra
+                       non c'e' un contatore da spostare, quindi il motivo
+                       che teneva BLIND fuori da ADC_STATUS qui non c'e'
+il campione saturato   ADC_MAX su I E su Q (2047, 2047): il ricevitore
+                       abbagliato, e nessun eco del modello ci arriva per caso
+```
+
+#### Una cosa trovata scrivendo: il device ricorda DUE TX, non uno
+
+`vcpu_step` conta i cicli **prima** di eseguire, quindi una `sw` a `TX_CTRL`
+avviene all'istante *confine + costo*, non al confine. Un campione preso fra
+il confine e l'avvio arriva alla DMA **dopo** l'avvio, e può cadere nella coda
+(la commutazione) del TX di prima: con solo l'ultimo TX in memoria uscirebbe
+pulito. Fra il confine e l'avvio non può esserci un'altra `sw`, quindi due
+bastano. **Non è provato da un test**, ed è dichiarato in `test_tx.vasm`: per
+centrarlo bisogna dipendere dal ciclo esatto di ogni istruzione. Con un PRI di
+1 ms non succede mai, perché serve un TX che riparta entro 10 µs dalla fine
+del precedente.
+
+#### Cosa è stato scritto
+
+```
+devices.h   TX_LEN 0x54, TX_CTRL 0x58, TX_STATUS 0x5C; TX_START/TX_NEG,
+            TX_ON/TX_BLIND/TX_OVERRUN; TX_TR_US = 10; VTx; tx_load,
+            tx_store, tx_blinds; adc_advance prende il trasmettitore
+devices.c   l'ADC chiede tx_blinds() campione per campione; il device:
+            TX_ON e' il tempo (t < fine), BLIND e OVERRUN li abbassa la
+            lettura, TX_LEN <= 0 e' un errore di costruzione
+machine.c   tsw = TX_TR_US * (CPU_HZ / 10^6) = 1000 tick master, alla
+            accensione: non dipende da nessun divisore. Il bus e la DMA
+manual.md   §3.2, sottosezione "Il trasmettitore": in §3.2 e non in una
+            §3.3 nuova, cosi' i rimandi a §3.3 (le CPU) non si muovono
+test_tx     tests/, a file singolo come test_adc, senza --adc
+```
+
+`TX_NEG` la macchina lo **conserva e basta**: è per il mondo (passo 2). I
+registri **non sono in `hal/`**: ci vanno col primo programma che li usa con le
+interfacce, cioè la macchina a stati.
+
+#### Il test, e i due rossi
+
+`0 200 1 5 1 4 2 0 0 0 11 11`: stato vuoto, `TX_LEN` riletto, ON, ON|OVERRUN,
+l'overrun abbassato; blocco A subito dopo il TX, **4 accecati su 4**, e
+`TX_STATUS` = BLIND, poi abbassato; blocco B a commutazione finita, pulito;
+blocco C (16 campioni) a cavallo della fine, **11 accecati e tutti in testa**.
+L'11 non dipende dalla forma del file: vale per qualunque distanza fra le due
+`sw` fra 1 e 99 cicli, e il conto è nel sorgente.
+
+Nel blocco A solo il primo campione cade col TX acceso: gli altri tre stanno
+nella commutazione. È ciò che rende il test capace di vedere la commutazione,
+e la prima stesura del commento lo sbagliava (diceva due e due).
+
+| mutazione del simulatore | uscita |
+|---|---|
+| nessun accecamento | `0 200 1 5 1 0 0 0 0 0 0 0` |
+| commutazione a zero | `0 200 1 5 1 1 2 0 0 0 1 1` |
+
+Tutti e due i rossi sono quelli previsti nel commento del test **prima** di
+lanciarli.
+
+#### Le verifiche
+
+| cosa | risultato |
+|---|---|
+| build | nessun warning |
+| `ctest --timeout 60` | **69/69** (68 + `tx`) |
+| impronte, `out` contro la linea di base | **26/26 identiche**: registri, non opcode |
+| `tools/equiv.py` contro `HEAD` | 54 programmi **identici**; diverso solo `tx`, che su `HEAD` non c'era |
+
+#### Dove si riprende
+
+Dal **passo 2 di §3.82: il mondo esterno e l'eco**, l'applicazione Linux in
+lockstep. Il protocollo, il modello dell'acqua e la scena sono già decisi là.
 
 ---
 

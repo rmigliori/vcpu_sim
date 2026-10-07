@@ -35,7 +35,7 @@ Il progetto si trova in `vcpu_sim/` ed è composto da:
 | File | Ruolo |
 |---|---|
 | `include/vcpu.h`, `src/vcpu.c` | **il core**: ISA, registri, modello di timing, esecuzione di un'istruzione, presa di una trap, timer privato |
-| `include/devices.h`, `src/devices.c` | **le periferiche**: la mappa MMIO (il «datasheet»), tastiera, comparatori, ADC, marcatore |
+| `include/devices.h`, `src/devices.c` | **le periferiche**: la mappa MMIO (il «datasheet»), tastiera, comparatori, ADC, trasmettitore, marcatore |
 | `include/machine.h`, `src/machine.c` | **la scheda**: il clock master coi suoi divisori, la memoria, il bus, il ciclo principale, l'arbitraggio delle interruzioni, il debugger |
 | `src/assembler.c` | Assembler a due passi con symbol table |
 | `include/toolchain.h` | Modello oggetti/eseguibili/archivi (`.vo`/`.vx`/`.va`) |
@@ -62,11 +62,11 @@ programma solo la macchina è identica al ciclo a quella di prima.
 
 ```
  VMachine ── clock master ─┬─ /1 CPU ─────────── VCpu 0, VCpu 1: registri, pc, psw, timer privato
-                           ├─ /1 periferiche ─── ADC_PERIOD
+                           ├─ /1 periferiche ─── ADC_PERIOD, TX_LEN
                            ├─ /1 (la radice) ─── CLOCK_CYCLES, comparatori su base CICLI
                            └─ /100000 ms ─────── CLOCK_MS,      comparatori su base MS
           ── bus ─┬─ RAM locale (1 MiB da 0, una per CPU)
-                  ├─ MMIO: tastiera, ADC (DMA), CLOCK_MS, CLOCK_CYCLES,   della scheda
+                  ├─ MMIO: tastiera, ADC (DMA), TX, CLOCK_MS, CLOCK_CYCLES, della scheda
                   │        spinlock, distributore delle interruzioni
                   │        comparatori, mailbox, marcatore                 uno per CPU
                   └─ RAM condivisa (64 KiB a 0x200000)
@@ -655,6 +655,38 @@ deve puntare fra `0x200000` e `0x20FFFF`, e un blocco che non ci sta tutto è
 una configurazione impossibile. Nessuna periferica scrive nella RAM privata di
 una CPU, e l'ADC non appartiene a nessuna: lo programma chi lo usa, e il blocco
 lo vede chiunque.
+
+#### Il trasmettitore, e l'accecamento del ricevitore
+
+Dal 07/10/2026 l'altimetro ha anche la metà che parla. Il chirp vero non si
+modella: il TX è un impulso lungo `TX_LEN`, e l'eco lo produrrà il mondo,
+fuori dalla macchina. Qui c'è solo ciò che è del ferro: quando il TX è acceso,
+e cosa fa al ricevitore.
+
+| Registro | Indirizzo | Accesso | Significato |
+|---|---|---|---|
+| `TX_LEN` | `0x100054` | lettura/scrittura | la durata del TX in tick del clock periferiche (oggi cicli: 5000 = 50 µs) |
+| `TX_CTRL` | `0x100058` | scrittura | bit 0 `TX_START` = trasmetti; bit 1 `TX_NEG` = il segno del codice di Barker di questo TX |
+| `TX_STATUS` | `0x10005C` | lettura | bit 0 `TX_ON`; bit 1 `TX_BLIND`; bit 2 `TX_OVERRUN` — **e la lettura abbassa BLIND e OVERRUN** |
+
+**La commutazione T/R è della scheda, 10 µs.** Dal trasmettere al ricevere non
+si passa all'istante, e il tempo del commutatore è del ferro: non è un
+registro. La durata del TX invece lo è, perché il chirp lo progetta il
+programma.
+
+**L'accecamento.** Un campione preso col TX acceso, o entro 10 µs dalla sua
+fine, esce **saturato**, 2047 su I e su Q, e alza `TX_BLIND`. Il bit sta nel
+trasmettitore e non in `ADC_STATUS`, dove dal bit 2 in su c'è il contatore dei
+blocchi. Saturato e non zero, perché zero è un campione plausibile.
+
+**Un avvio col TX acceso è ignorato** e alza `TX_OVERRUN`, come l'ADC. Un
+`TX_LEN` non positivo è un errore di costruzione, e il simulatore lo dice.
+Nessun interrupt: chi trasmette è la time line, e sa quando.
+
+`TX_NEG` oggi la macchina lo conserva e basta: è per il mondo esterno, che lo
+userà per il segno dell'eco. `tests/test_tx.vasm` prova lo stato, l'overrun e
+l'accecamento, compresa la commutazione. I registri non sono ancora in
+`hal/`: ci andranno col primo programma che li usa con le interfacce.
 
 ### 3.3 Due CPU: RAM condivisa, spinlock e mailbox
 

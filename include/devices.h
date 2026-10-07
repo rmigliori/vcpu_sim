@@ -368,6 +368,57 @@
 #define ADC_MIN        (-2048)
 
 // ---------------------------------------------------------------------------
+//  IL TRASMETTITORE, e l'accecamento del ricevitore  (07/10/2026, §3.83)
+//
+//  La meta' dell'altimetro che mancava: l'ADC ascolta, questo parla. Il chirp
+//  vero non si modella -- e' un impulso lungo TX_LEN -- e l'eco lo fara' il
+//  mondo, che sta fuori dalla macchina (§3.82). Qui c'e' solo cio' che e' del
+//  FERRO: quando il TX e' acceso, e che cosa fa al ricevitore.
+//
+//      TX_LEN     lett./scritt.  la durata del TX, in tick PERIFERICHE (come
+//                                ADC_PERIOD): 5000 = 50 us oggi. E' un registro
+//                                perche' il chirp lo progetta il programma
+//      TX_CTRL    scrittura      bit 0 TX_START = trasmetti; bit 1 TX_NEG = il
+//                                segno del codice di Barker di questo TX, che
+//                                la macchina conserva per il mondo
+//      TX_STATUS  lettura        bit 0 TX_ON      sta trasmettendo
+//                                bit 1 TX_BLIND   un campione e' uscito accecato
+//                                bit 2 TX_OVERRUN un avvio col TX acceso
+//                                e la lettura abbassa BLIND e OVERRUN
+//
+//  --- LA COMMUTAZIONE T/R E' DELLA SCHEDA, non un registro ---
+//  Dal TX non si passa all'RX all'istante («riesci a invertire immediatamente
+//  la corsa di un autobus?», l'utente, §3.82): il commutatore ha un tempo, ed
+//  e' del ferro. TX_TR_US qui sotto, in microsecondi, convertito in tick
+//  master all'accensione: non dipende da nessun divisore.
+//
+//  --- L'ACCECAMENTO ---
+//  Un campione preso mentre il TX e' acceso, o entro TX_TR_US dalla fine,
+//  esce SATURATO -- ADC_MAX su I e su Q, cio' che fa un ricevitore abbagliato
+//  -- e alza TX_BLIND. Il bit sta qui e non in ADC_STATUS di proposito: li'
+//  dal bit 2 in su c'e' il contatore dei blocchi, e spostarlo romperebbe i
+//  test dell'ADC. Saturato e non zero: zero e' un campione plausibile, il
+//  massimo su tutti e due i canali non lo produce nessun eco del modello.
+//
+//  --- UN AVVIO COL TX ACCESO E' IGNORATO e alza TX_OVERRUN ---
+//  La regola dell'ADC, nella stessa forma: un errore di TEMPO della time line,
+//  che il programma deve vedere e non il simulatore fermare. Un TX_LEN non
+//  positivo invece e' un errore di COSTRUZIONE, e si dice.
+//
+//  NESSUN INTERRUPT, come l'ADC: chi trasmette e' la time line, e sa quando.
+// ---------------------------------------------------------------------------
+#define TX_LEN       (MMIO_BASE + 0x54)
+#define TX_CTRL      (MMIO_BASE + 0x58)
+#define TX_STATUS    (MMIO_BASE + 0x5C)
+
+#define TX_START        1   // TX_CTRL, bit 0
+#define TX_NEG          2   // TX_CTRL, bit 1: il segno Barker
+#define TX_ON           1   // TX_STATUS, bit 0
+#define TX_BLIND        2   // TX_STATUS, bit 1
+#define TX_OVERRUN      4   // TX_STATUS, bit 2
+#define TX_TR_US       10   // la commutazione T/R, in microsecondi
+
+// ---------------------------------------------------------------------------
 //  PIU' CPU: la RAM CONDIVISA, la MAILBOX e lo SPINLOCK  (29/09/2026, §3.79)
 //
 //  Ogni CPU ha la sua RAM LOCALE da 0 a MEM_SIZE, allo stesso indirizzo --
@@ -714,6 +765,22 @@ typedef struct
   double   amp;
 } VAdc;
 
+// Il trasmettitore. Si ricorda gli ULTIMI DUE TX, non uno: il tempo di una
+// store e' il confine d'istruzione PIU' il costo (vcpu_step conta i cicli
+// prima di eseguire), quindi un campione preso fra il confine e l'avvio arriva
+// alla DMA DOPO l'avvio -- e puo' cadere nella coda del TX di prima. Un'altra
+// store non puo' esserci in mezzo, quindi due bastano.
+typedef struct
+{
+  int32_t  len;              // TX_LEN, in tick periferiche
+  uint64_t start[2], end[2]; // [0] l'ultimo TX, [1] quello prima: tick master
+  uint32_t n;                // i TX partiti dall'accensione
+  uint64_t tsw;              // la commutazione T/R, in tick master
+  unsigned char neg;         // il segno Barker dell'ultimo TX
+  unsigned char blind;       // un campione e' uscito accecato
+  unsigned char overrun;     // un avvio col TX acceso
+} VTx;
+
 // La mailbox di UNA CPU: la sua FIFO d'ingresso, e i suoi due bit. Chi
 // spedisce scrive nella FIFO dell'altra; l'overrun e' di chi ha spedito.
 typedef struct
@@ -783,11 +850,20 @@ int  cmp_pending(const VCmp* c, int32_t ms, int32_t cycles);
 // base, cioe' l'indirizzo SHARED_BASE. Nessuna periferica scrive nella RAM
 // privata di una CPU, e l'ADC non appartiene a nessuna: lo programma chi lo
 // usa, e il blocco lo vede chiunque.
+//
+// Il campione chiede al TRASMETTITORE se e' accecato: e' il trasmettitore a
+// sapere quando e' stato acceso, e il bit TX_BLIND e' suo.
 struct VClock;
 int  adc_load(VAdc* a, int64_t addr, int32_t* out);
 int  adc_store(VAdc* a, int64_t addr, int32_t value, uint64_t t, const struct VClock* ck);
-void adc_advance(VAdc* a, uint64_t t, const struct VClock* ck, uint8_t* shared);
+void adc_advance(VAdc* a, uint64_t t, const struct VClock* ck, uint8_t* shared, VTx* tx);
 int  adc_set_signal(VAdc* a, const char* spec, char* err, size_t errsz);
+
+// Il trasmettitore: `t` serve a sapere se e' acceso, il clock a convertire
+// TX_LEN da tick periferiche a tick master.
+int  tx_load(VTx* x, int64_t addr, uint64_t t, int32_t* out);
+int  tx_store(VTx* x, int64_t addr, int32_t value, uint64_t t, const struct VClock* ck);
+int  tx_blinds(const VTx* x, uint64_t ts);   // il campione preso a ts e' accecato
 
 // La mailbox: `mine` e' quella della CPU che fa l'accesso, `peer` l'altra.
 int  mbox_load(VMbox* mine, const VMbox* peer, int64_t addr, int32_t* out);
