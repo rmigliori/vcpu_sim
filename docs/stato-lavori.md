@@ -137,7 +137,18 @@
 
 ## 0. STATO ATTUALE — DA DOVE SI RIPRENDE
 
-> ### ▶ RIPRENDI DA QUI (07/10/2026 o dopo)
+> ### ▶ RIPRENDI DA QUI (08/10/2026 o dopo)
+>
+> **L'08/10 (§3.86): misure, FDIRTY, il banco alternativo.** I costi delle
+> attività sono misurati: poco (FRONTE 891, TRACKER 126, FFT 7663), e il costo
+> vero era il CONTESTO, ~2030 cicli a slot col super task vettoriale. Due lavori
+> di macchina, decisi con l'utente: **FDIRTY** (i float hanno un bit loro,
+> `834b5b2`, pushato) e **il banco alternativo dei registri** (`PSW_BANK`,
+> `lib_hal_banco`, la via veloce del super task: **uno slot a 327 cicli**).
+> `ctest` **72/72**. Il banco va committato; poi si torna ai **budget**, sui
+> numeri nuovi. La sezione da leggere è §3.86, prima di tutto il resto qui sotto.
+>
+> **Il 07/10**, per chi ne cerca le tracce:
 >
 > **DOVE SIAMO.** La macchina AMP è finita (tappe 1–3, 29/09) e della tappa 4,
 > il test grande dell'altimetro, sono fatti i primi tre passi su quattro, tutti
@@ -3963,9 +3974,76 @@ Verifiche:
 | impronte | **18 mosse**, le immagini che linkano `lib_hal`; 8 ferme; `test_fdirty` nuova |
 | attivazione rimisurata | T scalare **302**, invariata; T solo vettoriale 1022 → **950** |
 
+FDIRTY committato in `834b5b2`, pushato dall'utente su GitHub e sulla Pi.
+
+#### Il banco alternativo: FATTO, non committato
+
+Discusso prima di scriverlo, e corretto due volte da me:
+
+```
+r14 NON nel banco    nell'HAL e' il puntatore al contesto e ctx_restore lo
+                     reimposta: bancato, il banco alternativo ne terrebbe uno
+                     vecchio e l'ISR scriverebbe nello stack sbagliato
+r1 NON nel banco     passa da un banco all'altro, come AF con EXX: e' il
+                     contesto opaco dell'ISR. Si scambiano r2..r13, r15, f0..f15
+niente opcode        il bit E' il banco (MODE1 dello SHARC): mtpsw e reti lo
+                     cambiano, la trap no. Deciso dall'utente
+un registro in piu'  (mscratch di RISC-V, k0/k1 del MIPS) proposto
+                     dall'utente: valeva ~10 cicli su ~250, ed e' rimasto fuori
+```
+
+**Il caso trovato leggendo il kernel: la MATERIALIZZAZIONE.** Dopo la via
+veloce i registri dell'idle restano nel banco 0, non salvati. Se prima che
+l'idle riparta il kernel sceglie un altro task del banco 0 (lo slot ha reso
+pronto qualcuno: `tbs_scegli`), quel task li distruggerebbe. Il frame del banco
+riserva quindi sullo stack dell'interrotto un frame canonico coi float (132
+byte) e ci scrive solo flag, epc, psw e r1; `ctx_restore`, prima di ripristinare
+nel banco 0 un frame che non e' quello, scrive i registri vivi negli spazi
+riservati. Il puntatore non cambia, il TCB resta valido, il kernel non sa
+niente dei banchi.
+
+**E una trappola: `irq_restore` rimette la psw INTERA**, banco compreso. Un super
+task partito nel banco 0 salverebbe alla prima `wait` una psw col banco 0, e al
+ritorno ci tornerebbe. Da cui la regola: il super task parte nel banco
+alternativo. Le tre regole stanno in `hal.vinc`.
+
+```
+macchina    PSW_BANK (bit 3), alt_r/alt_f in VCpu, scrivi_psw in mtpsw e reti
+HAL         CONFIG banco -> lib_hal_banco: _trap_entry_banco, irq_arm_banco,
+            il preambolo di ctx_restore (banco, materializzazione), cr_banco,
+            cr_leggero, hal_ctx_block_super col frame LEGGERO (epc, psw).
+            Nell'HAL normale hal_ctx_block_super e' un secondo nome di
+            hal_ctx_block: stesso indirizzo
+kernel      task_block_super chiama hal_ctx_block_super. Nient'altro
+test        rtos/test/test_banco.vasm: "-1 1 1 1 4 6 1 1 1"
+```
+
+| cosa | risultato |
+|---|---|
+| `ctest --timeout 60` | **72/72** (71 + `banco`) |
+| i 56 programmi di prima contro `834b5b2` | **112 file identici byte per byte**, indirizzi compresi |
+| impronte | TEXT+DATA **ferme in tutte**; si muove la tabella dei simboli di 19 immagini (il nome `hal_ctx_block_super`); `test_banco` nuova |
+| rossi | quattro mutazioni dell'HAL, previste prima: tre come previsto; **R3 è stato verde due volte** (il controllo dei vettori copriva quello del banco, e `irq_restore` rialza i bit sporchi dopo la `wait`), poi rosso in una forma più grave del previsto, spiegata dalla traccia. In fondo a `test_banco.vasm` |
+
+**Il numero** (`out/misure/m_banco.vasm`, T vettoriale, idle con registri e
+float vivi):
+
+```
+                  oggi        prima: T scalare   prima: T vettoriale
+attivazione       180-183     302                1022
+uscita            147         292                1010
+UNO SLOT          327         594                ~2030
+di cui contesto   113         381                ~1820
+```
+
+La mia stima era ~250. Il resto (~214) è KERNEL: `wait`, `task_block_super`,
+`sched_isr_exit_to`, `dispatcher`, `wait_signal`. Il banco non lo tocca.
+
 #### Dove si riprende
 
-Dal **commit di FDIRTY** (lo decide l'utente), poi `EXX`.
+Dal **commit del banco** (lo decide l'utente). Poi, finalmente, i **budget**:
+con uno slot a 327 cicli il conto di §3.86 cambia, e va rifatto sui numeri
+nuovi. Se lo si vuole più basso, il prossimo pezzo è il kernel, non il contesto.
 
 ---
 

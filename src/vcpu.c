@@ -64,6 +64,31 @@ static void set_scalar(VCpu* cpu, int rd, int64_t value)
 }
 
 // ---------------------------------------------------------------------------
+//  LA PSW SCRITTA PER INTERO (mtpsw, reti): se cambia PSW_BANK, cambiano i
+//  registri. Lo scambio e' fisico -- il banco attivo sta sempre in r[] e f[] --
+//  cosi' il resto dell'interprete, il debugger e le dumps non sanno che i banchi
+//  esistono. Quali registri, e perche' quelli, in vcpu.h.
+// ---------------------------------------------------------------------------
+static void scambia_banco(VCpu* cpu)
+{
+  for (int i = 2; i < NUM_SCALAR; ++i)
+  {
+    if (i == 14) continue;          // lo stack e' condiviso
+    int64_t t = cpu->r[i]; cpu->r[i] = cpu->alt_r[i]; cpu->alt_r[i] = t;
+  }
+  for (int i = 0; i < NUM_FLOAT; ++i)
+  {
+    float t = cpu->f[i]; cpu->f[i] = cpu->alt_f[i]; cpu->alt_f[i] = t;
+  }
+}
+
+static void scrivi_psw(VCpu* cpu, uint64_t v)
+{
+  if ((cpu->psw ^ v) & PSW_BANK) scambia_banco(cpu);
+  cpu->psw = v;
+}
+
+// ---------------------------------------------------------------------------
 //  Quale stato dell'ESTENSIONE scrive? -> il bit sporco da alzare, o 0.
 //    PSW_VDIRTY   v0..v7, vl, vmask
 //    PSW_FDIRTY   f0..f15
@@ -260,7 +285,7 @@ static void execute(VCpu* cpu, const Instr* in)
       case OP_STI:  cpu->psw |=  PSW_IE; break;
       case OP_CLI:  cpu->psw &= ~PSW_IE; break;
       case OP_RETI:
-        cpu->pc = cpu->epc; cpu->psw = cpu->epsw;
+        cpu->pc = cpu->epc; scrivi_psw(cpu, cpu->epsw);
         if (cpu->trap_depth > 0) cpu->trap_depth -= 1;
         break;
       case OP_MARK:
@@ -290,7 +315,7 @@ static void execute(VCpu* cpu, const Instr* in)
       }
       case OP_MFCAUSE: set_scalar(cpu, in->a, (int64_t) cpu->cause); break;
       case OP_MFPSW: set_scalar(cpu, in->a, (int64_t) cpu->psw); break;
-      case OP_MTPSW: cpu->psw = (uint64_t) cpu->r[in->b];        break;
+      case OP_MTPSW: scrivi_psw(cpu, (uint64_t) cpu->r[in->b]);  break;
       case OP_MFEPC: set_scalar(cpu, in->a, cpu->epc);           break;
       case OP_MFEPSW: set_scalar(cpu, in->a, (int64_t) cpu->epsw); break;
       case OP_MTEPSW: cpu->epsw = (uint64_t) cpu->r[in->b];        break;

@@ -1409,9 +1409,9 @@ interrupt gira esattamente come prima.
 | `settimer` | `rs1` | periodo del timer in cicli (`0` = disarmato); arma a `cicli + rs1` | 1 |
 | `sti` | — | `psw \|= IE` (abilita le interruzioni) | 1 |
 | `cli` | — | `psw &= ~IE` (disabilita le interruzioni) | 1 |
-| `reti` | — | ritorno da interrupt: `pc = epc; psw = epsw` (ripristina lo stato) | 1 |
+| `reti` | — | ritorno da interrupt: `pc = epc; psw = epsw` (ripristina lo stato, **banco dei registri compreso**: vedi `PSW_BANK`) | 1 |
 | `mfpsw` | `rd` | `rd = psw` (leggi la parola di stato) | 1 |
-| `mtpsw` | `rs1` | `psw = rs1` (scrivi la parola di stato) | 1 |
+| `mtpsw` | `rs1` | `psw = rs1` (scrivi la parola di stato; se cambia `PSW_BANK`, **cambiano i registri**) | 1 |
 | `mfepc` | `rd` | `rd = epc` (per salvare il contesto) | 1 |
 | `mtepc` | `rs1` | `epc = rs1` (dove tornerà la `reti`) | 1 |
 | `mfepsw` | `rd` | `rd = epsw` (la parola di stato del task interrotto) | 1 |
@@ -1500,6 +1500,25 @@ indietro con `reti`, perché sono una proprietà del task che riprende. Le lettu
 > un task che faceva un conto in float senza un'istruzione vettoriale salvava
 > anche i 2 KB dei vettori. `tests/test_fdirty.vasm` misura la taglia del frame
 > nei quattro casi: 68, 132, 2128, 2192 byte.
+
+**`PSW_BANK` (bit 3 della psw): il banco alternativo dei registri.** Il bit
+**è** il banco, come un bit di `MODE1` nello SHARC: quando `mtpsw` o `reti` lo
+cambiano, `r2..r13`, `r15` e `f0..f15` si scambiano col banco alternativo.
+Restano condivisi `r0`, `r1` (il registro che passa da un banco all'altro, come
+`AF` con l'`EXX` dello Z80), `r14` (lo stack, che per l'HAL è il puntatore al
+contesto), i vettori e i registri di controllo. **La trap non lo tocca**: copia
+la psw in `epsw` e abbassa solo `IE`, quindi il vettore gira nel banco di chi ha
+interrotto e da `epsw` sa quale fosse. Nessun opcode nuovo e nessun ciclo in più:
+lo scambio costa quanto `mtpsw` e `reti`.
+
+Lo usa la **via veloce del super task**, in `lib_hal_banco` (`CONFIG banco` nel
+build): una trap della causa registrata con `irq_arm_banco` che arriva nel banco
+0, senza vettori vivi, non salva l'interrotto e passa al banco alternativo. Le
+regole che impone stanno in `hal/interface/hal/hal.vinc`: il super task parte nel
+banco alternativo, attraverso la sua `wait` non conserva niente, e chi gira nel
+banco 0 coi vettori vivi passa per la via canonica. Uno slot del super task costa
+**327 cicli** invece di ~2030, e `rtos/test/test_banco.vasm` ne prova i quattro
+percorsi. Chi non linka `lib_hal_banco` non riceve un'istruzione.
 
 **Come funziona il trap.** L'interruzione del timer è consegnata al **confine di
 istruzione**: quando `IE` è attivo, il timer è armato e il contatore dei cicli

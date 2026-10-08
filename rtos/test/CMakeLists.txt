@@ -589,3 +589,24 @@ vasm_program(test_wait OBJECTS t_wait LINK lib_wait lib_kernel)
 
 vasm_check(wait MODE DUMPS PROGRAM test_wait
            EXPECT "-1 -1 1 1 0 1 3 1 2 0 1 0 12345 0 0")
+
+# ---------------------------------------------------------------------------
+#  test_banco — IL BANCO ALTERNATIVO DEI REGISTRI (08/10/2026, §3.86).
+#
+#  La via veloce del super task, e i tre casi in cui non si puo' prendere: lo
+#  SFORAMENTO (la trap arriva col super task gia' nel banco alternativo), la
+#  MATERIALIZZAZIONE (un task del banco 0 deve girare prima che l'idle
+#  riparta), l'idle coi VETTORI vivi. Nove numeri, tutti derivabili: i flag del
+#  frame dell'idle (-1 via veloce, 4 materializzato, 6 canonico coi vettori) e
+#  l'idle che ritrova interi, float e v0. Le mutazioni viste rosse sono in fondo
+#  al sorgente.
+#
+#  CONFIG banco: lib_hal diventa lib_hal_banco, il resto della chiusura no.
+# ---------------------------------------------------------------------------
+vasm_object(t_banco SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_banco.vasm
+                    INTERFACES vinc_queue vinc_tcb vinc_wait vinc_hal)
+
+vasm_program(test_banco OBJECTS t_banco LINK lib_wait lib_kernel CONFIG banco)
+
+vasm_check(banco MODE DUMPS PROGRAM test_banco
+           EXPECT "-1 1 1 1 4 6 1 1 1")

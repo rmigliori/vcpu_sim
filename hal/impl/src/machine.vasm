@@ -58,6 +58,15 @@
 ; controllo a un puntatore, non a un nome. Vedi §12.2 della proposta.
 g_handler: .word 0        ; puntatore all'ISR applicativa (indice istruzione)
 
+.ifdef BANCO
+; La via veloce del super task (hal.vinc, "LA VIA VELOCE"). La causa che la
+; prende la dice irq_arm_banco; -1 non e' una causa, quindi senza irq_arm_banco
+; non la prende nessuno.
+g_causa_banco: .word -1
+g_pendente:    .word 0    ; il frame di banco il cui banco 0 e' ancora VIVO, o 0
+g_bersaglio:   .word 0    ; appoggio della materializzazione
+.endif
+
   .text
 
   .global _trap_entry
@@ -70,6 +79,11 @@ g_handler: .word 0        ; puntatore all'ISR applicativa (indice istruzione)
   .global irq_enable
   .global irq_save
   .global irq_restore
+  .global hal_ctx_block_super
+.ifdef BANCO
+  .global _trap_entry_banco
+  .global irq_arm_banco
+.endif
 
 ; ==========================================================================
 ;  _trap_entry: VETTORE di trap del timer. All'ingresso r14 = sp del task
@@ -99,6 +113,70 @@ _trap_entry:
   li r5, g_handler
   lw r5, 0(r5)
   jr r5                   ; consegna all'ISR applicativa (r1 = contesto)
+
+.ifdef BANCO
+; ==========================================================================
+;  _trap_entry_banco: il vettore con la VIA VELOCE del super task (§3.86).
+;
+;  All'ingresso e' tutto vivo, come in _trap_entry, e la trap NON ha cambiato
+;  banco: siamo in quello dell'interrotto. Tre domande, prima di toccare un
+;  registro che non sia r1 (condiviso, e messo subito al suo posto nel frame):
+;
+;    l'interrotto era gia' nel banco alternativo?   lo sforamento, o una trap
+;      dentro il super task: il banco e' suo e vivo -> via canonica
+;    aveva i vettori vivi?   il banco non li copre -> via canonica
+;    e' la causa registrata?   questa si chiede GIA' nel banco alternativo, i
+;      cui registri sono liberi per la regola della wait
+;
+;  La via veloce non salva niente dell'interrotto: riserva sul suo stack un
+;  frame canonico con i float (CTX_BANCO_SIZE), ci scrive flag, epc, psw e r1
+;  agli stessi posti, e se lo segna in g_pendente. La consegna all'ISR e'
+;  quella di sempre: r1 = r14 = contesto. L'ISR non sa da che via e' arrivata.
+;
+;  Le posizioni, da P = sp - 132: +0 flag, +68 epc, +72 psw, +124 r1. Sono quelle
+;  del frame canonico con il blocco float, e servono alla materializzazione.
+; ==========================================================================
+_trap_entry_banco:
+  sw r1, -8(r14)          ; r1 al suo posto: P + 124 (e anche nel frame canonico)
+  mfepsw r1
+  slli r1, r1, 60         ; PSW_BANK (bit 3) nel bit del segno
+  blt r1, r0, teb_canonico
+  mfepsw r1
+  slli r1, r1, 62         ; PSW_VDIRTY (bit 1) nel bit del segno
+  blt r1, r0, teb_canonico
+  li r1, PSW_BANK
+  mtpsw r1                ; banco alternativo, IE = 0: r2..r13, r15 sono liberi
+  mfcause r2
+  li r3, g_causa_banco
+  lw r3, 0(r3)
+  bne r2, r3, teb_torna
+
+  mfepc r2
+  sw r2, -64(r14)         ; epc: P + 68
+  mfepsw r2
+  sw r2, -60(r14)         ; psw: P + 72
+  addi r14, r14, -CTX_BANCO_SIZE
+  li r2, CTX_BANCO
+  sw r2, 0(r14)
+  li r3, g_pendente
+  sw r14, 0(r3)           ; il banco 0 e' vivo, e questo e' il suo frame
+  mov r1, r14
+  li r5, g_handler
+  lw r5, 0(r5)
+  jr r5
+
+; --- non era la sveglia: di nuovo nel banco 0, con la psw che la trap aveva
+;     lasciato viva -- quella dell'interrotto senza IE. ctx_save legge da li'
+;     i bit sporchi, e mtpsw li aveva azzerati ---
+teb_torna:
+  mfepsw r1
+  srli r1, r1, 1
+  slli r1, r1, 1          ; IE giu'
+  mtpsw r1                ; ...e il banco dell'interrotto, che e' lo 0
+teb_canonico:
+  lw r1, -8(r14)
+  j _trap_entry
+.endif
 
 ; ==========================================================================
 ;  ctx_save: seconda meta' del salvataggio contesto (la prima e' il push raw di
@@ -282,6 +360,104 @@ ctx_restore:
   ; r2 e' del chiamante ed e' sporcato comunque da qui in giu'.
   DBG_OPEN MARK_HALSW, M_HALSW_LOAD
 
+.ifdef BANCO
+  ; ------------------------------------------------------------------------
+  ;  IN QUALE BANCO SI RIPRISTINA (§3.86). Un frame si riprende nel banco
+  ;  della SUA psw, e i due frame nuovi hanno una ripresa loro:
+  ;
+  ;    CTX_BANCO     l'interrotto della via veloce: i suoi registri sono
+  ;                  ancora nel banco 0, basta reti
+  ;    CTX_LEGGERO   il super task alla sua wait: epc e psw, e basta
+  ;    canonico      se il banco del frame e' diverso da quello vivo si
+  ;                  cambia -- e se si va nel banco 0 mentre un frame di banco
+  ;                  e' in attesa (g_pendente), quel banco 0 e' VIVO: prima si
+  ;                  MATERIALIZZA, cioe' si scrivono i suoi registri negli
+  ;                  spazi che il frame di banco aveva riservato. Il puntatore
+  ;                  non cambia, e il TCB che lo tiene resta valido
+  ;
+  ;  La materializzazione e' il caso raro: un altro task del banco 0 sceglie
+  ;  di girare prima che l'interrotto riparta. La paga lui.
+  ; ------------------------------------------------------------------------
+  lw r1, 0(r14)
+  li r2, CTX_BANCO
+  beq r1, r2, cr_banco
+  li r2, CTX_LEGGERO
+  beq r1, r2, cr_leggero
+  li r3, 8                ; la psw: dopo il flag, i blocchi e l'epc
+  li r2, PSW_FDIRTY
+  and r4, r1, r2
+  beq r4, r0, crb_nof
+  addi r3, r3, 64
+crb_nof:
+  li r2, PSW_VDIRTY
+  and r4, r1, r2
+  beq r4, r0, crb_nov
+  addi r3, r3, 2060
+crb_nov:
+  add r3, r3, r14
+  lw r3, 0(r3)            ; la psw del frame
+  mfpsw r4
+  xor r4, r4, r3
+  slli r4, r4, 60         ; il banco della DIFFERENZA nel bit del segno
+  blt r4, r0, crb_cambia
+  j crb_comune
+crb_cambia:
+  slli r3, r3, 60
+  blt r3, r0, crb_verso_alt
+  li r2, g_pendente
+  lw r2, 0(r2)
+  beq r2, r0, crb_a_zero
+
+  ; --- MATERIALIZZA il frame di banco in attesa (r2 = il suo puntatore) ---
+  li r3, g_bersaglio
+  sw r14, 0(r3)           ; il frame da riprendere, per dopo
+  li r3, g_pendente
+  sw r0, 0(r3)
+  mov r14, r2
+  mtpsw r0                ; banco 0: i registri dell'interrotto, vivi
+  sw r2, 120(r14)         ; gli spazi del frame canonico coi float:
+  sw r3, 116(r14)         ;   r_k a 76 + (13 - k) * 4
+  sw r4, 112(r14)
+  sw r5, 108(r14)
+  sw r6, 104(r14)
+  sw r7, 100(r14)
+  sw r8, 96(r14)
+  sw r9, 92(r14)
+  sw r10, 88(r14)
+  sw r11, 84(r14)
+  sw r12, 80(r14)
+  sw r13, 76(r14)
+  sw r15, 128(r14)
+  fsw f15, 4(r14)         ;   f_k a 4 + (15 - k) * 4
+  fsw f14, 8(r14)
+  fsw f13, 12(r14)
+  fsw f12, 16(r14)
+  fsw f11, 20(r14)
+  fsw f10, 24(r14)
+  fsw f9, 28(r14)
+  fsw f8, 32(r14)
+  fsw f7, 36(r14)
+  fsw f6, 40(r14)
+  fsw f5, 44(r14)
+  fsw f4, 48(r14)
+  fsw f3, 52(r14)
+  fsw f2, 56(r14)
+  fsw f1, 60(r14)
+  fsw f0, 64(r14)
+  li r2, PSW_FDIRTY
+  sw r2, 0(r14)           ; adesso e' un frame canonico col blocco float
+  li r2, g_bersaglio
+  lw r14, 0(r2)
+  j crb_comune
+crb_a_zero:
+  mtpsw r0                ; nel banco 0 non c'e' niente di vivo
+  j crb_comune
+crb_verso_alt:
+  li r2, PSW_BANK
+  mtpsw r2
+crb_comune:
+.endif
+
   lw r1, 0(r14)           ; il flag: quali blocchi dell'estensione stanno sotto?
   addi r14, r14, 4
   beq r1, r0, cr_scalar
@@ -420,6 +596,30 @@ cr_scalar:
 
   reti                    ; pc = epc; psw = quella del frame -> il task riparte
 
+.ifdef BANCO
+; --- l'interrotto della via veloce: i registri sono ancora nel banco 0, e la
+;     reti con la sua psw ce lo riporta ---
+cr_banco:
+  li r2, g_pendente
+  sw r0, 0(r2)
+  lw r1, 68(r14)
+  mtepc r1
+  lw r1, 72(r14)
+  mtepsw r1
+  lw r1, 124(r14)
+  addi r14, r14, CTX_BANCO_SIZE
+  reti
+
+; --- il super task alla sua wait: niente registri, per la regola ---
+cr_leggero:
+  lw r1, 4(r14)
+  mtepc r1
+  lw r1, 8(r14)
+  mtepsw r1
+  addi r14, r14, 12
+  reti
+.endif
+
 ; ==========================================================================
 ;  hal_ctx_block(r1 = indirizzo di ripresa) -> r1 = contesto opaco
 ;
@@ -446,6 +646,29 @@ cr_scalar:
 ;  ripristina, ma reti atterra dentro receive, che il proprio r15 lo rilegge
 ;  dallo stack. Lo slot deve ESISTERE perche' il frame abbia la forma giusta.
 ; ==========================================================================
+; ==========================================================================
+;  hal_ctx_block_super(r1 = indirizzo di ripresa) -> r1 = contesto opaco
+;
+;  La sospensione del SUPER TASK (task_block_super). Nell'HAL normale e' un
+;  secondo nome di hal_ctx_block -- lo stesso indirizzo, zero istruzioni. In
+;  lib_hal_banco e' il frame LEGGERO (§3.86): attraverso la wait del super
+;  task non si conserva niente, e il frame dice solo dove riprende e con quale
+;  psw -- IE e il banco alternativo, SEMPRE: e' li' che il super task gira.
+;  I bit sporchi no: cio' che c'era nei float e nei vettori e' morto.
+; ==========================================================================
+.ifdef BANCO
+hal_ctx_block_super:
+  addi r14, r14, -12
+  sw r1, 4(r14)           ; epc: dove riprende
+  li r2, PSW_IE_BANK
+  sw r2, 8(r14)           ; psw
+  li r2, CTX_LEGGERO
+  sw r2, 0(r14)
+  mov r1, r14
+  ret
+.else
+hal_ctx_block_super:
+.endif
 hal_ctx_block:
   mtepc  r1               ; l'epc che ctx_save leggera': dove il task riprendera'
   ; --- la psw con cui il task riprendera': IE:1 sempre, e i BIT SPORCHI COME
@@ -506,6 +729,18 @@ timer_init:               ; timer_init(r1 = periodo in cicli): arma il tick
 irq_arm:                  ; installa il vettore di trap dell'HAL
   sethandler _trap_entry
   ret
+
+.ifdef BANCO
+; irq_arm_banco(r1 = la causa che sveglia il super task): il vettore con la via
+; veloce. La causa e' un dato dell'applicazione -- l'HAL non sa quale sorgente
+; scandisca la time line -- e passa per registrazione, come l'ISR con
+; irq_install. Clobber: r2.
+irq_arm_banco:
+  li r2, g_causa_banco
+  sw r1, 0(r2)
+  sethandler _trap_entry_banco
+  ret
+.endif
 
 ; irq_install(r1 = puntatore all'ISR applicativa): la registra. L'app lo ottiene
 ; con `li rX, la_mia_isr` (R_ADDR -> indice d'istruzione = puntatore a funzione).

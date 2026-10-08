@@ -1,0 +1,560 @@
+; rtos/test/test_banco.vasm — IL BANCO ALTERNATIVO DEI REGISTRI: la via veloce
+; del super task, e i tre casi in cui non si puo' prendere (08/10/2026, §3.86).
+;
+; Linkato con CONFIG banco: lib_hal_banco, il vettore _trap_entry_banco
+; registrato per CAUSE_CMP0. Le regole che la via veloce impone stanno in
+; hal.vinc ("LA VIA VELOCE"); questo programma le rispetta tutte: T parte nel
+; banco alternativo, non conserva niente attraverso la wait, e l'idle non usa i
+; vettori -- tranne al passo 4, dove li usa apposta.
+;
+; --- I PERSONAGGI ---
+;   T   il super task, nel banco alternativo. Ogni sveglia SPORCA r2..r13, i
+;       float e v0: se un solo registro dell'idle stesse nel banco di T, l'idle
+;       lo ritroverebbe sporco
+;   I   l'idle, nel banco 0, con TUTTI i registri vivi: r2..r10 = 1000 + k,
+;       r11..r13 tre indirizzi, f0..f15 = k + 0.5, r15 = 777. Gira in tondo
+;       senza toccarli, e alla fine li VERIFICA uno per uno
+;   H   un task ordinario al livello 1, titolare di wH. Sporca anche lui tutto,
+;       ma nel banco 0: e' il caso che costringe a materializzare
+;
+; --- I NOVE NUMERI, tutti DERIVABILI: nessuno dipende dai cicli ---
+;   -1  passo 1: alla prima sveglia il frame dell'idle e' CTX_BANCO. La via
+;       veloce e' stata presa davvero
+;    1  passo 2, lo SFORAMENTO: la trap arriva mentre T gira, gia' nel banco
+;       alternativo. Va per la via canonica, e r2..r5, r9 di T sono intatti
+;    1  ...e la wait dopo torna subito con 1: la sveglia non si e' persa
+;    1  passo 3: H ha girato una volta
+;    4  ...e quando gira, il frame dell'idle e' stato MATERIALIZZATO: PSW_FDIRTY,
+;       cioe' un frame canonico col blocco float, allo stesso indirizzo
+;    6  passo 4: l'idle ha toccato i vettori, e la sveglia dopo passa per la via
+;       canonica: il frame dell'idle ha VDIRTY | FDIRTY
+;    1  l'idle ritrova r2..r13 e r15
+;    1  ...i sedici float
+;    1  ...e v0, salvato dalla via canonica del passo 4
+;
+; --- ROSSO, quattro volte: le mutazioni e le uscite sono in fondo al file ---
+;
+; --- IL CANE DA GUARDIA, come in test_wait ---
+; Il canale 1, sui millisecondi, a +20 ms: se qualcuno dorme per sempre stampa
+; 99999 e il passo a cui ci si e' fermati.
+
+.include "tcb/tcb.vinc"
+.include "queue/queue_api.vinc"
+.include "wait/wait.vinc"
+.include "hal/hal.vinc"
+.include "hal/clock.vinc"
+
+  .data
+
+wT:         .res WAIT
+wH:         .res WAIT
+passo:      .word 0
+usa_vett:   .word 0        ; != 0: l'idle tocca i vettori, una volta
+fine:       .word 0        ; != 0: l'idle verifica e chiude
+cntI:       .word 0
+cntH:       .word 0
+buf:        .space 256
+
+r_flag1:    .word 0
+r_integro:  .word 0
+r_persa:    .word 0
+r_flagH:    .word 0
+r_flag4:    .word 0
+
+  .supertask tcbT
+tcbI:       .res TCB
+tcbH:       .res TCB
+
+stackT:     .space 4096        ; il frame canonico di T con float e vettori: 2192
+stackT_top:
+stackI:     .space 4096        ; quello dell'idle al passo 4, idem
+stackI_top:
+stackH:     .space 4096        ; H sporca anche i vettori
+stackH_top:
+
+  .text
+
+  .global main
+  .extern current
+  .extern pcb1
+  .extern pcb7
+  .extern task_ready
+  .extern sched_init
+  .extern wait_init
+  .extern wait
+  .extern wait_signal
+  .extern sched_isr_exit_to
+  .extern irq_install
+  .extern irq_arm_banco
+  .extern irq_enable
+  .extern irq_save
+  .extern irq_restore
+  .extern ctx_init
+
+; ==========================================================================
+;  BOOT
+; ==========================================================================
+main:
+  li r14, stackT_top
+  call sched_init
+  li r1, wT
+  li r2, tcbT
+  call wait_init
+  li r1, wH
+  li r2, tcbH
+  call wait_init
+
+  ; --- H (livello 1): READY. Gira alla prima wait di T, e si sospende ---
+  li r1, stackH_top
+  li r2, taskH
+  call ctx_init
+  li r3, tcbH
+  sw r1, TCB.sp(r3)
+  li r4, pcb1
+  sw r4, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r1, r4
+  mov r2, r3
+  call enqueue_tail
+
+  ; --- I (idle, livello 7) ---
+  li r1, stackI_top
+  li r2, taskI
+  call ctx_init
+  li r3, tcbI
+  sw r1, TCB.sp(r3)
+  li r4, pcb7
+  sw r4, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r1, r4
+  mov r2, r3
+  call enqueue_tail
+
+  ; --- T: parte a freddo, RUNNING ---
+  li r3, tcbT
+  li r1, current
+  sw r3, 0(r1)
+  li r5, RUNNING
+  sw r5, TCB.state(r3)
+
+  li r1, isr
+  call irq_install
+  li r1, CAUSE_CMP0
+  call irq_arm_banco       ; la via veloce, per la sveglia di T
+
+  ; --- il cane da guardia: canale 1, fra 20 ms ---
+  li r1, CLOCK_MS
+  lw r2, 0(r1)
+  addi r2, r2, 20
+  li r1, CMP1
+  sw r2, 0(r1)
+  li r1, CMP_CTRL
+  li r2, CMP_ARM1
+  sw r2, 0(r1)
+
+  ; --- T PARTE NEL BANCO ALTERNATIVO (la regola di hal.vinc), a IE = 1 ---
+  li r1, PSW_IE_BANK
+  mtpsw r1
+  li r5, taskT
+  jr r5
+
+; ==========================================================================
+;  T, il super task
+; ==========================================================================
+taskT:
+  ; --- passo 1: la via veloce ----------------------------------------------
+  li r1, passo
+  li r2, 1
+  sw r2, 0(r1)
+  call sveglia             ; H gira, poi l'idle, poi la sveglia di T
+  li r1, tcbI
+  lw r1, TCB.sp(r1)
+  lw r1, 0(r1)             ; il flag del frame dell'idle
+  li r2, r_flag1
+  sw r1, 0(r2)             ; -1: CTX_BANCO
+  call sporca
+  call sveglia
+  call sporca
+  call sveglia
+  call sporca
+
+  ; --- passo 2: lo SFORAMENTO -------------------------------------------------
+  ; Il comparatore spara mentre T gira, nel banco alternativo. La trap deve
+  ; prendere la via canonica e tornare qui con i registri di T intatti.
+  ;
+  ; PRIMA I BIT SPORCHI GIU', e non e' un dettaglio: da qui allo sparo T non
+  ; tocca ne' float ne' vettori, quindi a mandarlo per la via canonica puo'
+  ; essere solo il controllo del BANCO. Nella prima stesura T aveva appena
+  ; chiamato `sporca`, VDIRTY era alto, e togliere il controllo del banco
+  ; lasciava il test verde. Una sveglia non basta: il frame leggero li abbassa,
+  ; ma `wait` torna con irq_restore, cioe' con la psw salvata all'INGRESSO, e
+  ; li rialza.
+  li r1, passo
+  li r2, 2
+  sw r2, 0(r1)
+  li r1, PSW_IE_BANK
+  mtpsw r1
+  li r2, 222
+  li r3, 333
+  li r4, 444
+  li r5, 555
+  li r9, 999
+  li r6, CLOCK_CYCLES
+  lw r7, 0(r6)
+  addi r7, r7, -1
+  li r6, CMP0
+  sw r7, 0(r6)
+  li r6, CMP_CTRL
+  li r7, CMP_ARM0_CYC
+  li r8, CMP_ARM1
+  or r7, r7, r8
+  sw r7, 0(r6)             ; la trap scatta QUI
+  li r6, 0
+  li r7, 222
+  bne r2, r7, p2_esito
+  li r7, 333
+  bne r3, r7, p2_esito
+  li r7, 444
+  bne r4, r7, p2_esito
+  li r7, 555
+  bne r5, r7, p2_esito
+  li r7, 999
+  bne r9, r7, p2_esito
+  li r6, 1
+p2_esito:
+  li r1, r_integro
+  sw r6, 0(r1)
+  li r1, wT
+  call wait                ; 1, subito
+  li r2, r_persa
+  sw r1, 0(r2)
+
+  ; --- passo 3: la MATERIALIZZAZIONE -----------------------------------------
+  ; T rende pronto H, che batte l'idle: alla wait di T sceglie lo scheduler, e
+  ; H deve girare nel banco 0 mentre i registri dell'idle sono ancora li'.
+  li r1, passo
+  li r2, 3
+  sw r2, 0(r1)
+  call irq_save            ; r5 = la psw di T, banco compreso
+  addi r14, r14, -4
+  sw r5, 0(r14)
+  li r1, wH
+  call wait_signal         ; r1 = tcbH, che aspettava
+  call task_ready          ; batte l'idle: need_resched
+  lw r5, 0(r14)
+  addi r14, r14, 4
+  call irq_restore
+  call sveglia             ; qui gira H, poi l'idle, poi la sveglia di T
+  call sporca
+
+  ; --- passo 4: l'idle tocca i VETTORI ---------------------------------------
+  li r1, passo
+  li r2, 4
+  sw r2, 0(r1)
+  li r1, usa_vett
+  li r2, 1
+  sw r2, 0(r1)
+  call sveglia             ; l'idle alza VDIRTY; questa sveglia e' canonica
+  li r1, tcbI
+  lw r1, TCB.sp(r1)
+  lw r1, 0(r1)
+  li r2, r_flag4
+  sw r1, 0(r2)             ; 6: VDIRTY | FDIRTY
+  call sporca              ; v0 compreso: l'idle lo deve ritrovare
+
+  ; --- fine: l'idle verifica. T aspetta per sempre ---
+  li r1, passo
+  li r2, 5
+  sw r2, 0(r1)
+  li r1, fine
+  li r2, 1
+  sw r2, 0(r1)
+  li r1, wT
+  call wait
+
+; ==========================================================================
+;  sveglia: arma il canale 0 fra 3000 cicli e aspetta. Il cane resta armato.
+;  Non foglia: r15 sta sullo stack, perche' attraverso la wait non si conserva
+;  niente.
+; ==========================================================================
+sveglia:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  li r1, CLOCK_CYCLES
+  lw r2, 0(r1)
+  addi r2, r2, 3000
+  li r1, CMP0
+  sw r2, 0(r1)
+  li r1, CMP_CTRL
+  li r2, CMP_ARM0_CYC
+  li r3, CMP_ARM1
+  or r2, r2, r3
+  sw r2, 0(r1)
+  li r1, wT
+  call wait
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; ==========================================================================
+;  sporca: r1..r13, i float e v0 (VL = 64). Foglia: r14 e r15 no.
+; ==========================================================================
+sporca:
+  li r1, -1
+  li r2, -2
+  li r3, -3
+  li r4, -4
+  li r5, -5
+  li r6, -6
+  li r7, -7
+  li r8, -8
+  li r9, -9
+  li r10, -10
+  li r11, -11
+  li r12, -12
+  li r13, -13
+  fli f0, 99.0
+  fli f1, 99.0
+  fli f2, 99.0
+  fli f3, 99.0
+  fli f4, 99.0
+  fli f5, 99.0
+  fli f6, 99.0
+  fli f7, 99.0
+  fli f8, 99.0
+  fli f9, 99.0
+  fli f10, 99.0
+  fli f11, 99.0
+  fli f12, 99.0
+  fli f13, 99.0
+  fli f14, 99.0
+  fli f15, 99.0
+  li r1, 64
+  setvl r1, r1
+  vsplat v0, f0
+  ret
+
+; ==========================================================================
+;  H: un task ordinario del banco 0. Quando gira, l'idle e' stato
+;  materializzato: lo dice il flag del suo frame.
+; ==========================================================================
+taskH:
+  li r1, wH
+  call wait
+  li r1, tcbI
+  lw r1, TCB.sp(r1)
+  lw r1, 0(r1)
+  li r2, r_flagH
+  sw r1, 0(r2)             ; 4: PSW_FDIRTY, il frame canonico coi float
+  li r1, cntH
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  call sporca
+  j taskH
+
+; ==========================================================================
+;  I, l'idle: tutti i registri vivi, e alla fine la verifica
+; ==========================================================================
+taskI:
+  li r2, 1002
+  li r3, 1003
+  li r4, 1004
+  li r5, 1005
+  li r6, 1006
+  li r7, 1007
+  li r8, 1008
+  li r9, 1009
+  li r10, 1010
+  li r11, usa_vett
+  li r12, fine
+  li r13, cntI
+  li r15, 777
+  fli f0, 0.5
+  fli f1, 1.5
+  fli f2, 2.5
+  fli f3, 3.5
+  fli f4, 4.5
+  fli f5, 5.5
+  fli f6, 6.5
+  fli f7, 7.5
+  fli f8, 8.5
+  fli f9, 9.5
+  fli f10, 10.5
+  fli f11, 11.5
+  fli f12, 12.5
+  fli f13, 13.5
+  fli f14, 14.5
+  fli f15, 15.5
+loopI:
+  lw r1, 0(r13)
+  addi r1, r1, 1
+  sw r1, 0(r13)
+  lw r1, 0(r12)
+  bne r1, r0, verifica
+  lw r1, 0(r11)
+  beq r1, r0, loopI
+  sw r0, 0(r11)            ; una volta sola: l'idle tocca i vettori
+  li r1, 64
+  setvl r1, r1
+  vsplat v0, f0            ; v0 = 0.5 su tutte le corsie: VDIRTY
+  j loopI
+
+verifica:
+  cli                      ; r14 diventa un appoggio: nessuna trap da qui in poi
+  li r1, 0
+  li r14, 1002             ; r14 e' lo stack: qui non serve piu', la corsa finisce
+  bne r2, r14, ver_int
+  li r14, 1003
+  bne r3, r14, ver_int
+  li r14, 1004
+  bne r4, r14, ver_int
+  li r14, 1005
+  bne r5, r14, ver_int
+  li r14, 1006
+  bne r6, r14, ver_int
+  li r14, 1007
+  bne r7, r14, ver_int
+  li r14, 1008
+  bne r8, r14, ver_int
+  li r14, 1009
+  bne r9, r14, ver_int
+  li r14, 1010
+  bne r10, r14, ver_int
+  li r14, usa_vett
+  bne r11, r14, ver_int
+  li r14, fine
+  bne r12, r14, ver_int
+  li r14, cntI
+  bne r13, r14, ver_int
+  li r14, 777
+  bne r15, r14, ver_int
+  li r1, 1
+ver_int:
+  mov r15, r1              ; l'esito degli interi
+  ; --- i float: k + 0.5, letti come bit ---
+  li r13, buf
+  fsw f0, 0(r13)
+  fsw f1, 4(r13)
+  fsw f2, 8(r13)
+  fsw f3, 12(r13)
+  fsw f4, 16(r13)
+  fsw f5, 20(r13)
+  fsw f6, 24(r13)
+  fsw f7, 28(r13)
+  fsw f8, 32(r13)
+  fsw f9, 36(r13)
+  fsw f10, 40(r13)
+  fsw f11, 44(r13)
+  fsw f12, 48(r13)
+  fsw f13, 52(r13)
+  fsw f14, 56(r13)
+  fsw f15, 60(r13)
+  li r12, attesi
+  li r11, 0                ; k
+  li r10, 16
+  li r9, 1
+ver_f:
+  lw r2, 0(r13)
+  lw r3, 0(r12)
+  beq r2, r3, ver_f_ok
+  li r9, 0
+ver_f_ok:
+  addi r13, r13, 4
+  addi r12, r12, 4
+  addi r11, r11, 1
+  bne r11, r10, ver_f
+  ; --- v0: 0.5 su tutte le corsie ---
+  li r13, buf
+  vstore v0, r13
+  li r12, attesi           ; attesi[0] = 0.5
+  lw r3, 0(r12)
+  li r11, 0
+  li r10, 64
+  li r8, 1
+ver_v:
+  lw r2, 0(r13)
+  beq r2, r3, ver_v_ok
+  li r8, 0
+ver_v_ok:
+  addi r13, r13, 4
+  addi r11, r11, 1
+  bne r11, r10, ver_v
+
+  li r1, r_flag1
+  lw r5, 0(r1)
+  dumps r5
+  li r1, r_integro
+  lw r5, 0(r1)
+  dumps r5
+  li r1, r_persa
+  lw r5, 0(r1)
+  dumps r5
+  li r1, cntH
+  lw r5, 0(r1)
+  dumps r5
+  li r1, r_flagH
+  lw r5, 0(r1)
+  dumps r5
+  li r1, r_flag4
+  lw r5, 0(r1)
+  dumps r5
+  dumps r15                ; gli interi
+  dumps r9                 ; i float
+  dumps r8                 ; v0
+  halt
+
+; ==========================================================================
+;  L'ISR. DISARMA E SEGNALA, come in test_wait. Gira nel banco alternativo
+;  quando arriva dalla via veloce, nel banco di chi ha interrotto quando arriva
+;  dalla canonica: non lo sa, e non deve saperlo.
+; ==========================================================================
+  .interrupt isr
+  mfcause r3
+  li r4, CAUSE_CMP1
+  beq r3, r4, isr_guardia
+  li r4, CMP_CTRL
+  li r5, CMP_ARM1
+  sw r5, 0(r4)             ; DISARMA il canale 0 (il cane resta armato)
+  li r1, wT
+  call wait_signal
+  .endinterrupt isr r1
+
+isr_guardia:
+  li r5, 99999
+  dumps r5
+  li r1, passo
+  lw r5, 0(r1)
+  dumps r5
+  halt
+
+  .data
+attesi: .float 0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5
+        .float 8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5, 15.5
+
+; ==========================================================================
+;  ROSSO, quattro mutazioni di lib_hal_banco (08/10/2026), con l'uscita
+;  prevista PRIMA di lanciarle:
+;
+;  R1  irq_arm_banco registra la causa 0: la via veloce non combacia mai, ogni
+;      sveglia passa per teb_torna e per la via canonica
+;        4 1 1 1 4 6 1 1 1     il primo flag e' quello canonico coi float; il
+;                              resto giusto, e prova che teb_torna rimette i
+;                              bit sporchi (i float dell'idle si salvano)
+;  R2  niente materializzazione
+;        crash: "word load out of bounds at 0xfffffffffffffff3". H gira nel
+;        banco 0 sopra i registri dell'idle, e l'idle si ritrova in r13 il -13
+;        di `sporca`
+;  R3  niente controllo del banco: lo sforamento prende la via veloce
+;        previsto "-1 0 ...", uscito il crash di R2. Il perche', dalla traccia:
+;        lo sforamento scrive g_pendente col frame di T, sopra quello
+;        dell'idle ancora in attesa dal passo 1; la reti lo azzera, e al
+;        passo 3 nessuno materializza l'idle. Lo stesso guasto, piu' grave
+;  R4  niente controllo di VDIRTY
+;        -1 1 1 1 4 -1 1 1 0   al passo 4 la via e' quella veloce, e v0
+;                              dell'idle e' perso
+;
+;  E R3 E' STATO VERDE DUE VOLTE prima di diventare rosso: allo sforamento T
+;  aveva VDIRTY alto, e il controllo dei vettori copriva quello del banco. Il
+;  passo 2 adesso abbassa i bit con mtpsw prima di sparare.
+; ==========================================================================

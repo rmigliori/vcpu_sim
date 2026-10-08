@@ -44,6 +44,39 @@
 ; accanto ai due addendi, e in nessun altro posto.
 .equ PSW_EXT    6
 
+; bit 3: IL BANCO ALTERNATIVO dei registri e' quello attivo (08/10/2026, §3.86).
+; Il bit E' il banco: mtpsw e reti lo cambiano, la trap no. Si scambiano
+; r2..r13, r15 e f0..f15; r1 e r14 sono condivisi. Il perche' sta in vcpu.h.
+.equ PSW_BANK    8
+.equ PSW_IE_BANK 9        ; PSW_IE | PSW_BANK: la psw con cui riprende il super task
+
+; --------------------------------------------------------------------------
+;  LA VIA VELOCE DEL SUPER TASK -- solo in lib_hal_banco (CONFIG banco).
+;
+;  Il vettore e' _trap_entry_banco (irq_arm_banco, con la CAUSA che lo sveglia).
+;  Se la trap arriva nel banco 0, senza vettori vivi e con quella causa, non
+;  salva l'interrotto: passa al banco alternativo, e i registri dell'interrotto
+;  restano dove sono. Ogni altra trap passa per _trap_entry, nel modo canonico.
+;
+;  LE REGOLE, che sono del programmatore e non costano RAM:
+;    il super task PARTE NEL BANCO ALTERNATIVO (mtpsw con PSW_BANK prima di
+;      entrarci): irq_save/irq_restore salvano e rimettono la psw intera, banco
+;      compreso, e una prima wait fatta dal banco 0 lo riporterebbe li'
+;    attraverso la WAIT DEL SUPER TASK non si conserva niente: e' una pipeline,
+;      ogni stadio finisce prima del prossimo (l'utente). Il suo frame e'
+;      LEGGERO -- epc e psw -- e i suoi registri li usa anche l'ISR
+;    chi gira nel banco 0 non usa i VETTORI, o paga la via canonica: il banco
+;      non li copre
+;
+;  Il frame del banco riserva sullo stack dell'interrotto un frame canonico
+;  intero con i float (132 byte), ma scrive solo flag, epc, psw e r1: se prima
+;  che l'interrotto riparta va ripristinato un altro contesto del banco 0,
+;  ctx_restore lo MATERIALIZZA al suo posto, e il puntatore non cambia.
+; --------------------------------------------------------------------------
+.equ CTX_BANCO      -1    ; il flag del frame del banco
+.equ CTX_LEGGERO    -2    ; il flag del frame leggero del super task
+.equ CTX_BANCO_SIZE 132   ; 68 + i 64 byte dei float
+
 ; --------------------------------------------------------------------------
 ;  Il frame di contesto: 16 parole, 64 byte.
 ;

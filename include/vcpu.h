@@ -74,6 +74,35 @@
 #define PSW_FDIRTY 0x4ULL   // bit 2: stato float da salvare
 
 // ---------------------------------------------------------------------------
+//  PSW_BANK — IL BANCO ALTERNATIVO DEI REGISTRI (08/10/2026, §3.86)
+//
+//  Il bit E' il banco, come in MODE1 dello SHARC: scriverlo cambia i registri.
+//  Lo scrivono solo mtpsw e reti -- le due istruzioni che scrivono la psw per
+//  intero -- e la trap NON lo tocca: copia la psw in epsw e abbassa IE, quindi
+//  il vettore gira nel banco di chi ha interrotto, e da epsw sa quale fosse.
+//  E' la cosa che lo Z80 non aveva bisogno di sapere: li' EXX si usava a
+//  interrupt chiusi, qui il super task gira nel banco alternativo a interrupt
+//  aperti, e una trap che lo interrompe (lo sforamento) non deve scambiare.
+//
+//  NIENTE OPCODE: con il banco nella psw, `mtpsw` fa cio' che faceva EXX, e
+//  `reti` rimette da sola il banco di chi riprende. Deciso dall'utente.
+//
+//  COSA SI SCAMBIA: r2..r13, r15 e f0..f15. Restano CONDIVISI
+//    r0    cablato a zero
+//    r1    il registro che passa da un banco all'altro, come AF nello Z80 con
+//          EXX: e' il contesto opaco che l'HAL consegna all'ISR
+//    r14   lo stack: nell'HAL e' il puntatore al contesto, e ctx_restore lo
+//          reimposta a ogni ripresa; bancato, il banco alternativo ne terrebbe
+//          uno vecchio. Lo Z80 non scambiava SP
+//    v0..v7, vl, vmask   2 KB di ferro: chi interrompe coi vettori vivi passa
+//          dal salvataggio canonico
+//    psw, epc, epsw      di controllo, non di dato
+//
+//  Il costo nel modello e' quello di mtpsw e di reti: nessun ciclo in piu'.
+// ---------------------------------------------------------------------------
+#define PSW_BANK   0x8ULL   // bit 3: il banco alternativo e' quello attivo
+
+// ---------------------------------------------------------------------------
 //  Timing model (first-order, in-order, no chaining/overlap)
 //    - scalar op        : fixed latency
 //    - vector op         : startup (pipeline fill) + ceil(VL / VEC_LANES)
@@ -311,6 +340,10 @@ typedef struct
   // da dove cadevano gli interrupt. L'excess precision dell'8087, dentro il
   // contesto. tests/test_fctx.vasm e' la prova, vista rossa prima.
   float   f[NUM_FLOAT];
+  // Il banco NON attivo (PSW_BANK): r2..r13, r15 e f0..f15 di chi non gira in
+  // quel banco. Si usano solo quegli indici; gli altri restano a zero.
+  int64_t alt_r[NUM_SCALAR];
+  float   alt_f[NUM_FLOAT];
   float   v[NUM_VECTOR][VLMAX];
   int     vl;
   uint64_t vmask;   // per-element predicate written by vms* compares (bit i = element i)

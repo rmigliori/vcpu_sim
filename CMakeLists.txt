@@ -128,6 +128,11 @@ vasm_interface(vinc_marks
 # ---------------------------------------------------------------------------
 vasm_config(marks DEFINES MARKS INTERFACES vinc_marks)
 
+# LA VIA VELOCE DEL SUPER TASK (08/10/2026, §3.86): il banco alternativo dei
+# registri. La linka solo chi la chiede (CONFIG banco), cosi' tutti gli altri
+# programmi restano identici al ciclo. Le regole che impone stanno in hal.vinc.
+vasm_config(banco DEFINES BANCO)
+
 # L'altra meta' dell'HAL: qui e non prima, perche' lib_hal dichiara
 # `CONFIGS marks` e quel target nasce nella riga sopra. Vedi il riquadro in
 # testa a `add_subdirectory(hal/interface)`.

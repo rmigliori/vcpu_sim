@@ -135,6 +135,7 @@ g_lat_open: .word 0       ; !=0 => una finestra LATENCY e' aperta
   .global dispatcher        ; per sched_isr_exit_to, nell'oggetto accanto
   .extern ctx_restore
   .extern hal_ctx_block
+  .extern hal_ctx_block_super
 
 ; ==========================================================================
 ;  sched_init(): svuota le otto code di ready e i loro slot.
@@ -309,7 +310,9 @@ task_yield:
 ; ==========================================================================
 task_block_super:
   mov r1, r15            ; l'indirizzo di ripresa: il ritorno al chiamante
-  call hal_ctx_block     ; r1 = contesto opaco del chiamante
+  call hal_ctx_block_super  ; r1 = contesto opaco. Nell'HAL normale e'
+                         ; hal_ctx_block; in lib_hal_banco e' il frame LEGGERO
+                         ; (§3.86): attraverso la wait non si conserva niente
   li r2, current
   lw r3, 0(r2)
   sw r1, TCB.sp(r3)      ; il contesto vive nel TCB: il super task HA un
