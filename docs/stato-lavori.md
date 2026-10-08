@@ -1,6 +1,6 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **7 ottobre 2026, sera** (la ripresa riscritta in §0; §3.85 **`equiv.py` oltre il
+> Ultimo aggiornamento: **8 ottobre 2026** (§3.86: misure, FDIRTY, il banco, i budget accettati, ADC_AT deciso); prima: **7 ottobre 2026, sera** (la ripresa riscritta in §0; §3.85 **`equiv.py` oltre il
 > tetto**, il passo 3: i primi 64 MB su disco e uno SHA-256 del flusso intero,
 > visto rosso con una `srai` a 2 cicli dopo i 64 MB; e prima §3.84 **il mondo esterno e
 > l'eco**, il passo 2: `tools/mare.py` in lockstep via `--eco-cmd`, la riga
@@ -144,9 +144,20 @@
 > vero era il CONTESTO, ~2030 cicli a slot col super task vettoriale. Due lavori
 > di macchina, decisi con l'utente: **FDIRTY** (i float hanno un bit loro,
 > `834b5b2`, pushato) e **il banco alternativo dei registri** (`PSW_BANK`,
-> `lib_hal_banco`, la via veloce del super task: **uno slot a 327 cicli**).
-> `ctest` **72/72**. Il banco va committato; poi si torna ai **budget**, sui
-> numeri nuovi. La sezione da leggere è §3.86, prima di tutto il resto qui sotto.
+> `lib_hal_banco`, la via veloce del super task: **uno slot a 327 cicli**,
+> `1422288`, pushato). `ctest` **72/72**. **I budget sono ACCETTATI**
+> dall'utente. E l'utente ha deciso di togliere l'anticipo dello slot RX col
+> ferro: **`ADC_AT`**, l'avvio dell'ADC a un istante programmato, nella forma
+> approvata in fondo a §3.86. Si riprende da li', poi il cpuometro, poi la
+> macchina a stati. La sezione da leggere è §3.86, prima di tutto il resto.
+>
+> **LA FORMULA PER RIPRENDERE (08/10):**
+>
+> ```
+> Leggi docs/stato-lavori.md, §0 e poi §3.86 (tutta, e in fondo
+> "L'anticipo di RX"). Riprendiamo da ADC_AT, nella forma gia'
+> approvata: scrivilo, con il test visto rosso, poi il cpuometro.
+> ```
 >
 > **Il 07/10**, per chi ne cerca le tracce:
 >
@@ -4039,11 +4050,89 @@ di cui contesto   113         381                ~1820
 La mia stima era ~250. Il resto (~214) è KERNEL: `wait`, `task_block_super`,
 `sched_isr_exit_to`, `dispatcher`, `wait_signal`. Il banco non lo tocca.
 
+Committato in `1422288`, pushato dall'utente su GitHub e sulla Pi.
+
+#### I BUDGET: ACCETTATI dall'utente («il budget mi sembra corretto»)
+
+La regola: **durata dello slot = 327 di meccanismo + il lavoro misurato × 1,25,
+arrotondato alle centinaia**. Un'attività per slot (raggruppare è stato
+respinto: si ottimizza il contesto, non gli algoritmi).
+
+```
+slot          lavoro    durata    note
+TX                14       400
+RX                87       600    <- SPARISCE con ADC_AT, qui sotto
+FRONTE           891     1.500
+TRACKER          126       500    arma ADC_AT per lo sweep dopo
+BARKER_ACC       746     1.300    ACQ, ogni sweep
+BARKER_DEC       907     1.500    ACQ, solo al 5°
+FFT            7.663    10.000
+MSG               14       400    la FFT scrive gia' in RAM condivisa
+DECIDI            --       400    NON misurato: e' la macchina a stati
+
+CAL     3.400 a sweep   ACQ 4.700 (6.200 al 5°)   TRACK 13.800, di cui 2.289 meccanismo
+```
+
+(Con lo slot RX tolto: CAL 2.800, ACQ 4.100 / 5.600, TRACK 13.200.) In TRACK la
+catena finisce verso 734 µs, il TX dopo e' a 1.000. Aperto, detto all'utente e
+non deciso: il margine al 25% e' largo per una macchina in cui FRONTE costa
+sempre 890-891; al 10% scoprirebbe anche le regressioni piccole.
+
+#### L'ANTICIPO DI RX, e perche' si toglie col ferro
+
+L'utente ha chiesto se l'anticipo fosse la commutazione T/R. **No**: quella e'
+fisica, 10 µs della scheda, e il software non la paga. L'anticipo e' SOFTWARE:
+l'ADC parte alla `sw` su `ADC_CTRL`, la sveglia del super task costa 183 cicli
+e la finestra ne dura 64, quindi lo slot RX doveva suonare 300 cicli prima e
+aspettare l'istante in un ciclo su `CLOCK_CYCLES` (5-8 cicli d'imprecisione).
+
+**L'idea dell'utente: l'anticipo lo fa l'IDLE** (e il ricordo: da giovane un
+CPUOMETRO era un'onda quadra perfetta generata dall'idle). Discussa e NON presa,
+per due ragioni dette: la precisione della finestra diventerebbe il periodo
+del ciclo dell'idle -- e l'idle che riceve dalla FIFO e fa statistiche (§3.86
+sopra) ne ha uno lungo -- e un'ISR che arriva prima dell'istante ritarda la
+finestra di tutta la sua durata, senza rimedio. Il cpuometro dice la stessa
+cosa dall'altra parte: l'onda e' perfetta perche' l'idle non deve niente a
+nessuno.
+
+**DECISO dall'utente: la scelta HW** («l'anticipo di rx non mi convince sarebbe
+meglio la scelta hw»): l'avvio dell'ADC a un istante programmato, il generatore
+di timing degli altimetri veri. LA FORMA, proposta e approvata («si»):
+
+```
+ADC_AT  0x70   (MMIO_BASE + 0x70: libero, fra MBOX_CTRL 0x6C e HWLOCK 0x80,
+               verificato l'08/10 su devices.h)
+  scrittura    l'istante ASSOLUTO, base CLOCK_CYCLES: l'ADC parte da solo li'.
+               Campione i a AT + (i+1) * ADC_PERIOD, esatto al tick. Il
+               programma l'istante lo SA: niente lw prima della sw
+  si congela   ADDR, COUNT, PERIOD all'ARMAMENTO, non all'avvio: il TRACKER
+               arma e poi fa altro. Un secondo armamento sostituisce il primo
+  in ritardo   un istante gia' passato NON parte, e alza un bit. Non in
+               ADC_STATUS (dal bit 2 c'e' il contatore: la ragione di
+               TX_BLIND, §3.82) ma nella LETTURA di ADC_AT: bit 0 armato,
+               bit 1 in ritardo, abbassato dalla lettura. Confronto wrappante,
+               (adesso - AT) >= 0, come i comparatori
+  il mondo     la scheda chiede il blocco a mare.py all'istante AT invece che
+               alla sw: il protocollo non cambia
+  ADC_CTRL     resta com'e', avvio immediato: i tre test dell'ADC non si muovono
+  il TX        resta com'e': il suo istante si legge esatto, e un jitter sul TX
+               non entra nella misura del ritardo
+```
+
+Il test: un blocco armato a un istante noto, l'eco di `mare.py` nel gate
+calcolato qualunque sia la fase del programma. Il rosso: l'ADC che parte
+all'armamento invece che all'istante.
+
+**E il CPUOMETRO, accettato dall'utente**, DOPO `ADC_AT`: l'idle alterna un
+canale del marcatore a ogni giro, e `tools/marks.py` legge l'onda quadra. E' la
+misura del «respiro» che §0 aspetta dal 14/09: quanto margine resta davvero
+alla CPU0 con la time line che gira.
+
 #### Dove si riprende
 
-Dal **commit del banco** (lo decide l'utente). Poi, finalmente, i **budget**:
-con uno slot a 327 cicli il conto di §3.86 cambia, e va rifatto sui numeri
-nuovi. Se lo si vuole più basso, il prossimo pezzo è il kernel, non il contesto.
+Da **`ADC_AT`**, nella forma qui sopra: macchina (`devices.h/.c`, `machine.c`),
+`hal/adc.vinc`, il test, visto rosso. Poi il cpuometro. Poi la macchina a stati
+coi budget accettati.
 
 ---
 
