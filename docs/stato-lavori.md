@@ -3844,6 +3844,131 @@ il contratto scritto.
 
 ---
 
+### 3.86 I COSTI MISURATI DELLE ATTIVITÀ: la base dei budget del passo 4 (08/10/2026)
+
+Chiesto dall'utente dopo la proposta di budget fatta su stime: «fai le misure».
+I programmi stanno in `out/misure/` (**non versionato**: `misura.sh`,
+`m_taratura`, `m_attivazione`, `m_attivita`, `scena.scena`); le procedure sono
+codice di misura, non ancora le attività del passo 4.
+
+**Il metodo:** una `lw CLOCK_CYCLES` prima e una dopo, differenza meno 4.
+Tarato: vuoto **0**, una `li` **1**, una `div` **20**, `fft64` **7663** — la
+cifra di §3.77, esatta. Niente traccia, quindi niente rischio OOM.
+
+```
+ATTIVAZIONE   302-304  comparatore sui cicli -> prima istruzione di T dopo wait;
+                       jitter 2, la fase dell'idle (lw a 4 cicli). Dalla traccia:
+                       _trap_entry 100, isr+wait_signal 26, sched_isr_exit_to 40,
+                       dispatcher 15, ctx_restore 90, ritorno da wait 31
+USCITA        292      da "call wait" alla prima istruzione dell'idle
+                       => uno slot costa 594 cicli di meccanismo, entrata + uscita
+CON T VETTORIALE (VDIRTY alzato, il caso vero: FRONTE, BARKER, FFT)
+ATTIVAZIONE   1022-1025   ctx_restore di T: 810
+USCITA        1010        il salvataggio di T: 806
+                       => ~2030 a slot, e ~1820 (il 90%) sono CONTESTO.
+                       Il frame vettoriale supera i 2 KB: lo stack di 128 byte
+                       di m_attivazione e' andato sotto zero al primo giro
+TX            13-14    segno scelto, lw;sw a TX_CTRL
+APRI          5-8      di ritardo sull'istante voluto: l'attesa attiva gira a 5
+BLOCCO        79       dall'avvio al contatore visto: 64 di DMA + il poll
+FRONTE        890-891  vettoriale, costo COSTANTE: I^2+Q^2, vredmax, soglia a
+                       1/4 della potenza, mfvmask + ricerca binaria sui bit,
+                       interpolazione lineare
+TRACKER       86 / 91 / 126   primo / secondo / filtro: due punti e alfa/beta,
+                       con le conversioni intero<->float col numero magico
+BARKER_ACC    745-746  per sweep
+BARKER_DEC    907      al quinto: rumore sui primi 16 gate, poi il fronte della
+                       somma decodificata
+FFT           7663
+MSG           14       una parola in mailbox (la FFT puo' scrivere gia' in RAM
+                       condivisa); copiare lo spettro costerebbe altri 313
+DECIDI        --       e' la macchina a stati: si misura quando c'e'
+```
+
+**Sanità, sui blocchi veri di `tools/mare.py`** (scena di §3.82 senza clutter):
+il fronte a 44,6 gate nel primo sweep (finestra a priori), poi ~25 con la
+finestra del tracker; residui degli sweep 3..5 **−0,14 −0,51 −0,13** gate, sotto
+1 come in §3.82. Il fronte della somma Barker a 26,1.
+
+**Quattro cose emerse misurando:**
+
+- **il criterio di ACQ di §3.82 era sbagliato, ed era mio.** «Picco sopra una
+  soglia sul rumore», con il rumore preso come media della finestra, non passa
+  mai: l'eco ha un plateau che riempie mezza finestra. Il rumore va preso
+  **prima del fronte**. E l'argmax cade nel plateau, non sul fronte: il ±1 gate
+  va confrontato col **fronte** della somma;
+- **la conversione float→intero non chiede un'istruzione nuova:** col numero
+  magico costa ~15 cicli, e ne servono tre per sweep, contro i 594 di uno slot.
+  Decide l'utente;
+- **i cinque blocchi del Barker non sono allineati** se la finestra si muove fra
+  uno sweep e l'altro: in ACQ si muove di ~0,25 gate a sweep, quindi la somma si
+  allarga di ~1 gate. Non gestito nella misura, ed è dichiarato;
+- **`.word NOME` di una `.equ` scrive 0 in silenzio** (il manuale lo cita in
+  §4.2): è costato una corsa. Farlo diventare un errore è una modifica
+  dell'assembler, e decide l'utente.
+
+#### L'utente: l'ottimizzazione va nel CONTESTO, non negli algoritmi
+
+Raggruppare attività per risparmiare slot (proposta mia) è **respinto**: il
+costo sta nel salvataggio e nel ripristino, ed è lì che si lavora. Le leve,
+discusse:
+
+```
+1  la wait del SUPER TASK e' sincrona: attraverso di lei non c'e' niente di
+   vivo (le attivita' finiscono, lo stato e' in memoria). Regola del
+   programmatore -- si conservano r14 e r15 -- e un frame LEGGERO (epc, psw,
+   r15, un terzo valore del flag). Stima: slot da ~2030 a ~460. Solo il super
+   task: i task ordinari contano sui registri attraverso il blocco
+2  l'idle senza contesto: RITIRATA. L'idle della CPU di foreground puo'
+   LAVORARE -- ricevere da una FIFO senza sospendersi, fare statistiche
+   (utente) -- quindi e' interrotto con registri vivi, e va salvato tutto.
+   Se tocca float o vettori il suo salvataggio diventa quello vettoriale,
+   ~1600 a slot: e' il posto di una regola
+3  il codice del salvataggio: un solo spostamento di r14, ~15 cicli a
+   salvataggio e ~15 a ripristino. Muove le impronte di chi linka lib_hal
+4  il ferro: il banco secondario dell'ADSP-2100 / SHARC, lo stacking e il
+   salvataggio pigro dei float del Cortex-M. Cambia l'ISA: per ultimo
+```
+
+#### La leva 1 diventa il SECONDO BANCO, e prima FDIRTY (decisi dall'utente)
+
+L'utente: il super task è una **pipeline DSP**, ogni stadio finisce prima del
+prossimo, quindi la regola regge; e in più un'istruzione come l'`EXX` dello
+Z80 (lui diceva `xchg`), usata **solo** dall'ISR che sveglia il super task —
+le altre salvano nel modo canonico. Concordato:
+
+```
+EXX        scambia r1..r15 E f0..f15 (r14: il super task ha il suo stack;
+           r15: sparisce il push raw di _trap_entry). Fuori: v*, vl, vmask,
+           psw, epc, epsw. 1 ciclo
+il bit     nella psw, invertito da EXX, copiato in epsw dalla trap: il vettore
+           deve sapere DA CHE BANCO arriva prima di toccare un registro. Lo
+           sforamento (trap dello slot col super task gia' nel banco
+           alternativo) va per la via canonica
+la regola  attraverso la wait del super task non si conserva niente
+FDIRTY     prima di EXX, come passo a se'
+```
+
+**FDIRTY: FATTO, non committato.** Le istruzioni float non alzano più `VDIRTY`;
+`PSW_FDIRTY` (bit 2) le copre; `ctx_save` ha due blocchi, e il flag del frame è
+la maschera `PSW_EXT` (= 6, scritta in `hal.vinc` perché l'assembler non
+somma costanti). Il percorso pulito resta di **quattro istruzioni identiche**.
+Verifiche:
+
+| cosa | risultato |
+|---|---|
+| `ctest --timeout 60` | **71/71** (70 + `fdirty`) |
+| `test_fdirty` | `68 132 1 2128 1 2192 1 1`; ROSSO, come previsto nel sorgente, con la macchina di prima (`68 2128 0 2128 1 2128 0 1`) e con l'HAL di prima (`68 68 0 2192 1 2192 1 1`) |
+| `equiv.py` contro `HEAD` (`out/eq_head`), cicli + istruzioni + uscite | **54/56 identici**; `fctx` 1736 → 472 (il task solo float non salva più i vettori); `vectors` +402, perché i controlli costano 6 cicli a salvataggio sporco e 7 a ripristino e il programma va a timer: i cicli in più tolgono giri ai task. `EXPECT` fermo |
+| impronte | **18 mosse**, le immagini che linkano `lib_hal`; 8 ferme; `test_fdirty` nuova |
+| attivazione rimisurata | T scalare **302**, invariata; T solo vettoriale 1022 → **950** |
+
+#### Dove si riprende
+
+Dal **commit di FDIRTY** (lo decide l'utente), poi `EXX`.
+
+---
+
 ### 3.85 `equiv.py` OLTRE IL TETTO: il passo 3 della tappa 4 (07/10/2026, terza parte)
 
 Il tetto dei 64 MB (§3.81) rendeva il confronto **cieco** oltre quel punto:

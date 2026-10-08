@@ -211,6 +211,19 @@ vasm_object(t_fctx    SOURCE ${CMAKE_SOURCE_DIR}/tests/test_fctx.vasm)
 vasm_program(test_fctx OBJECTS t_fctx LINK lib_hal)
 vasm_check(fctx       MODE DUMPS PROGRAM test_fctx EXPECT "0 0")
 
+# test_fdirty — OGNI TASK SALVA CIO' CHE HA TOCCATO (08/10/2026).
+#
+# I bit sporchi dell'estensione sono due, VDIRTY e FDIRTY, e i blocchi del
+# frame anche. Quattro casi -- interi, float, vettori, tutti e due -- con l'ISR
+# che misura la taglia del frame e sporca f1 e v0: 68, 132, 2128, 2192, e ogni
+# registro ritrovato. Visto rosso con la macchina di prima (le float alzavano
+# VDIRTY: "68 2128 0 2128 1 2128 0 1") e con l'HAL di prima (un blocco solo:
+# "68 68 0 2192 1 2192 1 1"). Linkato a lib_hal e senza kernel, come test_fctx.
+vasm_object(t_fdirty    SOURCE ${CMAKE_SOURCE_DIR}/tests/test_fdirty.vasm)
+vasm_program(test_fdirty OBJECTS t_fdirty LINK lib_hal)
+vasm_check(fdirty       MODE DUMPS PROGRAM test_fdirty
+           EXPECT "68 132 1 2128 1 2192 1 1")
+
 # test_vcvt — LA PRIMA CONVERSIONE INTERO -> FLOAT (28/09/2026).
 #
 # I campioni dell'ADC sono interi a 12 bit, la FFT e' in float, e fino a oggi

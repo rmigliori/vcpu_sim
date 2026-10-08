@@ -141,32 +141,39 @@ ctx_save:
   sw r1, 0(r14)           ; epc
 
   ; ------------------------------------------------------------------------
-  ;  IL CONTESTO VETTORIALE, e SOLO se qualcuno l'ha toccato.
+  ;  L'ESTENSIONE -- float e vettori -- e SOLO cio' che il task ha toccato.
   ;
-  ;  Salvarlo sempre costerebbe ~1260 cicli contro i ~120 dello scalare -- un
-  ;  fattore dieci su OGNI commutazione, pagato anche dai task che l'unita'
-  ;  vettoriale non la sfiorano. PSW_VDIRTY e' la domanda a cui rispondere in
-  ;  tre istruzioni prima di decidere.
+  ;  Salvarla sempre costerebbe ~1600 cicli a commutazione contro i ~120 dello
+  ;  scalare -- un fattore dieci su OGNI commutazione, pagato anche dai task che
+  ;  non la sfiorano. I due bit sporchi sono la domanda; il percorso di chi non
+  ;  ne ha nessuno e' di quattro istruzioni, le stesse di quando il bit era uno.
   ;
-  ;  Il frame diventa a TAGLIA VARIABILE, e la parola di flag e' l'ultima cosa
+  ;  I BLOCCHI SONO DUE dall'08/10/2026 (§3.86): i float (64 byte) e i vettori
+  ;  (2060). Prima i float viaggiavano dentro il blocco vettoriale, e un task
+  ;  solo float pagava i 2 KB dei vettori.
+  ;
+  ;  Il frame e' a TAGLIA VARIABILE, e la parola di flag e' l'ultima cosa
   ;  spinta -- cioe' quella all'indirizzo piu' basso, offset 0 del contesto
   ;  opaco. Deve stare li' perche' ctx_restore la legge PRIMA di sapere quanto
-  ;  e' grande cio' che sta ripristinando.
+  ;  e' grande cio' che sta ripristinando. Il flag E' la maschera PSW_EXT della
+  ;  psw: dice quali dei due blocchi stanno sotto.
   ;
-  ;  Il blocco sta sullo STACK del task e non nel TCB: il kernel vede TCB.sp
+  ;  I blocchi stanno sullo STACK del task e non nel TCB: il kernel vede TCB.sp
   ;  come un puntatore opaco e non lo interpreta mai (§12.3), e un campo nel TCB
   ;  gli farebbe conoscere una cosa che solo l'HAL sa leggere. Il prezzo lo paga
-  ;  lo stack di chi usa i vettori, che e' dove va pagato.
+  ;  lo stack di chi usa l'estensione, che e' dove va pagato.
   ; ------------------------------------------------------------------------
   mfpsw r1
-  li r2, PSW_VDIRTY
-  and r1, r1, r2
+  li r2, PSW_EXT
+  and r1, r1, r2           ; i bit sporchi del task: saranno il flag
   beq r1, r0, cs_clean
+  mov r5, r1               ; r1..r13 sono gia' nel frame: tutti liberi
 
-  ; --- i 16 registri FLOAT. Non erano salvati DA SEMPRE, e nessun commento lo
-  ;     dichiarava: il frame nominava solo r1..r13, psw, epc, r15. Non e' un
-  ;     buco separabile da quello vettoriale -- vredsum riduce IN un float,
-  ;     quindi ogni calcolo vettoriale vero finisce li' dentro ---
+  ; --- i 16 registri FLOAT, se il task li ha scritti. Fino al 12/09 non erano
+  ;     salvati MAI, e nessun commento lo dichiarava ---
+  li r2, PSW_FDIRTY
+  and r3, r5, r2
+  beq r3, r0, cs_vett
   addi r14, r14, -4
   fsw f0, 0(r14)
   addi r14, r14, -4
@@ -199,6 +206,12 @@ ctx_save:
   fsw f14, 0(r14)
   addi r14, r14, -4
   fsw f15, 0(r14)
+
+  ; --- i VETTORIALI, se il task li ha scritti ---
+cs_vett:
+  li r2, PSW_VDIRTY
+  and r3, r5, r2
+  beq r3, r0, cs_flag
 
   ; --- vl e vmask PRIMA dei registri vettoriali: il salvataggio usa setvl, che
   ;     vl lo distrugge. vmask e' a 64 bit e la sw ne scrive 32: due parole ---
@@ -236,9 +249,9 @@ ctx_save:
   sub r14, r14, r4
   vstore v7, r14          ; v7 e' il piu' in basso: ctx_restore lo riprende per primo
 
-  li r1, 1
+cs_flag:
   addi r14, r14, -4
-  sw r1, 0(r14)           ; flag = 1: sotto c'e' un blocco vettoriale
+  sw r5, 0(r14)           ; flag = i bit sporchi: quali blocchi stanno sotto
   mov r1, r14
   ret
 
@@ -269,9 +282,15 @@ ctx_restore:
   ; r2 e' del chiamante ed e' sporcato comunque da qui in giu'.
   DBG_OPEN MARK_HALSW, M_HALSW_LOAD
 
-  lw r1, 0(r14)           ; il flag: c'e' un blocco vettoriale sotto?
+  lw r1, 0(r14)           ; il flag: quali blocchi dell'estensione stanno sotto?
   addi r14, r14, 4
   beq r1, r0, cr_scalar
+  mov r5, r1              ; r1..r13 si ricaricano dal frame alla fine: liberi
+
+  ; --- i VETTORIALI, che stanno piu' in basso: si riprendono per primi ---
+  li r2, PSW_VDIRTY
+  and r3, r5, r2
+  beq r3, r0, cr_float
 
   li r3, 0x7fffffff
   setvl r3, r3            ; VL = VLMAX per ricaricare i registri PIENI
@@ -306,6 +325,12 @@ ctx_restore:
   slli r2, r2, 32
   or r1, r1, r2
   mtvmask r1
+
+  ; --- i FLOAT ---
+cr_float:
+  li r2, PSW_FDIRTY
+  and r3, r5, r2
+  beq r3, r0, cr_scalar
   flw f15, 0(r14)
   addi r14, r14, 4
   flw f14, 0(r14)
@@ -338,9 +363,10 @@ ctx_restore:
   addi r14, r14, 4
   flw f0, 0(r14)
   addi r14, r14, 4
-  ; NB: mtvl e mtvmask rialzano VDIRTY nella psw VIVA, che reti sovrascrive con
-  ; quella del frame. Il VDIRTY che conta e' quello, e c'e': lo stato e' stato
-  ; salvato proprio perche' era alzato quando il task e' uscito.
+  ; NB: mtvl, mtvmask e flw rialzano VDIRTY e FDIRTY nella psw VIVA, che reti
+  ; sovrascrive con quella del frame. I bit che contano sono quelli, e ci sono:
+  ; lo stato e' stato salvato proprio perche' erano alzati quando il task e'
+  ; uscito.
 
 cr_scalar:
   lw r1, 0(r14)           ; epc dal frame
@@ -422,14 +448,15 @@ cr_scalar:
 ; ==========================================================================
 hal_ctx_block:
   mtepc  r1               ; l'epc che ctx_save leggera': dove il task riprendera'
-  ; --- la psw con cui il task riprendera': IE:1 sempre, e VDIRTY COME ADESSO ---
+  ; --- la psw con cui il task riprendera': IE:1 sempre, e i BIT SPORCHI COME
+  ;     ADESSO ---
   ; Qui la epsw si COSTRUISCE invece di copiarla (non c'e' stata nessuna trap a
-  ; scriverla), e questo e' il punto in cui VDIRTY andrebbe perso: un task
-  ; vettoriale che si blocca volontariamente riprenderebbe con il flag basso, e
-  ; alla preemption successiva il suo stato non verrebbe salvato. Tre istruzioni
-  ; per non perderlo.
+  ; scriverla), e questo e' il punto in cui VDIRTY e FDIRTY andrebbero persi: un
+  ; task che si blocca volontariamente riprenderebbe con i bit bassi, e alla
+  ; preemption successiva il suo stato non verrebbe salvato. Tre istruzioni per
+  ; non perderli, le stesse di quando il bit era uno.
   mfpsw  r3
-  li     r2, PSW_VDIRTY
+  li     r2, PSW_EXT
   and    r3, r3, r2
   li     r2, PSW_IE
   or     r2, r2, r3

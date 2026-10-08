@@ -32,7 +32,8 @@
 //
 //  Lo alza la MACCHINA a ogni scrittura di stato architetturale vettoriale
 //  (v0..v7, vl, vmask), e serve a una cosa sola: permettere a ctx_save di NON
-//  salvare duemila byte per i task che i vettori non li toccano.
+//  salvare duemila byte per i task che i vettori non li toccano. I float hanno
+//  un bit loro, PSW_FDIRTY, qui sotto.
 //
 //  Salvare sempre costerebbe ~1260 cicli per commutazione contro i ~120 dello
 //  scalare -- un fattore dieci, pagato anche da chi non usa l'unita' vettoriale.
@@ -59,8 +60,18 @@
 //  Nota sul percorso ISR: un'ISR che usasse i vettori alzerebbe VDIRTY nella psw
 //  VIVA, che reti sovrascrive. Un'ISR vettoriale e' un problema suo, e oggi non
 //  esiste.
+//
+//  --- I FLOAT HANNO UN BIT LORO (08/10/2026, §3.86) ---
+//  Fino a quel giorno VDIRTY lo alzavano anche le istruzioni float, e i float
+//  si salvavano solo dentro il blocco vettoriale: un task che faceva un conto
+//  in float, senza un'istruzione vettoriale, pagava ~1600 cicli di contesto a
+//  commutazione per 64 byte di registri. Adesso VDIRTY dice solo v0..v7, vl e
+//  vmask, e PSW_FDIRTY dice f0..f15: ctx_save salva cio' che il task ha
+//  toccato, e niente di piu'. Lo stesso schema, la stessa semantica -- lo alza
+//  la macchina, viaggia nella psw, non lo azzera nessuno.
 // ---------------------------------------------------------------------------
 #define PSW_VDIRTY 0x2ULL   // bit 1: stato vettoriale da salvare
+#define PSW_FDIRTY 0x4ULL   // bit 2: stato float da salvare
 
 // ---------------------------------------------------------------------------
 //  Timing model (first-order, in-order, no chaining/overlap)
@@ -369,7 +380,8 @@ typedef struct
 // ---------------------------------------------------------------------------
 void vcpu_init(VCpu* cpu);
 
-// UNA istruzione: pc avanti, costo sul conto dei cicli, VDIRTY, esecuzione.
+// UNA istruzione: pc avanti, costo sul conto dei cicli, i bit sporchi
+// (VDIRTY, FDIRTY), esecuzione.
 void vcpu_step(VCpu* cpu, const Instr* in);
 
 // Prende una trap con la causa data: epc, epsw, IE giu', pc al vettore.

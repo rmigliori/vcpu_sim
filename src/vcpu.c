@@ -64,21 +64,26 @@ static void set_scalar(VCpu* cpu, int rd, int64_t value)
 }
 
 // ---------------------------------------------------------------------------
-//  Scrive stato architetturale VETTORIALE? (v0..v7, vl, vmask)
+//  Quale stato dell'ESTENSIONE scrive? -> il bit sporco da alzare, o 0.
+//    PSW_VDIRTY   v0..v7, vl, vmask
+//    PSW_FDIRTY   f0..f15
 //
 //  Sta in un posto solo e non sparso nei case di execute(), ed e' una scelta di
-//  manutenzione: la regola e' "quali istruzioni sporcano l'unita' vettoriale",
-//  cioe' UNA cosa, e un giorno che se ne aggiunga una il compilatore non aiuta
+//  manutenzione: la regola e' "quali istruzioni sporcano quale banco", cioe'
+//  UNA cosa, e un giorno che se ne aggiunga una il compilatore non aiuta
 //  comunque -- ma almeno l'elenco da rileggere e' questo e non l'interprete
 //  intero.
 //
+//  Fino all'08/10/2026 il bit era uno solo, e un task che toccava solo i float
+//  si portava dietro anche i 2 KB dei vettori a ogni commutazione (§3.86).
+//
 //  Chi NON c'e' e' altrettanto significativo: le store (vstore, vstorex,
-//  vstorem) leggono e basta; le riduzioni (vredsum/vredmax/vredmin) scrivono un
-//  registro FLOAT, che il frame scalare non porta ma che e' un problema diverso
-//  e gia' esistente; mfvl e mfvmask sono letture, ed e' quello che permette a
-//  ctx_save di guardare il flag senza falsarlo.
+//  vstorem, fsw) leggono e basta; mfvl e mfvmask sono letture, ed e' quello che
+//  permette a ctx_save di guardare i bit senza falsarli. Le riduzioni
+//  (vredsum/vredmax/vredmin) LEGGONO i vettori e scrivono un FLOAT: sporcano
+//  il banco float e non quello vettoriale.
 // ---------------------------------------------------------------------------
-static int sporca_estensione(int op)
+static uint64_t sporca_estensione(int op)
 {
   switch (op)
   {
@@ -91,15 +96,17 @@ static int sporca_estensione(int op)
     case OP_VCVT:
     case OP_VMSLT: case OP_VMSGT:  case OP_VMSEQ:   // scrivono vmask
     case OP_SETVL:                                  // scrive vl
+      return PSW_VDIRTY;
 
     // --- stato FLOAT: f0..f15 ---
     case OP_FLI:  case OP_FLW:   case OP_FADD: case OP_FMUL:
     case OP_FMACC: case OP_FMOV: case OP_FMIN: case OP_FMAX:
     case OP_FSUB: case OP_FDIV:  case OP_FNEG: case OP_FSQRT:
     case OP_VREDSUM: case OP_VREDMAX: case OP_VREDMIN:  // riducono IN un float
-      return 1;
+      return PSW_FDIRTY;
+
     default:
-      return 0;                    // mtvl e mtvmask lo alzano da soli
+      return 0;                    // mtvl e mtvmask alzano VDIRTY da soli
   }
 }
 
@@ -659,7 +666,7 @@ void vcpu_step(VCpu* cpu, const Instr* in)
   cpu->pc += 1;
   cpu->instr_count += 1;
   cpu->cycles += instr_cost(in, cpu->vl);
-  if (sporca_estensione(in->op)) cpu->psw |= PSW_VDIRTY;
+  cpu->psw |= sporca_estensione(in->op);
   execute(cpu, in);
 }
 

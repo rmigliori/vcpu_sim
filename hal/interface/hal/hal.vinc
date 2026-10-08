@@ -35,6 +35,15 @@
 ; non della macchina in astratto. Il ragionamento per esteso sta in vcpu.h.
 .equ PSW_VDIRTY 2
 
+; bit 2: i registri FLOAT (f0..f15) sono stati scritti. Fino all'08/10/2026 li
+; copriva VDIRTY, e un task solo float salvava anche i 2 KB dei vettori.
+.equ PSW_FDIRTY 4
+
+; I due insieme, come maschera: l'assembler non valuta espressioni fra costanti
+; (`PSW_VDIRTY + PSW_FDIRTY` non si assembla), quindi la somma e' scritta qui,
+; accanto ai due addendi, e in nessun altro posto.
+.equ PSW_EXT    6
+
 ; --------------------------------------------------------------------------
 ;  Il frame di contesto: 16 parole, 64 byte.
 ;
@@ -60,17 +69,20 @@
 ;  che ctx_save cambia quei frame resterebbero validi e sbagliati. Con la
 ;  taglia pubblicata la duplicazione si riduce a una costante sola.
 ; --------------------------------------------------------------------------
-; La parte FISSA del frame: 17 parole — flag vettoriale, epc, psw, r13..r1, r15.
+; La parte FISSA del frame: 17 parole — flag, epc, psw, r13..r1, r15.
 ; Non e' piu' la taglia del frame, ed e' il motivo per cui il nome andra' rivisto:
-; dal 12/09/2026 il frame e' a TAGLIA VARIABILE, perche' un task che ha toccato
-; l'unita' vettoriale si porta dietro anche v0..v7, vl e vmask — altri
-; 8*VLMAX*4 + 12 byte, cioe' 2060 con VLMAX 64. La parola di flag all'offset 0
-; dice quale dei due casi sia, e la legge ctx_restore prima di sapere quanto
-; grande sia cio' che sta ripristinando.
+; dal 12/09/2026 il frame e' a TAGLIA VARIABILE. Dall'08/10/2026 i blocchi
+; facoltativi sono DUE, e la parola di flag all'offset 0 e' la maschera
+; PSW_EXT della psw del task: dice quali ci sono, e la legge ctx_restore prima
+; di sapere quanto grande sia cio' che sta ripristinando.
 ;
-; Chi dimensiona uno stack deve sapere QUALE dei due: 68 byte per un task
-; scalare, ~2,2 KB per uno vettoriale. E' la ragione per cui gli stack smettono
-; di essere un numero che si copia da un test all'altro.
+;     bit PSW_FDIRTY   f0..f15                       64 byte
+;     bit PSW_VDIRTY   v0..v7, vl, vmask             8*VLMAX*4 + 12 = 2060 byte
+;
+; Chi dimensiona uno stack deve sapere QUALE caso: 68 byte per un task che
+; lavora sugli interi, 132 se usa i float, 2128 se usa i vettori, 2192 se usa
+; tutti e due. E' la ragione per cui gli stack smettono di essere un numero che
+; si copia da un test all'altro.
 .equ CTX_FRAME_SIZE  68
 
 ; --- CHI HA INTERROTTO (14/09/2026, §3.67) ---

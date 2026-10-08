@@ -1486,13 +1486,20 @@ interrupt gira esattamente come prima.
 > Qui `vmask` è un registro a sé, e quella divergenza costa esattamente queste
 > due istruzioni.
 
-**`PSW_VDIRTY` (bit 1 della psw).** La macchina lo alza a ogni scrittura di stato
-dell'**estensione** — `v0..v7`, `vl`, `vmask` e i sedici registri **float**. Serve
-a `ctx_save`, che così salva i ~2,1 KB del banco **solo per i task che l'hanno
-toccato**: farlo sempre costerebbe ~1650 cicli per commutazione contro i ~300
-dello scalare, pagati anche da chi l'unità vettoriale non la sfiora. Viaggia
-nella psw, quindi nel frame e indietro con `reti`, perché è una proprietà del
-task che riprende. Le letture (`mfvl`, `mfvmask`) **non** lo alzano.
+**`PSW_VDIRTY` (bit 1) e `PSW_FDIRTY` (bit 2 della psw).** La macchina li alza a
+ogni scrittura di stato dell'**estensione**: `VDIRTY` per `v0..v7`, `vl`, `vmask`;
+`FDIRTY` per i sedici registri **float** (anche le riduzioni `vredsum`/`vredmax`/
+`vredmin`, che scrivono un float). Servono a `ctx_save`, che così salva **solo i
+blocchi che il task ha toccato**: i 64 byte dei float, i 2060 dei vettori, tutti e
+due o nessuno. Salvare sempre costerebbe ~1600 cicli per commutazione, pagati
+anche da chi l'estensione non la sfiora. Viaggiano nella psw, quindi nel frame e
+indietro con `reti`, perché sono una proprietà del task che riprende. Le letture
+(`mfvl`, `mfvmask`, `fsw`, `vstore`) **non** li alzano.
+
+> Fino all'8/10/2026 il bit era uno solo, `VDIRTY`, e lo alzavano anche i float:
+> un task che faceva un conto in float senza un'istruzione vettoriale salvava
+> anche i 2 KB dei vettori. `tests/test_fdirty.vasm` misura la taglia del frame
+> nei quattro casi: 68, 132, 2128, 2192 byte.
 
 **Come funziona il trap.** L'interruzione del timer è consegnata al **confine di
 istruzione**: quando `IE` è attivo, il timer è armato e il contatore dei cicli

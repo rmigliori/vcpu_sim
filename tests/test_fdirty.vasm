@@ -1,0 +1,171 @@
+; tests/test_fdirty.vasm — OGNI TASK SALVA CIO' CHE HA TOCCATO (08/10/2026).
+;
+; --- IL GUASTO ---
+; Fino all'08/10/2026 il bit sporco dell'estensione era uno solo, VDIRTY, e lo
+; alzavano anche le istruzioni float; ctx_save salvava i float DENTRO il blocco
+; vettoriale. Un task che faceva un conto in float, senza un'istruzione
+; vettoriale, si portava dietro i 2 KB dei vettori a ogni commutazione: misurato
+; in §3.86, ~1600 cicli per 64 byte di registri. Adesso i bit sono due --
+; VDIRTY per v0..v7, vl, vmask; FDIRTY per f0..f15 -- e i blocchi del frame
+; anche.
+;
+; --- IL TEST ---
+; Quattro casi, ognuno con la psw azzerata prima (mtpsw r0: IE basso, nessun
+; bit sporco) e una trap del timer in mezzo. L'ISR misura la TAGLIA del frame
+; -- la cima dello stack meno il contesto opaco che _trap_entry le consegna --
+; e poi SPORCA float e vettori, f1 e v0: cio' che il task ritrova l'ha salvato
+; il frame, e nient'altro.
+;
+;   68    interi: solo la parte fissa (hal.vinc, CTX_FRAME_SIZE)
+;  132    float:  68 + 16 * 4
+;    1    ...e f1 e' ancora 1.5
+; 2128    vettori: 68 + 8 * 64 * 4 + 12
+;    1    ...e v0[0] e' ancora 2.5
+; 2192    tutti e due: 68 + 64 + 2060
+;    1 1  ...e li ritrova tutti e due
+;
+; Nessun numero dipende dai cicli: le taglie le dice il layout, i valori li
+; dice il frame.
+;
+; --- ROSSO, due volte ---
+;   la macchina di prima (le float alzano VDIRTY):   68 2128 0 2128 1 2128 0 1
+;     il task solo float salva i vettori e perde i float
+;   l'HAL di prima (un blocco solo, sotto VDIRTY):   68 68 0 2192 1 2192 1 1
+;     FDIRTY non lo guarda nessuno: i float del task solo float si perdono, e
+;     chi usa solo i vettori paga anche i float
+;
+; Non c'e' kernel: il soggetto e' il contesto dell'HAL, come in test_fctx.
+
+  .data
+ntrap:  .word 0          ; quante trap sono arrivate
+taglia: .word 0          ; la taglia del frame, scritta dall'ISR
+buf:    .space 256
+dati:   .float 2.5       ; v0[0]; le altre corsie non si guardano
+        .space 252
+
+  .text
+  .global main
+  .extern irq_arm
+  .extern irq_install
+  .extern ctx_restore
+
+main:
+  li r14, 65536            ; la cima dello stack: l'ISR la usa per la taglia
+  call irq_arm
+  li r1, isr
+  call irq_install
+
+  ; --- 1. INTERI ---------------------------------------------------------
+  mtpsw r0
+  li r9, 1234
+  call trappa
+  li r2, taglia
+  lw r5, 0(r2)
+  dumps r5                 ; 68
+
+  ; --- 2. FLOAT ----------------------------------------------------------
+  mtpsw r0
+  fli f1, 1.5
+  call trappa
+  li r2, taglia
+  lw r5, 0(r2)
+  dumps r5                 ; 132
+  call f1_intatto
+  dumps r6                 ; 1
+
+  ; --- 3. VETTORI --------------------------------------------------------
+  mtpsw r0
+  li r2, 64
+  setvl r2, r2
+  li r3, dati
+  vload v0, r3
+  call trappa
+  li r2, taglia
+  lw r5, 0(r2)
+  dumps r5                 ; 2128
+  call v0_intatto
+  dumps r6                 ; 1
+
+  ; --- 4. TUTTI E DUE ----------------------------------------------------
+  mtpsw r0
+  fli f1, 1.5
+  li r2, 64
+  setvl r2, r2
+  li r3, dati
+  vload v0, r3
+  call trappa
+  li r2, taglia
+  lw r5, 0(r2)
+  dumps r5                 ; 2192
+  call f1_intatto
+  dumps r6                 ; 1
+  call v0_intatto
+  dumps r6                 ; 1
+  halt
+
+; ==========================================================================
+;  trappa: una trap del timer fra 50 cicli, e la si aspetta. Il ciclo
+;  d'attesa non tocca ne' float ne' vettori. Foglia. Clobber: r2..r5.
+; ==========================================================================
+trappa:
+  li r2, ntrap
+  lw r3, 0(r2)
+  li r4, 50
+  settimer r4
+  sti
+tr_attesa:
+  lw r5, 0(r2)
+  beq r5, r3, tr_attesa
+  cli
+  ret
+
+; ==========================================================================
+;  f1_intatto -> r6 = 1 se f1 e' 1.5 (0x3FC00000). fsw legge e basta: non
+;  sporca niente. Foglia. Clobber: r2, r3, r6.
+; ==========================================================================
+f1_intatto:
+  li r2, buf
+  fsw f1, 0(r2)
+  lw r2, 0(r2)
+  li r3, 0x3FC00000
+  li r6, 1
+  beq r2, r3, f1_si
+  li r6, 0
+f1_si:
+  ret
+
+; ==========================================================================
+;  v0_intatto -> r6 = 1 se v0[0] e' 2.5 (0x40200000). Foglia. Clobber: r2,
+;  r3, r6.
+; ==========================================================================
+v0_intatto:
+  li r2, buf
+  vstore v0, r2
+  lw r2, 0(r2)
+  li r3, 0x40200000
+  li r6, 1
+  beq r2, r3, v0_si
+  li r6, 0
+v0_si:
+  ret
+
+; ==========================================================================
+;  L'ISR: SPEGNE IL TIMER (test_fctx dice perche'), misura il frame, sporca
+;  f1 e v0, conta, e torna sullo stesso frame. r1 e' il contesto opaco, e
+;  ctx_restore lo vuole in r1: non va toccato.
+; ==========================================================================
+isr:
+  settimer r0
+  li r2, 65536
+  sub r2, r2, r1
+  li r3, taglia
+  sw r2, 0(r3)
+  fli f1, 99.0
+  li r2, 64
+  setvl r2, r2
+  vsplat v0, f1
+  li r2, ntrap
+  lw r3, 0(r2)
+  addi r3, r3, 1
+  sw r3, 0(r2)
+  j ctx_restore
