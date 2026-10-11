@@ -145,16 +145,20 @@
 > CPUOMETRO (§3.88):** l'onda quadra dell'idle, con un PRESCALER perché il
 > registratore tiene 8192 marche; su `test_mondo` dà la CPU libera **uguale al
 > ciclo** a `trace.py` (24.748 e 24.748) e gli stessi due tick a zero, quelli
-> dei tasti. `ctest` **74/74**, impronte ferme. **Si riprende dalla MACCHINA A
-> STATI**, coi budget accettati e il cpuometro come suo idle.
+> dei tasti. `ctest` **74/74**, impronte ferme. **E la sera (§3.89): la FORMA
+> della macchina a stati è DECISA** -- finestra calcolata e catena che la
+> segue, FRONTE con la rivelazione sul rumore, TRACKER per inerzia, DECIDI
+> ultimo slot -- e ci sono le direzioni dopo lo scheduler (VC, forse il C,
+> l'FPGA). **Si riprende dal CODICE.**
 >
-> **LA FORMULA PER RIPRENDERE (11/10):**
+> **LA FORMULA PER RIPRENDERE (12/10):**
 >
 > ```
-> Leggi docs/stato-lavori.md, §0 e poi §3.88, §3.87, §3.86 (i budget),
-> §3.82 (la tabella dei modi). Riprendiamo dalla macchina a stati: prima
-> di scrivere codice dimmi la forma -- slot, transizioni, cosa fa DECIDI --
-> e discutiamola.
+> Leggi docs/stato-lavori.md, §0 e poi §3.89 (la forma, tutta), §3.86 (i
+> budget e le misure), §3.82 (i modi e i fallimenti). Riprendiamo dal
+> codice: le attivita' come procedure vere, da out/misure/m_attivita.vasm
+> a una libreria, una per volta con un test visto rosso, cominciando da
+> FRONTE con la rivelazione sul rumore.
 > ```
 >
 > **L'08/10 (§3.86): misure, FDIRTY, il banco alternativo.** I costi delle
@@ -3885,6 +3889,355 @@ il contratto scritto.
 
 ---
 
+### 3.89 LA FORMA DELLA MACCHINA A STATI, decisa (11/10/2026, sera)
+
+**Sessione di sola discussione, nessun codice.** La forma del passo 4 della
+tappa 4, discussa punto per punto e **confermata dall'utente** («mi sembra
+tutto ok»). Si riprende dal CODICE.
+
+#### La forma
+
+```
+il frame            uno sweep, 1 ms. Il TX a un istante FISSO (t0); tutto il
+                    resto CALCOLATO da t0: gli istanti restano assoluti, la
+                    time line non deriva
+la finestra         CALCOLATA (il range tracker degli altimetri): ADC_AT la arma
+                    il TRACKER dello sweep prima (§3.87)
+la catena           SEGUE la finestra. FRONTE parte alla FINE della finestra
+                    (AT + 64), senza margine: la sveglia del super task costa
+                    ~180 cicli (§3.86, col banco), e quando FRONTE gira il blocco
+                    e' finito. FRONTE controlla comunque il contatore: blocco non
+                    finito = ERRORE da registrare, non un'attesa. Gli slot dopo
+                    in fila, ognuno all'istante del precedente + il suo budget.
+                    In TRACK la catena finisce verso 73.000, il TX dopo e' a 100.000
+in tutti i modi     FRONTE e TRACKER, a OGNI sweep: l'anello resta chiuso
+FRONTE              RIVELA prima di misurare (CFAR): rumore medio sui primi gate
+                    della finestra, quelli prima del fronte; "trovato" solo se il
+                    picco supera K volte quel rumore (K ~ 10 in potenza, da
+                    verificare col test della perdita); poi il fronte come oggi
+                    (soglia a 1/4 del picco, interpolazione). Casella d'esito:
+                    trovato / non trovato
+TRACKER             l'alfa/beta. Se FRONTE non trova va per INERZIA (coasting):
+                    solo la predizione, e la finestra dopo si mette li'. Casella
+                    d'esito: il RESIDUO
+ACQ                 + BARKER_ACC (ogni sweep) e BARKER_DEC (al 5o). I blocchi si
+                    ALLINEANO con lo spostamento INTERO della finestra fra uno
+                    sweep e l'altro: esatto, perche' l'istante di ADC_AT e' un
+                    intero e a periodo 1 un ciclo e' un gate. Il criterio
+                    corretto in §3.86: rumore PRIMA del fronte, +-1 gate sul
+                    FRONTE della somma, non sul massimo
+TRACK               + FFT e MSG: il CARICO dell'elaborazione dello strumento e il
+                    suo invio al background. L'inseguimento resta a FRONTE e
+                    TRACKER
+DECIDI              ULTIMO slot del frame: decidere e applicare il cambio di modo
+                    coincidono al confine (§3.74). Legge le caselle, conta gli
+                    sweep, applica i fallimenti di §3.82 (CAL resta in CAL, ACQ
+                    torna in CAL con la finestra dov'e', TRACK per 2 sweep di
+                    fila ricomincia da capo con la finestra a priori), prepara il
+                    modo del frame dopo. Poi attivera' il task delle statistiche
+                    (§3.88)
+conversione         float -> intero col NUMERO MAGICO (~15 cicli, tre a sweep):
+                    nessuna istruzione nuova
+```
+
+#### Tre chiarimenti chiesti dall'utente, e le risposte
+
+- **FRONTE non e' l'alfa/beta.** FRONTE e' la MISURA (dove sale l'eco: un
+  retracker a soglia, vettoriale, 891 cicli costanti); TRACKER e' l'ANELLO
+  (residuo, posizione e velocita', la finestra dopo, `ADC_AT`). Due attivita'
+  perche' falliscono in modi diversi: «non trovato» e' una perdita, «residuo
+  oltre 3 gate» e' clutter o un salto. Il criterio di TRACK di §3.82 li nomina
+  tutti e due.
+- **Perche' l'anello resta chiuso in TRACK** («all'uscita dall'acquisizione non
+  ho gia' i parametri?»). Si ha una STIMA: con una velocita' sbagliata di ~0,1
+  gate a sweep (ordine di grandezza, con 0,2 gate di rumore di misura) l'eco esce
+  dalla finestra di +-32 gate in ~300 sweep, 0,3 s, e senza che la velocita'
+  vera cambi. Costa ~1.000 cicli, l'1% dello sweep.
+- **«La FFT e' il prodotto».** In TRACK FRONTE e TRACKER servono allo STRUMENTO
+  (l'autofocus); FFT e MSG servono a CHI STA FUORI (la fotografia). Detto onesto:
+  nel nostro modello (eco campionato direttamente, niente Doppler, fase costante)
+  lo spettro porta poca fisica; la FFT e' il SEGNAPOSTO dell'elaborazione vera,
+  entrata il 28/09 come carico DSP tipico (float, vettori, 7.663 cicli, un
+  risultato da spedire).
+
+**Il DERAMP, possibile evoluzione dopo la macchina a stati.** L'intuizione
+dell'utente («con la FFT dovrei inseguire») e' giusta per gli altimetri veri a
+chirp lungo: mescolato l'eco con una copia del chirp, l'uscita della FFT E' il
+profilo in distanza, e il tracker lavora su quella (a memoria). Da noi no per
+una decisione del §3.82. Passarci cambia `mare.py`, FRONTE e §3.82: NON ora.
+
+#### Le direzioni dopo lo scheduler, dette dall'utente
+
+```
+1  finire lo scheduler in assembly (questa tappa)
+2  il linguaggio ad alto livello VC
+3  FORSE lo scheduler in C per ND Satcom -- non garantito: non anticiparlo
+4  le parti del ferro in assembly del processore vero (esempio: Cortex-M4)
+5  il banco alternativo, dove manca, simulato
+6  la simulazione sotto Linux, come esercizio
+7  (idea) una scheda FPGA con la nostra macchina in VHDL
+```
+
+Cosa ne ho detto, perche' non vada ri-derivato:
+
+- **VC prima del C e' la prova generale del port**: il kernel in VC sopra l'HAL
+  in assembly e' lo stesso taglio di C sopra un `port` (FreeRTOS: kernel C,
+  `port.c` + assembler per la commutazione), con un compilatore nostro e i
+  cicli misurati; i `dumps` attesi diventano la specifica;
+- **il banco non si simula a costo zero**: scrivere i registri in un'area fissa
+  costa come scriverli sullo stack. Si porta la REGOLA che lo rendeva possibile
+  (leva 1 di §3.86: attraverso la `wait` del super task niente di vivo, quindi
+  frame leggero); il banco resta un'accelerazione del port. Sul Cortex-M4 (a
+  memoria, da verificare): 8 registri salvati dall'hardware, r4..r11 in PendSV,
+  lazy stacking dei float (= il nostro FDIRTY), niente registri vettoriali,
+  MSP/PSP ma nessun banco generale;
+- **Linux** (il port POSIX di FreeRTOS) prova la LOGICA, non i TEMPI;
+- **FPGA**: prima serve una **codifica binaria dell'ISA** (oggi il `.vx` porta
+  `op a b c imm fimm target` gia' decodificati, `imm` a 64 bit, `fimm` double;
+  gli scalari sono `int64_t` e la memoria a 32 bit): larghezza dell'istruzione,
+  dei registri, immediati float a 32 bit -- decisioni dell'utente, che servono
+  ANCHE a VC. Proposta: un core MULTICICLO senza pipeline in cui ogni istruzione
+  dura ESATTAMENTE i cicli del modello, quindi identico al simulatore al ciclo e
+  provabile coi test di `ctest`; tutto in simulazione (GHDL, non installato qui)
+  prima di comprare la scheda; il mondo esterno sul ferro va generato in tempo
+  reale. Impegno come VC; dopo la macchina a stati.
+
+#### Si riprende dal CODICE: le attivita' come procedure vere
+
+Il punto 2 della stima: FRONTE (con la rivelazione), TRACKER (con l'inerzia),
+BARKER_ACC/DEC (con l'allineamento), MSG, portati da `out/misure/m_attivita.vasm`
+(fuori da git, codice di misura) in una libreria, con un test ciascuna visto
+rosso; la FFT c'e' gia' in `dsp/`. Poi la macchina a stati (punto 3), poi la
+scena vera e i fallimenti (punto 4). Il percorso NOMINALE per primo.
+
+---
+
+
+### 3.88 IL CPUOMETRO: la CPU libera dall'onda dell'idle (11/10/2026)
+
+**La forma decisa in §3.86 non stava nel registratore**, e l'ho detto prima di
+scrivere. Il marcatore tiene **8192 marche** per CPU (`MARCHE_MAX`), poi le
+perde. Una marca a ogni giro dell'idle (6 cicli nel caso stretto) le riempie in
+~49.000 cicli; in TRACK la CPU0 è libera per l'~87% del frame, quindi un solo
+sweep ne vorrebbe ~14.500. **Deciso con l'utente: un PRESCALER nell'idle**, N
+passaggi di un ciclo vuoto fra due marche. Allargare il registratore è stato
+scartato: costa RAM, e lo strumento smetterebbe di costare poco.
+
+**Il giro**, in due metà IDENTICHE chiuse da un salto ciascuna:
+
+```
+cpu_alto:  li r2, CPU_N / (addi r2,r2,-1 ; bne r2,r0) x N / mark CPUOMETRO, 1 / j cpu_basso
+cpu_basso: li r2, CPU_N / (addi ; bne) x N                / mark CPUOMETRO, 0 / j cpu_alto
+H = 2N + 3 cicli. Senza il primo `j` le meta' sarebbero 2N+2 e 2N+3
+```
+
+`mark` e' l'istruzione da un ciclo (§3.66), niente registri. Un semiperiodo
+lungo d contiene **esattamente** d − H cicli tolti all'idle: la misura è al
+ciclo, il prescaler toglie solo la LOCALIZZAZIONE dentro il semiperiodo.
+
+**Dove sta:**
+
+```
+marks.conf            category CPUOMETRO 10, marker ALTO 1
+CMakeLists.txt        vasm_config(cpuometro DEFINES CPUOMETRO INTERFACES vinc_marks):
+                      nessuna libreria ce l'ha, quindi il kernel linkato e' quello
+                      pulito e cambia solo l'idle
+test_mondo.vasm       .ifdef CPUOMETRO: CPU_N 10 (H = 23), il giro al posto di cntI
+rtos/test/CMake       test_mondo_cpuometro, e il test `cpuometro`
+tools/marks.py        cpuometro(): riconosce il canale dal SIMBOLO, lo toglie dalle
+                      finestre, controlla che l'onda alterni e che il semiperiodo
+                      piu' corto sia l'H dichiarato (--h); CPU libera, tolta, e il
+                      MINIMO PER TICK (i tick dal canale 2 della macchina). Un
+                      semiperiodo conta nel tick in cui finisce: errore < H
+tools/cpuometro.py    il confronto con trace.py, che e' il test; misura() e' riusata
+                      dal generatore dei grafici
+tools/grafici_cpuometro.py (+ .template.html)
+                      la pagina LOCALE e autosufficiente (niente librerie, SVG
+                      disegnato in JS, dati dentro): tre numeri, la CPU libera
+                      per tick (cpuometro a barre, trace.py a trattino), l'onda
+                      vera con sotto il corpo dell'idle di trace.py, in quattro
+                      finestre (#0..#3 nell'indirizzo). Esce in
+                      docs/grafici/cpuometro.html, che non sta in git
+manual.md             il paragrafo dopo --marks
+```
+
+**La previsione corretta prima di misurare.** `trace.py` attribuisce il codice
+del kernel «a carico di chi girava», e la sua riga `idle` (27.125 cicli su
+`test_mondo`) comprende 2.300 cicli di `ctx_save` e `_trap_entry` mentre l'idle
+viene interrotto: CPU tolta, che il cpuometro conta come tale. Il confronto è
+quindi con la sola fascia `task` dell'idle, il CORPO: su `test_mondo` 24.825 =
+2.482 giri da 10 + 5 di preambolo, esattamente `cntI`.
+
+**I numeri, su `test_mondo_cpuometro`** (le stesse sequenze `dumps` di
+`test_mondo`, con `cntI` a 0):
+
+| cosa | cpuometro | trace.py |
+|---|---|---|
+| CPU libera dal ciclo 3384 al 101808 | **24.748** (25,1%) | **24.748** |
+| per tick (24) | scarto da −15 a +10 cicli | ammesso sotto H = 23 |
+| tick senza CPU libera | 21567, 61739 | 21567, 61739: i tick dei due tasti |
+| marche | 1.189 su 8.192 | |
+
+Il **minimo per tick è zero**, come nel §3.71, e lo dicono due strumenti
+indipendenti. Il semiperiodo peggiore ha 7.582 cicli tolti.
+
+**Rossi, previsti prima**, su copie nello scratchpad:
+
+```
+giro asimmetrico (senza `j cpu_basso`)   il piu' corto e' 22: il lettore rifiuta H = 23
+lettore che conta H - 1                  24.748 contro 23.672: -1.076, un ciclo
+                                         per semiperiodo
+```
+
+Il secondo è stato rosso al primo colpo **per la ragione sbagliata**:
+`trace.py` copiato fuori dall'albero non trova i simboli e dà idle 0 (calcola
+la radice dal proprio percorso). Rifatto mutando solo `marks.py`.
+
+**Verifiche:** `ctest` **74/74** (73 + `cpuometro`); `scheduler_facts --check
+out` verde; impronte: le 28 di prima **ferme**, più quella nuova di
+`test_mondo_cpuometro`; `equiv.py` sui 59 programmi identico (il simulatore non
+è cambiato, quindi qui la prova sono le impronte).
+
+**Due cose viste per strada, non fatte:**
+- le marche PERSE la macchina le stampa su stdout ma **non le scrive nella
+  registrazione**: un lettore vede solo un intervallo più corto. Il cpuometro
+  dice da che ciclo a che ciclo ha misurato, e `cpuometro.py` guarda lo stdout;
+  un `# perse N` in testa alla registrazione sarebbe la riparazione, ed è
+  una modifica del formato;
+- il manuale diceva `--marche` e `marks.py leggi`: le opzioni vere sono
+  `--marks` e `read`. Corretto nel paragrafo toccato.
+
+**Una correzione che ne viene, detta all'utente.** Il respiro di `test_mondo`
+citato dal 15/09 (26,7%, oggi 26,5% nella riga `idle` di `trace.py`) era
+GONFIATO di ~2,2 punti: quella riga comprende il kernel a carico dell'idle
+interrotto (`_trap_entry`, `ctx_save`: 2.300 cicli). Il respiro vero è il corpo
+dell'idle: **24,2%** sull'intera corsa (24.748 su 102.259), 25,1% sull'intervallo
+coperto dall'onda. La riga di respiro per programma in `scheduler-measures.md`,
+aperta dal 14/09, va scritta su QUESTO numero.
+
+#### Le statistiche: un task al livello 6, non l'idle (discusso con l'utente)
+
+Il cpuometro vale finché l'idle non fa altro; §3.86 voleva un idle che lavora
+(FIFO, statistiche). **Proposta dell'utente, accettata: le statistiche in un
+task PERIODICO al livello immediatamente sopra l'idle** (6). L'idle resta
+un'onda pura. È il «background server» della letteratura; in FreeRTOS l'idle
+hook non deve bloccare e il lavoro va in un task a bassa priorità. Il disegno
+concordato, da scrivere CON la macchina a stati:
+
+```
+chi lo attiva     la MACCHINA A STATI, a fine frame (DECIDI): una send, non un
+                  timeout -- in test_mondo il gestore costa il 32% per UNA
+                  casella. E' la schedule table di OSEK/AUTOSAR che attiva il
+                  task di background
+il respiro        il cpuometro misura il margine DOPO le statistiche; il task
+                  ha una categoria sua nel marcatore, cosi' il lettore dice
+                  "libera X, di cui statistiche Y"
+attivazioni perse un contatore: se l'attivazione di prima non e' stata servita,
+                  in un frame non c'e' stato margine. Un secondo cpuometro,
+                  grossolano, che vale anche senza il marcatore
+il super task     la via del banco non guarda chi interrompe: 327 a slot devono
+                  restare 327 anche col task di banco 0 al posto dell'idle. Da
+                  MISURARE, non dare per buono
+```
+
+**Il timestamp, osservazione dell'utente.** Le statistiche vogliono l'istante,
+e va preso ALLA SORGENTE, nello slot del super task: anche il task al livello 6
+gira dopo i fatti, quindi il clock letto lì sarebbe l'istante del calcolo. Il
+record è **evento + `CLOCK_CYCLES`** (una `lw`, 4 cicli), due parole. Ne segue:
+
+```
+sulla CPU0        buffer locale, il task al livello 6 lo svuota. Si parte da qui:
+                  si misura subito col cpuometro accanto
+sulla CPU1        lo stesso record, in un ANELLO in RAM condivisa (la mailbox
+                  porta una parola sola), come lo spettro della FFT; la mailbox
+                  al piu' per svegliare la CPU1 una volta a frame. Cambia il
+                  TRASPORTO, non il formato
+perche' vale      CLOCK_CYCLES e' il clock MASTER della scheda (§3.78): un istante
+                  della CPU0 si confronta con uno della CPU1 senza sincronizzare
+                  niente. Sul ferro AMP non e' gratis (timer di sistema unico
+                  come il generic timer ARM, o contatori per core da
+                  sincronizzare: il TSC dei vecchi x86 multi-socket)
+il limite         32 bit a 100 MHz girano ogni 42,9 s: per le durate non conta
+                  (si sottrae, come i comparatori); per statistiche lunghe si
+                  contano i giri o si affianca CLOCK_MS
+```
+
+**Si riprende dalla MACCHINA A STATI**, coi budget accettati (§3.86) e lo slot
+RX tolto da `ADC_AT` (§3.87). Il suo idle è quello di qui, con CPU_N scelto
+perché la corsa stia in 8192 marche: con ~20 frame N ≈ 100, H ≈ 200, errore ai
+confini del frame sotto il 2 per mille. Quello è il respiro vero della CPU0. Il
+task delle statistiche, qui sopra, si scrive con lei.
+
+---
+
+### 3.87 `ADC_AT`: L'ADC PARTE A UN ISTANTE PROGRAMMATO (11/10/2026)
+
+La forma approvata in fondo a §3.86, scritta così com'è. Tre punti che la
+forma non diceva e che ho preso come conseguenza delle regole che c'erano già
+(detti all'utente):
+
+```
+all'istante con l'ADC     e' un AVVIO, e segue la regola di ADC_CTRL: ignorato,
+  ancora occupato         ADC_OVERRUN. Il blocco in corso si porta fino
+                          all'ISTANTE, non fino al confine: se e' finito prima
+                          (anche con l'ultimo campione proprio ad AT), si parte
+un armamento in ritardo   DISARMA quello di prima: "il secondo sostituisce il
+                          primo" vale anche quando il secondo non parte
+configurazione impossibile si dice ALL'ARMAMENTO (e' li' che si congela), e
+                          non si arma -- come ADC_CTRL non parte
+```
+
+**Dove sta.** `devices.c`: `adc_config_ok` e `adc_parti` tolti da `adc_store`
+e condivisi dai due avvii; `ADC_AT` in scrittura (istante a 64 bit ricostruito
+dal confronto wrappante, `manca <= 0` = in ritardo) e in lettura (armato,
+ritardo; la lettura abbassa il ritardo); **`adc_scatta`**, al confine
+d'istruzione, prima di `adc_advance`. `machine.c`: la domanda al mondo è una
+funzione sola, `adc_chiedi_mondo`, chiamata alla `sw` su `ADC_CTRL` e quando
+`adc_scatta` dice che un blocco è partito, quindi `mare.py` riceve `BLOCCO`
+**all'istante**, dopo ogni TX partito prima. Il protocollo non cambia.
+`hal/adc.vinc` e `manual.md` §3.2 hanno il registro e i due bit.
+
+**Il test, `tests/test_adc_at.vasm`**, sulla scena di `test_eco`: tre giri e
+lo stesso fronte, **60042**, con l'istante `AT = lettura + 4 + 60000` (la `sw`
+del TX costa 4 cicli: il TX è a lettura + 4).
+
+```
+EXPECT "1 0 60042 60042 60042 2 0 3 2 4 0"
+giro 1   armato subito dopo il TX; ADC_AT letto 1, poi 0
+giro 2   armato ~40 cicli prima, poi ADC_ADDR e ADC_COUNT riprogrammati
+giro 3   armato a un istante sbagliato e riarmato; l'istante dentro tre div
+quarto   ritardo 2 / 0, blocchi 3; istante dentro un blocco di ADC_CTRL:
+         overrun 2, blocchi 4, ADC_AT 0
+```
+
+**Rossi, tutti previsti prima.** Su una copia dei sorgenti nello scratchpad,
+mai sull'albero:
+
+| mutante | uscita | dove |
+|---|---|---|
+| parte all'ARMAMENTO (il rosso di §3.86) | `0 0 60001 60001 60001 …` | il blocco del giro 1 esce accecato (I = 2047, `TX_STATUS` 3); il giro 1 finisce in pochi cicli, il TX 2 trova il TX 1 acceso (`TX_OVERRUN`) e la finestra cade sull'eco del TX 1 (I = 652). A cascata, spiegato con dei `dumps` in più |
+| configurazione congelata all'avvio | giro 2 `-1000000` | |
+| il secondo armamento ignorato | giro 3 `-1000000`, quarto `1 1 … 0 4 1` | |
+| avvio al CONFINE invece che ad AT | `60042 60040 60025` | il giro 1 resta verde per caso di fase; la `div` del giro 3 lo prende sempre |
+| niente ritardo | quarto `1 0` invece di `2 0` | |
+| niente overrun all'istante | quarto, overrun `0` | |
+
+**Verifiche:**
+
+| cosa | risultato |
+|---|---|
+| `ctest --timeout 60` | **73/73** (72 + `adc_at`) |
+| `equiv.py` contro `HEAD` (worktree nello scratchpad), i 58 programmi di prima | **116 file identici**, `diff -rq` vuoto (`out/eq_h0810`, `out/eq_at0810`) |
+| impronte | **28/28 ferme**: `test_adc_at` gira a file singolo, nessun `.vx` |
+| `scheduler_facts --check out` | rosso **già su `HEAD`**: la pagina non era stata rigenerata dopo FDIRTY (`vectors` +402, §3.86). Rigenerata, ed è nel diff |
+
+**Si riprende dal CPUOMETRO** (§3.86, in fondo): l'idle alterna un canale del
+marcatore a ogni giro, e `tools/marks.py` legge l'onda quadra. Poi la macchina
+a stati, coi budget accettati e lo slot RX tolto (CAL 2.800, ACQ 4.100 / 5.600,
+TRACK 13.200). **Il cpuometro è FATTO l'11/10: §3.88.**
+
+---
+
 ### 3.86 I COSTI MISURATI DELLE ATTIVITÀ: la base dei budget del passo 4 (08/10/2026)
 
 Chiesto dall'utente dopo la proposta di budget fatta su stime: «fai le misure».
@@ -4152,231 +4505,6 @@ alla CPU0 con la time line che gira.
 Da **`ADC_AT`**, nella forma qui sopra: macchina (`devices.h/.c`, `machine.c`),
 `hal/adc.vinc`, il test, visto rosso. Poi il cpuometro. Poi la macchina a stati
 coi budget accettati. **`ADC_AT` è FATTO l'11/10: §3.87.**
-
----
-
-### 3.87 `ADC_AT`: L'ADC PARTE A UN ISTANTE PROGRAMMATO (11/10/2026)
-
-La forma approvata in fondo a §3.86, scritta così com'è. Tre punti che la
-forma non diceva e che ho preso come conseguenza delle regole che c'erano già
-(detti all'utente):
-
-```
-all'istante con l'ADC     e' un AVVIO, e segue la regola di ADC_CTRL: ignorato,
-  ancora occupato         ADC_OVERRUN. Il blocco in corso si porta fino
-                          all'ISTANTE, non fino al confine: se e' finito prima
-                          (anche con l'ultimo campione proprio ad AT), si parte
-un armamento in ritardo   DISARMA quello di prima: "il secondo sostituisce il
-                          primo" vale anche quando il secondo non parte
-configurazione impossibile si dice ALL'ARMAMENTO (e' li' che si congela), e
-                          non si arma -- come ADC_CTRL non parte
-```
-
-**Dove sta.** `devices.c`: `adc_config_ok` e `adc_parti` tolti da `adc_store`
-e condivisi dai due avvii; `ADC_AT` in scrittura (istante a 64 bit ricostruito
-dal confronto wrappante, `manca <= 0` = in ritardo) e in lettura (armato,
-ritardo; la lettura abbassa il ritardo); **`adc_scatta`**, al confine
-d'istruzione, prima di `adc_advance`. `machine.c`: la domanda al mondo è una
-funzione sola, `adc_chiedi_mondo`, chiamata alla `sw` su `ADC_CTRL` e quando
-`adc_scatta` dice che un blocco è partito, quindi `mare.py` riceve `BLOCCO`
-**all'istante**, dopo ogni TX partito prima. Il protocollo non cambia.
-`hal/adc.vinc` e `manual.md` §3.2 hanno il registro e i due bit.
-
-**Il test, `tests/test_adc_at.vasm`**, sulla scena di `test_eco`: tre giri e
-lo stesso fronte, **60042**, con l'istante `AT = lettura + 4 + 60000` (la `sw`
-del TX costa 4 cicli: il TX è a lettura + 4).
-
-```
-EXPECT "1 0 60042 60042 60042 2 0 3 2 4 0"
-giro 1   armato subito dopo il TX; ADC_AT letto 1, poi 0
-giro 2   armato ~40 cicli prima, poi ADC_ADDR e ADC_COUNT riprogrammati
-giro 3   armato a un istante sbagliato e riarmato; l'istante dentro tre div
-quarto   ritardo 2 / 0, blocchi 3; istante dentro un blocco di ADC_CTRL:
-         overrun 2, blocchi 4, ADC_AT 0
-```
-
-**Rossi, tutti previsti prima.** Su una copia dei sorgenti nello scratchpad,
-mai sull'albero:
-
-| mutante | uscita | dove |
-|---|---|---|
-| parte all'ARMAMENTO (il rosso di §3.86) | `0 0 60001 60001 60001 …` | il blocco del giro 1 esce accecato (I = 2047, `TX_STATUS` 3); il giro 1 finisce in pochi cicli, il TX 2 trova il TX 1 acceso (`TX_OVERRUN`) e la finestra cade sull'eco del TX 1 (I = 652). A cascata, spiegato con dei `dumps` in più |
-| configurazione congelata all'avvio | giro 2 `-1000000` | |
-| il secondo armamento ignorato | giro 3 `-1000000`, quarto `1 1 … 0 4 1` | |
-| avvio al CONFINE invece che ad AT | `60042 60040 60025` | il giro 1 resta verde per caso di fase; la `div` del giro 3 lo prende sempre |
-| niente ritardo | quarto `1 0` invece di `2 0` | |
-| niente overrun all'istante | quarto, overrun `0` | |
-
-**Verifiche:**
-
-| cosa | risultato |
-|---|---|
-| `ctest --timeout 60` | **73/73** (72 + `adc_at`) |
-| `equiv.py` contro `HEAD` (worktree nello scratchpad), i 58 programmi di prima | **116 file identici**, `diff -rq` vuoto (`out/eq_h0810`, `out/eq_at0810`) |
-| impronte | **28/28 ferme**: `test_adc_at` gira a file singolo, nessun `.vx` |
-| `scheduler_facts --check out` | rosso **già su `HEAD`**: la pagina non era stata rigenerata dopo FDIRTY (`vectors` +402, §3.86). Rigenerata, ed è nel diff |
-
-**Si riprende dal CPUOMETRO** (§3.86, in fondo): l'idle alterna un canale del
-marcatore a ogni giro, e `tools/marks.py` legge l'onda quadra. Poi la macchina
-a stati, coi budget accettati e lo slot RX tolto (CAL 2.800, ACQ 4.100 / 5.600,
-TRACK 13.200). **Il cpuometro è FATTO l'11/10: §3.88.**
-
----
-
-### 3.88 IL CPUOMETRO: la CPU libera dall'onda dell'idle (11/10/2026)
-
-**La forma decisa in §3.86 non stava nel registratore**, e l'ho detto prima di
-scrivere. Il marcatore tiene **8192 marche** per CPU (`MARCHE_MAX`), poi le
-perde. Una marca a ogni giro dell'idle (6 cicli nel caso stretto) le riempie in
-~49.000 cicli; in TRACK la CPU0 è libera per l'~87% del frame, quindi un solo
-sweep ne vorrebbe ~14.500. **Deciso con l'utente: un PRESCALER nell'idle**, N
-passaggi di un ciclo vuoto fra due marche. Allargare il registratore è stato
-scartato: costa RAM, e lo strumento smetterebbe di costare poco.
-
-**Il giro**, in due metà IDENTICHE chiuse da un salto ciascuna:
-
-```
-cpu_alto:  li r2, CPU_N / (addi r2,r2,-1 ; bne r2,r0) x N / mark CPUOMETRO, 1 / j cpu_basso
-cpu_basso: li r2, CPU_N / (addi ; bne) x N                / mark CPUOMETRO, 0 / j cpu_alto
-H = 2N + 3 cicli. Senza il primo `j` le meta' sarebbero 2N+2 e 2N+3
-```
-
-`mark` e' l'istruzione da un ciclo (§3.66), niente registri. Un semiperiodo
-lungo d contiene **esattamente** d − H cicli tolti all'idle: la misura è al
-ciclo, il prescaler toglie solo la LOCALIZZAZIONE dentro il semiperiodo.
-
-**Dove sta:**
-
-```
-marks.conf            category CPUOMETRO 10, marker ALTO 1
-CMakeLists.txt        vasm_config(cpuometro DEFINES CPUOMETRO INTERFACES vinc_marks):
-                      nessuna libreria ce l'ha, quindi il kernel linkato e' quello
-                      pulito e cambia solo l'idle
-test_mondo.vasm       .ifdef CPUOMETRO: CPU_N 10 (H = 23), il giro al posto di cntI
-rtos/test/CMake       test_mondo_cpuometro, e il test `cpuometro`
-tools/marks.py        cpuometro(): riconosce il canale dal SIMBOLO, lo toglie dalle
-                      finestre, controlla che l'onda alterni e che il semiperiodo
-                      piu' corto sia l'H dichiarato (--h); CPU libera, tolta, e il
-                      MINIMO PER TICK (i tick dal canale 2 della macchina). Un
-                      semiperiodo conta nel tick in cui finisce: errore < H
-tools/cpuometro.py    il confronto con trace.py, che e' il test; misura() e' riusata
-                      dal generatore dei grafici
-tools/grafici_cpuometro.py (+ .template.html)
-                      la pagina LOCALE e autosufficiente (niente librerie, SVG
-                      disegnato in JS, dati dentro): tre numeri, la CPU libera
-                      per tick (cpuometro a barre, trace.py a trattino), l'onda
-                      vera con sotto il corpo dell'idle di trace.py, in quattro
-                      finestre (#0..#3 nell'indirizzo). Esce in
-                      docs/grafici/cpuometro.html, che non sta in git
-manual.md             il paragrafo dopo --marks
-```
-
-**La previsione corretta prima di misurare.** `trace.py` attribuisce il codice
-del kernel «a carico di chi girava», e la sua riga `idle` (27.125 cicli su
-`test_mondo`) comprende 2.300 cicli di `ctx_save` e `_trap_entry` mentre l'idle
-viene interrotto: CPU tolta, che il cpuometro conta come tale. Il confronto è
-quindi con la sola fascia `task` dell'idle, il CORPO: su `test_mondo` 24.825 =
-2.482 giri da 10 + 5 di preambolo, esattamente `cntI`.
-
-**I numeri, su `test_mondo_cpuometro`** (le stesse sequenze `dumps` di
-`test_mondo`, con `cntI` a 0):
-
-| cosa | cpuometro | trace.py |
-|---|---|---|
-| CPU libera dal ciclo 3384 al 101808 | **24.748** (25,1%) | **24.748** |
-| per tick (24) | scarto da −15 a +10 cicli | ammesso sotto H = 23 |
-| tick senza CPU libera | 21567, 61739 | 21567, 61739: i tick dei due tasti |
-| marche | 1.189 su 8.192 | |
-
-Il **minimo per tick è zero**, come nel §3.71, e lo dicono due strumenti
-indipendenti. Il semiperiodo peggiore ha 7.582 cicli tolti.
-
-**Rossi, previsti prima**, su copie nello scratchpad:
-
-```
-giro asimmetrico (senza `j cpu_basso`)   il piu' corto e' 22: il lettore rifiuta H = 23
-lettore che conta H - 1                  24.748 contro 23.672: -1.076, un ciclo
-                                         per semiperiodo
-```
-
-Il secondo è stato rosso al primo colpo **per la ragione sbagliata**:
-`trace.py` copiato fuori dall'albero non trova i simboli e dà idle 0 (calcola
-la radice dal proprio percorso). Rifatto mutando solo `marks.py`.
-
-**Verifiche:** `ctest` **74/74** (73 + `cpuometro`); `scheduler_facts --check
-out` verde; impronte: le 28 di prima **ferme**, più quella nuova di
-`test_mondo_cpuometro`; `equiv.py` sui 59 programmi identico (il simulatore non
-è cambiato, quindi qui la prova sono le impronte).
-
-**Due cose viste per strada, non fatte:**
-- le marche PERSE la macchina le stampa su stdout ma **non le scrive nella
-  registrazione**: un lettore vede solo un intervallo più corto. Il cpuometro
-  dice da che ciclo a che ciclo ha misurato, e `cpuometro.py` guarda lo stdout;
-  un `# perse N` in testa alla registrazione sarebbe la riparazione, ed è
-  una modifica del formato;
-- il manuale diceva `--marche` e `marks.py leggi`: le opzioni vere sono
-  `--marks` e `read`. Corretto nel paragrafo toccato.
-
-**Una correzione che ne viene, detta all'utente.** Il respiro di `test_mondo`
-citato dal 15/09 (26,7%, oggi 26,5% nella riga `idle` di `trace.py`) era
-GONFIATO di ~2,2 punti: quella riga comprende il kernel a carico dell'idle
-interrotto (`_trap_entry`, `ctx_save`: 2.300 cicli). Il respiro vero è il corpo
-dell'idle: **24,2%** sull'intera corsa (24.748 su 102.259), 25,1% sull'intervallo
-coperto dall'onda. La riga di respiro per programma in `scheduler-measures.md`,
-aperta dal 14/09, va scritta su QUESTO numero.
-
-#### Le statistiche: un task al livello 6, non l'idle (discusso con l'utente)
-
-Il cpuometro vale finché l'idle non fa altro; §3.86 voleva un idle che lavora
-(FIFO, statistiche). **Proposta dell'utente, accettata: le statistiche in un
-task PERIODICO al livello immediatamente sopra l'idle** (6). L'idle resta
-un'onda pura. È il «background server» della letteratura; in FreeRTOS l'idle
-hook non deve bloccare e il lavoro va in un task a bassa priorità. Il disegno
-concordato, da scrivere CON la macchina a stati:
-
-```
-chi lo attiva     la MACCHINA A STATI, a fine frame (DECIDI): una send, non un
-                  timeout -- in test_mondo il gestore costa il 32% per UNA
-                  casella. E' la schedule table di OSEK/AUTOSAR che attiva il
-                  task di background
-il respiro        il cpuometro misura il margine DOPO le statistiche; il task
-                  ha una categoria sua nel marcatore, cosi' il lettore dice
-                  "libera X, di cui statistiche Y"
-attivazioni perse un contatore: se l'attivazione di prima non e' stata servita,
-                  in un frame non c'e' stato margine. Un secondo cpuometro,
-                  grossolano, che vale anche senza il marcatore
-il super task     la via del banco non guarda chi interrompe: 327 a slot devono
-                  restare 327 anche col task di banco 0 al posto dell'idle. Da
-                  MISURARE, non dare per buono
-```
-
-**Il timestamp, osservazione dell'utente.** Le statistiche vogliono l'istante,
-e va preso ALLA SORGENTE, nello slot del super task: anche il task al livello 6
-gira dopo i fatti, quindi il clock letto lì sarebbe l'istante del calcolo. Il
-record è **evento + `CLOCK_CYCLES`** (una `lw`, 4 cicli), due parole. Ne segue:
-
-```
-sulla CPU0        buffer locale, il task al livello 6 lo svuota. Si parte da qui:
-                  si misura subito col cpuometro accanto
-sulla CPU1        lo stesso record, in un ANELLO in RAM condivisa (la mailbox
-                  porta una parola sola), come lo spettro della FFT; la mailbox
-                  al piu' per svegliare la CPU1 una volta a frame. Cambia il
-                  TRASPORTO, non il formato
-perche' vale      CLOCK_CYCLES e' il clock MASTER della scheda (§3.78): un istante
-                  della CPU0 si confronta con uno della CPU1 senza sincronizzare
-                  niente. Sul ferro AMP non e' gratis (timer di sistema unico
-                  come il generic timer ARM, o contatori per core da
-                  sincronizzare: il TSC dei vecchi x86 multi-socket)
-il limite         32 bit a 100 MHz girano ogni 42,9 s: per le durate non conta
-                  (si sottrae, come i comparatori); per statistiche lunghe si
-                  contano i giri o si affianca CLOCK_MS
-```
-
-**Si riprende dalla MACCHINA A STATI**, coi budget accettati (§3.86) e lo slot
-RX tolto da `ADC_AT` (§3.87). Il suo idle è quello di qui, con CPU_N scelto
-perché la corsa stia in 8192 marche: con ~20 frame N ≈ 100, H ≈ 200, errore ai
-confini del frame sotto il 2 per mille. Quello è il respiro vero della CPU0. Il
-task delle statistiche, qui sopra, si scrive con lei.
 
 ---
 
