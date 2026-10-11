@@ -136,13 +136,23 @@ in §2.4; `--kbd` alimenta la tastiera con una traccia a cicli ed è descritto i
 §3.1; `--adc` dà all'ADC il suo segnale ed è descritto in §3.2, come
 `--eco-cmd`, che al posto del segnale mette un mondo esterno.
 
-C'è una quarta opzione, disponibile solo su `run`: **`--marche <file>`** scrive
+C'è una quarta opzione, disponibile solo su `run`: **`--marks <file>`** scrive
 la registrazione del *marcatore* — i tag che il programma piazza scrivendo nei
 registri di `hal/marker.vinc`, più due canali che la macchina riempie da sola (chi
 possiede la CPU, e quando arriva un tasto). Il catalogo dei nomi è `marks.conf`,
-e `tools/marks.py leggi` traduce la registrazione in finestre e durate. Serve a
+e `tools/marks.py read` traduce la registrazione in finestre e durate. Serve a
 misurare il **tempo di risposta**, che la traccia del `pc` non può dare: una
 finestra aperta in un task e chiusa in un altro attraversa le commutazioni.
+
+**Il cpuometro** (dal 11/10/2026) è un canale del marcatore che misura la **CPU
+libera** senza la traccia: l'idle alterna il canale `CPUOMETRO` ogni N passaggi
+di un ciclo vuoto, quindi ogni semiperiodo dura `H = 2N + 3` cicli se nessuno lo
+interrompe, e uno lungo `d` contiene esattamente `d − H` cicli tolti all'idle.
+`marks.py read --h <H>` riporta la CPU libera e il **minimo per tick**. Il
+prescaler N esiste perché il registratore tiene 8192 marche: va scelto perché
+la corsa ci stia. `rtos/test/test_mondo.vasm` ne ha la variante (`CONFIG
+cpuometro`), e `tools/cpuometro.py` la confronta con `trace.py`: devono dare lo
+stesso numero al ciclo.
 
 Esempio:
 

@@ -139,20 +139,22 @@
 
 > ### ▶ RIPRENDI DA QUI (11/10/2026 o dopo)
 >
-> **L'11/10 (§3.87): `ADC_AT` è FATTO.** L'ADC parte da solo all'istante
-> scritto, esatto al tick, e il mondo riceve il blocco all'istante.
-> `tests/test_adc_at.vasm` dà lo stesso fronte di `test_eco` (60042) in tre
-> fasi diverse del programma, ed è stato visto rosso con sei mutanti, ognuno
-> nel suo giro. `ctest` **73/73**, i 58 programmi di prima **identici al
-> ciclo** contro `HEAD`, impronte 28/28 ferme. Si riprende dal **cpuometro**,
-> poi la macchina a stati.
+> **L'11/10, due pezzi FATTI.** **`ADC_AT` (§3.87):** l'ADC parte da solo
+> all'istante scritto, esatto al tick; `test_adc_at` dà il fronte di
+> `test_eco` (60042) in tre fasi del programma, rosso con sei mutanti. **Il
+> CPUOMETRO (§3.88):** l'onda quadra dell'idle, con un PRESCALER perché il
+> registratore tiene 8192 marche; su `test_mondo` dà la CPU libera **uguale al
+> ciclo** a `trace.py` (24.748 e 24.748) e gli stessi due tick a zero, quelli
+> dei tasti. `ctest` **74/74**, impronte ferme. **Si riprende dalla MACCHINA A
+> STATI**, coi budget accettati e il cpuometro come suo idle.
 >
 > **LA FORMULA PER RIPRENDERE (11/10):**
 >
 > ```
-> Leggi docs/stato-lavori.md, §0 e poi §3.87 e la fine di §3.86 (il
-> cpuometro). Riprendiamo dal cpuometro: prima di scriverlo dimmi come
-> lo misuri e cosa ti aspetti di vedere.
+> Leggi docs/stato-lavori.md, §0 e poi §3.88, §3.87, §3.86 (i budget),
+> §3.82 (la tabella dei modi). Riprendiamo dalla macchina a stati: prima
+> di scrivere codice dimmi la forma -- slot, transizioni, cosa fa DECIDI --
+> e discutiamola.
 > ```
 >
 > **L'08/10 (§3.86): misure, FDIRTY, il banco alternativo.** I costi delle
@@ -4216,7 +4218,164 @@ mai sull'albero:
 **Si riprende dal CPUOMETRO** (§3.86, in fondo): l'idle alterna un canale del
 marcatore a ogni giro, e `tools/marks.py` legge l'onda quadra. Poi la macchina
 a stati, coi budget accettati e lo slot RX tolto (CAL 2.800, ACQ 4.100 / 5.600,
-TRACK 13.200).
+TRACK 13.200). **Il cpuometro è FATTO l'11/10: §3.88.**
+
+---
+
+### 3.88 IL CPUOMETRO: la CPU libera dall'onda dell'idle (11/10/2026)
+
+**La forma decisa in §3.86 non stava nel registratore**, e l'ho detto prima di
+scrivere. Il marcatore tiene **8192 marche** per CPU (`MARCHE_MAX`), poi le
+perde. Una marca a ogni giro dell'idle (6 cicli nel caso stretto) le riempie in
+~49.000 cicli; in TRACK la CPU0 è libera per l'~87% del frame, quindi un solo
+sweep ne vorrebbe ~14.500. **Deciso con l'utente: un PRESCALER nell'idle**, N
+passaggi di un ciclo vuoto fra due marche. Allargare il registratore è stato
+scartato: costa RAM, e lo strumento smetterebbe di costare poco.
+
+**Il giro**, in due metà IDENTICHE chiuse da un salto ciascuna:
+
+```
+cpu_alto:  li r2, CPU_N / (addi r2,r2,-1 ; bne r2,r0) x N / mark CPUOMETRO, 1 / j cpu_basso
+cpu_basso: li r2, CPU_N / (addi ; bne) x N                / mark CPUOMETRO, 0 / j cpu_alto
+H = 2N + 3 cicli. Senza il primo `j` le meta' sarebbero 2N+2 e 2N+3
+```
+
+`mark` e' l'istruzione da un ciclo (§3.66), niente registri. Un semiperiodo
+lungo d contiene **esattamente** d − H cicli tolti all'idle: la misura è al
+ciclo, il prescaler toglie solo la LOCALIZZAZIONE dentro il semiperiodo.
+
+**Dove sta:**
+
+```
+marks.conf            category CPUOMETRO 10, marker ALTO 1
+CMakeLists.txt        vasm_config(cpuometro DEFINES CPUOMETRO INTERFACES vinc_marks):
+                      nessuna libreria ce l'ha, quindi il kernel linkato e' quello
+                      pulito e cambia solo l'idle
+test_mondo.vasm       .ifdef CPUOMETRO: CPU_N 10 (H = 23), il giro al posto di cntI
+rtos/test/CMake       test_mondo_cpuometro, e il test `cpuometro`
+tools/marks.py        cpuometro(): riconosce il canale dal SIMBOLO, lo toglie dalle
+                      finestre, controlla che l'onda alterni e che il semiperiodo
+                      piu' corto sia l'H dichiarato (--h); CPU libera, tolta, e il
+                      MINIMO PER TICK (i tick dal canale 2 della macchina). Un
+                      semiperiodo conta nel tick in cui finisce: errore < H
+tools/cpuometro.py    il confronto con trace.py, che e' il test; misura() e' riusata
+                      dal generatore dei grafici
+tools/grafici_cpuometro.py (+ .template.html)
+                      la pagina LOCALE e autosufficiente (niente librerie, SVG
+                      disegnato in JS, dati dentro): tre numeri, la CPU libera
+                      per tick (cpuometro a barre, trace.py a trattino), l'onda
+                      vera con sotto il corpo dell'idle di trace.py, in quattro
+                      finestre (#0..#3 nell'indirizzo). Esce in
+                      docs/grafici/cpuometro.html, che non sta in git
+manual.md             il paragrafo dopo --marks
+```
+
+**La previsione corretta prima di misurare.** `trace.py` attribuisce il codice
+del kernel «a carico di chi girava», e la sua riga `idle` (27.125 cicli su
+`test_mondo`) comprende 2.300 cicli di `ctx_save` e `_trap_entry` mentre l'idle
+viene interrotto: CPU tolta, che il cpuometro conta come tale. Il confronto è
+quindi con la sola fascia `task` dell'idle, il CORPO: su `test_mondo` 24.825 =
+2.482 giri da 10 + 5 di preambolo, esattamente `cntI`.
+
+**I numeri, su `test_mondo_cpuometro`** (le stesse sequenze `dumps` di
+`test_mondo`, con `cntI` a 0):
+
+| cosa | cpuometro | trace.py |
+|---|---|---|
+| CPU libera dal ciclo 3384 al 101808 | **24.748** (25,1%) | **24.748** |
+| per tick (24) | scarto da −15 a +10 cicli | ammesso sotto H = 23 |
+| tick senza CPU libera | 21567, 61739 | 21567, 61739: i tick dei due tasti |
+| marche | 1.189 su 8.192 | |
+
+Il **minimo per tick è zero**, come nel §3.71, e lo dicono due strumenti
+indipendenti. Il semiperiodo peggiore ha 7.582 cicli tolti.
+
+**Rossi, previsti prima**, su copie nello scratchpad:
+
+```
+giro asimmetrico (senza `j cpu_basso`)   il piu' corto e' 22: il lettore rifiuta H = 23
+lettore che conta H - 1                  24.748 contro 23.672: -1.076, un ciclo
+                                         per semiperiodo
+```
+
+Il secondo è stato rosso al primo colpo **per la ragione sbagliata**:
+`trace.py` copiato fuori dall'albero non trova i simboli e dà idle 0 (calcola
+la radice dal proprio percorso). Rifatto mutando solo `marks.py`.
+
+**Verifiche:** `ctest` **74/74** (73 + `cpuometro`); `scheduler_facts --check
+out` verde; impronte: le 28 di prima **ferme**, più quella nuova di
+`test_mondo_cpuometro`; `equiv.py` sui 59 programmi identico (il simulatore non
+è cambiato, quindi qui la prova sono le impronte).
+
+**Due cose viste per strada, non fatte:**
+- le marche PERSE la macchina le stampa su stdout ma **non le scrive nella
+  registrazione**: un lettore vede solo un intervallo più corto. Il cpuometro
+  dice da che ciclo a che ciclo ha misurato, e `cpuometro.py` guarda lo stdout;
+  un `# perse N` in testa alla registrazione sarebbe la riparazione, ed è
+  una modifica del formato;
+- il manuale diceva `--marche` e `marks.py leggi`: le opzioni vere sono
+  `--marks` e `read`. Corretto nel paragrafo toccato.
+
+**Una correzione che ne viene, detta all'utente.** Il respiro di `test_mondo`
+citato dal 15/09 (26,7%, oggi 26,5% nella riga `idle` di `trace.py`) era
+GONFIATO di ~2,2 punti: quella riga comprende il kernel a carico dell'idle
+interrotto (`_trap_entry`, `ctx_save`: 2.300 cicli). Il respiro vero è il corpo
+dell'idle: **24,2%** sull'intera corsa (24.748 su 102.259), 25,1% sull'intervallo
+coperto dall'onda. La riga di respiro per programma in `scheduler-measures.md`,
+aperta dal 14/09, va scritta su QUESTO numero.
+
+#### Le statistiche: un task al livello 6, non l'idle (discusso con l'utente)
+
+Il cpuometro vale finché l'idle non fa altro; §3.86 voleva un idle che lavora
+(FIFO, statistiche). **Proposta dell'utente, accettata: le statistiche in un
+task PERIODICO al livello immediatamente sopra l'idle** (6). L'idle resta
+un'onda pura. È il «background server» della letteratura; in FreeRTOS l'idle
+hook non deve bloccare e il lavoro va in un task a bassa priorità. Il disegno
+concordato, da scrivere CON la macchina a stati:
+
+```
+chi lo attiva     la MACCHINA A STATI, a fine frame (DECIDI): una send, non un
+                  timeout -- in test_mondo il gestore costa il 32% per UNA
+                  casella. E' la schedule table di OSEK/AUTOSAR che attiva il
+                  task di background
+il respiro        il cpuometro misura il margine DOPO le statistiche; il task
+                  ha una categoria sua nel marcatore, cosi' il lettore dice
+                  "libera X, di cui statistiche Y"
+attivazioni perse un contatore: se l'attivazione di prima non e' stata servita,
+                  in un frame non c'e' stato margine. Un secondo cpuometro,
+                  grossolano, che vale anche senza il marcatore
+il super task     la via del banco non guarda chi interrompe: 327 a slot devono
+                  restare 327 anche col task di banco 0 al posto dell'idle. Da
+                  MISURARE, non dare per buono
+```
+
+**Il timestamp, osservazione dell'utente.** Le statistiche vogliono l'istante,
+e va preso ALLA SORGENTE, nello slot del super task: anche il task al livello 6
+gira dopo i fatti, quindi il clock letto lì sarebbe l'istante del calcolo. Il
+record è **evento + `CLOCK_CYCLES`** (una `lw`, 4 cicli), due parole. Ne segue:
+
+```
+sulla CPU0        buffer locale, il task al livello 6 lo svuota. Si parte da qui:
+                  si misura subito col cpuometro accanto
+sulla CPU1        lo stesso record, in un ANELLO in RAM condivisa (la mailbox
+                  porta una parola sola), come lo spettro della FFT; la mailbox
+                  al piu' per svegliare la CPU1 una volta a frame. Cambia il
+                  TRASPORTO, non il formato
+perche' vale      CLOCK_CYCLES e' il clock MASTER della scheda (§3.78): un istante
+                  della CPU0 si confronta con uno della CPU1 senza sincronizzare
+                  niente. Sul ferro AMP non e' gratis (timer di sistema unico
+                  come il generic timer ARM, o contatori per core da
+                  sincronizzare: il TSC dei vecchi x86 multi-socket)
+il limite         32 bit a 100 MHz girano ogni 42,9 s: per le durate non conta
+                  (si sottrae, come i comparatori); per statistiche lunghe si
+                  contano i giri o si affianca CLOCK_MS
+```
+
+**Si riprende dalla MACCHINA A STATI**, coi budget accettati (§3.86) e lo slot
+RX tolto da `ADC_AT` (§3.87). Il suo idle è quello di qui, con CPU_N scelto
+perché la corsa stia in 8192 marche: con ~20 frame N ≈ 100, H ≈ 200, errore ai
+confini del frame sotto il 2 per mille. Quello è il respiro vero della CPU0. Il
+task delle statistiche, qui sopra, si scrive con lei.
 
 ---
 

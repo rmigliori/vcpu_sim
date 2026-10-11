@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Il cpuometro</title>
+<!-- GENERATA da tools/grafici_cpuometro.py: non modificare, si rifa da li'. -->
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface-1: #fcfcfb;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11,11,11,0.10);
+  --series-1: #2a78d6;   /* il cpuometro */
+  --series-2: #eb6834;   /* trace.py */
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface-1: #1a1a19;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface-1: #1a1a19;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --border: rgba(255,255,255,0.10);
+  --series-1: #3987e5;
+  --series-2: #d95926;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--page); color: var(--text-primary);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main { max-width: 1040px; margin: 0 auto; padding: 32px 16px 48px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+h2 { font-size: 17px; margin: 0 0 4px; }
+.sub, .note { color: var(--text-secondary); margin: 0; }
+.note { font-size: 13.5px; margin-top: 8px; max-width: 76ch; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+         gap: 12px; margin: 24px 0; }
+.tile, .fig, details {
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+}
+.tile { padding: 14px 16px; }
+.tile .k { color: var(--text-secondary); font-size: 13px; }
+.tile .v { font-size: 30px; font-weight: 600; margin: 2px 0; }
+.tile .d { color: var(--text-secondary); font-size: 13px; }
+.fig { padding: 18px 16px 14px; margin-bottom: 16px; }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px;
+          color: var(--text-secondary); margin: 8px 0 4px; }
+.legend i { display: inline-block; vertical-align: middle; margin-right: 6px; }
+.sw-bar { width: 12px; height: 12px; border-radius: 3px; background: var(--series-1); }
+.sw-line { width: 16px; height: 3px; border-radius: 2px; background: var(--series-2); }
+.ctl { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
+.ctl button {
+  font: inherit; font-size: 13px; color: var(--text-primary); background: transparent;
+  border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; cursor: pointer;
+}
+.ctl button[aria-pressed="true"] { border-color: var(--text-primary); font-weight: 600; }
+.chart { width: 100%; }
+.chart svg { display: block; width: 100%; overflow: visible; }
+svg text { fill: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+svg .lbl { fill: var(--text-secondary); font-size: 12px; }
+details { padding: 12px 16px; }
+summary { cursor: pointer; color: var(--text-secondary); }
+table { border-collapse: collapse; width: 100%; margin-top: 10px; font-size: 13px;
+        font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--grid); }
+th { color: var(--text-secondary); font-weight: 600; }
+.tip {
+  position: fixed; pointer-events: none; z-index: 10; display: none;
+  background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px; font-size: 12.5px; line-height: 1.45;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12); max-width: 300px;
+}
+.tip b { font-weight: 600; }
+.tip .s { color: var(--text-secondary); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Il cpuometro</h1>
+  <p class="sub" id="sub"></p>
+
+  <section class="tiles" id="tiles"></section>
+
+  <section class="fig">
+    <h2>CPU libera, tick per tick</h2>
+    <p class="sub">Cicli in cui gira il corpo dell'idle, in ogni intervallo fra due tick (~4.000 cicli).</p>
+    <div class="legend">
+      <span><i class="sw-bar"></i>cpuometro (l'onda dell'idle, letta da marks.py)</span>
+      <span><i class="sw-line"></i>trace.py (dal pc)</span>
+    </div>
+    <div class="chart" id="f1"></div>
+    <p class="note">Il cpuometro conta un semiperiodo nel tick in cui finisce, quindi tick
+      per tick può scostarsi da trace.py di meno di H. Sull'intera corsa i due numeri
+      coincidono al ciclo. I due tick a zero sono quelli in cui arriva un tasto.</p>
+  </section>
+
+  <section class="fig">
+    <h2>L'onda quadra dell'idle</h2>
+    <p class="sub">Dove l'onda è fitta gira l'idle; dove è piatta la CPU è di qualcun altro.</p>
+    <div class="ctl" id="ctl"></div>
+    <div class="legend">
+      <span><i class="sw-line" style="background:var(--series-1)"></i>l'onda sul canale CPUOMETRO</span>
+      <span><i class="sw-bar" style="background:var(--series-2)"></i>il corpo dell'idle secondo trace.py</span>
+    </div>
+    <div class="chart" id="f2"></div>
+    <p class="note" id="nota2"></p>
+  </section>
+
+  <details>
+    <summary>La tabella, tick per tick</summary>
+    <table id="tab"></table>
+  </details>
+</main>
+<div class="tip" id="tip"></div>
+
+<script>
+const D = /*DATI*/null;
+const NS = "http://www.w3.org/2000/svg";
+// Il separatore delle migliaia anche a quattro cifre: "3.384" accanto a
+// "101.808", non "3384".
+const FMT = new Intl.NumberFormat("it-IT", {useGrouping: "always"});
+const n = x => FMT.format(x);
+const pct = (x, y) => (100 * x / y).toLocaleString("it-IT", {maximumFractionDigits: 1}) + "%";
+const tip = document.getElementById("tip");
+
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function text(parent, x, y, s, attrs = {}) {
+  const t = el("text", Object.assign({x, y}, attrs), parent);
+  t.textContent = s;
+  return t;
+}
+function mostra(ev, html) {
+  tip.innerHTML = html;
+  tip.style.display = "block";
+  const r = tip.getBoundingClientRect();
+  let x = ev.clientX + 14, y = ev.clientY + 14;
+  if (x + r.width > innerWidth - 8) x = ev.clientX - r.width - 14;
+  if (y + r.height > innerHeight - 8) y = ev.clientY - r.height - 14;
+  tip.style.left = Math.max(8, x) + "px";
+  tip.style.top = Math.max(8, y) + "px";
+}
+function nascondi() { tip.style.display = "none"; }
+// Un passo "tondo" per l'asse: 1, 2 o 5 per una potenza di dieci.
+function passo(span, quanti) {
+  const g = span / quanti, p = Math.pow(10, Math.floor(Math.log10(g)));
+  return [1, 2, 5, 10].map(m => m * p).find(s => s >= g);
+}
+const tastoDi = t => D.tasti.findIndex(c => t.a < c && c <= t.b);
+const nomeTasto = i => "tasto '" + "ab"[i] + "'";
+
+// --- intestazione e numeri -------------------------------------------------
+document.getElementById("sub").textContent =
+  `${D.programma} · H = ${D.H} cicli · ${n(D.hz / 1e6)} MHz · due strumenti indipendenti della stessa grandezza`;
+const zeri = D.tick.filter(t => t.cpu === 0);
+const scarto = D.tick.reduce((m, t) => Math.max(m, Math.abs(t.cpu - t.trace)), 0);
+document.getElementById("tiles").innerHTML = `
+  <div class="tile"><div class="k">CPU libera, dal ciclo ${n(D.da)} al ${n(D.a)}</div>
+    <div class="v">${pct(D.libera, D.span)}</div>
+    <div class="d">cpuometro ${n(D.libera)} cicli · trace.py ${n(D.libera_trace)}:
+      ${D.libera === D.libera_trace ? "uguali al ciclo" : "DIVERSI"}</div></div>
+  <div class="tile"><div class="k">Il tick peggiore</div>
+    <div class="v">${n(Math.min(...D.tick.map(t => t.cpu)))} cicli liberi</div>
+    <div class="d">${zeri.length} tick senza CPU libera, quelli dei due tasti</div></div>
+  <div class="tile"><div class="k">Scarto massimo per tick</div>
+    <div class="v">${n(scarto)} cicli</div>
+    <div class="d">ammesso sotto H = ${D.H}: un semiperiodo a cavallo del tick</div></div>`;
+
+// --- figura 1: CPU libera per tick -----------------------------------------
+function figura1() {
+  const box = document.getElementById("f1");
+  box.innerHTML = "";
+  const W = box.clientWidth, Hh = 280, m = {l: 48, r: 8, t: 26, b: 34};
+  const svg = el("svg", {viewBox: `0 0 ${W} ${Hh}`, height: Hh, role: "img",
+    "aria-label": "CPU libera per tick: barre del cpuometro, trattini di trace.py"}, box);
+  const pw = W - m.l - m.r, ph = Hh - m.t - m.b;
+  const vmax = Math.max(...D.tick.map(t => Math.max(t.cpu, t.trace)));
+  const sy = passo(vmax, 4), ymax = Math.ceil(vmax / sy) * sy;
+  const y = v => m.t + ph - v / ymax * ph;
+  const band = pw / D.tick.length, bw = Math.max(4, Math.min(28, band * 0.6));
+  for (let v = 0; v <= ymax + 1e-9; v += sy) {
+    el("line", {x1: m.l, x2: W - m.r, y1: y(v), y2: y(v),
+      stroke: v === 0 ? "var(--axis)" : "var(--grid)", "stroke-width": 1}, svg);
+    text(svg, m.l - 6, y(v) + 4, n(v), {"text-anchor": "end"});
+  }
+  text(svg, m.l - 6, m.t - 12, "cicli liberi", {"text-anchor": "end"});
+  const ogni = Math.max(1, Math.ceil(22 / band));      // un'etichetta ogni ~22 px
+  D.tick.forEach((t, i) => {
+    const cx = m.l + band * i + band / 2, x0 = cx - bw / 2;
+    if (t.cpu > 0) {
+      const top = y(t.cpu), base = y(0), r = Math.min(4, (base - top) / 2);
+      el("path", {d: `M${x0},${base} V${top + r} Q${x0},${top} ${x0 + r},${top}
+        H${x0 + bw - r} Q${x0 + bw},${top} ${x0 + bw},${top + r} V${base} Z`,
+        fill: "var(--series-1)"}, svg);
+    }
+    // trace.py: un trattino sopra la barra, con l'anello della superficie
+    const ty = y(t.trace), tw = bw + 8;
+    el("line", {x1: cx - tw / 2, x2: cx + tw / 2, y1: ty, y2: ty,
+      stroke: "var(--surface-1)", "stroke-width": 6, "stroke-linecap": "round"}, svg);
+    el("line", {x1: cx - tw / 2, x2: cx + tw / 2, y1: ty, y2: ty,
+      stroke: "var(--series-2)", "stroke-width": 2.5, "stroke-linecap": "round"}, svg);
+    if (i % ogni === 0)
+      text(svg, cx, Hh - m.b + 16, String(i + 1), {"text-anchor": "middle"});
+    const k = tastoDi(t);
+    if (k >= 0 && t.cpu === 0)       // in una colonna stretta, solo la lettera
+      text(svg, cx, y(0) - 10, band < 48 ? "ab"[k] : nomeTasto(k),
+           {"text-anchor": "middle", class: "lbl"});
+    const hit = el("rect", {x: m.l + band * i, y: m.t, width: band, height: ph,
+      fill: "transparent"}, svg);
+    hit.addEventListener("pointermove", ev => mostra(ev,
+      `<b>tick ${i + 1}</b> <span class="s">dal ciclo ${n(t.a)} al ${n(t.b)}</span><br>
+       cpuometro <b>${n(t.cpu)}</b> cicli liberi (${pct(t.cpu, t.b - t.a)})<br>
+       trace.py <b>${n(t.trace)}</b><br>
+       <span class="s">scarto ${t.cpu - t.trace > 0 ? "+" : ""}${n(t.cpu - t.trace)} cicli
+       ${k >= 0 ? "· qui arriva il " + nomeTasto(k) : ""}</span>`));
+    hit.addEventListener("pointerleave", nascondi);
+  });
+  text(svg, m.l + pw / 2, Hh - 2, "tick", {"text-anchor": "middle"});
+}
+
+// --- figura 2: l'onda -------------------------------------------------------
+const O = D.onda;
+const primoLibero = D.tick.find(t => t.cpu > 0 && tastoDi(t) < 0);
+const t0 = O.find(c => c > primoLibero.a);
+const tickTasto = D.tick[D.tick.findIndex(t => tastoDi(t) === 0)];
+const FINESTRE = [
+  ["Tutta la corsa", D.da, D.a],
+  ["Intorno al tasto 'a'", tickTasto.a - 4000, tickTasto.b + 4200],
+  ["Un tick normale", primoLibero.a, primoLibero.b],
+  ["Da vicino: 400 cicli", t0 - 40, t0 + 360],
+];
+// La finestra si puo' scegliere dall'indirizzo: cpuometro.html#3 e' lo zoom.
+let finestra = /^#[0-3]$/.test(location.hash) ? +location.hash[1] : 1;
+const ctl = document.getElementById("ctl");
+FINESTRE.forEach(([nome], i) => {
+  const b = document.createElement("button");
+  b.textContent = nome;
+  b.addEventListener("click", () => { finestra = i; figura2(); });
+  ctl.appendChild(b);
+});
+
+function livello(i) { return i % 2 === 0 ? 1 : 0; }    // la prima marca alza
+function cerca(arr, c) {                                // ultimo indice con arr[i] <= c
+  let lo = 0, hi = arr.length - 1, r = -1;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (arr[m] <= c) { r = m; lo = m + 1; } else hi = m - 1; }
+  return r;
+}
+function idleQui(c) {
+  const i = cerca(D.corpo.map(x => x[0]), c);
+  return i >= 0 && c < D.corpo[i][1];
+}
+const inizi = D.corpo.map(x => x[0]);
+
+function figura2() {
+  [...ctl.children].forEach((b, i) => b.setAttribute("aria-pressed", i === finestra));
+  const [, w0, w1] = FINESTRE[finestra];
+  const box = document.getElementById("f2");
+  box.innerHTML = "";
+  const W = box.clientWidth, Hh = 210, m = {l: 48, r: 8, t: 22, b: 34};
+  const svg = el("svg", {viewBox: `0 0 ${W} ${Hh}`, height: Hh, role: "img",
+    "aria-label": "L'onda quadra del cpuometro e il corpo dell'idle secondo trace.py"}, box);
+  const pw = W - m.l - m.r;
+  const x = c => m.l + (c - w0) / (w1 - w0) * pw;
+  const alto = m.t + 14, basso = m.t + 84, striscia = m.t + 104, sh = 16;
+
+  // i tick e i tasti, dietro a tutto
+  const tk = [D.tick[0].a, ...D.tick.map(t => t.b)];
+  tk.forEach((c, i) => {
+    if (c < w0 || c > w1) return;
+    el("line", {x1: x(c), x2: x(c), y1: m.t, y2: striscia + sh,
+      stroke: "var(--grid)", "stroke-width": 1}, svg);
+    if (w1 - w0 < 40000) text(svg, x(c) + 3, m.t - 6, "tick " + (i + 1));
+  });
+  D.tasti.forEach((c, i) => {
+    if (c < w0 || c > w1) return;
+    el("line", {x1: x(c), x2: x(c), y1: m.t - 4, y2: striscia + sh,
+      stroke: "var(--text-secondary)", "stroke-width": 1, "stroke-dasharray": "3 3"}, svg);
+    text(svg, x(c) + 4, striscia + sh + 14, nomeTasto(i), {class: "lbl"});
+  });
+
+  // l'onda: un gradino a ogni marca
+  const i0 = Math.max(0, cerca(O, w0)), i1 = Math.min(O.length - 1, cerca(O, w1) + 1);
+  let d = "", liv = null;
+  for (let i = i0; i <= i1; i++) {
+    const c = Math.min(Math.max(O[i], w0), w1), yy = livello(i) ? alto : basso;
+    if (liv === null) d += `M${x(c)},${yy}`;
+    else d += `H${x(c)}V${yy}`;
+    liv = yy;
+  }
+  el("path", {d, fill: "none", stroke: "var(--series-1)", "stroke-width":
+    (w1 - w0) / pw > 20 ? 1 : 2, "stroke-linejoin": "miter"}, svg);
+  text(svg, m.l - 6, alto + 4, "1", {"text-anchor": "end"});
+  text(svg, m.l - 6, basso + 4, "0", {"text-anchor": "end"});
+
+  // trace.py: il corpo dell'idle
+  el("rect", {x: m.l, y: striscia, width: pw, height: sh, fill: "var(--grid)", rx: 3}, svg);
+  D.corpo.forEach(([a, b]) => {
+    if (b < w0 || a > w1) return;
+    const xa = x(Math.max(a, w0)), xb = x(Math.min(b, w1));
+    el("rect", {x: xa, y: striscia, width: Math.max(0.6, xb - xa), height: sh,
+      fill: "var(--series-2)"}, svg);
+  });
+  text(svg, m.l - 6, striscia + sh - 4, "idle", {"text-anchor": "end"});
+
+  // l'asse dei cicli
+  const s = passo(w1 - w0, Math.max(3, Math.floor(pw / 110)));
+  for (let c = Math.ceil(w0 / s) * s; c <= w1; c += s)
+    text(svg, x(c), Hh - 4, n(c), {"text-anchor": "middle"});
+
+  // il mirino
+  const croce = el("line", {y1: m.t - 4, y2: striscia + sh, stroke: "var(--text-secondary)",
+    "stroke-width": 1, visibility: "hidden"}, svg);
+  const hit = el("rect", {x: m.l, y: m.t - 4, width: pw, height: striscia + sh - m.t + 4,
+    fill: "transparent"}, svg);
+  hit.addEventListener("pointermove", ev => {
+    const r = svg.getBoundingClientRect();
+    const px = (ev.clientX - r.left) * W / r.width;
+    const c = Math.round(w0 + (px - m.l) / pw * (w1 - w0));
+    croce.setAttribute("x1", x(c)); croce.setAttribute("x2", x(c));
+    croce.setAttribute("visibility", "visible");
+    const i = cerca(O, c);
+    let semi = '<span class="s">fuori dalla misura</span>';
+    if (i >= 0 && i < O.length - 1) {
+      const dd = O[i + 1] - O[i];
+      semi = `semiperiodo di <b>${n(dd)}</b> cicli: ${D.H} dell'idle` +
+             (dd > D.H ? ` + <b>${n(dd - D.H)}</b> tolti` : ", nessuno tolto");
+    }
+    mostra(ev, `<b>ciclo ${n(c)}</b><br>${semi}<br>
+      <span class="s">trace.py: ${idleQui(c) ? "qui gira l'idle" : "qui la CPU è di altri"}</span>`);
+  });
+  hit.addEventListener("pointerleave", () => { croce.setAttribute("visibility", "hidden"); nascondi(); });
+
+  const nm = O.filter(c => c >= w0 && c <= w1).length;
+  document.getElementById("nota2").textContent = finestra === 0
+    ? `Tutta la corsa: ${n(O.length)} marche, troppo fitte per vederle una per una. Le fasce piene sono l'idle che gira, i tratti piatti la CPU tolta.`
+    : `In questa finestra ${n(nm)} marche. Un semiperiodo dura ${D.H} cicli se nessuno interrompe l'idle; più lungo, contiene esattamente i cicli tolti.`;
+}
+
+// --- la tabella -------------------------------------------------------------
+document.getElementById("tab").innerHTML =
+  "<tr><th>tick</th><th>dal ciclo</th><th>cpuometro</th><th>trace.py</th><th>scarto</th></tr>" +
+  D.tick.map((t, i) => `<tr><td>${i + 1}</td><td>${n(t.a)}</td><td>${n(t.cpu)}</td>
+    <td>${n(t.trace)}</td><td>${t.cpu - t.trace > 0 ? "+" : ""}${n(t.cpu - t.trace)}</td></tr>`).join("");
+
+let larghezza = 0;
+function disegna() {
+  const w = document.querySelector("main").clientWidth;
+  if (w === larghezza) return;
+  larghezza = w;
+  figura1(); figura2();
+}
+disegna();
+new ResizeObserver(disegna).observe(document.querySelector("main"));
+</script>
+</body>
+</html>

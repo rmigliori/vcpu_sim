@@ -133,6 +133,12 @@ vasm_config(marks DEFINES MARKS INTERFACES vinc_marks)
 # programmi restano identici al ciclo. Le regole che impone stanno in hal.vinc.
 vasm_config(banco DEFINES BANCO)
 
+# IL CPUOMETRO (11/10/2026, §3.88): l'idle che genera l'onda quadra. Vuole il
+# catalogo delle marche per il canale, ma NON i tag del kernel: nessuna
+# libreria ha questa configurazione, quindi chi la chiede linka quelle pulite e
+# l'unica cosa che cambia e' l'idle.
+vasm_config(cpuometro DEFINES CPUOMETRO INTERFACES vinc_marks)
+
 # L'altra meta' dell'HAL: qui e non prima, perche' lib_hal dichiara
 # `CONFIGS marks` e quel target nasce nella riga sopra. Vedi il riquadro in
 # testa a `add_subdirectory(hal/interface)`.

@@ -121,6 +121,14 @@
 ; SETTE CICLI PER LIVELLO, misurati. Da cui il caso peggiore si DEDUCE invece di
 ; doverlo costruire: il vincitore piu' profondo possibile e' a livello 6 --
 ; sotto c'e' solo l'idle, che non sveglia nessuno -- cioe' 160 + 6*7 = 202.
+;
+; --- E SULLA VARIANTE COL CPUOMETRO (11/10/2026, §3.88) ---
+; L'idle non conta piu' in cntI: genera un'onda quadra sul canale CPUOMETRO,
+; ogni CPU_N passaggi di un ciclo vuoto. Il semiperiodo vale H = 2*CPU_N + 3
+; cicli -- li, CPU_N volte addi+bne, mark, j -- e uno piu' lungo contiene
+; esattamente i cicli tolti all'idle. E' il secondo strumento della CPU libera:
+; il primo e' trace.py, che la conta dal pc, e i due devono dare lo stesso
+; numero. cntI resta a 0, e i primi otto numeri non si muovono.
 
   .text
 .include "tcb/tcb.vinc"
@@ -135,6 +143,10 @@
 
 .ifdef MARKS
 .include "marks/marks.vinc"
+.endif
+.ifdef CPUOMETRO
+.include "marks/marks.vinc"
+.equ CPU_N  10                  ; H = 23 cicli: ~1.100 marche, il registratore ne tiene 8192
 .endif
 
 ; I due codici che P sa distinguere. Non sono stringhe perche' la macchina non
@@ -445,6 +457,24 @@ taskI:
   li r1, MARKN_EXEC
   li r2, N_EXEC_IDLE
   sw r2, 0(r1)
+.endif
+.ifdef CPUOMETRO
+  ; Due meta' IDENTICHE, ognuna chiusa da un salto: con la seconda che cade
+  ; dentro la prima senza `j`, i due semiperiodi differirebbero di un ciclo.
+cpu_alto:
+  li r2, CPU_N
+cpu_a:
+  addi r2, r2, -1
+  bne r2, r0, cpu_a
+  mark MARK_CPUOMETRO, M_CPUOMETRO_ALTO
+  j cpu_basso
+cpu_basso:
+  li r2, CPU_N
+cpu_b:
+  addi r2, r2, -1
+  bne r2, r0, cpu_b
+  mark MARK_CPUOMETRO, 0
+  j cpu_alto
 .endif
   li r1, cntI
 loopI:

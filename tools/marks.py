@@ -305,7 +305,64 @@ def simboli_dati(vx):
             for m in (re.match(r"\s*(\d+)\s+D\s+(\S+)", l) for l in out.splitlines()) if m}
 
 
-def analizza(cat, by_channel, recording, vx, nomi=None, hz=None):
+def cpuometro(onda, tick, h, errori):
+    """La CPU libera dall'onda quadra dell'idle (§3.88).
+
+    Fra due marche consecutive l'idle esegue il suo semiperiodo, che costa
+    ESATTAMENTE H cicli -- li, N volte addi+bne, mark, j -- piu' tutto cio'
+    che lo ha interrotto. Quindi un semiperiodo lungo d contiene d - H cicli
+    tolti all'idle, esatti, e la CPU libera fra la prima e l'ultima marca e'
+    (numero dei semiperiodi) * H. Prima della prima marca e dopo l'ultima
+    non e' misurata, e si dice.
+
+    H si prende dal piu' corto dei semiperiodi -- uno che nessuno ha
+    interrotto -- e, se il chiamante lo DICHIARA (lo sa dal sorgente:
+    2*CPU_N + 3), deve coincidere: uno piu' corto del dichiarato vorrebbe dire
+    che il giro non e' quello che si crede, e allora nessun numero qui vale.
+
+    Il minimo PER TICK, non solo la media: «ce la fa?» si decide sul tick
+    peggiore (§3.71). Un semiperiodo si conta nel tick in cui FINISCE, quindi
+    a cavallo di un tick l'attribuzione sbaglia al piu' di H: e' il prezzo del
+    prescaler, e la ragione per cui H va tenuto piccolo rispetto al tick.
+    """
+    for i, (c, v, in_trap) in enumerate(onda):
+        if in_trap:
+            errori.append(f"ciclo {c}: il CPUOMETRO ha marcato dentro una trap: "
+                          f"l'onda deve venire dall'idle e da nessun altro")
+        atteso = 1 if i % 2 == 0 else 0
+        if (v != 0) != (atteso != 0):
+            errori.append(f"ciclo {c}: il CPUOMETRO non alterna (valore {v} dopo "
+                          f"{onda[i-1][1] if i else '-'}): una marca persa o un "
+                          f"giro sbagliato, e la misura non vale")
+            return None
+    if len(onda) < 2:
+        errori.append("il CPUOMETRO ha una marca sola: nessun semiperiodo")
+        return None
+    t = [c for c, _, _ in onda]
+    d = [b - a for a, b in zip(t, t[1:])]
+    hmin = min(d)
+    if h is not None and hmin != h:
+        errori.append(f"il CPUOMETRO dichiara H = {h} e il semiperiodo piu' corto "
+                      f"e' {hmin}: il giro dell'idle non e' quello dichiarato")
+        return None
+    H = h if h is not None else hmin
+    span = t[-1] - t[0]
+    libera = H * len(d)
+
+    per_tick = []
+    for a, b in zip(tick, tick[1:]):
+        n = sum(1 for z in t[1:] if a < z <= b)
+        per_tick.append({"a": a, "b": b, "libera": n * H, "durata": b - a})
+    return {
+        "H": H, "semiperiodi": len(d), "da": t[0], "a": t[-1], "span": span,
+        "libera": libera, "rubata": span - libera,
+        "rubato_max": max(d) - H,
+        "tick": per_tick,
+        "onda": t,               # gli istanti delle marche: l'onda, per disegnarla
+    }
+
+
+def analizza(cat, by_channel, recording, vx, nomi=None, hz=None, h_cpu=None):
     """La registrazione, letta e decomposta. Ritorna DATI, non testo.
 
     E' separata dalla stampa perche' ha due consumatori: `read` qui sotto, che
@@ -442,8 +499,17 @@ def analizza(cat, by_channel, recording, vx, nomi=None, hz=None):
             if cc > c and v == a: return cc
         return None
 
+    # Il CPUOMETRO (§3.88) e' una categoria, ma non si legge a finestre: e'
+    # un'onda quadra, e le sue centinaia di semiperiodi coprirebbero il report.
+    # Lo si riconosce dal SIMBOLO, che e' la sua identita' nel catalogo.
+    ch_cpu = next((c.canale for c in cat.values() if c.simbolo == "CPUOMETRO"), None)
+    onda = []
+
     aperte, finestre, puntuali, eventi, errori = {}, [], [], [], []
     for c, ch, v, cur, dato, ha_dato, in_trap in ev:
+        if ch == ch_cpu:
+            onda.append((c, v, in_trap))
+            continue
         # Il porto dati e la sua dichiarazione devono essere d'accordo, e le due
         # discordanze sono difetti diversi: una marca senza il dato che la sua
         # categoria promette e' una misura che manca; un dato armato su un
@@ -540,9 +606,13 @@ def analizza(cat, by_channel, recording, vx, nomi=None, hz=None):
                     "succ": succ(c), "rientro": r,
                     "fuori": (r - c) if r is not None else None})
 
+    tick = [c for c, ch, v, _, _, _, _ in ev if ch == 2 and ch in riservati]
+    cpu = cpuometro(onda, tick, h_cpu, errori) if onda else None
+
     return {
         "recording": recording,
         "nmarche":   len(ev),
+        "cpuometro": cpu,
         "fine":      fine,
         # La frequenza viaggia CON l'analisi, non accanto: chi disegna questi
         # numeri deve poterli convertire senza andare a ricercarla, e senza la
@@ -624,6 +694,25 @@ def report(a):
         print(f"  {f['canale']:<{wcan}} {f['marker']:<{wmrk}} "
               f"@{f['a']:<7} {f['d']:>6} cicli{t(f['d'])}{cross}{dd}   [{dett}]")
 
+    k = a.get("cpuometro")
+    if k:
+        pc = lambda x, y: f"{100.0 * x / y:.1f}%" if y else "-"
+        print(f"\n--- cpuometro: H = {k['H']} cicli, {k['semiperiodi']} semiperiodi ---")
+        print(f"  misurato dal ciclo {k['da']} al {k['a']}: {k['span']} cicli{t(k['span'])}")
+        print(f"  CPU libera   {k['libera']:>9} cicli  {pc(k['libera'], k['span'])}")
+        print(f"  CPU tolta    {k['rubata']:>9} cicli  {pc(k['rubata'], k['span'])}"
+              f"   (il semiperiodo peggiore: {k['rubato_max']} tolti)")
+        if k["tick"]:
+            lib = [x["libera"] for x in k["tick"]]
+            w = min(k["tick"], key=lambda x: x["libera"])
+            print(f"  per tick ({len(lib)}): minimo {w['libera']} cicli liberi "
+                  f"su {w['durata']} ({pc(w['libera'], w['durata'])}), al tick "
+                  f"che parte dal ciclo {w['a']}; massimo {max(lib)}")
+            zeri = [x["a"] for x in k["tick"] if x["libera"] == 0]
+            if zeri:
+                print(f"  tick SENZA CPU libera: {len(zeri)}, dai cicli "
+                      + ", ".join(str(z) for z in zeri))
+
     if a["errori"]:
         print("\n--- ERRORI ---")
         for e in a["errori"]:
@@ -647,6 +736,10 @@ def main():
     l.add_argument("--mhz", type=float,
                    help="rilegge questa registrazione a un'altra frequenza "
                         "(default: quella che la registrazione dichiara)")
+    # Il semiperiodo del cpuometro come lo dice il SORGENTE (2*CPU_N + 3): il
+    # lettore lo confronta col piu' corto misurato invece di crederci.
+    l.add_argument("--h", type=int,
+                   help="il semiperiodo dichiarato del CPUOMETRO, in cicli")
     a = ap.parse_args()
 
     cat, by_channel, nomi = read_catalogue(a.catalogue)
@@ -654,7 +747,7 @@ def main():
         generate(a.catalogue, cat, a.out, nomi)
         return
     dati = analizza(cat, by_channel, a.recording, a.vx, nomi,
-                    hz=int(a.mhz * 1e6) if a.mhz else None)
+                    hz=int(a.mhz * 1e6) if a.mhz else None, h_cpu=a.h)
     if a.json:
         import json
         json.dump(dati, open(a.json, "w"))

@@ -534,7 +534,7 @@ vasm_object(t_mondo SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_mondo.vasm
                     INTERFACES vinc_queue vinc_tcb vinc_mailbox vinc_message
                                vinc_timeout vinc_timeout_manager vinc_hal
                                vinc_pool
-                    CONFIGS marks)
+                    CONFIGS marks cpuometro)
 
 vasm_program(test_mondo OBJECTS t_mondo
              LINK lib_timeout_manager lib_messaggi lib_kernel lib_pool
@@ -564,6 +564,25 @@ vasm_program(test_mondo_marks OBJECTS t_mondo
              LINK lib_timeout_manager lib_messaggi lib_kernel lib_pool
                   lib_timeout
              CONFIG marks)
+
+# La variante col CPUOMETRO (11/10/2026, §3.88): cambia solo l'idle, che invece
+# di contare in cntI genera l'onda quadra. Il kernel e' quello pulito.
+vasm_program(test_mondo_cpuometro OBJECTS t_mondo
+             LINK lib_timeout_manager lib_messaggi lib_kernel lib_pool
+                  lib_timeout
+             CONFIG cpuometro)
+
+# I due strumenti della CPU libera devono essere D'ACCORDO: il cpuometro (l'onda
+# dell'idle, letta da marks.py) e trace.py (il pc). Fra la prima e l'ultima
+# marca al ciclo -- 24748 e 24748, il 25,1% -- tick per tick sotto H = 23, e i
+# due tick senza CPU libera gli stessi: quelli dei due tasti. H = 2*CPU_N + 3,
+# dal sorgente. Visto rosso col giro asimmetrico (il piu' corto e' 22, e il
+# lettore rifiuta l'H dichiarato) e col lettore che conta H - 1 (-1076: un
+# ciclo per semiperiodo).
+add_test(NAME cpuometro
+         COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/cpuometro.py
+                 $<TARGET_FILE:vcpu_sim> ${VASM_BINARY_DIR}/test_mondo_cpuometro.vx
+                 --h 23 -- --kbd "24000:a,64000:b")
 
 # ---------------------------------------------------------------------------
 #  test_wait — IL MECCANISMO DEL FOREGROUND: `.interrupt`, il dispatch
