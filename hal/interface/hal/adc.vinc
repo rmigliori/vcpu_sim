@@ -34,6 +34,16 @@
 ;     bit 0      ADC_BUSY      sta acquisendo
 ;     bit 1      ADC_OVERRUN   un avvio e' arrivato mentre acquisiva: IGNORATO
 ;     bit 2..31  i blocchi finiti dall'accensione (>> ADC_DONE_SHIFT)
+;
+; --- ADC_AT: l'avvio a un istante programmato (08/10/2026, §3.86) ---
+; Si scrive l'istante ASSOLUTO, nella base di CLOCK_CYCLES, e l'ADC parte da
+; solo li': il campione i e' preso a AT + (i+1)*ADC_PERIOD, esatto al tick.
+; ADDR, COUNT e PERIOD si congelano all'ARMAMENTO: chi arma poi puo' fare
+; altro. Un secondo armamento sostituisce il primo. Un istante gia' passato
+; non parte e alza ADC_AT_LATE; all'istante con l'ADC ancora occupato e' un
+; avvio mentre acquisisce, e alza ADC_OVERRUN. La lettura di ADC_AT:
+;     bit 0      ADC_AT_ARMED  armato, l'istante non e' ancora arrivato
+;     bit 1      ADC_AT_LATE   un armamento in ritardo: la lettura lo abbassa
 ; --------------------------------------------------------------------------
 .equ ADC_ADDR    0x100040        ; lettura/scrittura: dove scrivere il blocco,
                                  ; SOLO nella RAM condivisa (hal/amp.vinc)
@@ -41,11 +51,14 @@
 .equ ADC_PERIOD  0x100048        ; lettura/scrittura: tick fra due campioni
 .equ ADC_CTRL    0x10004C        ; scrittura: ADC_START avvia
 .equ ADC_STATUS  0x100050        ; lettura: i bit qui sopra
+.equ ADC_AT      0x100070        ; scrittura: l'istante; lettura: armato/ritardo
 
 .equ ADC_START       1           ; ADC_CTRL, bit 0
 .equ ADC_BUSY        1           ; ADC_STATUS, bit 0
 .equ ADC_OVERRUN     2           ; ADC_STATUS, bit 1
 .equ ADC_DONE_SHIFT  2           ; ADC_STATUS >> 2 = blocchi finiti
+.equ ADC_AT_ARMED    1           ; lettura di ADC_AT, bit 0
+.equ ADC_AT_LATE     2           ; lettura di ADC_AT, bit 1
 
 .equ ADC_MAX      2047
 .equ ADC_MIN     -2048

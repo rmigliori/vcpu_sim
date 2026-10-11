@@ -286,6 +286,21 @@ vasm_check(eco        MODE DUMPS EXPECT "60042 -1 0"
            ARGS --eco-cmd "python3 ${CMAKE_SOURCE_DIR}/tools/mare.py ${CMAKE_SOURCE_DIR}/tests/eco_piatto.scena"
            SOURCE ${CMAKE_SOURCE_DIR}/tests/test_eco.vasm)
 
+# test_adc_at — L'AVVIO DELL'ADC A UN ISTANTE PROGRAMMATO (08/10/2026, §3.86).
+#
+# ADC_AT al posto dell'anticipo in software dello slot RX. Tre giri, tre fasi
+# del programma -- armato subito, all'ultimo con l'ADC riprogrammato dopo,
+# riarmato con l'istante dentro una div -- e lo stesso fronte di test_eco,
+# 60042. Poi il ritardo (2, abbassato dalla lettura: 0; nessun blocco in piu':
+# 3) e l'istante dentro un blocco di ADC_CTRL (overrun 2, blocchi 4, disarmato
+# 0). Visto rosso con l'ADC che parte all'armamento; e con quattro mutanti,
+# ognuno rosso nel suo giro: configurazione congelata all'avvio, secondo
+# armamento ignorato, avvio al confine invece che all'istante, niente ritardo
+# o niente overrun.
+vasm_check(adc_at     MODE DUMPS EXPECT "1 0 60042 60042 60042 2 0 3 2 4 0"
+           ARGS --eco-cmd "python3 ${CMAKE_SOURCE_DIR}/tools/mare.py ${CMAKE_SOURCE_DIR}/tests/eco_piatto.scena"
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_adc_at.vasm)
+
 # test_amp — DUE CPU (29/09/2026, §3.79). Due programmi, uno per CPU, sulla
 # stessa scheda: `run test_amp0.vx test_amp1.vx`. Il soggetto e' la MACCHINA
 # -- la RAM condivisa, lo spinlock hardware, la mailbox -- e niente kernel.

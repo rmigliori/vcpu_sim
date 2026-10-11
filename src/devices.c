@@ -335,28 +335,24 @@ int adc_load(VAdc* a, int64_t addr, int32_t* out)
   if (addr == ADC_ADDR)   { *out = a->addr;   return 1; }
   if (addr == ADC_COUNT)  { *out = a->count;  return 1; }
   if (addr == ADC_PERIOD) { *out = a->period; return 1; }
+  // ADC_AT si legge come uno stato, e la lettura abbassa il ritardo.
+  if (addr == ADC_AT)
+  {
+    *out = (a->armed ? ADC_AT_ARMED : 0) | (a->late ? ADC_AT_LATE : 0);
+    a->late = 0;
+    return 1;
+  }
   return 0;
 }
 
-// Tre registri di configurazione, e l'avvio. Il primo campione e' preso un
-// periodo DOPO l'istante dell'avvio, e il periodo e' in tick PERIFERICHE.
-int adc_store(VAdc* a, int64_t addr, int32_t value, uint64_t t, const VClock* ck)
+// Una configurazione impossibile e' un errore di COSTRUZIONE, come un canale
+// del comparatore che non esiste: si dice, e non si parte.
+//
+// LA DMA SCRIVE SOLO NELLA RAM CONDIVISA (decisione dell'utente, 29/09/2026):
+// nessuna periferica scrive nella memoria privata di una CPU. Un blocco che
+// non ci sta tutto dentro e' una configurazione impossibile.
+static int adc_config_ok(const VAdc* a)
 {
-  if (addr == ADC_ADDR)   { a->addr   = value; return 1; }
-  if (addr == ADC_COUNT)  { a->count  = value; return 1; }
-  if (addr == ADC_PERIOD) { a->period = value; return 1; }
-  if (addr != ADC_CTRL) return 0;
-
-  if (!(value & ADC_START)) return 1;
-  // Mentre acquisisce l'avvio e' IGNORATO e si alza l'overrun: e' un errore
-  // di tempo della time line, e lo deve vedere il programma.
-  if (a->busy) { a->overrun = 1; return 1; }
-  // Una configurazione impossibile invece e' un errore di COSTRUZIONE, come
-  // un canale del comparatore che non esiste: si dice, e non si parte.
-  //
-  // LA DMA SCRIVE SOLO NELLA RAM CONDIVISA (decisione dell'utente, 29/09/2026):
-  // nessuna periferica scrive nella memoria privata di una CPU. Un blocco che
-  // non ci sta tutto dentro e' una configurazione impossibile.
   int64_t fine = (int64_t) a->addr + 8 * (int64_t) a->count;
   int in_shared = a->addr >= SHARED_BASE && fine <= SHARED_BASE + SHARED_SIZE;
   if (a->count <= 0 || a->period <= 0 || !in_shared)
@@ -364,14 +360,70 @@ int adc_store(VAdc* a, int64_t addr, int32_t value, uint64_t t, const VClock* ck
     fprintf(stderr, "runtime error: ADC, configurazione impossibile "
                     "(addr 0x%x, count %d, period %d)\n",
             (unsigned) a->addr, a->count, a->period);
+    return 0;
+  }
+  return 1;
+}
+
+// L'avvio, all'istante t0: il primo campione e' preso un periodo DOPO, e il
+// periodo e' in tick PERIFERICHE.
+static void adc_parti(VAdc* a, int32_t addr, int32_t count, int32_t period,
+                      uint64_t t0, const VClock* ck)
+{
+  a->cur_addr   = addr;
+  a->cur_count  = count;
+  a->cur_period = period;
+  a->i    = 0;
+  a->next = t0 + (uint64_t) period * ck->div_periph;
+  a->busy = 1;
+}
+
+// Tre registri di configurazione, l'avvio immediato e quello armato.
+int adc_store(VAdc* a, int64_t addr, int32_t value, uint64_t t, const VClock* ck)
+{
+  if (addr == ADC_ADDR)   { a->addr   = value; return 1; }
+  if (addr == ADC_COUNT)  { a->count  = value; return 1; }
+  if (addr == ADC_PERIOD) { a->period = value; return 1; }
+
+  if (addr == ADC_AT)
+  {
+    // Un secondo armamento sostituisce il primo, anche quando e' in ritardo.
+    a->armed = 0;
+    // Il confronto wrappante dei comparatori: l'istante e' i 32 bit bassi del
+    // clock master, e l'adesso pure. Uguale vuol dire gia' passato.
+    int32_t manca = (int32_t) ((uint32_t) value - (uint32_t) t);
+    if (manca <= 0) { a->late = 1; return 1; }
+    if (!adc_config_ok(a)) return 1;
+    a->at        = t + (uint64_t) manca;
+    a->at_addr   = a->addr;
+    a->at_count  = a->count;
+    a->at_period = a->period;
+    a->armed     = 1;
     return 1;
   }
-  a->cur_addr   = a->addr;
-  a->cur_count  = a->count;
-  a->cur_period = a->period;
-  a->i    = 0;
-  a->next = t + (uint64_t) a->period * ck->div_periph;
-  a->busy = 1;
+
+  if (addr != ADC_CTRL) return 0;
+
+  if (!(value & ADC_START)) return 1;
+  // Mentre acquisisce l'avvio e' IGNORATO e si alza l'overrun: e' un errore
+  // di tempo della time line, e lo deve vedere il programma.
+  if (a->busy) { a->overrun = 1; return 1; }
+  if (!adc_config_ok(a)) return 1;
+  adc_parti(a, a->addr, a->count, a->period, t, ck);
+  return 1;
+}
+
+// L'istante armato, al primo confine d'istruzione da li' in poi. Il blocco in
+// corso si porta fino all'ISTANTE, non fino al confine: se e' finito prima,
+// il nuovo parte; se no, e' un avvio mentre acquisisce, con la sua regola. I
+// campioni del nuovo blocco contano da AT, quindi il confine non li sposta.
+int adc_scatta(VAdc* a, uint64_t t, const VClock* ck, uint8_t* shared, VTx* tx)
+{
+  if (!a->armed || t < a->at) return 0;
+  adc_advance(a, a->at, ck, shared, tx);
+  a->armed = 0;
+  if (a->busy) { a->overrun = 1; return 0; }
+  adc_parti(a, a->at_addr, a->at_count, a->at_period, a->at, ck);
   return 1;
 }
 

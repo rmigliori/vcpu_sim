@@ -137,7 +137,23 @@
 
 ## 0. STATO ATTUALE — DA DOVE SI RIPRENDE
 
-> ### ▶ RIPRENDI DA QUI (08/10/2026 o dopo)
+> ### ▶ RIPRENDI DA QUI (11/10/2026 o dopo)
+>
+> **L'11/10 (§3.87): `ADC_AT` è FATTO.** L'ADC parte da solo all'istante
+> scritto, esatto al tick, e il mondo riceve il blocco all'istante.
+> `tests/test_adc_at.vasm` dà lo stesso fronte di `test_eco` (60042) in tre
+> fasi diverse del programma, ed è stato visto rosso con sei mutanti, ognuno
+> nel suo giro. `ctest` **73/73**, i 58 programmi di prima **identici al
+> ciclo** contro `HEAD`, impronte 28/28 ferme. Si riprende dal **cpuometro**,
+> poi la macchina a stati.
+>
+> **LA FORMULA PER RIPRENDERE (11/10):**
+>
+> ```
+> Leggi docs/stato-lavori.md, §0 e poi §3.87 e la fine di §3.86 (il
+> cpuometro). Riprendiamo dal cpuometro: prima di scriverlo dimmi come
+> lo misuri e cosa ti aspetti di vedere.
+> ```
 >
 > **L'08/10 (§3.86): misure, FDIRTY, il banco alternativo.** I costi delle
 > attività sono misurati: poco (FRONTE 891, TRACKER 126, FFT 7663), e il costo
@@ -4132,7 +4148,75 @@ alla CPU0 con la time line che gira.
 
 Da **`ADC_AT`**, nella forma qui sopra: macchina (`devices.h/.c`, `machine.c`),
 `hal/adc.vinc`, il test, visto rosso. Poi il cpuometro. Poi la macchina a stati
-coi budget accettati.
+coi budget accettati. **`ADC_AT` è FATTO l'11/10: §3.87.**
+
+---
+
+### 3.87 `ADC_AT`: L'ADC PARTE A UN ISTANTE PROGRAMMATO (11/10/2026)
+
+La forma approvata in fondo a §3.86, scritta così com'è. Tre punti che la
+forma non diceva e che ho preso come conseguenza delle regole che c'erano già
+(detti all'utente):
+
+```
+all'istante con l'ADC     e' un AVVIO, e segue la regola di ADC_CTRL: ignorato,
+  ancora occupato         ADC_OVERRUN. Il blocco in corso si porta fino
+                          all'ISTANTE, non fino al confine: se e' finito prima
+                          (anche con l'ultimo campione proprio ad AT), si parte
+un armamento in ritardo   DISARMA quello di prima: "il secondo sostituisce il
+                          primo" vale anche quando il secondo non parte
+configurazione impossibile si dice ALL'ARMAMENTO (e' li' che si congela), e
+                          non si arma -- come ADC_CTRL non parte
+```
+
+**Dove sta.** `devices.c`: `adc_config_ok` e `adc_parti` tolti da `adc_store`
+e condivisi dai due avvii; `ADC_AT` in scrittura (istante a 64 bit ricostruito
+dal confronto wrappante, `manca <= 0` = in ritardo) e in lettura (armato,
+ritardo; la lettura abbassa il ritardo); **`adc_scatta`**, al confine
+d'istruzione, prima di `adc_advance`. `machine.c`: la domanda al mondo è una
+funzione sola, `adc_chiedi_mondo`, chiamata alla `sw` su `ADC_CTRL` e quando
+`adc_scatta` dice che un blocco è partito, quindi `mare.py` riceve `BLOCCO`
+**all'istante**, dopo ogni TX partito prima. Il protocollo non cambia.
+`hal/adc.vinc` e `manual.md` §3.2 hanno il registro e i due bit.
+
+**Il test, `tests/test_adc_at.vasm`**, sulla scena di `test_eco`: tre giri e
+lo stesso fronte, **60042**, con l'istante `AT = lettura + 4 + 60000` (la `sw`
+del TX costa 4 cicli: il TX è a lettura + 4).
+
+```
+EXPECT "1 0 60042 60042 60042 2 0 3 2 4 0"
+giro 1   armato subito dopo il TX; ADC_AT letto 1, poi 0
+giro 2   armato ~40 cicli prima, poi ADC_ADDR e ADC_COUNT riprogrammati
+giro 3   armato a un istante sbagliato e riarmato; l'istante dentro tre div
+quarto   ritardo 2 / 0, blocchi 3; istante dentro un blocco di ADC_CTRL:
+         overrun 2, blocchi 4, ADC_AT 0
+```
+
+**Rossi, tutti previsti prima.** Su una copia dei sorgenti nello scratchpad,
+mai sull'albero:
+
+| mutante | uscita | dove |
+|---|---|---|
+| parte all'ARMAMENTO (il rosso di §3.86) | `0 0 60001 60001 60001 …` | il blocco del giro 1 esce accecato (I = 2047, `TX_STATUS` 3); il giro 1 finisce in pochi cicli, il TX 2 trova il TX 1 acceso (`TX_OVERRUN`) e la finestra cade sull'eco del TX 1 (I = 652). A cascata, spiegato con dei `dumps` in più |
+| configurazione congelata all'avvio | giro 2 `-1000000` | |
+| il secondo armamento ignorato | giro 3 `-1000000`, quarto `1 1 … 0 4 1` | |
+| avvio al CONFINE invece che ad AT | `60042 60040 60025` | il giro 1 resta verde per caso di fase; la `div` del giro 3 lo prende sempre |
+| niente ritardo | quarto `1 0` invece di `2 0` | |
+| niente overrun all'istante | quarto, overrun `0` | |
+
+**Verifiche:**
+
+| cosa | risultato |
+|---|---|
+| `ctest --timeout 60` | **73/73** (72 + `adc_at`) |
+| `equiv.py` contro `HEAD` (worktree nello scratchpad), i 58 programmi di prima | **116 file identici**, `diff -rq` vuoto (`out/eq_h0810`, `out/eq_at0810`) |
+| impronte | **28/28 ferme**: `test_adc_at` gira a file singolo, nessun `.vx` |
+| `scheduler_facts --check out` | rosso **già su `HEAD`**: la pagina non era stata rigenerata dopo FDIRTY (`vectors` +402, §3.86). Rigenerata, ed è nel diff |
+
+**Si riprende dal CPUOMETRO** (§3.86, in fondo): l'idle alterna un canale del
+marcatore a ogni giro, e `tools/marks.py` legge l'onda quadra. Poi la macchina
+a stati, coi budget accettati e lo slot RX tolto (CAL 2.800, ACQ 4.100 / 5.600,
+TRACK 13.200).
 
 ---
 

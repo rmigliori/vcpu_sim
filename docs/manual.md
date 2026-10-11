@@ -605,6 +605,8 @@ scrive in RAM, **con la DMA e senza la CPU**, un blocco di N campioni
 | `ADC_PERIOD` | `0x100048` | lettura/scrittura | i tick del clock periferiche fra un campione e il successivo (oggi divisore 1: cicli) |
 | `ADC_CTRL` | `0x10004C` | scrittura | bit 0 `ADC_START` = avvia l'acquisizione |
 | `ADC_STATUS` | `0x100050` | lettura | bit 0 `ADC_BUSY`; bit 1 `ADC_OVERRUN`; bit 2..31 i blocchi finiti dall'accensione — **e la lettura abbassa l'overrun** |
+| `ADC_AT` | `0x100070` | scrittura | l'**istante** a cui l'acquisizione parte da sola, nella base di `CLOCK_CYCLES` |
+| | | lettura | bit 0 `ADC_AT_ARMED`; bit 1 `ADC_AT_LATE` — **e la lettura abbassa il ritardo** |
 
 **L'acquisizione la avvia il programma**, non gira da sola: una scrittura ad
 `ADC_CTRL` dice *«acquisisci `ADC_COUNT` campioni a `ADC_ADDR`, uno ogni
@@ -633,6 +635,23 @@ comparatore. **Un avvio mentre acquisisce è ignorato** e alza `ADC_OVERRUN`: è
 un errore di tempo che il programma deve vedere, non un errore del simulatore.
 Una configurazione impossibile (N o periodo non positivi, un blocco che esce
 dalla RAM) invece è un errore di costruzione, e il simulatore lo dice.
+
+**L'avvio a un istante programmato** (dal 08/10/2026): una scrittura ad
+`ADC_AT` arma l'acquisizione all'istante **assoluto** scritto, nella base di
+`CLOCK_CYCLES` (il clock master). L'ADC parte da solo lì, e il campione i è
+preso a `AT + (i+1)·ADC_PERIOD`, **esatto al tick**, comunque cadano i confini
+d'istruzione. È il generatore di timing di un altimetro vero: la finestra di
+ricezione non dipende da quando il programma riesce a fare la `sw`, e chi arma
+(il tracker, per lo sweep dopo) poi fa altro. Per questo `ADC_ADDR`,
+`ADC_COUNT` e `ADC_PERIOD` **si congelano all'armamento**, non all'avvio, e un
+secondo armamento **sostituisce** il primo. Un istante **già passato** — il
+confronto wrappante dei comparatori, `(adesso − AT) ≥ 0` — non parte, disarma e
+alza `ADC_AT_LATE`, che sta nella lettura di `ADC_AT` e non in `ADC_STATUS`,
+dove dal bit 2 c'è il contatore. Se all'istante l'ADC sta ancora acquisendo, è
+un avvio mentre acquisisce: ignorato, con `ADC_OVERRUN`. `ADC_CTRL` resta
+l'avvio immediato. Il blocco si chiede al mondo esterno quando **parte**, cioè
+all'istante. `tests/test_adc_at.vasm` lo prova con tre fasi diverse del
+programma, e lo stesso fronte di `test_eco`.
 
 **Il segnale è il mondo**, e si dà al simulatore come la traccia della tastiera:
 

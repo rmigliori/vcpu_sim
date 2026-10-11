@@ -351,6 +351,29 @@
 //  della time line, e lo deve vedere il programma, non fermarlo.
 //
 //  ADC_ADDR, ADC_COUNT e ADC_PERIOD si rileggono; ADC_CTRL si scrive e basta.
+//
+//  --- ADC_AT: L'AVVIO A UN ISTANTE PROGRAMMATO (08/10/2026, §3.86) ---
+//  Il generatore di timing degli altimetri veri, deciso dall'utente al posto
+//  dell'anticipo in software dello slot RX: ADC_CTRL parte alla `sw`, e la
+//  sveglia del super task costa piu' della finestra. Si SCRIVE l'istante
+//  ASSOLUTO, nella base di CLOCK_CYCLES (il clock master): l'ADC parte da solo
+//  li', e il campione i e' preso a  AT + (i+1)*ADC_PERIOD, esatto al tick. Il
+//  programma l'istante lo SA: niente lettura prima della scrittura.
+//
+//  ADDR, COUNT e PERIOD SI CONGELANO ALL'ARMAMENTO, non all'avvio: chi arma
+//  (il TRACKER) poi fa altro, anche riprogrammare l'ADC. Un secondo armamento
+//  SOSTITUISCE il primo -- anche uno in ritardo, che quindi disarma.
+//
+//  UN ISTANTE GIA' PASSATO NON PARTE: (adesso - AT) >= 0, il confronto
+//  wrappante dei comparatori, alza ADC_AT_LATE. Il bit non sta in ADC_STATUS,
+//  dove dal bit 2 c'e' il contatore (la ragione di TX_BLIND, §3.82), ma nella
+//  LETTURA di ADC_AT, che lo abbassa:
+//      bit 0      ADC_AT_ARMED  armato, l'istante non e' ancora arrivato
+//      bit 1      ADC_AT_LATE   un armamento e' arrivato in ritardo
+//
+//  E' un AVVIO come quello di ADC_CTRL, e ne segue la regola: se all'istante
+//  l'ADC sta ancora acquisendo, l'avvio e' ignorato e alza ADC_OVERRUN.
+//  ADC_CTRL resta com'e', l'avvio immediato.
 // ---------------------------------------------------------------------------
 // Dal 29/09/2026 la DMA scrive SOLO nella RAM condivisa: ADC_ADDR sta fra
 // SHARED_BASE e SHARED_BASE + SHARED_SIZE (qui sotto).
@@ -359,11 +382,14 @@
 #define ADC_PERIOD   (MMIO_BASE + 0x48)
 #define ADC_CTRL     (MMIO_BASE + 0x4C)
 #define ADC_STATUS   (MMIO_BASE + 0x50)
+#define ADC_AT       (MMIO_BASE + 0x70)
 
 #define ADC_START       1   // ADC_CTRL: avvia
 #define ADC_BUSY        1   // ADC_STATUS, bit 0
 #define ADC_OVERRUN     2   // ADC_STATUS, bit 1
 #define ADC_DONE_SHIFT  2   // ADC_STATUS >> 2 = blocchi finiti
+#define ADC_AT_ARMED    1   // lettura di ADC_AT, bit 0
+#define ADC_AT_LATE     2   // lettura di ADC_AT, bit 1
 #define ADC_MAX         2047
 #define ADC_MIN        (-2048)
 
@@ -761,6 +787,11 @@ typedef struct
   unsigned char busy;
   unsigned char overrun;
   uint32_t done;             // i blocchi finiti
+  // ADC_AT: l'avvio armato, con la configurazione congelata all'armamento
+  unsigned char armed;
+  unsigned char late;        // un armamento in ritardo, finche' non si legge
+  uint64_t at;               // l'istante, in tick master
+  int32_t  at_addr, at_count, at_period;
   double   freq;             // il mondo (--adc): Hz col segno
   double   amp;
   // Il mondo ESTERNO (--eco-cmd, §3.84): il segnale all'antenna per il blocco
@@ -861,6 +892,10 @@ int  cmp_pending(const VCmp* c, int32_t ms, int32_t cycles);
 struct VClock;
 int  adc_load(VAdc* a, int64_t addr, int32_t* out);
 int  adc_store(VAdc* a, int64_t addr, int32_t value, uint64_t t, const struct VClock* ck);
+// ADC_AT: se l'istante armato e' arrivato, porta il blocco in corso fino a
+// li' e poi avvia (o alza l'overrun). Ritorna 1 se un blocco e' partito: la
+// scheda gli chiede il segnale al mondo PRIMA di adc_advance.
+int  adc_scatta(VAdc* a, uint64_t t, const struct VClock* ck, uint8_t* shared, VTx* tx);
 void adc_advance(VAdc* a, uint64_t t, const struct VClock* ck, uint8_t* shared, VTx* tx);
 int  adc_set_signal(VAdc* a, const char* spec, char* err, size_t errsz);
 

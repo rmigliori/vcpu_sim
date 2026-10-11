@@ -124,15 +124,24 @@ static void ferma_tutte(VMachine* m)
 // blocco avviato chiede i suoi campioni tutti insieme, che e' lecito perche'
 // nessun TX partito durante il blocco puo' avere l'eco nel blocco stesso
 // (§3.82: con 640 ns e' impossibile, e un TX a finestra aperta acceca comunque).
+//
+// Il blocco si chiede quando PARTE: alla `sw` su ADC_CTRL, o all'istante di
+// ADC_AT (§3.86) -- cosi' il mondo ha gia' sentito ogni TX partito prima.
+static void adc_chiedi_mondo(VMachine* m)
+{
+  VAdc* a = &m->adc;
+  if (m->mondo.on)
+    if (mondo_blocco(&m->mondo, a->next, (uint64_t) a->cur_period * m->clock.div_periph,
+                     a->cur_count, a->eco) != 0)
+      ferma_tutte(m);
+}
+
 static int adc_store_mondo(VMachine* m, int64_t addr, int32_t value, uint64_t t)
 {
   VAdc* a = &m->adc;
   int era = a->busy;
   if (!adc_store(a, addr, value, t, &m->clock)) return 0;
-  if (m->mondo.on && !era && a->busy)
-    if (mondo_blocco(&m->mondo, a->next, (uint64_t) a->cur_period * m->clock.div_periph,
-                     a->cur_count, a->eco) != 0)
-      ferma_tutte(m);
+  if (!era && a->busy) adc_chiedi_mondo(m);
   return 1;
 }
 
@@ -517,6 +526,8 @@ void machine_run(VMachine* m, RunMode mode)
     // linea della tastiera, col SUO timbro.
     int kt = m->intd.target[INTD_KBD];
     kbd_advance(&m->kbd, t, &m->marker[kt], &m->cpu[kt]);
+    if (adc_scatta(&m->adc, t, &m->clock, m->shared, &m->tx))   // ADC_AT
+      adc_chiedi_mondo(m);
     adc_advance(&m->adc, t, &m->clock, m->shared, &m->tx);   // la DMA: solo RAM condivisa
 
     // LA RICHIESTA, PRIMA DELLA CONSEGNA (15/09/2026). Il timer matura quando

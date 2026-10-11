@@ -1,0 +1,249 @@
+; tests/test_adc_at.vasm — L'AVVIO DELL'ADC A UN ISTANTE PROGRAMMATO (08/10/2026, §3.86).
+;
+; ADC_AT: si scrive l'istante assoluto, nella base di CLOCK_CYCLES, e l'ADC
+; parte da solo li'. Gira con --eco-cmd "python3 tools/mare.py
+; tests/eco_piatto.scena", l'acqua ferma a 90 km senza rumore, come test_eco:
+; il fronte cade a 60.041,5 tick da ogni TX, e il primo campione oltre meta'
+; ampiezza e' quello a 60.042.
+;
+; --- L'ISTANTE DEL TX, al ciclo ---
+; `lw r9` legge il clock al confine della `sw` che segue (il costo si conta
+; prima di eseguire), e la `sw` avviene a quel confine PIU' il suo costo, 4
+; cicli (CYC_SCALAR_MEM). Quindi TX = r9 + 4, e l'istante armato e'
+;
+;     AT = r9 + 4 + RITARDO,   RITARDO = 60000
+;
+; Il campione j e' preso a AT + (j+1): dal TX, a RITARDO + j + 1. Il primo
+; oltre meta' ampiezza e' j = 41, cioe' 60042 -- lo stesso numero di test_eco,
+; ma qui la `sw` dell'ADC non c'e': c'e' l'istante.
+;
+; --- TRE GIRI, TRE FASI DEL PROGRAMMA, UNO STESSO NUMERO ---
+;   1  armato SUBITO dopo il TX, 60.000 cicli prima dell'istante; e la lettura
+;      di ADC_AT: 1 (armato) prima, 0 dopo
+;   2  armato ALL'ULTIMO, una quarantina di cicli prima; e subito dopo ADC_ADDR
+;      e ADC_COUNT riprogrammati: la configurazione e' quella dell'ARMAMENTO
+;   3  armato a un istante sbagliato (30 prima: il fronte uscirebbe dalla
+;      finestra) e RIARMATO a quello giusto; e l'istante cade nel mezzo di una
+;      catena di `div`, quindi il confine d'istruzione arriva dopo
+; Ogni giro ha il suo blocco: un blocco rimasto dal giro prima darebbe un
+; verde falso.
+;
+; --- IL QUARTO: il ritardo e l'avvio mentre acquisisce ---
+;   2  un armamento a un istante gia' passato: non parte, alza ADC_AT_LATE e
+;      DISARMA quello di prima (armato a +100.000, mai partito)
+;   0  la seconda lettura: il bit si abbassa leggendo
+;   3  i blocchi finiti: quelli dei tre giri, nessuno in piu'
+;   2  ADC_OVERRUN, raccolto durante l'attesa (la lettura lo abbassa): un
+;      istante armato dentro un blocco avviato con ADC_CTRL e' un avvio mentre
+;      acquisisce
+;   4  i blocchi finiti: quello di ADC_CTRL, l'armato no
+;   0  ADC_AT: scattato, non e' piu' armato
+;
+; Visto rosso con l'ADC che parte all'ARMAMENTO invece che all'istante.
+
+.equ TX_LEN      0x100054        ; da devices.h, ricopiati come in test_eco
+.equ TX_CTRL     0x100058
+.equ TX_START    1
+
+.equ ADC_ADDR    0x100040
+.equ ADC_COUNT   0x100044
+.equ ADC_PERIOD  0x100048
+.equ ADC_CTRL    0x10004C
+.equ ADC_STATUS  0x100050
+.equ ADC_AT      0x100070
+.equ ADC_START   1
+.equ ADC_OVERRUN 2
+
+.equ CLOCK_CYCLES 0x100030
+
+.equ BLOCCO_1    0x200000        ; 64 campioni: 512 byte ciascuno
+.equ BLOCCO_2    0x200200
+.equ BLOCCO_3    0x200400
+.equ BLOCCO_X    0x200600        ; dove il giro 2 riprogramma l'ADC, invano
+.equ BLOCCO_4    0x200800
+.equ PARTENZA    10000           ; il primo TX non parte a zero (test_eco)
+.equ RITARDO_SW  60004           ; RITARDO + il costo della sw del TX
+.equ ULTIMO      59964           ; giro 2: si arma una quarantina di cicli prima
+.equ SBAGLIATO   59974           ; giro 3: 30 cicli prima dell'istante giusto
+.equ VICINO      59996           ; giro 3: le div partono a ridosso dell'istante
+.equ SOGLIA      250000          ; (1000 / 2)^2: meta' ampiezza, al quadrato
+
+  .text
+main:
+  li r1, TX_LEN
+  li r2, 5000                    ; 50 us
+  sw r2, 0(r1)
+  li r1, ADC_COUNT
+  li r2, 64
+  sw r2, 0(r1)
+  li r1, ADC_PERIOD
+  li r2, 1
+  sw r2, 0(r1)
+
+  li r1, CLOCK_CYCLES
+  li r11, TX_CTRL
+  li r12, TX_START
+  li r13, ADC_AT
+
+  li r2, PARTENZA
+partenza:
+  lw r3, 0(r1)
+  blt r3, r2, partenza
+
+  ; --- giro 1: armato subito -------------------------------------------------
+  li r2, ADC_ADDR
+  li r3, BLOCCO_1
+  sw r3, 0(r2)
+  lw r9, 0(r1)
+  sw r12, 0(r11)                 ; il TX
+  li r10, RITARDO_SW
+  add r10, r10, r9               ; AT
+  sw r10, 0(r13)
+  lw r2, 0(r13)
+  dumps r2                       ; 1
+  li r4, 1
+  call aspetta_blocchi
+  lw r2, 0(r13)
+  dumps r2                       ; 0
+  li r3, BLOCCO_1
+  call fronte
+  dumps r2                       ; 60042
+
+  ; --- giro 2: armato all'ultimo, poi l'ADC riprogrammato ---------------------
+  li r2, ADC_ADDR
+  li r3, BLOCCO_2
+  sw r3, 0(r2)
+  lw r9, 0(r1)
+  sw r12, 0(r11)
+  li r10, RITARDO_SW
+  add r10, r10, r9
+  li r2, ULTIMO
+ultimo:
+  lw r3, 0(r1)
+  sub r3, r3, r9
+  blt r3, r2, ultimo
+  sw r10, 0(r13)
+  li r2, ADC_ADDR                ; dopo l'armamento: non deve contare
+  li r3, BLOCCO_X
+  sw r3, 0(r2)
+  li r2, ADC_COUNT
+  li r3, 1
+  sw r3, 0(r2)
+  li r4, 2
+  call aspetta_blocchi
+  li r3, BLOCCO_2
+  call fronte
+  dumps r2                       ; 60042
+
+  ; --- giro 3: riarmato, e l'istante dentro una div -------------------------
+  li r2, ADC_ADDR
+  li r3, BLOCCO_3
+  sw r3, 0(r2)
+  li r2, ADC_COUNT
+  li r3, 64
+  sw r3, 0(r2)
+  lw r9, 0(r1)
+  sw r12, 0(r11)
+  li r10, SBAGLIATO
+  add r10, r10, r9
+  sw r10, 0(r13)                 ; il primo armamento: sbagliato
+  li r10, RITARDO_SW
+  add r10, r10, r9
+  sw r10, 0(r13)                 ; il secondo lo sostituisce
+  li r2, VICINO
+vicino:
+  lw r3, 0(r1)
+  sub r3, r3, r9
+  blt r3, r2, vicino
+  li r5, 1000
+  li r6, 7
+  div r5, r5, r6                 ; 20 cicli l'una: l'istante cade qui dentro
+  div r5, r5, r6
+  div r5, r5, r6
+  li r4, 3
+  call aspetta_blocchi
+  li r3, BLOCCO_3
+  call fronte
+  dumps r2                       ; 60042
+
+  ; --- il quarto: il ritardo, e l'istante mentre acquisisce ------------------
+  lw r10, 0(r1)
+  li r2, 100000
+  add r2, r2, r10
+  sw r2, 0(r13)                  ; armato lontano
+  lw r10, 0(r1)
+  sw r10, 0(r13)                 ; gia' passato: la sw viene dopo la lettura
+  lw r2, 0(r13)
+  dumps r2                       ; 2
+  lw r2, 0(r13)
+  dumps r2                       ; 0
+  li r1, ADC_STATUS
+  lw r2, 0(r1)
+  srli r2, r2, 2
+  dumps r2                       ; 3
+
+  li r1, ADC_ADDR
+  li r2, BLOCCO_4
+  sw r2, 0(r1)
+  li r1, CLOCK_CYCLES
+  li r2, ADC_CTRL
+  li r3, ADC_START
+  lw r10, 0(r1)
+  sw r3, 0(r2)                   ; 64 cicli di acquisizione da qui
+  addi r10, r10, 24
+  sw r10, 0(r13)                 ; l'istante cade dentro il blocco
+  li r1, ADC_STATUS
+  li r4, 4
+  li r5, 0                       ; l'overrun, raccolto
+  li r6, ADC_OVERRUN
+raccogli:
+  lw r2, 0(r1)
+  and r3, r2, r6
+  or r5, r5, r3
+  srli r2, r2, 2
+  bne r2, r4, raccogli
+  li r7, 200                     ; e oltre l'istante, per sicurezza
+dopo:
+  addi r7, r7, -1
+  bne r7, r0, dopo
+  lw r2, 0(r1)
+  and r3, r2, r6
+  or r5, r5, r3
+  dumps r5                       ; 2
+  srli r2, r2, 2
+  dumps r2                       ; 4
+  lw r2, 0(r13)
+  dumps r2                       ; 0
+  halt
+
+; Aspetta che i blocchi finiti siano r4: il CONTATORE di ADC_STATUS.
+aspetta_blocchi:
+  li r5, ADC_STATUS
+attesa:
+  lw r2, 0(r5)
+  srli r2, r2, 2
+  bne r2, r4, attesa
+  ret
+
+; r3 = il blocco. Torna in r2 l'istante, dal TX, del primo campione oltre
+; meta' ampiezza: RITARDO + j + 1. Un numero che non passa se non c'e'.
+fronte:
+  li r4, 0                       ; j
+  li r5, 64
+  li r6, SOGLIA
+cerca:
+  lw r7, 0(r3)                   ; I
+  lw r8, 4(r3)                   ; Q
+  mul r2, r7, r7
+  mul r8, r8, r8
+  add r2, r2, r8
+  blt r2, r6, avanti
+  li r2, 60001                   ; RITARDO + 1
+  add r2, r2, r4
+  ret
+avanti:
+  addi r3, r3, 8
+  addi r4, r4, 1
+  bne r4, r5, cerca
+  li r2, -1000000
+  ret
