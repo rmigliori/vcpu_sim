@@ -44,7 +44,7 @@
 | `tmgr` | 22216 | 0 | 49834 | 498,3 µs |
 | `coop` | 4866 | 0 | 10531 | 105,3 µs |
 | `events` | 9265 | 0 | 18767 | 187,7 µs |
-| `vectors` | 92611 | 43712 | 159668 | 1,60 ms |
+| `vectors` | 93013 | 43712 | 160070 | 1,60 ms |
 
 Misurati così, uno per riga:
 
@@ -183,9 +183,9 @@ Un programma che non compare non ha prodotto una traccia leggibile.
 
 | proprietario | cicli | quota |
 |---|---:|---:|
-| A | 57582 | 36.1% |
-| B | 55577 | 34.8% |
-| ISR | 41911 | 26.2% |
+| A | 57696 | 36.0% |
+| B | 55606 | 34.7% |
+| ISR | 42170 | 26.3% |
 | idle | 4094 | 2.6% |
 | boot | 504 | 0.3% |
 
