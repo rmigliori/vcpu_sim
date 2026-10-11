@@ -218,10 +218,11 @@
 >
 > **Aperti e piccoli, nessuno urgente:** l'immediato degli shift fuori da 0..63
 > (§3.81: la proposta è rifiutarlo in assembler, decide l'utente); `out/rosso/`,
-> 321 MB dell'esperimento di §3.85, da cancellare se non serve; in
-> `~/.ssh/config` il blocco `Host pi` dice ancora `HostName dietpi4`, e finché
-> non diventa `dietpi4cloud` il push sulla Pi vuole
-> `git -c core.sshCommand="ssh -o HostName=dietpi4cloud" push pi master`.
+> 321 MB dell'esperimento di §3.85, da cancellare se non serve. Il push sulla
+> Pi: **in casa** `git push pi master` e basta (`dietpi4` si risolve sul
+> FritzBox, verificato l'11/10); solo **fuori casa** serve ZeroTier,
+> `git -c core.sshCommand="ssh -o HostName=dietpi4cloud" push pi master`. Il
+> blocco `Host pi` di `~/.ssh/config` va lasciato com'è.
 >
 > **LA FORMULA PER RIPRENDERE**, da incollare all'inizio della sessione:
 >
