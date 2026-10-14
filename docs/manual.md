@@ -1097,6 +1097,33 @@ una ricorsione.
 
 `tests/test_include.vasm` è il test mirato di entrambe le proprietà.
 
+**Dove sta un errore (14/10/2026).** Un errore dell'assemblatore dice il **file**
+e la **riga in quel file**, e se il file è incluso, la catena di chi lo
+includeva, come «In file included from» del C:
+
+```
+asm error: b_rotto.vinc:7: .equ X: divisione intera con resto in '7 / 2' ...
+  incluso da a_rotto.vinc:4
+  incluso da errore_include.vasm:8
+```
+
+Un errore in una riga generata da una **macro** dice la riga del corpo, nel file
+dove la macro è definita, e la chiamata:
+
+```
+asm error: macro_rotta.vinc:5: fli: 'NESSUNO' non e' un numero ne' una .equ
+  incluso da errore_macro.vasm:8
+  nell'espansione della macro 'SBAGLIA', chiamata da errore_macro.vasm:12
+```
+
+Vale anche per gli errori delle istruzioni, che si leggono nel secondo passo:
+ogni riga conservata porta con sé la posizione da cui viene. Le righe generate
+da `.proc` e `.interrupt` (prologo, epilogo, coda) prendono quella della
+direttiva. Un errore che non sta su una riga — una `.proc` mai chiusa, un
+`.global` di un nome che non c'è — dice solo il file. Prima di questa data la
+riga era contata su **tutto** il flusso, inclusi compresi, e un errore del
+secondo passo diceva l'indice dell'istruzione (`instr N`).
+
 #### 4.2.3 `.ifdef`: compilare via del codice, e perché non guarda le `.equ`
 
 Quattro direttive — `.ifdef`, `.ifndef`, `.else`, `.endif` — e un flag, `-D`:

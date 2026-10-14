@@ -1,0 +1,4 @@
+; tests/posizioni/a_rotto.vinc — il primo livello: include quello rotto.
+;
+; (riga 3)
+.include "b_rotto.vinc"

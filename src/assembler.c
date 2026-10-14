@@ -1228,6 +1228,114 @@ enum { SEC_TEXT, SEC_DATA, SEC_SHARED };
 static char* g_code_lines[MAX_INSTR];  // text-section lines kept for pass 2
 static int   g_code_count;
 
+// ---------------------------------------------------------------------------
+//  LE POSIZIONI NEGLI ERRORI (14/10/2026, §3.93): file, riga, e chi includeva.
+//
+//  Fino a qui un errore diceva "line N" con N contato su TUTTO il flusso, file
+//  inclusi compresi: un errore alla riga 3 dopo un .include di 64 righe usciva
+//  "line 67", e il file non lo diceva nessuno. Gli errori del pass 2 dicevano
+//  "instr N", l'indice dell'istruzione.
+//
+//  Ogni file che entra in un'unita' di assemblaggio e' un FRAME: il nome, e
+//  dove l'ha incluso il frame padre. Una posizione e' (frame, riga) -- la riga
+//  nel SUO file -- e la catena delle inclusioni si ricostruisce risalendo i
+//  padri, come "In file included from" del C. Una riga generata da una macro
+//  porta la sua riga nel corpo E il punto della chiamata. Le righe di codice
+//  conservate per il pass 2 portano ciascuna la sua posizione: quando il pass 2
+//  gira, i file sono chiusi da un pezzo.
+// ---------------------------------------------------------------------------
+#define MAX_SRC_FRAMES 256
+
+typedef struct { char file[512]; int parent; int at_line; } SrcFrame;
+typedef struct { int frame; int line; int macro; int call_frame; int call_line; } SrcPos;
+
+static SrcFrame g_frames[MAX_SRC_FRAMES];
+static int      g_frame_count;
+static SrcPos   g_pos;                     // dove si e' adesso: pass 1 o pass 2
+static SrcPos   g_code_pos[MAX_INSTR];     // da dove viene ogni riga di codice
+
+static const SrcPos NO_POS = { -1, 0, -1, -1, 0 };
+
+static void pos_reset(void)
+{
+  g_frame_count = 0;
+  g_pos = NO_POS;
+}
+
+static int pos_new_frame(const char* file, int parent, int at_line)
+{
+  if (g_frame_count >= MAX_SRC_FRAMES) return -1;
+  SrcFrame* f = &g_frames[g_frame_count];
+  snprintf(f->file, sizeof f->file, "%s", file);
+  f->parent  = parent;
+  f->at_line = at_line;
+  return g_frame_count++;
+}
+
+// La fine dell'unita': i controlli che vengono dopo l'ultima riga (.proc mai
+// chiusa, .global di un nome che non c'e', le rilocazioni) parlano del file e
+// non di una riga.
+static void pos_end_of_unit(void)
+{
+  g_pos = NO_POS;
+  if (g_frame_count > 0) g_pos.frame = 0;
+}
+
+static void pos_chain(char* out, size_t sz, size_t* o, int frame)
+{
+  for (int f = frame; f >= 0 && g_frames[f].parent >= 0 && *o < sz; f = g_frames[f].parent)
+  {
+    int w = snprintf(out + *o, sz - *o, "\n  incluso da %s:%d",
+                     g_frames[g_frames[f].parent].file, g_frames[f].at_line);
+    if (w > 0) *o += (size_t) w;
+  }
+}
+
+static const char* macro_name_at(int idx);
+
+// Riscrive 'err' come "file:riga: messaggio" piu' la catena. Il vecchio prefisso
+// "line N: " si toglie: la riga e' gia' nella posizione.
+static void pos_format_error(char* err, size_t errsz)
+{
+  if (g_pos.frame < 0 || g_pos.frame >= g_frame_count) return;
+  const char* msg = err;
+  if (strncmp(msg, "line ", 5) == 0)
+  {
+    const char* p = msg + 5;
+    while (isdigit((unsigned char) *p)) ++p;
+    if (p > msg + 5 && p[0] == ':' && p[1] == ' ') msg = p + 2;
+  }
+  char   out[1024];
+  size_t o = 0;
+  int w = (g_pos.line > 0)
+        ? snprintf(out, sizeof out, "%s:%d: %s", g_frames[g_pos.frame].file, g_pos.line, msg)
+        : snprintf(out, sizeof out, "%s: %s", g_frames[g_pos.frame].file, msg);
+  if (w > 0) o = (size_t) w;
+  if (o < sizeof out) pos_chain(out, sizeof out, &o, g_pos.frame);
+  if (g_pos.macro >= 0 && g_pos.call_frame >= 0 && o < sizeof out)
+  {
+    w = snprintf(out + o, sizeof out - o, "\n  nell'espansione della macro '%s', chiamata da %s:%d",
+                 macro_name_at(g_pos.macro), g_frames[g_pos.call_frame].file, g_pos.call_line);
+    if (w > 0) o += (size_t) w;
+    if (o < sizeof out) pos_chain(out, sizeof out, &o, g_pos.call_frame);
+  }
+  snprintf(err, errsz, "%s", out);
+}
+
+// Aggiunge una riga di codice per il pass 2, con la sua posizione.
+static int add_code_line(const char* text, SrcPos pos, char* err, size_t errsz)
+{
+  if (g_code_count >= MAX_INSTR)
+  {
+    snprintf(err, errsz, "too many instructions");
+    return -1;
+  }
+  g_code_lines[g_code_count] = strdup(text);
+  g_code_pos[g_code_count]   = pos;
+  g_code_count += 1;
+  return 0;
+}
+
 static void free_code_lines(void)
 {
   for (int i = 0; i < g_code_count; ++i) free(g_code_lines[i]);
@@ -1290,6 +1398,7 @@ static void join_tokens(char** toks, int start, int n, char* out, size_t outsz);
 static int    g_proc_active;
 static char   g_proc_name[64];
 static char*  g_proc_body[MAX_INSTR];
+static SrcPos g_proc_body_pos[MAX_INSTR];   // ogni riga del corpo, dove stava
 static int    g_proc_body_count;
 
 static void free_proc_body(void)
@@ -1298,16 +1407,11 @@ static void free_proc_body(void)
   g_proc_body_count = 0;
 }
 
+// Una riga GENERATA (prologo/epilogo di .proc, coda di .interrupt): prende la
+// posizione della direttiva che la genera, cioe' quella corrente.
 static int emit_synth_line(const char* text, char* err, size_t errsz)
 {
-  if (g_code_count >= MAX_INSTR)
-  {
-    snprintf(err, errsz, "too many instructions");
-    return -1;
-  }
-  g_code_lines[g_code_count] = strdup(text);
-  g_code_count += 1;
-  return 0;
+  return add_code_line(text, g_pos, err, errsz);
 }
 
 // Scalar destination register (1..13) written by TOKS, or -1 if TOKS does not
@@ -1399,16 +1503,14 @@ static int close_and_emit_proc(char* err, size_t errsz)
     int en = tokenize(buf, etoks, 64);
     free(g_proc_body[i]);
     if (en == 0) continue;
-    if (g_code_count >= MAX_INSTR)
+    char joined[512];
+    join_tokens(etoks, 0, en, joined, sizeof joined);
+    if (add_code_line(joined, g_proc_body_pos[i], err, errsz) != 0)
     {
-      snprintf(err, errsz, "too many instructions");
+      for (int j = i + 1; j < g_proc_body_count; ++j) free(g_proc_body[j]);
       g_proc_body_count = 0;
       return -1;
     }
-    char joined[512];
-    join_tokens(etoks, 0, en, joined, sizeof joined);
-    g_code_lines[g_code_count] = strdup(joined);
-    g_code_count += 1;
   }
   g_proc_body_count = 0;
 
@@ -1489,6 +1591,7 @@ static int handle_proc_body_line(const char* raw_line, char** toks, int n,
   if (toks[0][0] == '.') { snprintf(err, errsz, "line %d: directives are not allowed inside .proc/.endproc", lineno); return -1; }
 
   if (g_proc_body_count >= MAX_INSTR) { snprintf(err, errsz, "too many instructions"); return -1; }
+  g_proc_body_pos[g_proc_body_count] = g_pos;
   g_proc_body[g_proc_body_count++] = strdup(raw_line);
   return 1;
 }
@@ -1677,6 +1780,7 @@ typedef struct
   char  parm[MAX_MACRO_PARMS][32];
   int   nparm;
   char* body[MAX_MACRO_BODY];
+  SrcPos bpos[MAX_MACRO_BODY];   // dove sta ogni riga del corpo (§3.93)
   int   nbody;
 } Macro;
 
@@ -1691,6 +1795,11 @@ static void free_macros(void)
     for (int j = 0; j < g_macros[i].nbody; ++j) free(g_macros[i].body[j]);
   g_macro_count = 0;
   g_macro_active = 0;
+}
+
+static const char* macro_name_at(int idx)
+{
+  return (idx >= 0 && idx < g_macro_count) ? g_macros[idx].name : "?";
 }
 
 static Macro* find_macro(const char* name)
@@ -1807,6 +1916,7 @@ static int handle_macro_body_line(const char* raw_line, char** toks, int n,
   { snprintf(err, errsz, "line %d: macro '%s' calls macro '%s': a body holds instructions only", lineno, m->name, toks[0]); return -1; }
   if (m->nbody >= MAX_MACRO_BODY)
   { snprintf(err, errsz, "line %d: macro '%s' is too long (max %d lines)", lineno, m->name, MAX_MACRO_BODY); return -1; }
+  m->bpos[m->nbody] = g_pos;
   m->body[m->nbody++] = strdup(raw_line);
   return 1;
 }
@@ -1828,7 +1938,12 @@ static int handle_macro_call(char** toks, int k, int n, int section,
     char line[512];
     if (macro_substitute(m, toks + k + 1, m->body[i], line, sizeof line, err, errsz) != 0)
       return -1;
-    if (emit_synth_line(line, err, errsz) != 0) return -1;
+    // La riga porta la sua posizione nel corpo, e la chiamata che l'ha espansa.
+    SrcPos pos     = m->bpos[i];
+    pos.macro      = (int) (m - g_macros);
+    pos.call_frame = g_pos.frame;
+    pos.call_line  = g_pos.line;
+    if (add_code_line(line, pos, err, errsz) != 0) return -1;
   }
   return 1;
 }
@@ -1935,6 +2050,8 @@ typedef struct
 typedef struct
 {
   FILE* stk[MAX_INCLUDE];
+  int   line[MAX_INCLUDE];    // la riga di ciascun file aperto (§3.93)
+  int   frame[MAX_INCLUDE];   // il suo frame in g_frames
   int   sp;
   char  base_dir[400];
   char  seen[MAX_INC_SEEN][512];
@@ -1992,7 +2109,11 @@ static int inc_begin(IncState* inc, FILE* top, const char* path, char* err, size
 {
   memset(inc, 0, sizeof *inc);
   base_dir_of(path, inc->base_dir, sizeof inc->base_dir);
+  pos_reset();
+  inc->frame[inc->sp] = pos_new_frame(path, -1, 0);
+  inc->line[inc->sp]  = 0;
   inc->stk[inc->sp++] = top;
+  pos_end_of_unit();
   char canon[512];
   inc_canonical(path, canon, sizeof canon);
   return inc_remember(inc, canon, err, errsz);
@@ -2079,7 +2200,9 @@ static int cond_line(IncState* inc, const char* raw, int lineno,
 
 // Read the next line of the assembly unit. '*lineno' counts PHYSICAL lines,
 // the ones compiled out included, so a message still points where the source
-// does. Returns 1 (line in 'line'), 0 at end of unit, -1 on error.
+// does -- and since 14/10/2026 (§3.93) it counts them IN THEIR OWN FILE: before,
+// one counter ran across every included file. The position goes to g_pos too.
+// Returns 1 (line in 'line'), 0 at end of unit, -1 on error.
 static int inc_next_line(IncState* inc, char* line, size_t sz, int* lineno,
                          char* err, size_t errsz)
 {
@@ -2087,7 +2210,10 @@ static int inc_next_line(IncState* inc, char* line, size_t sz, int* lineno,
   {
     if (fgets(line, sz, inc->stk[inc->sp - 1]))
     {
-      *lineno += 1;
+      *lineno = ++inc->line[inc->sp - 1];
+      g_pos = NO_POS;
+      g_pos.frame = inc->frame[inc->sp - 1];
+      g_pos.line  = *lineno;
       int c = cond_line(inc, line, *lineno, err, errsz);
       if (c < 0) return -1;
       if (c > 0) continue;            // the directive itself never reaches pass 1
@@ -2103,7 +2229,7 @@ static int inc_next_line(IncState* inc, char* line, size_t sz, int* lineno,
                inc->cond[inc->ncond - 1].lineno);
       return -1;
     }
-    if (inc->sp == 1) return 0;      // leave the top-level file open for the caller
+    if (inc->sp == 1) { pos_end_of_unit(); return 0; }   // the top-level file stays open
     fclose(inc->stk[inc->sp - 1]);
     inc->sp -= 1;
   }
@@ -2172,11 +2298,15 @@ static int inc_push(IncState* inc, const char* raw, int lineno, char* err, size_
     return -1;
   }
   if (inc_remember(inc, canon, err, errsz) != 0) { fclose(f); return -1; }
+  int fr = pos_new_frame(full, inc->frame[inc->sp - 1], inc->line[inc->sp - 1]);
+  if (fr < 0) { snprintf(err, errsz, "line %d: too many included files", lineno); fclose(f); return -1; }
+  inc->frame[inc->sp] = fr;
+  inc->line[inc->sp]  = 0;
   inc->stk[inc->sp++] = f;
   return 1;
 }
 
-int assemble(const char* path, uint8_t* mem, Instr* prog, char* err, size_t errsz)
+static int assemble_unit(const char* path, uint8_t* mem, Instr* prog, char* err, size_t errsz)
 {
   g_symbol_count = 0;
   g_code_count   = 0;
@@ -2364,15 +2494,9 @@ int assemble(const char* path, uint8_t* mem, Instr* prog, char* err, size_t errs
     if (hc == 1) continue;
 
     // A text instruction: store its tokens (sans label) for pass 2.
-    if (g_code_count >= MAX_INSTR)
-    {
-      snprintf(err, errsz, "too many instructions");
-      fclose(fp); return -1;
-    }
     char joined[512];
     join_tokens(toks, k, n, joined, sizeof(joined));
-    g_code_lines[g_code_count] = strdup(joined);
-    g_code_count += 1;
+    if (add_code_line(joined, g_pos, err, errsz) != 0) { fclose(fp); return -1; }
   }
   if (rc < 0) { free_code_lines(); inc_cleanup(&inc); fclose(fp); return -1; }
 
@@ -2389,21 +2513,29 @@ int assemble(const char* path, uint8_t* mem, Instr* prog, char* err, size_t errs
     char* etoks[64];
     int en = tokenize(buf, etoks, 64);
     if (en == 0) continue;
+    g_pos = g_code_pos[i];             // l'errore dice la riga, non l'indice
     if (encode(etoks, en, &prog[i], err, errsz) != 0)
     {
-      char tmp[256];
-      snprintf(tmp, sizeof(tmp), "instr %d: %s", i, err);
-      snprintf(err, errsz, "%s", tmp);
       free_code_lines();
       fclose(fp);
       return -1;
     }
   }
+  pos_end_of_unit();
 
   int count = g_code_count;
   free_code_lines();
   fclose(fp);
   return count;
+}
+
+// Il punto d'ingresso: un errore esce con la sua posizione (§3.93).
+int assemble(const char* path, uint8_t* mem, Instr* prog, char* err, size_t errsz)
+{
+  pos_reset();
+  int rc = assemble_unit(path, mem, prog, err, errsz);
+  if (rc < 0) pos_format_error(err, errsz);
+  return rc;
 }
 
 // ---------------------------------------------------------------------------
@@ -2445,8 +2577,8 @@ static int is_branch_op(OpCode op)
          op == OP_JAL || op == OP_SETHANDLER;
 }
 
-int assemble_object(const char* path, VObject* obj, const char* expanded_out,
-                     char* err, size_t errsz)
+static int assemble_object_unit(const char* path, VObject* obj, const char* expanded_out,
+                                char* err, size_t errsz)
 {
   memset(obj, 0, sizeof(*obj));
   g_symbol_count = 0;
@@ -2650,15 +2782,9 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
     if (hc < 0) goto fail;
     if (hc == 1) continue;
 
-    if (g_code_count >= MAX_INSTR)
-    {
-      snprintf(err, errsz, "too many instructions");
-      goto fail;
-    }
     char joined[512];
     join_tokens(toks, k, n, joined, sizeof(joined));
-    g_code_lines[g_code_count] = strdup(joined);
-    g_code_count += 1;
+    if (add_code_line(joined, g_pos, err, errsz) != 0) goto fail;
   }
   if (rc < 0) goto fail;
 
@@ -2697,11 +2823,9 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
     if (en == 0) continue;
 
     g_pending_hit = 0;
+    g_pos = g_code_pos[i];             // l'errore dice la riga, non l'indice
     if (encode(etoks, en, &obj->text[i], err, errsz) != 0)
     {
-      char tmp[256];
-      snprintf(tmp, sizeof(tmp), "instr %d: %s", i, err);
-      snprintf(err, errsz, "%s", tmp);
       g_obj_mode = 0;
       goto fail;
     }
@@ -2716,6 +2840,7 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
     }
   }
   g_obj_mode = 0;
+  pos_end_of_unit();
 
   obj->text_count   = g_code_count;
   obj->shared_count = shared_ptr;
@@ -2766,6 +2891,16 @@ fail:
   inc_cleanup(&inc);   // nested includes still open; fp is closed just below
   fclose(fp);
   return -1;
+}
+
+// Il punto d'ingresso: un errore esce con la sua posizione (§3.93).
+int assemble_object(const char* path, VObject* obj, const char* expanded_out,
+                    char* err, size_t errsz)
+{
+  pos_reset();
+  int rc = assemble_object_unit(path, obj, expanded_out, err, errsz);
+  if (rc != 0) pos_format_error(err, errsz);
+  return rc;
 }
 
 void vobject_free(VObject* obj)

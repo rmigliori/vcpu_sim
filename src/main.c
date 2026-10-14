@@ -279,7 +279,7 @@ static int cmd_legacy(const char* path, RunMode mode)
 {
   static VMachine m;
   static Instr prog[MAX_INSTR];
-  char err[256] = {0};
+  char err[1024] = {0};   // un errore porta la catena degli include (§3.93)
 
   machine_init(&m);
   if (apply_kbd_trace(&m) != 0) return 2;
@@ -324,7 +324,7 @@ static int cmd_asm(int argc, char** argv)
 
   VObject* obj = calloc(1, sizeof(VObject));
   if (!obj) { fprintf(stderr, "out of memory\n"); return 1; }
-  char err[256] = {0};
+  char err[1024] = {0};   // un errore porta la catena degli include (§3.93)
 
   int rc = 1;
   if (assemble_object(in, obj, expanded, err, sizeof err) != 0)

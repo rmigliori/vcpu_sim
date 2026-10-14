@@ -1,0 +1,6 @@
+; tests/posizioni/macro_rotta.vinc — una macro con un errore nel corpo, che
+; si vede solo quando la si espande (pass 2). Il corpo e' alla riga 5.
+.macro SBAGLIA
+  li r2, 2
+  fli f1, NESSUNO
+.endmacro

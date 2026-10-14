@@ -1,0 +1,7 @@
+; tests/posizioni/b_rotto.vinc — il secondo livello: l'errore e' alla riga 7.
+;
+;
+;
+;
+.equ OK 4
+.equ X 7 / 2

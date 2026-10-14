@@ -201,8 +201,9 @@ vasm_check(costanti_obj MODE DUMPS EXPECT "20 7 -3 20 1.5 20 5"
 # Le regole del C, piu' la divisione intera con resto come errore. Diciassette
 # numeri derivati a mano nel sorgente; due volte, come test_costanti. Visto
 # rosso con l'assembler di prima, che si ferma alla prima .equ float. I casi
-# d'errore sono in §3.92, provati a mano: un test che si aspetta un
-# assemblaggio fallito vasm_check non lo sa fare.
+# d'errore sono in §3.92, provati a mano: vasm_check non verifica un
+# assemblaggio fallito, ma add_test con PASS_REGULAR_EXPRESSION si' (le
+# posizioni qui sotto). Farne dei test e' aperto.
 set(_espr "14 47 5 6 -17 32 16 -8 6 15 5 -1 6 1.25 8 1.25 11")
 vasm_check(espressioni MODE DUMPS EXPECT "${_espr}"
            SOURCE ${CMAKE_SOURCE_DIR}/tests/test_espressioni.vasm)
@@ -210,6 +211,26 @@ vasm_object(t_espressioni SOURCE ${CMAKE_SOURCE_DIR}/tests/test_espressioni.vasm
 vasm_program(test_espressioni OBJECTS t_espressioni)
 vasm_check(espressioni_obj MODE DUMPS EXPECT "${_espr}"
            PROGRAM test_espressioni)
+
+# LE POSIZIONI NEGLI ERRORI (14/10/2026, §3.93). Due sorgenti che devono
+# assemblare MALE, e il messaggio deve dire file, riga e la catena: un errore
+# due include piu' in basso, e un errore del pass 2 nel corpo di una macro
+# definita in un include. Su tutte e due le strade. Visti rossi con
+# l'assembler di prima, che diceva "line 19" (8 + 4 + 7: le righe dei tre
+# file sommate) e "instr 2", senza file.
+set(_pos_inc "b_rotto[.]vinc:7: [.]equ X: divisione intera con resto.*incluso da [^\n]*a_rotto[.]vinc:4.*incluso da [^\n]*errore_include[.]vasm:8")
+set(_pos_mac "macro_rotta[.]vinc:5: fli: 'NESSUNO'.*incluso da [^\n]*errore_macro[.]vasm:8.*nell'espansione della macro 'SBAGLIA', chiamata da [^\n]*errore_macro[.]vasm:12")
+foreach(caso include macro)
+  add_test(NAME posizioni_${caso}
+           COMMAND vcpu_sim ${CMAKE_SOURCE_DIR}/tests/posizioni/errore_${caso}.vasm)
+  add_test(NAME posizioni_${caso}_obj
+           COMMAND vcpu_sim asm ${CMAKE_SOURCE_DIR}/tests/posizioni/errore_${caso}.vasm
+                   -o ${CMAKE_BINARY_DIR}/posizioni_${caso}.vo)
+endforeach()
+set_tests_properties(posizioni_include posizioni_include_obj PROPERTIES
+                     PASS_REGULAR_EXPRESSION "${_pos_inc}")
+set_tests_properties(posizioni_macro posizioni_macro_obj PROPERTIES
+                     PASS_REGULAR_EXPRESSION "${_pos_mac}")
 # test_include gira in modalita' legacy a file singolo (non ha oggetti ne'
 # link), quindi i suoi -I se li scrive a mano invece di riceverli da
 # INTERFACES. La lista cresce di uno a ogni libreria che si sposta, ed e' il

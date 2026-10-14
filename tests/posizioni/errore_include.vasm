@@ -1,0 +1,11 @@
+; tests/posizioni/errore_include.vasm — un errore DUE include piu' in basso
+; (14/10/2026, §3.93). Deve assemblare MALE, e il messaggio deve dire il file e
+; la riga dell'errore e la catena di chi includeva:
+;     .../b_rotto.vinc:7: .equ X: divisione intera con resto ...
+;       incluso da .../a_rotto.vinc:4
+;       incluso da .../errore_include.vasm:8
+; Prima di §3.93 la riga era contata su tutto il flusso, e il file non c'era.
+.include "a_rotto.vinc"
+  .text
+main:
+  halt

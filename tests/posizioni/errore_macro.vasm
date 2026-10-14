@@ -1,0 +1,13 @@
+; tests/posizioni/errore_macro.vasm — un errore del PASS 2 dentro una macro
+; definita in un include (14/10/2026, §3.93). Il messaggio deve dire la riga
+; del CORPO nel file della macro, chi includeva quel file, e la CHIAMATA:
+;     .../macro_rotta.vinc:5: fli: 'NESSUNO' non e' un numero ne' una .equ
+;       incluso da .../errore_macro.vasm:8
+;       nell'espansione della macro 'SBAGLIA', chiamata da .../errore_macro.vasm:12
+; Prima di §3.93 diceva "instr 1".
+.include "macro_rotta.vinc"
+  .text
+main:
+  li r1, 1
+  SBAGLIA
+  halt

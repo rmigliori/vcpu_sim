@@ -147,14 +147,16 @@
 > e `ECO_K` è diventata una `.equ` vera. **E (§3.92) la `.equ` è
 > un'ESPRESSIONE TIPIZZATA**, con le regole del C e la divisione intera con
 > resto come errore: `ECO_K_SU_NR = ECO_K / ECO_NR`, `PSW_EXT = PSW_VDIRTY |
-> PSW_FDIRTY`. FRONTE costa 921 cicli (708 se non trova). `ctest` **79/79**, i
-> `.vx` di prima identici byte per byte. **Si riprende dal TRACKER, con
-> l'inerzia.**
+> PSW_FDIRTY`. FRONTE costa 921 cicli (708 se non trova). **E (§3.93) gli
+> errori dell'assemblatore dicono file, riga nel file e la catena degli
+> include** (e la macro): prima la riga era contata su tutto il flusso.
+> `ctest` **83/83**, i `.vx` di prima identici byte per byte. **Si riprende dal
+> TRACKER, con l'inerzia.**
 >
 > **LA FORMULA PER RIPRENDERE (14/10):**
 >
 > ```
-> Leggi docs/stato-lavori.md, §0 e poi §3.92, §3.90, §3.89 (la forma), §3.86 (i
+> Leggi docs/stato-lavori.md, §0 e poi §3.90, §3.89 (la forma), §3.86 (i
 > budget). Riprendiamo dalla prossima attivita' in lib_eco: il TRACKER con
 > l'inerzia, da out/misure/m_attivita.vasm, con un test visto rosso.
 > ```
@@ -3909,6 +3911,58 @@ il contratto scritto.
 
 ---
 
+### 3.93 DOVE STA UN ERRORE: file, riga, e chi includeva (14/10/2026, sera)
+
+Partito da due limiti segnalati in §3.92 («`instr N`», «duplicate constant»
+senza riga), e cercandoli ne è uscito uno più serio: **la riga era contata su
+tutto il flusso, inclusi compresi.** Un `.word NESSUNO` alla riga 3 dopo un
+`.include` di `adc.vinc` (64 righe) usciva «line 67», e il file non lo diceva
+nessuno: quasi ogni sorgente vero include qualcosa. Deciso con l'utente di
+correggere tutto, e la catena delle inclusioni è una sua domanda («il C ti dice
+anche chi lo includeva»).
+
+```
+il FRAME      ogni file che entra nell'unita': nome, frame padre, riga della
+              .include. La catena si ricostruisce risalendo i padri
+la POSIZIONE  (frame, riga nel SUO file), piu' per le macro il corpo e la
+              chiamata. g_pos e' dove si e' adesso; ogni riga di codice
+              conservata per il pass 2 porta la sua (g_code_pos), perche' al
+              pass 2 i file sono chiusi
+le righe      .proc e .interrupt generate: la posizione della direttiva. I
+generate      corpi di .proc e delle macro: la loro riga
+il messaggio  "file:riga: msg" + "  incluso da f:r" per livello + "  nell'
+              espansione della macro 'M', chiamata da f:r". Il vecchio
+              "line N: " si toglie; un errore senza riga (fine unita',
+              .global, rilocazioni) dice solo il file
+dove          assemble() e assemble_object() sono involucri che formattano;
+              il lavoro sta in assemble_unit / assemble_object_unit
+```
+
+**Una correzione di quanto avevo detto:** «`vasm_check` non sa verificare un
+assemblaggio fallito» è vero, ma il progetto lo fa già con `add_test` e
+`PASS_REGULAR_EXPRESSION` (`supertask_asm`, `locator_*`). Quindi le posizioni
+hanno test veri, e i casi d'errore di §3.91 e §3.92 potrebbero averli: aperto.
+
+| cosa | risultato |
+|---|---|
+| `posizioni_include`, `posizioni_macro`, ciascuno a file singolo e a oggetti (`tests/posizioni/`) | verdi; **rossi** con l'assembler di prima, che diceva «line 19» (8 + 4 + 7, tre file sommati) e «instr 2» |
+| a mano: errore nel principale dopo un include, pass 2 in un'istruzione e in un corpo di `.proc`, costante duplicata, `.proc` mai chiusa | ognuno al suo posto |
+| i 31 `.vx`, tutti ricostruiti, contro `HEAD` | **identici byte per byte** |
+| `ctest --timeout 60` | **83/83** (79 + 4) |
+
+Due cose sbagliate da me e prese dalla verifica, non dal test: i numeri di riga
+nelle intestazioni dei sorgenti di prova (10, 9, 13 invece di 8, 8, 12), e
+quelli di `HEAD` nel commento del CMake (18 e 1 invece di 19 e 2).
+
+**Fuori, e di proposito:** un nome sconosciuto in `li` compilato come oggetto
+non è un errore dell'assembler ma un riferimento esterno, e l'errore lo dà `ld`,
+che le righe del sorgente non le conosce. `main.c`: il buffer degli errori di
+`asm` e del percorso a file singolo passa da 256 a 1024 byte, per la catena.
+Il manuale lo dice in §4.2.2.
+
+---
+
+
 ### 3.92 LA `.equ` COME ESPRESSIONE TIPIZZATA (14/10/2026, sera)
 
 Chiesta dall'utente («come in C, una costante tipizzata che è il risultato di
@@ -3951,9 +4005,10 @@ rinumerare avrebbe rotto i riferimenti).
 
 **Rimasti, da convertire se si vuole:** `CMP_ARM0_CYC` e `CMP_ARM1_CYC` in
 `clock.vinc`, due `|` scritti a mano. Non toccati: non li chiedeva nessun caso,
-e convertirli è una riga ciascuno con le immagini da verificare. Due limiti
-vecchi, non di oggi: l'errore di un'istruzione dice `instr N` e non la riga, e
-«duplicate constant» non dice la riga.
+e convertirli è una riga ciascuno con le immagini da verificare (**fatto**,
+`31282ab`). Due limiti vecchi, non di oggi: l'errore di un'istruzione dice
+`instr N` e non la riga, e «duplicate constant» non dice la riga (**risolti in
+§3.93**).
 
 ---
 
@@ -4003,7 +4058,7 @@ Il manuale (§4.2 e le tabelle) lo dice.
 | `ctest --timeout 60` | **77/77** (75 + `costanti` + `costanti_obj`) |
 
 Un limite rimasto, ed era già di `li`: l'errore di un'istruzione dice `instr N`
-e non la riga, perché il codice si legge nel pass 2.
+e non la riga, perché il codice si legge nel pass 2. **Risolto in §3.93.**
 
 **Poi FRONTE con `ECO_K` vera** in `eco.vinc`, e il confronto senza dividere:
 `NR × picco > K × somma`. Una `fmul` in più: **926** cicli se trova, **713** se
