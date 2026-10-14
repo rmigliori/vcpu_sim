@@ -8,8 +8,13 @@
 ;     una foglia, e il link parcheggiato in r11 sparisce;
 ;   la potenza va nello scratch del chiamante, non in un buffer della libreria.
 ;
+; --- LA MEDIA SENZA DIVIDERE ---
+; "picco > K x somma / NR" si scrive "NR x picco > K x somma": ECO_K ed ECO_NR
+; restano le due .equ di eco.vinc, e nessun 1.25 calcolato a mano deve
+; seguirle se una cambia. Costa una fmul in piu'.
+;
 ; --- NIENTE CONFRONTI FLOAT: il segno passa dalla memoria ---
-; L'ISA non ne ha (test_fft lo spiega). K*rumore - picco si scrive come float
+; L'ISA non ne ha (test_fft lo spiega). K*somma - NR*picco si scrive come float
 ; e si rilegge come intero: negativo vuol dire trovato. Lo zero NON e' trovato,
 ; ed e' cio' che salva il blocco tutto a zero: picco 0, rumore 0, nessun gate
 ; sopra soglia, e la ricerca del bit su una maschera vuota non finirebbe bene.
@@ -43,9 +48,11 @@ fronte:
   mtvl r4
   vredsum f2, v0                 ; la potenza dei primi ECO_NR gate
   mtvl r3
-  fli f3, 1.25                   ; ECO_K / ECO_NR = 20 / 16
-  fmul f2, f2, f3                ; K volte il rumore medio
-  fsub f3, f2, f1
+  fli f3, ECO_K
+  fmul f2, f2, f3                ; K x la somma
+  fli f3, ECO_NR
+  fmul f4, f1, f3                ; NR x il picco
+  fsub f3, f2, f4                ; picco > K x media  <=>  NR x picco > K x somma
   fsw f3, 256(r2)
   lw r4, 256(r2)
   blt r4, r0, fr_si

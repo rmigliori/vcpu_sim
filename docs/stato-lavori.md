@@ -142,14 +142,16 @@
 > **Il 14/10 (§3.90): FRONTE è una procedura vera**, in `dsp/eco/` (`lib_eco`),
 > con la rivelazione CFAR e un test visto rosso (`test_fronte`, "1 1 0").
 > **K = 20, non 10**: misurato, con K = 10 l'1,8% degli sweep di solo rumore dà
-> "trovato". FRONTE costa 921 cicli (708 se non trova). `ctest` **75/75**, i 28
-> `.vx` di prima identici byte per byte. **Si riprende dal TRACKER, con
-> l'inerzia.**
+> "trovato". **E poi (§3.91) l'assembler:** `.word`, `.float` e `fli` leggono
+> le `.equ` invece di scrivere 0 in silenzio (`test_costanti`, visto rosso),
+> e `ECO_K` è diventata una `.equ` vera. FRONTE costa 926 cicli (713 se non
+> trova). `ctest` **77/77**, i `.vx` di prima identici byte per byte. **Si
+> riprende dal TRACKER, con l'inerzia.**
 >
 > **LA FORMULA PER RIPRENDERE (14/10):**
 >
 > ```
-> Leggi docs/stato-lavori.md, §0 e poi §3.90, §3.89 (la forma), §3.86 (i
+> Leggi docs/stato-lavori.md, §0 e poi §3.91, §3.90, §3.89 (la forma), §3.86 (i
 > budget). Riprendiamo dalla prossima attivita' in lib_eco: il TRACKER con
 > l'inerzia, da out/misure/m_attivita.vasm, con un test visto rosso.
 > ```
@@ -3903,6 +3905,61 @@ il contratto scritto.
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
 
 ---
+
+### 3.91 LE `.equ` DOVE SI LEGGE UN NUMERO: `.word`, `.float`, `fli` (14/10/2026, sera)
+
+Trovata scrivendo FRONTE (§3.90) e decisa con l'utente. Tre lettori
+dell'assembler passavano il token a `strtoll`/`strtof`/`strtod` col puntatore di
+fine a `NULL`: un **nome** valeva 0 e `1.5x` valeva 1.5, in silenzio. Era la
+trappola di `.word NOME` dell'08/10 (§3.86), e avrebbe messo a zero la K di
+FRONTE. `li` invece passava già da `const_value`, che cerca le `.equ` e vuole il
+token letto tutto.
+
+**La discussione, perché non vada rifatta.** L'utente ricordava la `.equ` come
+sostituzione TESTUALE (il `#define`): è il modello di MASM per `EQU` con testo e
+di `%define` in NASM, a memoria; il nostro è quello di GNU as, un nome con un
+VALORE, controllato alla definizione. Restiamo lì: la sostituzione testuale nel
+progetto c'è già, ed è `.macro`. Le `.equ` sono locali al file (la tabella si
+azzera a ogni assemblaggio), e si condividono per `.include`. Sono **solo
+intere** per storia, non per principio: nate il 27/08 per offset e indirizzi.
+Le `.equ` float e le espressioni costanti sono decisioni a parte, da prendere
+quando un caso le chiede: le `.equ` float da sole non avrebbero fatto derivare
+1,25 da 20 e 16.
+
+**Cosa è cambiato:**
+
+```
+float_value      gemello di const_value: costante (intera -> float) o letterale,
+                 il token letto TUTTO. Per fli
+float32_value    lo stesso per .float: il letterale resta strtof, perche' un
+                 doppio arrotondamento via double puo' cambiare un bit
+.word            const_value
+nei DUE assemblatori (a file singolo e a oggetti): ognuno ha il suo .word/.float
+```
+
+Nei **dati** la costante va definita **prima** (`.word` e `.float` si leggono nel
+pass 1 con le `.equ`, in ordine: la regola di `.equ` e `.field`); nel **codice**
+anche dopo, e `fli` è codice. Sbagliare l'ordine è un errore, non uno zero.
+Il manuale (§4.2 e le tabelle) lo dice.
+
+| cosa | risultato |
+|---|---|
+| `test_costanti`, a file singolo e linkato | `20 7 -3 20 1.5 20 5`; **rosso** con l'assembler di prima, tutti e due: `0 7 0 0 1.5 0 0` |
+| gli errori, provati a mano sui due assemblatori | nome ignoto in `.word`/`.float`/`fli`, `1.5x`, `12a`, `.equ` dopo la `.word`: **sette errori su sette** |
+| i 352 `.word`/`.float`/`fli` dei sorgenti versionati | nessun operando non numerico: nessuno si appoggiava allo zero |
+| i 29 `.vx` di prima, ricostruiti dall'assembler nuovo, contro `HEAD` | **identici byte per byte** |
+| `ctest --timeout 60` | **77/77** (75 + `costanti` + `costanti_obj`) |
+
+Un limite rimasto, ed era già di `li`: l'errore di un'istruzione dice `instr N`
+e non la riga, perché il codice si legge nel pass 2.
+
+**Poi FRONTE con `ECO_K` vera** in `eco.vinc`, e il confronto senza dividere:
+`NR × picco > K × somma`. Una `fmul` in più: **926** cicli se trova, **713** se
+no (erano 921 e 708). `test_fronte` verde, M1 e M2 ancora rossi (`1 1 1`,
+`0 0 0`).
+
+---
+
 
 ### 3.90 FRONTE, LA PRIMA ATTIVITÀ VERA: `lib_eco` e la rivelazione (14/10/2026)
 

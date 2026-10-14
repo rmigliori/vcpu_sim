@@ -183,6 +183,33 @@ static int const_value(const char* tok, int64_t* out)
   return 0;
 }
 
+// Il gemello float di const_value (14/10/2026): una costante (intera, resa
+// float) o un letterale float, e il token va letto TUTTO. Prima fli e .float
+// chiamavano strtod/strtof col puntatore di fine a NULL: un nome che non
+// conoscono vale 0, e "1.5x" vale 1.5, tutti e due in silenzio.
+static int float_value(const char* tok, double* out)
+{
+  int64_t c;
+  if (find_const(tok, &c)) { *out = (double) c; return 0; }
+  char* end = NULL;
+  *out = strtod(tok, &end);
+  if (end == tok || *end != '\0') return -1;
+  return 0;
+}
+
+// Lo stesso per .float, che scrive 32 bit: il letterale resta strtof e non
+// passa dal double, perche' un doppio arrotondamento puo' cambiare l'ultimo
+// bit di qualche letterale, e l'immagine non sarebbe piu' la stessa.
+static int float32_value(const char* tok, float* out)
+{
+  int64_t c;
+  if (find_const(tok, &c)) { *out = (float) c; return 0; }
+  char* end = NULL;
+  *out = strtof(tok, &end);
+  if (end == tok || *end != '\0') return -1;
+  return 0;
+}
+
 // Compile-time directives (.equ/.struct/.field/.ends). Returns 1 if 'first' was
 // one of them (handled), 0 if not one of them, -1 on error (err filled). Struct
 // fields become qualified constants "NAME.field"; .ends also defines "NAME.size".
@@ -469,7 +496,12 @@ static int encode(char** toks, int n, Instr* out, char* err, size_t errsz)
   {
     if (need(ARGS, 2, mn, err, errsz)) return -1;
     R('f', NUM_FLOAT); out->a = reg;
-    out->fimm = strtod(toks[k++], NULL);
+    if (float_value(toks[k], &out->fimm) != 0)
+    {
+      snprintf(err, errsz, "fli: '%s' non e' un numero ne' una .equ", toks[k]);
+      return -1;
+    }
+    k++;
     out->op   = OP_FLI;
   }
   else if (strcmp(mn, "flw") == 0 || strcmp(mn, "fsw") == 0)
@@ -1931,7 +1963,13 @@ int assemble(const char* path, uint8_t* mem, Instr* prog, char* err, size_t errs
       {
         for (int i = k + 1; i < n; ++i)
         {
-          float val = strtof(toks[i], NULL);
+          float val;
+          if (float32_value(toks[i], &val) != 0)
+          {
+            snprintf(err, errsz, "line %d: .float: '%s' non e' un numero ne' una .equ "
+                                 "definita prima", lineno, toks[i]);
+            fclose(fp); return -1;
+          }
           if ((uint64_t) data_ptr + 4 > MEM_SIZE)
           {
             snprintf(err, errsz, "line %d: data overflow", lineno);
@@ -1945,7 +1983,14 @@ int assemble(const char* path, uint8_t* mem, Instr* prog, char* err, size_t errs
       {
         for (int i = k + 1; i < n; ++i)
         {
-          int32_t val = (int32_t) strtoll(toks[i], NULL, 0);
+          int64_t v;
+          if (const_value(toks[i], &v) != 0)
+          {
+            snprintf(err, errsz, "line %d: .word: '%s' non e' un numero ne' una .equ "
+                                 "definita prima", lineno, toks[i]);
+            fclose(fp); return -1;
+          }
+          int32_t val = (int32_t) v;
           if ((uint64_t) data_ptr + 4 > MEM_SIZE)
           {
             snprintf(err, errsz, "line %d: data overflow", lineno);
@@ -2228,12 +2273,25 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
           }
           if (is_float)
           {
-            float val = strtof(toks[i], NULL);
+            float val;
+            if (float32_value(toks[i], &val) != 0)
+            {
+              snprintf(err, errsz, "line %d: .float: '%s' non e' un numero ne' una .equ "
+                                   "definita prima", lineno, toks[i]);
+              goto fail;
+            }
             memcpy(&data[data_ptr], &val, 4);
           }
           else
           {
-            int32_t val = (int32_t) strtoll(toks[i], NULL, 0);
+            int64_t v;
+            if (const_value(toks[i], &v) != 0)
+            {
+              snprintf(err, errsz, "line %d: .word: '%s' non e' un numero ne' una .equ "
+                                   "definita prima", lineno, toks[i]);
+              goto fail;
+            }
+            int32_t val = (int32_t) v;
             memcpy(&data[data_ptr], &val, 4);
           }
           data_ptr += 4;

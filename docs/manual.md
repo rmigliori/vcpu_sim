@@ -868,8 +868,8 @@ loop:   setvl r4, r3      ; 'loop' = indice di questa istruzione
 | `.text` | `.text` | passa alla sezione codice (default) |
 | `.data` | `.data` | passa alla sezione dati |
 | `.shared` | `.shared` | passa alla sezione della **RAM condivisa** (più CPU). Si **riserva** e non si inizializza — `.word`/`.float` lì dentro sono un errore — e i suoi simboli sono **globali per definizione**, senza `.global`. Vuole il linker: in un file singolo è un errore, perché l'indirizzo lo decide il file di collocazione (§4.2.7) |
-| `.float` | `.float a, b, c, ...` | scrive i valori come float (4 byte l'uno) e avanza il puntatore dati |
-| `.word` | `.word a, b, c, ...` | scrive interi con segno a 32 bit (4 byte l'uno); accetta decimale o esadecimale (`0x...`) |
+| `.float` | `.float a, b, c, ...` | scrive i valori come float (4 byte l'uno) e avanza il puntatore dati; un valore è un letterale o una costante `.equ` **definita prima** (l'intero diventa float). Altro è un errore |
+| `.word` | `.word a, b, c, ...` | scrive interi con segno a 32 bit (4 byte l'uno); accetta decimale, esadecimale (`0x...`) o una costante `.equ` **definita prima**. Altro è un errore |
 | `.space` | `.space N` | riserva `N` elementi (`N*4` byte) senza inizializzarli |
 | `.equ` | `.equ NOME valore` | definisce una **costante** di compile-time (`.set` è sinonimo); il valore è un intero o una costante già definita |
 | `.struct` | `.struct NOME` … `.ends` | apre/chiude un blocco struttura: gli offset dei campi diventano costanti `NOME.campo` |
@@ -901,8 +901,11 @@ n:   .word 5, -3, 0x10, 42 ; interi a 32 bit, letti con lw/scritti con sw
 
 **Costanti e strutture.** `.equ` e `.struct` producono **costanti simboliche** di
 compile-time: puri interi (offset di campo, dimensioni), risolti come letterali
-ovunque serva un intero — displacement di `lw`/`sw` e immediati di `li` — e **mai
-rilocati**. Servono a togliere i *magic number* dagli accessi ai campi di una
+ovunque si legga un numero — displacement di `lw`/`sw`, immediati di `li`, i
+valori di `.word` e `.float` e l'immediato di `fli` — e **mai rilocati**. Dove
+serve un float l'intero diventa float. Fino al 14/10/2026 `.word`, `.float` e
+`fli` non le conoscevano e scrivevano **0 in silenzio**: ora un nome che non è
+una costante è un errore, come in `li`. Servono a togliere i *magic number* dagli accessi ai campi di una
 struttura in memoria:
 
 ```asm
@@ -1127,8 +1130,9 @@ compilato via qualunque cosa dica: il suo `.else` non può resuscitarlo.
 > **`.ifdef` interroga SOLO i nomi di `-D`, mai una costante `.equ`.** Gli
 > assembler classici fanno il contrario, e qui sarebbe una trappola: le `.equ`
 > si raccolgono **durante** il pass 1 e **in ordine**, quindi la stessa
-> `.ifdef VLMAX` risponderebbe «no» sopra la sua `.equ` e «sì» sotto — lo
-> stesso difetto silenzioso di una `.word` che riceve il nome di una costante.
+> `.ifdef VLMAX` risponderebbe «no» sopra la sua `.equ` e «sì» sotto. È lo
+> stesso vincolo di `.word` e `.float`, che vogliono la costante definita prima:
+> ma lì sbagliare l'ordine è un **errore**, e qui sarebbe una risposta diversa.
 > Con i soli `-D` la risposta non dipende da **dove** è scritta la domanda, ed è
 > questa proprietà che permette al filtro di stare nel **lettore di righe**, cioè
 > prima di tutto il resto.
@@ -1356,7 +1360,7 @@ La colonna **Cicli** riporta il costo nel modello di timing (§6);
 
 | Istruzione | Operandi | Semantica | Cicli |
 |---|---|---|---|
-| `fli` | `fd, fimm` | `fd = fimm` | 1 |
+| `fli` | `fd, fimm` | `fd = fimm`; `fimm` è un letterale o una costante `.equ` (l'intero diventa float) | 1 |
 | `flw` | `fd, rs1` &nbsp;/&nbsp; `fd, disp(rs1)` | `fd = mem_float[rs1 + disp]` (carica un float; `disp` opzionale, default 0) | 4 |
 | `fsw` | `fs, rs1` &nbsp;/&nbsp; `fs, disp(rs1)` | `mem_float[rs1 + disp] = fs` | 4 |
 | `fadd` | `fd, fs1, fs2` | `fd = fs1 + fs2` | 4 |

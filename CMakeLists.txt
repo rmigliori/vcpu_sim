@@ -184,6 +184,18 @@ vasm_check(proc       MODE DUMPS EXPECT "100 200 300"
 # istruzioni, che e' la ragione per cui il marcatore usa macro e non procedure.
 vasm_check(macro      MODE DUMPS EXPECT "15 25 75 35 42"
            SOURCE ${CMAKE_SOURCE_DIR}/tests/test_macro.vasm)
+
+# test_costanti — UNA .equ DOVE SI LEGGE UN NUMERO (14/10/2026, §3.91).
+# .word, .float e fli leggevano un nome come 0, in silenzio. Due volte, perche'
+# i due assemblatori -- a file singolo e a oggetti -- hanno ciascuno il suo
+# .word e il suo .float. Visti rossi tutti e due con l'assembler di prima:
+# "0 7 0 0 1.5 0 0". I numeri, a mano, nel sorgente.
+vasm_check(costanti   MODE DUMPS EXPECT "20 7 -3 20 1.5 20 5"
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_costanti.vasm)
+vasm_object(t_costanti SOURCE ${CMAKE_SOURCE_DIR}/tests/test_costanti.vasm)
+vasm_program(test_costanti OBJECTS t_costanti)
+vasm_check(costanti_obj MODE DUMPS EXPECT "20 7 -3 20 1.5 20 5"
+           PROGRAM test_costanti)
 # test_include gira in modalita' legacy a file singolo (non ha oggetti ne'
 # link), quindi i suoi -I se li scrive a mano invece di riceverli da
 # INTERFACES. La lista cresce di uno a ogni libreria che si sposta, ed e' il

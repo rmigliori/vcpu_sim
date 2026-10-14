@@ -32,10 +32,9 @@
 ; il prezzo del CFAR a celle fisse; il tracker centra il fronte a ~32, e un
 ; fronte cosi' fuori posto e' gia' un fallimento per la catena di §3.82.
 ;
-; ECO_K NON E' UNA .equ, ed e' l'assembler a imporlo: `fli f, NOME` di una
-; .equ da' 0 in silenzio (strtod, verificato il 14/10 -- la stessa famiglia di
-; `.word NOME`, §3.86). Sta in fronte.vasm come K / NR = 20 / 16 = 1.25, e se
-; cambia ECO_NR va cambiato li'.
+; ECO_K e' una .equ da quando l'assembler legge le costanti anche in `fli`
+; (14/10, §3.91): prima `fli f, ECO_K` avrebbe dato 0 in silenzio, e K stava in
+; fronte.vasm come 1.25, cioe' K / NR calcolato a mano.
 ;
 ; --- I REGISTRI ---
 ; Foglia. Usa r1..r8, f1..f7, v0..v2 e vmask, e lascia VL a ECO_W. Non tocca
@@ -44,4 +43,5 @@
 ; --------------------------------------------------------------------------
 .equ ECO_W        64             ; i gate della finestra = i campioni del blocco
 .equ ECO_NR       16             ; i gate del rumore: i primi della finestra
+.equ ECO_K        20             ; trovato se picco > ECO_K x il rumore medio
 .equ ECO_SCRATCH  260            ; la potenza (ECO_W float) e una parola

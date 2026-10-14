@@ -1,0 +1,55 @@
+; tests/test_costanti.vasm — una .equ dove si legge un NUMERO (14/10/2026, §3.91).
+;
+; Fino al 14/10 tre lettori dell'assembler non sapevano che le .equ esistono:
+; `.word`, `.float` e `fli` passavano il token a strtoll/strtof/strtod e ne
+; buttavano via la fine, quindi un NOME diventava 0 in silenzio, e "1.5x"
+; diventava 1.5. Lo zero e' costato una corsa l'08/10 (§3.86) e avrebbe messo
+; a zero la K di FRONTE (§3.90). Adesso passano da un lettore controllato,
+; come `li`: una costante vale il suo valore, il resto e' un errore.
+;
+; Gira due volte (CMakeLists di primo livello): a file singolo e come oggetto
+; linkato, perche' i due assemblatori hanno ciascuno il suo .word e .float.
+;
+; --- I SETTE NUMERI, tutti derivabili a mano ---
+;   20   .word KAPPA
+;    7   .word 7, accanto: i letterali non cambiano
+;   -3   .word NEG, una costante negativa
+;   20   .float KAPPA: l'intero diventa float
+;  1.5   .float 1.5, accanto
+;   20   fli f, KAPPA
+;    5   fli f, DOPO, definita IN FONDO al file: nel codice le costanti si
+;        usano anche in avanti (manual.md §4.2), e fli e' codice
+; Nei DATI no: .word e .float si leggono nel primo passo, in ordine, con le
+; .equ, quindi la costante va definita prima -- la regola di .equ e .field.
+;
+; Visto rosso con l'assembler di prima: "0 7 0 0 1.5 0 0".
+
+.equ KAPPA  20
+.equ NEG    -3
+
+  .data
+w:  .word KAPPA, 7, NEG
+x:  .float KAPPA, 1.5
+
+  .text
+  .global main
+main:
+  li r1, w
+  lw r2, 0(r1)
+  dumps r2                       ; 20
+  lw r2, 4(r1)
+  dumps r2                       ; 7
+  lw r2, 8(r1)
+  dumps r2                       ; -3
+  li r1, x
+  flw f1, 0(r1)
+  dumpf f1                       ; 20
+  flw f1, 4(r1)
+  dumpf f1                       ; 1.5
+  fli f2, KAPPA
+  dumpf f2                       ; 20
+  fli f3, DOPO
+  dumpf f3                       ; 5
+  halt
+
+.equ DOPO   5
