@@ -145,8 +145,14 @@ static int find_symbol(const char* name, int64_t* out)
 //  values (field offsets, sizes): resolved as literals wherever an integer is
 //  expected (displacements, immediates), never relocated. Separate namespace
 //  from labels so they cannot be mistaken for relocatable symbols.
+//
+//  DAL 14/10/2026 UNA COSTANTE HA UN TIPO, intero o float (§3.92), e la .equ
+//  accetta un'espressione con le regole del C: vedi eval_expr. Una costante
+//  float vale dove si legge un float (fli, .float); dove serve un intero e'
+//  un errore, mai un troncamento. find_const vede SOLO le intere: e' il
+//  lettore di tutti i posti che vogliono un intero.
 // ---------------------------------------------------------------------------
-typedef struct { char name[64]; int64_t value; } Const;
+typedef struct { char name[64]; int is_float; int64_t value; double fvalue; } Const;
 static Const   g_consts[MAX_SYMBOLS];
 static int     g_const_count;
 
@@ -155,21 +161,295 @@ static int     g_struct_active;
 static char    g_struct_name[48];
 static int64_t g_struct_off;
 
-static int find_const(const char* name, int64_t* out)
+static const Const* lookup_const(const char* name)
 {
   for (int i = 0; i < g_const_count; ++i)
-    if (strcmp(g_consts[i].name, name) == 0) { *out = g_consts[i].value; return 1; }
+    if (strcmp(g_consts[i].name, name) == 0) return &g_consts[i];
+  return NULL;
+}
+
+static int find_const(const char* name, int64_t* out)
+{
+  const Const* c = lookup_const(name);
+  if (c == NULL || c->is_float) return 0;
+  *out = c->value;
+  return 1;
+}
+
+// Il nome di una costante FLOAT usata dove serve un intero: un messaggio che
+// dica il perche', invece di "unknown symbol" (che sarebbe falso).
+static int float_const_as_int(const char* tok, char* err, size_t errsz)
+{
+  const char* name = (tok[0] == '-') ? tok + 1 : tok;
+  const Const* c = lookup_const(name);
+  if (c == NULL || !c->is_float) return 0;
+  snprintf(err, errsz, "'%s' e' una costante float: qui serve un intero", name);
+  return 1;
+}
+
+static int def_const_typed(const char* name, int is_float, int64_t value, double fvalue,
+                           char* err, size_t errsz)
+{
+  if (lookup_const(name)) { snprintf(err, errsz, "duplicate constant '%s'", name); return -1; }
+  if (g_const_count >= MAX_SYMBOLS) { snprintf(err, errsz, "too many constants"); return -1; }
+  Const* c = &g_consts[g_const_count];
+  snprintf(c->name, sizeof c->name, "%s", name);
+  c->is_float = is_float;
+  c->value    = value;
+  c->fvalue   = fvalue;
+  g_const_count += 1;
   return 0;
 }
 
 static int def_const(const char* name, int64_t value, char* err, size_t errsz)
 {
-  int64_t dummy;
-  if (find_const(name, &dummy)) { snprintf(err, errsz, "duplicate constant '%s'", name); return -1; }
-  if (g_const_count >= MAX_SYMBOLS) { snprintf(err, errsz, "too many constants"); return -1; }
-  snprintf(g_consts[g_const_count].name, sizeof g_consts[0].name, "%s", name);
-  g_consts[g_const_count].value = value;
-  g_const_count += 1;
+  return def_const_typed(name, 0, value, 0.0, err, errsz);
+}
+
+// ---------------------------------------------------------------------------
+//  LE ESPRESSIONI DELLA .equ (14/10/2026, §3.92). Discesa ricorsiva, con le
+//  precedenze e le regole di tipo del C:
+//
+//      |   ^   &   << >>   + -   * / %   unari - + ~   ( )
+//
+//  intero op intero da' intero; se un operando e' float lo e' anche il
+//  risultato (solo + - * /). % << >> & | ^ ~ vogliono interi. Gli operandi
+//  sono letterali e costanti GIA' DEFINITE: si valuta una volta, alla
+//  definizione, nel pass 1.
+//
+//  UNA REGOLA PIU' SEVERA DEL C, decisa dall'utente: una DIVISIONE INTERA CON
+//  RESTO e' un errore. In C 20 / 16 fa 1, e "K / NR" fra interi metterebbe a
+//  1 il rapporto senza che nessuno se ne accorga; le divisioni che servono a
+//  indirizzi e dimensioni sono esatte. Errori anche: divisione per zero
+//  (intera o float), shift fuori da 0..63. >> e' aritmetico, come srai.
+//  L'aritmetica intera e' a 64 bit con overflow avvolto, non UB.
+// ---------------------------------------------------------------------------
+typedef struct { int is_float; int64_t i; double f; } EVal;
+typedef struct { const char* p; const char* src; char* err; size_t errsz; } EScan;
+
+static int e_or(EScan* s, EVal* v);
+
+static void e_skip(EScan* s) { while (*s->p == ' ') ++s->p; }
+
+static double e_as_f(const EVal* v) { return v->is_float ? v->f : (double) v->i; }
+
+static int e_need_int(EScan* s, const EVal* a, const EVal* b, const char* op)
+{
+  if (a->is_float || (b && b->is_float))
+  {
+    snprintf(s->err, s->errsz, "'%s' vuole interi, non float, in '%s'", op, s->src);
+    return -1;
+  }
+  return 0;
+}
+
+static int e_primary(EScan* s, EVal* v)
+{
+  e_skip(s);
+  const char* p = s->p;
+  if (*p == '(')
+  {
+    s->p++;
+    if (e_or(s, v)) return -1;
+    e_skip(s);
+    if (*s->p != ')') { snprintf(s->err, s->errsz, "manca ')' in '%s'", s->src); return -1; }
+    s->p++;
+    return 0;
+  }
+  if (isdigit((unsigned char) *p) || *p == '.')
+  {
+    // Intero se strtoll arriva dove arriva strtod; float se strtod va oltre
+    // ("1.25", "20.", "1e3"). "0x10" e' intero per tutti e due.
+    char* ei = NULL;
+    char* ef = NULL;
+    long long iv = strtoll(p, &ei, 0);
+    double    fv = strtod(p, &ef);
+    if (ef > ei) { v->is_float = 1; v->f = fv; s->p = ef; }
+    else         { v->is_float = 0; v->i = (int64_t) iv; s->p = ei; }
+    if (s->p == p || isalnum((unsigned char) *s->p) || *s->p == '_')
+    { snprintf(s->err, s->errsz, "numero non valido in '%s'", s->src); return -1; }
+    return 0;
+  }
+  if (isalpha((unsigned char) *p) || *p == '_')
+  {
+    // Un nome: anche "TCB.size", i campi delle strutture hanno il punto.
+    const char* q = p;
+    while (isalnum((unsigned char) *q) || *q == '_' || *q == '.') ++q;
+    char name[64];
+    size_t len = (size_t) (q - p);
+    if (len >= sizeof name) { snprintf(s->err, s->errsz, "nome troppo lungo in '%s'", s->src); return -1; }
+    memcpy(name, p, len);
+    name[len] = '\0';
+    const Const* c = lookup_const(name);
+    if (c == NULL)
+    { snprintf(s->err, s->errsz, "'%s' non e' una costante definita prima", name); return -1; }
+    v->is_float = c->is_float;
+    v->i = c->value;
+    v->f = c->fvalue;
+    s->p = q;
+    return 0;
+  }
+  snprintf(s->err, s->errsz, "espressione non valida: '%s'", s->src);
+  return -1;
+}
+
+static int e_unary(EScan* s, EVal* v)
+{
+  e_skip(s);
+  char op = *s->p;
+  if (op == '-' || op == '+' || op == '~')
+  {
+    s->p++;
+    if (e_unary(s, v)) return -1;
+    if (op == '~')
+    {
+      if (e_need_int(s, v, NULL, "~")) return -1;
+      v->i = ~v->i;
+    }
+    else if (op == '-')
+    {
+      if (v->is_float) v->f = -v->f;
+      else             v->i = (int64_t) (0u - (uint64_t) v->i);
+    }
+    return 0;
+  }
+  return e_primary(s, v);
+}
+
+static int e_mul(EScan* s, EVal* v)
+{
+  if (e_unary(s, v)) return -1;
+  for (;;)
+  {
+    e_skip(s);
+    char op = *s->p;
+    if (op != '*' && op != '/' && op != '%') return 0;
+    s->p++;
+    EVal b;
+    if (e_unary(s, &b)) return -1;
+    if (op == '%')
+    {
+      if (e_need_int(s, v, &b, "%")) return -1;
+      if (b.i == 0) { snprintf(s->err, s->errsz, "resto di una divisione per zero in '%s'", s->src); return -1; }
+      v->i = v->i % b.i;
+    }
+    else if (v->is_float || b.is_float)
+    {
+      double x = e_as_f(v), y = e_as_f(&b);
+      if (op == '/' && y == 0.0) { snprintf(s->err, s->errsz, "divisione per zero in '%s'", s->src); return -1; }
+      v->f = (op == '*') ? x * y : x / y;
+      v->is_float = 1;
+    }
+    else if (op == '*')
+      v->i = (int64_t) ((uint64_t) v->i * (uint64_t) b.i);
+    else
+    {
+      if (b.i == 0) { snprintf(s->err, s->errsz, "divisione per zero in '%s'", s->src); return -1; }
+      if (v->i % b.i != 0)
+      {
+        snprintf(s->err, s->errsz, "divisione intera con resto in '%s' (%lld / %lld): "
+                 "scrivi un operando float se vuoi il quoziente vero",
+                 s->src, (long long) v->i, (long long) b.i);
+        return -1;
+      }
+      v->i = v->i / b.i;
+    }
+  }
+}
+
+static int e_add(EScan* s, EVal* v)
+{
+  if (e_mul(s, v)) return -1;
+  for (;;)
+  {
+    e_skip(s);
+    char op = *s->p;
+    if (op != '+' && op != '-') return 0;
+    s->p++;
+    EVal b;
+    if (e_mul(s, &b)) return -1;
+    if (v->is_float || b.is_float)
+    {
+      double x = e_as_f(v), y = e_as_f(&b);
+      v->f = (op == '+') ? x + y : x - y;
+      v->is_float = 1;
+    }
+    else
+      v->i = (int64_t) ((op == '+') ? (uint64_t) v->i + (uint64_t) b.i
+                                    : (uint64_t) v->i - (uint64_t) b.i);
+  }
+}
+
+static int e_shift(EScan* s, EVal* v)
+{
+  if (e_add(s, v)) return -1;
+  for (;;)
+  {
+    e_skip(s);
+    int left = (s->p[0] == '<' && s->p[1] == '<');
+    if (!left && !(s->p[0] == '>' && s->p[1] == '>')) return 0;
+    s->p += 2;
+    EVal b;
+    if (e_add(s, &b)) return -1;
+    if (e_need_int(s, v, &b, left ? "<<" : ">>")) return -1;
+    if (b.i < 0 || b.i > 63)
+    { snprintf(s->err, s->errsz, "shift di %lld fuori da 0..63 in '%s'", (long long) b.i, s->src); return -1; }
+    v->i = left ? (int64_t) ((uint64_t) v->i << b.i) : (v->i >> b.i);
+  }
+}
+
+static int e_and(EScan* s, EVal* v)
+{
+  if (e_shift(s, v)) return -1;
+  for (;;)
+  {
+    e_skip(s);
+    if (*s->p != '&') return 0;
+    s->p++;
+    EVal b;
+    if (e_shift(s, &b)) return -1;
+    if (e_need_int(s, v, &b, "&")) return -1;
+    v->i &= b.i;
+  }
+}
+
+static int e_xor(EScan* s, EVal* v)
+{
+  if (e_and(s, v)) return -1;
+  for (;;)
+  {
+    e_skip(s);
+    if (*s->p != '^') return 0;
+    s->p++;
+    EVal b;
+    if (e_and(s, &b)) return -1;
+    if (e_need_int(s, v, &b, "^")) return -1;
+    v->i ^= b.i;
+  }
+}
+
+static int e_or(EScan* s, EVal* v)
+{
+  if (e_xor(s, v)) return -1;
+  for (;;)
+  {
+    e_skip(s);
+    if (*s->p != '|') return 0;
+    s->p++;
+    EVal b;
+    if (e_xor(s, &b)) return -1;
+    if (e_need_int(s, v, &b, "|")) return -1;
+    v->i |= b.i;
+  }
+}
+
+// Valuta l'espressione 'src' (i token della .equ ricuciti con uno spazio).
+static int eval_expr(const char* src, EVal* v, char* err, size_t errsz)
+{
+  EScan s = { src, src, err, errsz };
+  if (e_or(&s, v)) return -1;
+  e_skip(&s);
+  if (*s.p != '\0') { snprintf(err, errsz, "di troppo in '%s': '%s'", src, s.p); return -1; }
   return 0;
 }
 
@@ -189,8 +469,8 @@ static int const_value(const char* tok, int64_t* out)
 // conoscono vale 0, e "1.5x" vale 1.5, tutti e due in silenzio.
 static int float_value(const char* tok, double* out)
 {
-  int64_t c;
-  if (find_const(tok, &c)) { *out = (double) c; return 0; }
+  const Const* c = lookup_const(tok);
+  if (c) { *out = c->is_float ? c->fvalue : (double) c->value; return 0; }
   char* end = NULL;
   *out = strtod(tok, &end);
   if (end == tok || *end != '\0') return -1;
@@ -202,8 +482,8 @@ static int float_value(const char* tok, double* out)
 // bit di qualche letterale, e l'immagine non sarebbe piu' la stessa.
 static int float32_value(const char* tok, float* out)
 {
-  int64_t c;
-  if (find_const(tok, &c)) { *out = (float) c; return 0; }
+  const Const* c = lookup_const(tok);
+  if (c) { *out = c->is_float ? (float) c->fvalue : (float) c->value; return 0; }
   char* end = NULL;
   *out = strtof(tok, &end);
   if (end == tok || *end != '\0') return -1;
@@ -218,10 +498,24 @@ static int handle_const_directive(const char* first, char** toks, int k, int n,
 {
   if (strcmp(first, ".equ") == 0 || strcmp(first, ".set") == 0)
   {
-    if (n - k != 3) { snprintf(err, errsz, "line %d: .equ needs NAME VALUE", lineno); return -1; }
-    int64_t v;
-    if (const_value(toks[k + 2], &v) != 0) { snprintf(err, errsz, "line %d: invalid value '%s'", lineno, toks[k + 2]); return -1; }
-    if (def_const(toks[k + 1], v, err, errsz) != 0) return -1;
+    if (n - k < 3) { snprintf(err, errsz, "line %d: .equ needs NAME VALUE", lineno); return -1; }
+    // Il valore e' un'espressione (§3.92): i token, che il tokenizzatore ha
+    // separato sugli spazi, si ricuciono con uno spazio e si valutano.
+    char expr[512] = "";
+    size_t used = 0;
+    for (int i = k + 2; i < n; ++i)
+    {
+      int w = snprintf(expr + used, sizeof expr - used, "%s%s", (i > k + 2) ? " " : "", toks[i]);
+      if (w < 0 || (size_t) w >= sizeof expr - used)
+      { snprintf(err, errsz, "line %d: .equ: espressione troppo lunga", lineno); return -1; }
+      used += (size_t) w;
+    }
+    EVal v;
+    char why[256];
+    if (eval_expr(expr, &v, why, sizeof why) != 0)
+    { snprintf(err, errsz, "line %d: .equ %s: %s", lineno, toks[k + 1], why); return -1; }
+    if (def_const_typed(toks[k + 1], v.is_float, v.is_float ? 0 : v.i, v.is_float ? v.f : 0.0,
+                        err, errsz) != 0) return -1;
     return 1;
   }
   if (strcmp(first, ".struct") == 0)
@@ -302,6 +596,7 @@ static int parse_reg(const char* tok, char prefix, int count, char* err, size_t 
 static int parse_int(const char* tok, int64_t* out, char* err, size_t errsz)
 {
   if (find_const(tok, out)) return 0;   // assembler-time constant (.equ / struct field)
+  if (float_const_as_int(tok, err, errsz)) return -1;   // float: qui no (§3.92)
 
   // Negated constant: "-NOME". It belongs here and not in the symbol branch
   // below, because a constant is not relocatable: its value is known now, so
@@ -393,7 +688,11 @@ static int parse_mem(const char* tok, int64_t* disp, int* reg, char* err, size_t
   memcpy(dbuf, tok, dlen);
   dbuf[dlen] = '\0';
   if (const_value(dbuf, disp) != 0)
-  { snprintf(err, errsz, "invalid displacement in '%s'", tok); return -1; }
+  {
+    if (float_const_as_int(dbuf, err, errsz)) return -1;
+    snprintf(err, errsz, "invalid displacement in '%s'", tok);
+    return -1;
+  }
 
   const char* rp    = lp + 1;
   const char* close = strchr(rp, ')');
@@ -1986,6 +2285,9 @@ int assemble(const char* path, uint8_t* mem, Instr* prog, char* err, size_t errs
           int64_t v;
           if (const_value(toks[i], &v) != 0)
           {
+            char why[160];
+            if (float_const_as_int(toks[i], why, sizeof why))
+            { snprintf(err, errsz, "line %d: .word: %s", lineno, why); fclose(fp); return -1; }
             snprintf(err, errsz, "line %d: .word: '%s' non e' un numero ne' una .equ "
                                  "definita prima", lineno, toks[i]);
             fclose(fp); return -1;
@@ -2287,6 +2589,9 @@ int assemble_object(const char* path, VObject* obj, const char* expanded_out,
             int64_t v;
             if (const_value(toks[i], &v) != 0)
             {
+              char why[160];
+              if (float_const_as_int(toks[i], why, sizeof why))
+              { snprintf(err, errsz, "line %d: .word: %s", lineno, why); goto fail; }
               snprintf(err, errsz, "line %d: .word: '%s' non e' un numero ne' una .equ "
                                    "definita prima", lineno, toks[i]);
               goto fail;

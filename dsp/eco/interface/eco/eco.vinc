@@ -34,7 +34,10 @@
 ;
 ; ECO_K e' una .equ da quando l'assembler legge le costanti anche in `fli`
 ; (14/10, §3.91): prima `fli f, ECO_K` avrebbe dato 0 in silenzio, e K stava in
-; fronte.vasm come 1.25, cioe' K / NR calcolato a mano.
+; fronte.vasm come 1.25, cioe' K / NR calcolato a mano. Da §3.92 il rapporto lo
+; calcola l'assembler, ECO_K_SU_NR. ECO_K e' FLOAT (20.0) di proposito: con
+; un 20 intero, K / NR sarebbe una divisione intera con resto, che la .equ
+; rifiuta -- in C varrebbe 1, in silenzio.
 ;
 ; --- I REGISTRI ---
 ; Foglia. Usa r1..r8, f1..f7, v0..v2 e vmask, e lascia VL a ECO_W. Non tocca
@@ -43,5 +46,6 @@
 ; --------------------------------------------------------------------------
 .equ ECO_W        64             ; i gate della finestra = i campioni del blocco
 .equ ECO_NR       16             ; i gate del rumore: i primi della finestra
-.equ ECO_K        20             ; trovato se picco > ECO_K x il rumore medio
+.equ ECO_K        20.0           ; trovato se picco > ECO_K x il rumore medio
+.equ ECO_K_SU_NR  ECO_K / ECO_NR ; 1.25: K sulla somma, invece che sulla media
 .equ ECO_SCRATCH  260            ; la potenza (ECO_W float) e una parola

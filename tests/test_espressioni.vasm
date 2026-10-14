@@ -1,0 +1,96 @@
+; tests/test_espressioni.vasm — la .equ come ESPRESSIONE tipizzata (14/10/2026, §3.92).
+;
+; La .equ accetta un'espressione, valutata dall'assembler alla definizione con
+; le regole del C: intero op intero da' intero, un float rende float il
+; risultato. In piu', deciso dall'utente, una divisione intera CON RESTO e' un
+; errore (in C 20 / 16 fa 1 in silenzio). Gira a file singolo e linkato: la
+; .equ e' la stessa funzione nei due assemblatori, ma i lettori dei dati no.
+;
+; --- I NUMERI, tutti a mano ---
+;   14    2 + 3 * 4               la precedenza: * prima di +
+;   47    (A + 4) * 2 - 1         le parentesi; A = 20
+;    5    A / 4                   divisione intera ESATTA
+;    6    A % 7
+;  -17    -A + 3                  il meno unario
+;   32    1 << 5
+;   16    0x100 >> 4
+;   -8    -32 >> 2                >> aritmetico, come srai
+;    6    2 | 4                   il caso di PSW_EXT in hal.vinc
+;   15    0xFF & 0x0F
+;    5    6 ^ 3
+;   -1    ~0
+;    6    .word EXT               una costante calcolata, nei dati
+; 1.25    fli KF / B              KF = 20.0, B = 16: il caso di FRONTE
+;    8    fli B * 0.5             intero per float: float
+; 1.25    .float Q                Q = KF / B, nei dati
+;   11    lw r, D1(r)             D1 = D - 1 = 4: la seconda parola di t,
+;                                 un intero calcolato in uno spiazzamento
+;
+; Visto rosso con l'assembler di prima: si ferma alla prima .equ con
+; un'espressione: "line 34: invalid value '20.0'", la prima .equ float.
+
+.equ A     20
+.equ B     16
+.equ KF    20.0
+.equ PREC  2 + 3 * 4
+.equ PAR   (A + 4) * 2 - 1
+.equ D     A / 4
+.equ R     A % 7
+.equ NEG   -A + 3
+.equ SL    1 << 5
+.equ SR    0x100 >> 4
+.equ SRN   -32 >> 2
+.equ EXT   2 | 4
+.equ AND   0xFF & 0x0F
+.equ XOR   6 ^ 3
+.equ NOT   ~0
+.equ Q     KF / B
+.equ FM    B * 0.5
+.equ D1    D - 1
+
+  .data
+w:  .word EXT
+x:  .float Q
+t:  .word 0, 11, 22, 33, 44
+
+  .text
+  .global main
+main:
+  li r1, PREC
+  dumps r1                       ; 14
+  li r1, PAR
+  dumps r1                       ; 47
+  li r1, D
+  dumps r1                       ; 5
+  li r1, R
+  dumps r1                       ; 6
+  li r1, NEG
+  dumps r1                       ; -17
+  li r1, SL
+  dumps r1                       ; 32
+  li r1, SR
+  dumps r1                       ; 16
+  li r1, SRN
+  dumps r1                       ; -8
+  li r1, EXT
+  dumps r1                       ; 6
+  li r1, AND
+  dumps r1                       ; 15
+  li r1, XOR
+  dumps r1                       ; 5
+  li r1, NOT
+  dumps r1                       ; -1
+  li r1, w
+  lw r2, 0(r1)
+  dumps r2                       ; 6
+  fli f1, Q
+  dumpf f1                       ; 1.25
+  fli f1, FM
+  dumpf f1                       ; 8
+  li r1, x
+  flw f1, 0(r1)
+  dumpf f1                       ; 1.25
+  li r1, t
+  lw r2, D1(r1)                  ; t + 4 byte: la seconda parola
+  dumps r2                       ; 11
+  halt

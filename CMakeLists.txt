@@ -196,6 +196,20 @@ vasm_object(t_costanti SOURCE ${CMAKE_SOURCE_DIR}/tests/test_costanti.vasm)
 vasm_program(test_costanti OBJECTS t_costanti)
 vasm_check(costanti_obj MODE DUMPS EXPECT "20 7 -3 20 1.5 20 5"
            PROGRAM test_costanti)
+
+# test_espressioni — LA .equ COME ESPRESSIONE TIPIZZATA (14/10/2026, §3.92).
+# Le regole del C, piu' la divisione intera con resto come errore. Diciassette
+# numeri derivati a mano nel sorgente; due volte, come test_costanti. Visto
+# rosso con l'assembler di prima, che si ferma alla prima .equ float. I casi
+# d'errore sono in §3.92, provati a mano: un test che si aspetta un
+# assemblaggio fallito vasm_check non lo sa fare.
+set(_espr "14 47 5 6 -17 32 16 -8 6 15 5 -1 6 1.25 8 1.25 11")
+vasm_check(espressioni MODE DUMPS EXPECT "${_espr}"
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_espressioni.vasm)
+vasm_object(t_espressioni SOURCE ${CMAKE_SOURCE_DIR}/tests/test_espressioni.vasm)
+vasm_program(test_espressioni OBJECTS t_espressioni)
+vasm_check(espressioni_obj MODE DUMPS EXPECT "${_espr}"
+           PROGRAM test_espressioni)
 # test_include gira in modalita' legacy a file singolo (non ha oggetti ne'
 # link), quindi i suoi -I se li scrive a mano invece di riceverli da
 # INTERFACES. La lista cresce di uno a ogni libreria che si sposta, ed e' il

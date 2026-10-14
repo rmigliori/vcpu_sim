@@ -39,10 +39,9 @@
 ; copriva VDIRTY, e un task solo float salvava anche i 2 KB dei vettori.
 .equ PSW_FDIRTY 4
 
-; I due insieme, come maschera: l'assembler non valuta espressioni fra costanti
-; (`PSW_VDIRTY + PSW_FDIRTY` non si assembla), quindi la somma e' scritta qui,
-; accanto ai due addendi, e in nessun altro posto.
-.equ PSW_EXT    6
+; I due insieme, come maschera. Fino al 14/10/2026 l'assembler non valutava
+; espressioni e qui c'era un 6 scritto a mano; ora la .equ lo calcola (§3.92).
+.equ PSW_EXT    PSW_VDIRTY | PSW_FDIRTY
 
 ; bit 3: IL BANCO ALTERNATIVO dei registri e' quello attivo (08/10/2026, §3.86).
 ; Il bit E' il banco: mtpsw e reti lo cambiano, la trap no. Si scambiano

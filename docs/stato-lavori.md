@@ -144,14 +144,17 @@
 > **K = 20, non 10**: misurato, con K = 10 l'1,8% degli sweep di solo rumore dà
 > "trovato". **E poi (§3.91) l'assembler:** `.word`, `.float` e `fli` leggono
 > le `.equ` invece di scrivere 0 in silenzio (`test_costanti`, visto rosso),
-> e `ECO_K` è diventata una `.equ` vera. FRONTE costa 926 cicli (713 se non
-> trova). `ctest` **77/77**, i `.vx` di prima identici byte per byte. **Si
-> riprende dal TRACKER, con l'inerzia.**
+> e `ECO_K` è diventata una `.equ` vera. **E (§3.92) la `.equ` è
+> un'ESPRESSIONE TIPIZZATA**, con le regole del C e la divisione intera con
+> resto come errore: `ECO_K_SU_NR = ECO_K / ECO_NR`, `PSW_EXT = PSW_VDIRTY |
+> PSW_FDIRTY`. FRONTE costa 921 cicli (708 se non trova). `ctest` **79/79**, i
+> `.vx` di prima identici byte per byte. **Si riprende dal TRACKER, con
+> l'inerzia.**
 >
 > **LA FORMULA PER RIPRENDERE (14/10):**
 >
 > ```
-> Leggi docs/stato-lavori.md, §0 e poi §3.91, §3.90, §3.89 (la forma), §3.86 (i
+> Leggi docs/stato-lavori.md, §0 e poi §3.92, §3.90, §3.89 (la forma), §3.86 (i
 > budget). Riprendiamo dalla prossima attivita' in lib_eco: il TRACKER con
 > l'inerzia, da out/misure/m_attivita.vasm, con un test visto rosso.
 > ```
@@ -3905,6 +3908,55 @@ il contratto scritto.
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
 
 ---
+
+### 3.92 LA `.equ` COME ESPRESSIONE TIPIZZATA (14/10/2026, sera)
+
+Chiesta dall'utente («come in C, una costante tipizzata che è il risultato di
+un'operazione»), dopo §3.91. Decisi da lui due punti: **le regole del C**, e
+**una divisione intera con resto è un errore** — più severo del C, dove
+`20 / 16` vale 1 in silenzio.
+
+```
+la costante   ha un TIPO: intera o float. find_const vede solo le intere (e'
+              il lettore di tutti i posti che vogliono un intero); una float
+              li' e' un errore che lo dice: "'X' e' una costante float: qui
+              serve un intero" -- in li, negli spiazzamenti, in .word
+la .equ       un'espressione, valutata UNA volta alla definizione (pass 1),
+              su letterali e costanti GIA' definite: | ^ & << >> + - * / %,
+              unari - + ~, parentesi, precedenze del C. Discesa ricorsiva,
+              eval_expr in assembler.c
+le regole     int op int = int; float in + - * / rende float; % << >> & | ^ ~
+              solo interi; aritmetica a 64 bit avvolta; >> aritmetico
+gli errori    divisione intera con resto, divisione per zero, shift fuori da
+              0..63, nome non definito prima, parentesi, roba in coda
+NON negli     operandi delle istruzioni: il conto si scrive una volta, con un
+              nome
+```
+
+**I due casi che la chiedevano, convertiti:** `ECO_K_SU_NR = ECO_K / ECO_NR` in
+`eco.vinc` (ECO_K diventa `20.0`: con 20 intero la `.equ` si ferma, ed è la
+regola che funziona), e FRONTE torna a una sola `fmul`; `PSW_EXT = PSW_VDIRTY |
+PSW_FDIRTY` in `hal.vinc`, dove c'era un 6 a mano.
+
+| cosa | risultato |
+|---|---|
+| `test_espressioni`, a file singolo e linkato | 17 numeri a mano, `14 47 5 6 -17 32 16 -8 6 15 5 -1 6 1.25 8 1.25 11`; **rosso** con l'assembler di prima: `line 34: invalid value '20.0'` |
+| quindici casi d'errore, a mano, sui due assemblatori | **tutti fermati**, ognuno col suo messaggio |
+| i 30 `.vx` contro `HEAD` | **29 identici byte per byte** (anche quelli con `PSW_EXT` calcolata); diverso solo `test_fronte`... |
+| ...`test_fronte` contro `be8c79b` | **identico byte per byte**: la `fmul` sola col 1.25, che ora calcola l'assembler. FRONTE torna a 921 / 708 cicli |
+| `ctest --timeout 60` | **79/79** |
+
+Il manuale ha la sezione nuova, **§4.2.8** (in coda: 4.2.1 era già `.proc`, e
+rinumerare avrebbe rotto i riferimenti).
+
+**Rimasti, da convertire se si vuole:** `CMP_ARM0_CYC` e `CMP_ARM1_CYC` in
+`clock.vinc`, due `|` scritti a mano. Non toccati: non li chiedeva nessun caso,
+e convertirli è una riga ciascuno con le immagini da verificare. Due limiti
+vecchi, non di oggi: l'errore di un'istruzione dice `instr N` e non la riga, e
+«duplicate constant» non dice la riga.
+
+---
+
 
 ### 3.91 LE `.equ` DOVE SI LEGGE UN NUMERO: `.word`, `.float`, `fli` (14/10/2026, sera)
 

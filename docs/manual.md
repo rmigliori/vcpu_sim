@@ -871,7 +871,7 @@ loop:   setvl r4, r3      ; 'loop' = indice di questa istruzione
 | `.float` | `.float a, b, c, ...` | scrive i valori come float (4 byte l'uno) e avanza il puntatore dati; un valore è un letterale o una costante `.equ` **definita prima** (l'intero diventa float). Altro è un errore |
 | `.word` | `.word a, b, c, ...` | scrive interi con segno a 32 bit (4 byte l'uno); accetta decimale, esadecimale (`0x...`) o una costante `.equ` **definita prima**. Altro è un errore |
 | `.space` | `.space N` | riserva `N` elementi (`N*4` byte) senza inizializzarli |
-| `.equ` | `.equ NOME valore` | definisce una **costante** di compile-time (`.set` è sinonimo); il valore è un intero o una costante già definita |
+| `.equ` | `.equ NOME espressione` | definisce una **costante** di compile-time (`.set` è sinonimo), **intera o float**: il valore è un'espressione su letterali e costanti già definite, con le regole del C (§4.2.8) |
 | `.struct` | `.struct NOME` … `.ends` | apre/chiude un blocco struttura: gli offset dei campi diventano costanti `NOME.campo` |
 | `.field` | `.field campo [dim]` | dentro `.struct`: definisce `NOME.campo` = offset corrente e avanza di `dim` byte (default 4) |
 | `.res` | `etichetta: .res TIPO` | nel segmento dati: riserva `TIPO.size` byte (come una `.space` *type-aware*); l'etichetta ne è l'indirizzo |
@@ -900,13 +900,15 @@ n:   .word 5, -3, 0x10, 42 ; interi a 32 bit, letti con lw/scritti con sw
 ```
 
 **Costanti e strutture.** `.equ` e `.struct` producono **costanti simboliche** di
-compile-time: puri interi (offset di campo, dimensioni), risolti come letterali
+compile-time (offset di campo, dimensioni, rapporti), risolte come letterali
 ovunque si legga un numero — displacement di `lw`/`sw`, immediati di `li`, i
-valori di `.word` e `.float` e l'immediato di `fli` — e **mai rilocati**. Dove
-serve un float l'intero diventa float. Fino al 14/10/2026 `.word`, `.float` e
-`fli` non le conoscevano e scrivevano **0 in silenzio**: ora un nome che non è
-una costante è un errore, come in `li`. Servono a togliere i *magic number* dagli accessi ai campi di una
-struttura in memoria:
+valori di `.word` e `.float` e l'immediato di `fli` — e **mai rilocate**. Una
+costante ha un **tipo**: intera o float (§4.2.8). Dove serve un float l'intero
+diventa float; dove serve un intero una costante float è un **errore**, mai un
+troncamento. Fino al 14/10/2026 `.word`, `.float` e `fli` non conoscevano le
+costanti e scrivevano **0 in silenzio**: ora un nome che non è una costante è un
+errore, come in `li`. Servono a togliere i *magic number* dagli accessi ai campi
+di una struttura in memoria:
 
 ```asm
 .equ VLMAX 64             ; costante semplice, poi usabile come `li r1, VLMAX`
@@ -939,13 +941,9 @@ risolve via `-I`. Come si risolve un nome, e perché una seconda inclusione dell
 stesso file non è un errore, sta in §4.2.2.
 
 Le costanti sono **locali al file** (nessuna rilocazione) e vanno definite prima
-dell'uso in una direttiva `.equ`/`.field`; nel codice invece sono usabili anche
-in avanti. Un blocco `.struct` non chiuso da `.ends` è un errore.
-
-Un operando simbolico può avere un **offset**: `simbolo+N` o `simbolo-N` (N
-decimale o esadecimale). Per i dati l'offset è in **byte**, quindi `li r1, y+8`
-punta a `y[2]`. Funziona sia in un singolo file sia in compilazione separata
-(l'offset diventa l'*addend* della rilocazione, §2.5).
+dell'uso in una direttiva `.equ`/`.field` e nei dati (`.word`, `.float`); nel
+codice invece sono usabili anche in avanti. Un blocco `.struct` non chiuso da
+`.ends` è un errore.
 
 #### 4.2.1 `.proc` / `.endproc`: prologo/epilogo per procedure non-foglia
 
@@ -1328,6 +1326,41 @@ Tre regole, e ognuna ha la sua ragione:
 E `run`, con due programmi, **confronta** ciò che i due `.symmap` dichiarano di
 condiviso — nomi, indirizzi, dimensioni — e rifiuta due immagini che non sono
 d'accordo, prima di far partire le CPU.
+
+#### 4.2.8 La `.equ` come espressione (14/10/2026)
+
+Il valore di una `.equ` è un'**espressione**, valutata dall'assembler una volta,
+alla definizione:
+
+```asm
+.equ ECO_K        20.0               ; float: il letterale ha il punto
+.equ ECO_NR       16                 ; intera
+.equ ECO_K_SU_NR  ECO_K / ECO_NR     ; float, 1.25
+.equ PSW_EXT      PSW_VDIRTY | PSW_FDIRTY
+```
+
+Gli operatori e le precedenze sono quelli del C, dal più debole:
+`|`, `^`, `&`, `<<` `>>`, `+` `-`, `*` `/` `%`, gli unari `-` `+` `~`, e le
+parentesi. Gli operandi sono letterali (decimali, `0x...`, float col punto o
+l'esponente) e costanti **già definite**, compresi i campi `TIPO.campo`.
+
+Le **regole di tipo** sono quelle del C: intero con intero dà intero; se un
+operando di `+ - * /` è float, lo è il risultato. `% << >> & | ^ ~` vogliono
+interi. L'aritmetica intera è a 64 bit, e `>>` è aritmetico come `srai`.
+
+**Una regola più severa del C: una divisione intera con resto è un errore.** In
+C `20 / 16` vale 1, e un rapporto fra due costanti intere si azzera o si tronca
+senza che nessuno lo veda. Qui l'assembler si ferma e lo dice; se si vuole il
+quoziente vero, un operando va scritto float (`20.0`). Sono errori anche la
+divisione per zero e uno shift fuori da 0..63.
+
+Le espressioni stanno **solo nella `.equ`**, non negli operandi delle
+istruzioni: il conto si scrive una volta, con un nome, e il codice usa il nome.
+
+Un operando simbolico può avere un **offset**: `simbolo+N` o `simbolo-N` (N
+decimale o esadecimale). Per i dati l'offset è in **byte**, quindi `li r1, y+8`
+punta a `y[2]`. Funziona sia in un singolo file sia in compilazione separata
+(l'offset diventa l'*addend* della rilocazione, §2.5).
 
 ### 4.3 Manuale delle istruzioni
 
