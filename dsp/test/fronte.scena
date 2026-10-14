@@ -1,0 +1,9 @@
+# dsp/test/fronte.scena -- l'acqua ferma, CON il rumore, e un TX perso (14/10/2026)
+#
+# La scena di test_fronte. Velocita' zero, quindi il fronte cade a
+# tau = 2 * 90000 / c = 60.041,5 tick da ogni TX, come in test_eco; il rumore di
+# §3.82, sigma 20 su I e su Q; e al TX n. 2 l'eco non c'e'. I numeri attesi li
+# ricava test_fronte.vasm per conto suo, non questo file e non tools/mare.py.
+quota 90000   velocita 0   ampiezza 1000   fronte 4.5   coda 1000
+fase 0.785    rumore 20    seme 1
+perdita 2 2

@@ -8,4 +8,5 @@
 #  simbolo o un header di rtos/. Cosi' la cartella si solleva di peso.
 # ---------------------------------------------------------------------------
 add_subdirectory(fft)
+add_subdirectory(eco)
 add_subdirectory(test)

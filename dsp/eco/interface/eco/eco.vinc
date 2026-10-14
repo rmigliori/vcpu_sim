@@ -1,0 +1,47 @@
+; eco/eco.vinc — le attivita' dell'altimetro sul blocco dell'ADC (14/10/2026).
+;
+; Le procedure che il super task chiama, una per slot (§3.89). Vengono da
+; out/misure/m_attivita.vasm, codice di misura, e arrivano qui una alla volta,
+; ciascuna col suo test visto rosso. Per ora: FRONTE.
+;
+; --- FRONTE: la MISURA, con la RIVELAZIONE prima ---
+;     call fronte     r1 = il blocco dell'ADC: ECO_W campioni, I e Q ALTERNATI,
+;                          interi a 32 bit (hal/adc.vinc)
+;                     r2 = lo scratch del CHIAMANTE, ECO_SCRATCH byte, allineato
+;                          a 4: ci finisce la potenza, gate per gate
+;     -> r1 = 1 trovato, 0 non trovato
+;        f1 = (solo se trovato) dove l'ampiezza passa la META' del picco, in
+;             campioni dall'inizio del blocco, frazionario. Il campione j e'
+;             preso a AT + (j+1)*ADC_PERIOD: convertire in tempo e' del TRACKER
+;
+; La RIVELAZIONE (CFAR): il rumore e' la potenza media dei primi ECO_NR gate,
+; quelli prima del fronte, e l'eco c'e' solo se il picco supera ECO_K volte
+; quel rumore. Poi il fronte: il primo gate oltre 1/4 del picco in potenza
+; (meta' ampiezza), interpolato linearmente col gate prima.
+;
+; ECO_K = 20, e non 10 come diceva §3.89. Misurato con un Monte Carlo prima
+; di scriverlo (14/10): con la media su 16 gate la soglia stessa e' rumorosa,
+; e il falso allarme per gate e' (1 + K/16)^-16, non e^-K. Su solo rumore:
+;     K = 10    1,8% degli sweep "trovato"
+;     K = 20    1 su 10.000
+; e nella scena di §3.82 il picco sta ~1.250 volte sopra il rumore: K = 20
+; non toglie niente alla rivelazione.
+;
+; UN LIMITE, e voluto: se il fronte cade nei primi ~13 gate, il plateau entra
+; nella media del rumore e FRONTE dice "non trovato" anche se l'eco c'e'. E'
+; il prezzo del CFAR a celle fisse; il tracker centra il fronte a ~32, e un
+; fronte cosi' fuori posto e' gia' un fallimento per la catena di §3.82.
+;
+; ECO_K NON E' UNA .equ, ed e' l'assembler a imporlo: `fli f, NOME` di una
+; .equ da' 0 in silenzio (strtod, verificato il 14/10 -- la stessa famiglia di
+; `.word NOME`, §3.86). Sta in fronte.vasm come K / NR = 20 / 16 = 1.25, e se
+; cambia ECO_NR va cambiato li'.
+;
+; --- I REGISTRI ---
+; Foglia. Usa r1..r8, f1..f7, v0..v2 e vmask, e lascia VL a ECO_W. Non tocca
+; r9..r15. Lo scratch e' del chiamante per la stessa ragione della FFT: la
+; libreria non possiede memoria.
+; --------------------------------------------------------------------------
+.equ ECO_W        64             ; i gate della finestra = i campioni del blocco
+.equ ECO_NR       16             ; i gate del rumore: i primi della finestra
+.equ ECO_SCRATCH  260            ; la potenza (ECO_W float) e una parola

@@ -1,0 +1,119 @@
+; dsp/eco/impl/src/fronte.vasm — FRONTE: la rivelazione e il fronte di salita
+; (14/10/2026). Il contratto e il perche' di K sono in eco/eco.vinc.
+;
+; Viene da m_attivita.vasm (§3.86, 890-891 cicli), con tre differenze:
+;   la soglia di rivelazione non e' piu' un numero assoluto passato in f8, ma
+;     ECO_K volte il rumore dei primi ECO_NR gate (§3.89);
+;   la ricerca del bit piu' basso e' dentro, non una procedura: FRONTE resta
+;     una foglia, e il link parcheggiato in r11 sparisce;
+;   la potenza va nello scratch del chiamante, non in un buffer della libreria.
+;
+; --- NIENTE CONFRONTI FLOAT: il segno passa dalla memoria ---
+; L'ISA non ne ha (test_fft lo spiega). K*rumore - picco si scrive come float
+; e si rilegge come intero: negativo vuol dire trovato. Lo zero NON e' trovato,
+; ed e' cio' che salva il blocco tutto a zero: picco 0, rumore 0, nessun gate
+; sopra soglia, e la ricerca del bit su una maschera vuota non finirebbe bene.
+;
+; --- INTERO -> FLOAT col numero magico: k-1 aggiunto ai bit di 1.5*2^23 ---
+
+.include "eco/eco.vinc"
+
+.equ MAGIC_HI  0x4B400000        ; i bit di 1.5 * 2^23
+
+  .text
+  .global fronte
+
+fronte:
+  li r3, ECO_W
+  setvl r3, r3
+  li r4, 8
+  vload v0, r1, r4               ; I, a passo 8
+  addi r5, r1, 4
+  vload v1, r5, r4               ; Q
+  vcvt v0, v0
+  vcvt v1, v1
+  vmul v0, v0, v0
+  vmul v1, v1, v1
+  vadd v0, v0, v1                ; la potenza, gate per gate
+  vstore v0, r2
+  vredmax f1, v0                 ; il picco
+
+  ; --- la rivelazione: il picco contro K volte il rumore medio ------------
+  li r4, ECO_NR
+  mtvl r4
+  vredsum f2, v0                 ; la potenza dei primi ECO_NR gate
+  mtvl r3
+  fli f3, 1.25                   ; ECO_K / ECO_NR = 20 / 16
+  fmul f2, f2, f3                ; K volte il rumore medio
+  fsub f3, f2, f1
+  fsw f3, 256(r2)
+  lw r4, 256(r2)
+  blt r4, r0, fr_si
+  li r1, 0
+  ret
+
+  ; --- il fronte: il primo gate oltre 1/4 del picco -----------------------
+fr_si:
+  fli f2, 0.25
+  fmul f2, f1, f2                ; meta' ampiezza = un quarto della potenza
+  vsplat v2, f2
+  vmsgt v0, v2
+  mfvmask r6                     ; non vuota: il picco supera la sua soglia
+
+  ; il bit piu' basso: isolato, poi ricerca binaria, sei passi
+  sub r7, r0, r6
+  and r6, r6, r7
+  li r3, 0
+  slli r7, r6, 32
+  bne r7, r0, fr_b16
+  addi r3, r3, 32
+  srli r6, r6, 32
+fr_b16:
+  slli r7, r6, 48
+  bne r7, r0, fr_b8
+  addi r3, r3, 16
+  srli r6, r6, 16
+fr_b8:
+  slli r7, r6, 56
+  bne r7, r0, fr_b4
+  addi r3, r3, 8
+  srli r6, r6, 8
+fr_b4:
+  slli r7, r6, 60
+  bne r7, r0, fr_b2
+  addi r3, r3, 4
+  srli r6, r6, 4
+fr_b2:
+  slli r7, r6, 62
+  bne r7, r0, fr_b1
+  addi r3, r3, 2
+  srli r6, r6, 2
+fr_b1:
+  slli r7, r6, 63
+  bne r7, r0, fr_k
+  addi r3, r3, 1
+fr_k:
+  beq r3, r0, fr_zero            ; gia' il gate 0: niente da interpolare
+
+  ; l'interpolazione fra k-1 e k, in potenza
+  slli r7, r3, 2
+  add r7, r2, r7
+  flw f4, 0(r7)                  ; p[k]
+  flw f5, -4(r7)                 ; p[k-1]
+  fsub f6, f2, f5
+  fsub f7, f4, f5
+  fdiv f6, f6, f7                ; la frazione, in [0, 1)
+  addi r8, r3, -1
+  li r5, MAGIC_HI
+  add r5, r5, r8
+  sw r5, 256(r2)
+  flw f1, 256(r2)
+  fli f3, 12582912.0
+  fsub f1, f1, f3                ; k - 1, in float
+  fadd f1, f1, f6
+  li r1, 1
+  ret
+fr_zero:
+  fli f1, 0.0
+  li r1, 1
+  ret

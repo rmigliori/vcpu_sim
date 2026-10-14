@@ -137,7 +137,22 @@
 
 ## 0. STATO ATTUALE — DA DOVE SI RIPRENDE
 
-> ### ▶ RIPRENDI DA QUI (11/10/2026 o dopo)
+> ### ▶ RIPRENDI DA QUI (14/10/2026 o dopo)
+>
+> **Il 14/10 (§3.90): FRONTE è una procedura vera**, in `dsp/eco/` (`lib_eco`),
+> con la rivelazione CFAR e un test visto rosso (`test_fronte`, "1 1 0").
+> **K = 20, non 10**: misurato, con K = 10 l'1,8% degli sweep di solo rumore dà
+> "trovato". FRONTE costa 921 cicli (708 se non trova). `ctest` **75/75**, i 28
+> `.vx` di prima identici byte per byte. **Si riprende dal TRACKER, con
+> l'inerzia.**
+>
+> **LA FORMULA PER RIPRENDERE (14/10):**
+>
+> ```
+> Leggi docs/stato-lavori.md, §0 e poi §3.90, §3.89 (la forma), §3.86 (i
+> budget). Riprendiamo dalla prossima attivita' in lib_eco: il TRACKER con
+> l'inerzia, da out/misure/m_attivita.vasm, con un test visto rosso.
+> ```
 >
 > **L'11/10, due pezzi FATTI.** **`ADC_AT` (§3.87):** l'ADC parte da solo
 > all'istante scritto, esatto al tick; `test_adc_at` dà il fronte di
@@ -3888,6 +3903,71 @@ il contratto scritto.
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
 
 ---
+
+### 3.90 FRONTE, LA PRIMA ATTIVITÀ VERA: `lib_eco` e la rivelazione (14/10/2026)
+
+Il punto 2 di §3.89, prima attività. Proposto prima di scriverlo e
+approvato dall'utente: K = 20, la libreria `dsp/eco/`, lo scratch del chiamante.
+
+**K = 20, e non 10 come diceva §3.89: una correzione MISURATA.** Monte Carlo
+(200.000 sweep di solo rumore, 64 gate, rumore medio sui primi 16): con la media
+stimata su 16 gate la soglia è essa stessa rumorosa, e il falso allarme per gate
+è (1 + K/16)^-16, non e^-K.
+
+```
+K = 10    1,8% degli sweep "trovato" sul solo rumore
+K = 15    0,1%
+K = 20    1 su 10.000          <- preso: il picco sta ~1.250 volte sopra il
+                                  rumore (§3.82), il margine resta 60
+```
+
+**Cosa c'è:**
+
+```
+dsp/eco/                    lib_eco: le attivita' dell'altimetro, una libreria
+                            sola (FRONTE e BARKER_DEC finiranno sulla stessa
+                            rivelazione). In dsp/: nessuna nomina rtos/
+  interface/eco/eco.vinc    il contratto, ECO_W 64, ECO_NR 16, ECO_SCRATCH 260
+  impl/src/fronte.vasm      fronte(r1 blocco, r2 scratch) -> r1 trovato, f1
+                            posizione. Foglia: bitbasso e' dentro, il link in
+                            r11 di m_attivita sparisce
+dsp/test/test_fronte.vasm   due sweep su fronte.scena (acqua ferma, rumore 20,
+dsp/test/fronte.scena       perdita al TX 2): "1 1 0"
+```
+
+**Il test e il rosso.** Il fronte a 30,5 contato a mano da τ (AT = TX + 60010);
+lo sweep 1 deve trovarlo entro mezzo gate, lo sweep 2 (il TX perso) deve dire
+non trovato. Rossi, come previsti prima: **senza rivelazione** `1 1 1`; **il
+rumore su tutta la finestra** (l'errore di §3.86) `0 0 0`. **Verde, e
+dichiarato:** K troppo grande (la somma invece della media, K = 320) — con un
+margine di 1.250 trova lo stesso. Vuole una scena con poco margine, al punto 4.
+
+**Una stima mia smentita dalla misura.** A mano la posizione era ~30,41 ± 0,15;
+la macchina ha dato 30,81. Senza rumore 30,45 (il bias tornava); il resto è il
+**picco gonfiato**: è il massimo di ~30 gate di plateau rumorosi, la soglia sale
+e il fronte va avanti. Su 30 semi: media 30,59, σ 0,12, da 30,33 a 30,81. Il
+seme 1, quello del test, è il più alto dei trenta; il bordo 31 è a 3,5 σ dalla
+media. Scritto nel sorgente.
+
+**Il costo:** **921 cicli** se trova (erano 891: la rivelazione ne aggiunge ~30),
+**708** se non trova. Con i 327 del meccanismo 1.248, nello slot da 1.500.
+
+**Una trappola dell'assembler, la seconda della famiglia:** `fli f, NOME` di una
+`.equ` dà **0 in silenzio** (`strtod`), come `.word NOME` (§3.86). Per questo K
+sta in `fronte.vasm` come letterale, 1.25 = K/NR, e il `.vinc` lo dice. Farle
+diventare errori è una modifica dell'assembler: decide l'utente.
+
+| cosa | risultato |
+|---|---|
+| `ctest --timeout 60` | **75/75** (74 + `fronte`) |
+| i 28 `.vx` di prima contro `HEAD` (worktree) | **identici byte per byte** |
+
+**Si riprende dal TRACKER** con l'inerzia (§3.89: se FRONTE non trova, solo la
+predizione; casella d'esito il residuo), poi BARKER_ACC/DEC con l'allineamento,
+poi MSG.
+
+---
+
 
 ### 3.89 LA FORMA DELLA MACCHINA A STATI, decisa (11/10/2026, sera)
 

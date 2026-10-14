@@ -1,0 +1,143 @@
+; dsp/test/test_fronte.vasm — FRONTE: la rivelazione e il fronte (14/10/2026).
+;
+; Gira con --eco-cmd "python3 tools/mare.py dsp/test/fronte.scena": l'acqua
+; ferma a 90 km, rumore sigma 20, e al secondo TX l'eco non c'e'. Due sweep,
+; tre numeri.
+;
+; --- DOVE CADE IL FRONTE, contato a mano ---
+; tau = 2 * 90000 / c = 60.041,5 tick dal TX (test_eco). Il TX e' a r9 + 4
+; (la lw legge il clock al confine della sw che segue, e la sw costa 4: lo
+; spiega test_adc_at), e si arma AT = TX + 60010. Il campione j e' preso a
+; AT + j + 1, cioe' a 60011 + j dal TX: la meta' ampiezza cade fra j = 30
+; (60041) e j = 31 (60042), a j = 30,5.
+;
+; --- PERCHE' "ENTRO MEZZO GATE" E NON UN NUMERO ESATTO ---
+; FRONTE interpola in POTENZA fra i due campioni attorno alla soglia, e la
+; soglia e' un quarto del PICCO, che la coda (exp) tiene sotto A^2 di ~3%. A
+; mano, senza rumore: i due campioni a -0,75 m e +0,75 m dal fronte hanno
+; ampiezza 0,434 A e 0,566 A (erf di 0,118), e l'interpolazione da' ~30,41.
+; MISURATO senza rumore: 30,45.
+; Il rumore fa due cose. Sposta i due campioni (~0,11 gate: sigma 20 su una
+; pendenza di ~132 per gate), e GONFIA IL PICCO, che e' il massimo di ~30 gate
+; di plateau rumorosi: la soglia sale e il fronte va avanti. Il secondo effetto
+; l'avevo dimenticato nel conto a mano, e l'ha mostrato la misura. Su 30 semi
+; (14/10): media 30,59, sigma 0,12, da 30,33 a 30,81. Il seme 1, quello del
+; test, da' 30,81 -- il piu' alto dei trenta. Il bordo, 31, e' a 3,5 sigma
+; dalla media.
+;
+; --- I TRE NUMERI ---
+;   1   sweep 1: trovato
+;   1   sweep 1: |posizione - 30,5| < 0,5
+;   0   sweep 2: la perdita, solo rumore: NON trovato
+;
+; --- ROSSO, su FRONTE mutata ---
+;   senza rivelazione (sempre trovato): la perdita esce 1
+;   il rumore su TUTTA la finestra invece che sui primi 16 gate -- l'errore
+;     trovato misurando in §3.86: il plateau ne riempie meta', la media sale
+;     a ~meta' del picco, e l'eco vero esce NON trovato
+; NON li vede un K troppo grande: col picco ~1.250 volte sopra il rumore anche
+; K = 320 trova. Quello vuole una scena con poco margine (eco/eco.vinc).
+
+.include "hal/adc.vinc"
+.include "hal/amp.vinc"
+.include "hal/clock.vinc"
+.include "eco/eco.vinc"
+
+.equ TX_LEN      0x100054        ; da devices.h, ricopiati come in test_eco:
+.equ TX_CTRL     0x100058        ; hal/tx.vinc non c'e' ancora
+.equ TX_START    1
+
+.equ BLOCCO_1    SHARED_BASE     ; un blocco per sweep: un blocco rimasto dallo
+.equ BLOCCO_2    0x200200        ; sweep prima darebbe un verde falso
+.equ PARTENZA    10000
+.equ RITARDO_SW  60014           ; 60010 + il costo della sw del TX
+.equ PRI         100000
+
+  .data
+scratch: .space ECO_SCRATCH
+appoggio: .word 0
+
+  .text
+  .global main
+main:
+  li r1, TX_LEN
+  li r2, 5000                    ; 50 us
+  sw r2, 0(r1)
+  li r1, ADC_COUNT
+  li r2, ECO_W
+  sw r2, 0(r1)
+  li r1, ADC_PERIOD
+  li r2, 1
+  sw r2, 0(r1)
+
+  li r12, CLOCK_CYCLES
+  li r11, TX_CTRL
+  li r13, ADC_AT
+  li r2, PARTENZA
+partenza:
+  lw r3, 0(r12)
+  blt r3, r2, partenza
+
+  ; --- sweep 1: l'eco c'e' ---------------------------------------------------
+  li r1, ADC_ADDR
+  li r2, BLOCCO_1
+  sw r2, 0(r1)
+  li r3, TX_START
+  lw r9, 0(r12)
+  sw r3, 0(r11)                  ; il TX
+  li r10, RITARDO_SW
+  add r10, r10, r9
+  sw r10, 0(r13)                 ; AT
+  li r4, 1
+  call aspetta_blocchi
+  li r1, BLOCCO_1
+  li r2, scratch
+  call fronte
+  dumps r1                       ; 1
+  fli f2, 30.5
+  fsub f1, f1, f2
+  fneg f2, f1
+  fmax f1, f1, f2                ; |posizione - 30,5|
+  fli f2, 0.5
+  fsub f1, f2, f1                ; 0,5 - |...|: non negativo = dentro
+  li r2, appoggio
+  fsw f1, 0(r2)
+  lw r3, 0(r2)
+  li r1, 1
+  blt r0, r3, dentro
+  beq r3, r0, dentro
+  li r1, 0
+dentro:
+  dumps r1                       ; 1
+
+  ; --- sweep 2: il TX perso, solo rumore -------------------------------------
+  li r1, ADC_ADDR
+  li r2, BLOCCO_2
+  sw r2, 0(r1)
+  li r2, PRI
+  add r2, r2, r9
+prossimo:
+  lw r3, 0(r12)
+  blt r3, r2, prossimo
+  li r3, TX_START
+  lw r9, 0(r12)
+  sw r3, 0(r11)
+  li r10, RITARDO_SW
+  add r10, r10, r9
+  sw r10, 0(r13)
+  li r4, 2
+  call aspetta_blocchi
+  li r1, BLOCCO_2
+  li r2, scratch
+  call fronte
+  dumps r1                       ; 0
+  halt
+
+; Aspetta che i blocchi finiti siano r4: il CONTATORE di ADC_STATUS.
+aspetta_blocchi:
+  li r5, ADC_STATUS
+attesa:
+  lw r2, 0(r5)
+  srli r2, r2, ADC_DONE_SHIFT
+  bne r2, r4, attesa
+  ret

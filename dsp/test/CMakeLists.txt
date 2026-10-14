@@ -25,3 +25,18 @@ vasm_check(fft_pos MODE DUMPS PROGRAM test_fft EXPECT "5 64 0"
            ARGS --adc 78125,1000)
 vasm_check(fft_neg MODE DUMPS PROGRAM test_fft EXPECT "59 64 0"
            ARGS --adc -78125,1000)
+
+vasm_object(t_fronte SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_fronte.vasm
+                     INTERFACES vinc_eco vinc_hal)
+
+vasm_program(test_fronte OBJECTS t_fronte LINK lib_eco)
+
+# test_fronte — FRONTE: LA RIVELAZIONE E IL FRONTE (14/10/2026).
+#
+# Due sweep sull'acqua ferma con rumore (fronte.scena): il primo trova l'eco
+# entro mezzo gate da 30,5, contato a mano da tau; il secondo e' un TX perso
+# e FRONTE deve dire che non c'e'. Visto rosso togliendo la rivelazione (la
+# perdita esce trovata) e prendendo il rumore su tutta la finestra (l'eco vero
+# esce non trovato). Il conto, e cio' che il test non vede, nel sorgente.
+vasm_check(fronte MODE DUMPS PROGRAM test_fronte EXPECT "1 1 0"
+           ARGS --eco-cmd "python3 ${CMAKE_SOURCE_DIR}/tools/mare.py ${CMAKE_CURRENT_SOURCE_DIR}/fronte.scena")
