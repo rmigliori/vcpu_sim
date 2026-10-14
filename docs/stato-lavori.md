@@ -150,15 +150,33 @@
 > PSW_FDIRTY`. FRONTE costa 921 cicli (708 se non trova). **E (§3.93) gli
 > errori dell'assemblatore dicono file, riga nel file e la catena degli
 > include** (e la macro): prima la riga era contata su tutto il flusso.
-> `ctest` **83/83**, i `.vx` di prima identici byte per byte. **Si riprende dal
-> TRACKER, con l'inerzia.**
+> `ctest` **83/83**, i `.vx` di prima identici byte per byte. Tutto pushato su
+> GitHub e sulla Pi fino a `1c2945f`. **Si riprende dal TRACKER, con
+> l'inerzia.**
+>
+> **Il TRACKER, cosa c'è già** (§3.89, §3.82, §3.86): in `m_attivita.vasm` è
+> l'alfa/beta con l'inizializzazione a due punti (alfa 0,6, beta 0,2571429),
+> il residuo oltre 3 gate come clutter, la finestra dopo `round(x + v) - 32`,
+> 126 cicli col filtro. Da portare: l'INERZIA (FRONTE non trova -> solo la
+> predizione), la casella d'esito (il residuo), l'armamento di `ADC_AT` per lo
+> sweep dopo. Lo stato del filtro (x, v, n) è memoria del chiamante, come lo
+> scratch di FRONTE. Le costanti (alfa, beta, 3 gate) ora possono essere
+> `.equ` calcolate: beta = alfa² / (2 − alfa) si scrive (§3.92).
+>
+> **Aperti e piccoli, nati il 14/10, nessuno urgente:** i casi d'errore di
+> §3.91 e §3.92 provati solo a mano (`add_test` + `PASS_REGULAR_EXPRESSION` li
+> renderebbe test, come `tests/posizioni/`); **`.word` tronca a 32 bit in
+> silenzio** un valore più grande (`0x100000005` -> 5, verificato), la stessa
+> famiglia di trappole: decide l'utente; una scena con poco margine per vedere
+> un K sbagliato per eccesso in FRONTE (al punto 4, la scena vera).
 >
 > **LA FORMULA PER RIPRENDERE (14/10):**
 >
 > ```
 > Leggi docs/stato-lavori.md, §0 e poi §3.90, §3.89 (la forma), §3.86 (i
-> budget). Riprendiamo dalla prossima attivita' in lib_eco: il TRACKER con
-> l'inerzia, da out/misure/m_attivita.vasm, con un test visto rosso.
+> budget); §3.91-§3.93 se tocchi l'assembler. Riprendiamo dalla prossima
+> attivita' in lib_eco: il TRACKER con l'inerzia, da
+> out/misure/m_attivita.vasm, con un test visto rosso.
 > ```
 >
 > **L'11/10, due pezzi FATTI.** **`ADC_AT` (§3.87):** l'ADC parte da solo
