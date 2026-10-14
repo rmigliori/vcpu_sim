@@ -137,16 +137,16 @@
 ; Una lettura di CMP_CTRL restituisce armamento E base, cosi' un
 ; read-modify-write che arma un canale non azzera la base di un altro.
 ;
-; Le combinazioni armato+base hanno un nome loro perche' l'assembler NON ha
-; espressioni fra costanti: `CMP_ARM0 + CMP_CYC0` non si assembla, e nemmeno
-; `CMP_ARM0+0x10000` (la forma `simbolo+N` vale per le etichette, non per le
-; .equ). Comporre una maschera a runtime costerebbe due `li` e un `or`, perche'
-; le logiche IMMEDIATE non ci sono -- e' l'annotazione di §3.74 dell'handoff,
-; della stessa famiglia di `srai`.
+; Le combinazioni armato+base hanno un nome loro perche' le espressioni stanno
+; solo nella .equ, non negli operandi (§3.92): `li r, CMP_ARM0 | CMP_CYC0` non
+; si scrive, e comporre la maschera a runtime costerebbe due `li` e un `or`,
+; perche' le logiche IMMEDIATE non ci sono -- l'annotazione di §3.74
+; dell'handoff, della stessa famiglia di `srai`. Fino al 14/10/2026 i due
+; valori erano scritti a mano; ora li calcola la .equ.
 .equ CMP_CYC0    0x10000         ; bit 16: il canale 0 confronta sui cicli
 .equ CMP_CYC1    0x20000         ; bit 17: ...il canale 1
-.equ CMP_ARM0_CYC 0x10001        ; CMP_ARM0 | CMP_CYC0
-.equ CMP_ARM1_CYC 0x20002        ; CMP_ARM1 | CMP_CYC1
+.equ CMP_ARM0_CYC CMP_ARM0 | CMP_CYC0
+.equ CMP_ARM1_CYC CMP_ARM1 | CMP_CYC1
 
 .equ CMP0        0x100020        ; la scadenza del canale 0, nella SUA base
 .equ CMP1        0x100024        ; la scadenza del canale 1, nella SUA base
