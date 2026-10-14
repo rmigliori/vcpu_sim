@@ -245,9 +245,11 @@
 > **Aperti e piccoli, nessuno urgente:** l'immediato degli shift fuori da 0..63
 > (§3.81: la proposta è rifiutarlo in assembler, decide l'utente); `out/rosso/`,
 > 321 MB dell'esperimento di §3.85, da cancellare se non serve. Il push sulla
-> Pi: **in casa** `git push pi master` e basta (`dietpi4` si risolve sul
-> FritzBox, verificato l'11/10); solo **fuori casa** serve ZeroTier,
+> Pi: **sulla rete del FritzBox** `git push pi master` e basta (`dietpi4` si
+> risolve lì, verificato l'11/10); **su qualunque altra rete** serve ZeroTier,
 > `git -c core.sshCommand="ssh -o HostName=dietpi4cloud" push pi master`. Il
+> criterio è `getent hosts dietpi4`, non il luogo: il 14/10 l'utente era a casa
+> su un'altra rete (gateway 192.168.0.1), e lì si usa DietPi4Cloud. Il
 > blocco `Host pi` di `~/.ssh/config` va lasciato com'è.
 >
 > **LA FORMULA PER RIPRENDERE**, da incollare all'inizio della sessione:
