@@ -155,8 +155,31 @@
 >   solo l'utente.
 > - **Dopo il clone** è stato rifatto `git config blame.ignoreRevsFile
 >   .git-blame-ignore-revs` (§2).
+> - **`out/misure/` non viaggia col clone**: è fuori da git (§3.86), e l'utente
+>   l'ha copiata a mano dal Lenovo. `misura.sh` ha ancora dentro il percorso
+>   del Lenovo (`/home/roberto-migliori/...`): sul VPS non gira finché non
+>   lo si corregge. Se versionare le misure fuori da `out/` è una decisione
+>   aperta dell'utente.
 
-> ### ▶ RIPRENDI DA QUI (14/10/2026 o dopo)
+> ### ▶ RIPRENDI DA QUI (20/10/2026 o dopo)
+>
+> **Il 20/10 (§3.94): TRACKER è una procedura vera** in `lib_eco`, con
+> l'inerzia, l'esito a tre valori (nominale, perso, clutter) e lo stato del
+> chiamante. Correggendolo è emerso un difetto di `m_attivita`: un primo sweep
+> perso rompeva l'inizializzazione. `test_tracker` è stato visto rosso con
+> quattro mutanti. Costo: 125 cicli col filtro. `ctest` **84/84**, i `.vx` di
+> prima identici. **Si riprende da BARKER_ACC/DEC con l'allineamento.**
+>
+> **LA FORMULA PER RIPRENDERE (20/10):**
+>
+> ```
+> Leggi docs/stato-lavori.md, §0 e poi §3.94, §3.89 (la forma: ACQ e
+> l'allineamento), §3.86 (BARKER e il criterio corretto). Riprendiamo da
+> BARKER_ACC/DEC in lib_eco, da out/misure/m_attivita.vasm, con un test
+> visto rosso.
+> ```
+>
+> ### Il 14/10, per chi ne cerca le tracce
 >
 > **Il 14/10 (§3.90): FRONTE è una procedura vera**, in `dsp/eco/` (`lib_eco`),
 > con la rivelazione CFAR e un test visto rosso (`test_fronte`, "1 1 0").
@@ -3949,6 +3972,65 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.94 TRACKER, LA SECONDA ATTIVITÀ: l'alfa/beta con l'inerzia (20/10/2026, sera)
+
+Il punto 2 di §3.89, seconda attività, la prima sessione sul VPS. Il
+contratto è stato proposto prima di scriverlo e **approvato dall'utente**
+(«vai»).
+
+**Un difetto di `m_attivita.vasm`, trovato leggendolo.** Il controllo
+`trovato == 0` veniva prima di quello su `n`, e `n` avanzava sempre. Se il primo
+sweep andava perso, si aveva `x = 0`, una finestra a −32 dal TX e, allo sweep
+dopo, `v = z − 0`: circa 60.000 cicli a sweep. La misura di §3.86 non lo vedeva
+perché la sua scena non aveva perdite. Corretto così: **lo stato lo
+inizializza il chiamante** (x = centro a priori, v = 0, n = 0), e **finché
+n < 2 una perdita non fa avanzare n**. I fallimenti di §3.82 ("con la
+finestra a priori" o "dov'è") diventano scritture di quei tre valori. **Limite
+dichiarato:** una perdita fra il primo e il secondo punto fa calcolare v su
+due sweep. L'errore vale ~0,25 gate a 375 m/s, e l'alfa/beta lo assorbe.
+
+```
+dsp/eco/impl/src/tracker.vasm   tracker(r1 trovato, r2 AT-TX, f1 posizione,
+                                r3 stato) -> r1 esito, f1 residuo, r2 AT-TX
+                                dello sweep dopo = round(x + v) - ECO_W/2
+eco/eco.vinc                    il contratto; ECO_STATO 16, ECO_ALFA 0.6,
+                                ECO_BETA = alfa^2 / (2 - alfa) calcolata,
+                                ECO_RES_MAX 3.0, gli esiti ECO_NOMINALE 0,
+                                ECO_PERSO 1, ECO_CLUTTER 2
+dsp/test/test_tracker.vasm      otto sweep di misure scritte a mano, la
+                                finestra in retroazione; niente ADC, niente mondo
+```
+
+L'esito ha **tre valori** (nominale, perso, clutter) invece di due: perdita e
+clutter si guastano in modi diversi (§3.89), e così DECIDI legge una casella
+sola. Precondizione dichiarata: `ADC_PERIOD = 1`.
+
+**Il test e il rosso.** Gli otto sweep coprono: una perdita a n = 0, i due
+punti, un residuo 0, un residuo −1,5, un clutter a ~4, una perdita in inerzia,
+la ripresa. I numeri sono contati a mano nel sorgente. I valori del test li ho
+scelti con un'emulazione float32, in modo che ogni arrotondamento cada ad
+almeno 0,19 gate dal mezzo. Le finestre seguono il conto. I due residui
+dopo il clutter seguono l'aritmetica della macchina (4,03516 invece di 4,0357:
+x = 60041,1 in float è 60041,1015625), ed è detto. Rossi, tutti e quattro sulla
+macchina vera e coi numeri scritti nel sorgente: la perdita che fa avanzare n
+(il difetto di `m_attivita`), la perdita senza inerzia, il clutter non
+scartato, beta = 0. Il residuo a 3 gate esatti non lo prova nessuno sweep.
+
+**I costi** (lw `CLOCK_CYCLES` prima e dopo, meno 4): perdita **55**
+nell'inizializzazione e **60** dopo, primo punto **85**, secondo **90**, filtro
+**125**, clutter **111**. In `m_attivita` erano 86 / 91 / 126.
+
+| cosa | risultato |
+|---|---|
+| `ctest --timeout 60` | **84/84** (83 + `tracker`) |
+| i 31 `.vx` di prima contro `HEAD` (worktree, build pulito) | **identici byte per byte** |
+
+**Si riprende da BARKER_ACC/DEC con l'allineamento** (§3.89: i blocchi si
+allineano con lo spostamento intero della finestra), poi MSG, poi la macchina a
+stati.
 
 ---
 
