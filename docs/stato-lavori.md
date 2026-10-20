@@ -137,6 +137,25 @@
 
 ## 0. STATO ATTUALE — DA DOVE SI RIPRENDE
 
+> ### Il trasloco (20/10/2026): si sviluppa sul VPS
+>
+> Da oggi il repo vive su un **VPS Hetzner** (`~/sandBox/vcpu_sim`, build in
+> `out/`); il Lenovo fa solo da terminale (VS Code Remote-SSH). Verificato
+> all'arrivo: `master` pulito e allineato a `origin`, `ctest --timeout 60`
+> **83/83** in 2,75 s. Il lavoro riprende dal TRACKER, qui sotto, senza
+> cambiamenti.
+>
+> - **Remote.** `origin`: fetch in HTTPS (lo fa Claude), push in SSH con
+>   deploy key a passphrase (**lo fa l'utente**). `pi` (`pi:repos/vcpu_sim.git`,
+>   append-only) passa da ZeroTier, già configurato in `Host pi`. La regola
+>   sul push non cambia (§2).
+> - **Limiti.** 1 vCPU, ~1,9 GB di RAM, 2 GB di swap, **`/tmp` è tmpfs** (955 MB,
+>   cioè RAM). Trace e `capture_output` senza tetto vanno limitati: il 29/09
+>   un'uscita senza tetto ha fatto intervenire l'OOM killer. Il sudo ce l'ha
+>   solo l'utente.
+> - **Dopo il clone** è stato rifatto `git config blame.ignoreRevsFile
+>   .git-blame-ignore-revs` (§2).
+
 > ### ▶ RIPRENDI DA QUI (14/10/2026 o dopo)
 >
 > **Il 14/10 (§3.90): FRONTE è una procedura vera**, in `dsp/eco/` (`lib_eco`),
@@ -1809,9 +1828,11 @@ dopo lo spostamento e danno gli stessi numeri di prima.
 
 ## 2. Git: dove siamo
 
-Branch `master`, pubblicato su `git@github.com:rmigliori/vcpu_sim.git` (remote
-`origin`, HTTPS + credential helper `git-credential-libsecret` configurato,
-push senza prompt).
+Branch `master`, pubblicato su `github.com/rmigliori/vcpu_sim` (remote
+`origin`). Dal 20/10/2026, sul VPS: fetch in HTTPS, push in SSH
+(`git@github.com:rmigliori/vcpu_sim.git`) con una deploy key a passphrase,
+quindi **il push lo fa l'utente**. Backup su `pi` (append-only, via ZeroTier).
+Sul Lenovo c'era HTTPS con `git-credential-libsecret` e push senza prompt.
 
 > **13/09/2026 — un ramo fuso e il primo tag.**
 > `mutex-cede-solo-se-serve` è stato fuso in `master` con `--no-ff`, quindi la
