@@ -1,0 +1,92 @@
+; dsp/test/test_tracker.vasm — TRACKER: l'alfa/beta con l'inerzia (20/10/2026).
+;
+; Niente ADC e niente mondo: TRACKER e' una funzione di (stato, misura), e qui
+; le misure sono scritte a mano, scelte perche' il conto si faccia sulla carta.
+; La finestra torna indietro come nella macchina a stati: l'AT - TX di uno
+; sweep e' l'r2 che TRACKER ha dato allo sweep prima.
+;
+; --- IL CONTO, sweep per sweep ---
+; Stato iniziale: x = 60042 (il centro a priori), v = 0, n = 0; AT - TX =
+; 60010. z = (AT - TX) + 1 + posizione; la finestra e' round(x + v) - 32.
+;
+;   1  perso                 n resta 0, x = 60042           finestra 60010
+;   2  60010, pos 30,25      z = 60041,25: x = z, v = 0     finestra 60009
+;   3  60009, pos 31,5       z = 60041,5:  v = 0,25         round(60041,75)
+;                                                           -> 60010
+;   4  60010, pos 30,75      z = 60041,75 = la predizione:
+;                            residuo 0                      round(60042) 60010
+;   5  60010, pos 29,5       z = 60040,5, predizione 60042: residuo -1,5;
+;                            x = 60042 - 0,9 = 60041,1
+;                            v = 0,25 - 1,5 x 0,2571429 = -0,1357143
+;                                                           round(60040,964)
+;                                                           -> 60009
+;   6  60009, pos 35         z = 60045, predizione 60040,964: residuo 4,036,
+;                            oltre 3 -> CLUTTER, x = 60040,964, v resta
+;                                                           round(60040,829)
+;                                                           -> 60009
+;   7  perso                 x = 60040,829, v resta         round(60040,693)
+;                                                           -> 60009
+;   8  60009, pos 31,25      z = 60041,25, predizione 60040,693: residuo 0,557
+;                            x = 60041,027, v = 0,0076      round(60041,035)
+;                                                           -> 60009
+;
+; Ogni arrotondamento cade ad almeno 0,19 gate dal mezzo (lo sweep 7), e il
+; float a 32 bit a 60.000 ha un ulp di 1/256: nessuna finestra dipende da lui.
+; I RESIDUI SI': x = 60041,1 in float e' 60041,1015625, e da li' il residuo
+; dello sweep 6 e' 4,03516 invece di 4,03571, quello dell'8 0,558594 invece di
+; 0,557. Sono i numeri attesi qui sotto, ed e' l'unico posto dove il test usa
+; l'aritmetica della macchina invece del conto.
+;
+; --- I NUMERI: esito, residuo, finestra, per gli otto sweep ---
+;   1 0 60010 | 0 0 60009 | 0 0 60010 | 0 0 60010 | 0 -1.5 60009 |
+;   2 4.03516 60009 | 1 0 60009 | 0 0.558594 60009
+;
+; --- ROSSO, su TRACKER mutata ---
+;   la perdita che fa avanzare n anche nell'inizializzazione (m_attivita):
+;     lo sweep 2 diventa il "secondo punto", v = -0,75, e le finestre
+;     scivolano di un gate a sweep: 60008 60008 60007 ...
+;   la perdita senza inerzia (la posizione presa per buona, qui 0): la prima
+;     finestra e' 59979
+;   il controllo del clutter tolto: lo sweep 6 esce nominale, finestra 60012
+;   beta = 0: la velocita' non si corregge, lo sweep 6 da' 60010
+; Il residuo a 3 gate esatti non lo prova nessuno sweep: da che parte sta lo
+; dice tracker.vasm.
+
+.include "eco/eco.vinc"
+
+.equ APRIORI     60042.0         ; il centro a priori, in cicli dal TX
+.equ AT_APRIORI  60010           ; APRIORI - ECO_W/2
+
+  .data
+stato:   .float APRIORI          ; x
+         .float 0.0              ; v
+         .word 0                 ; n
+         .word 0                 ; l'appoggio
+
+  .text
+  .global main
+
+; Uno sweep: la misura, TRACKER, i tre numeri. r10 e' la finestra, e torna.
+.macro SWEEP trov, pos
+  li r1, trov
+  mov r2, r10
+  fli f1, pos
+  li r3, stato
+  call tracker
+  mov r10, r2
+  dumps r1
+  dumpf f1
+  dumps r2
+.endmacro
+
+main:
+  li r10, AT_APRIORI
+  SWEEP 0, 0.0                   ; 1  perso, nell'inizializzazione
+  SWEEP 1, 30.25                 ; 2  il primo punto
+  SWEEP 1, 31.5                  ; 3  il secondo: v = 0,25
+  SWEEP 1, 30.75                 ; 4  residuo 0
+  SWEEP 1, 29.5                  ; 5  residuo -1,5
+  SWEEP 1, 35.0                  ; 6  residuo ~4: clutter
+  SWEEP 0, 0.0                   ; 7  perso, in inerzia
+  SWEEP 1, 31.25                 ; 8  l'anello riprende
+  halt

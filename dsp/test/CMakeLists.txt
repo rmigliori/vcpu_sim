@@ -40,3 +40,19 @@ vasm_program(test_fronte OBJECTS t_fronte LINK lib_eco)
 # esce non trovato). Il conto, e cio' che il test non vede, nel sorgente.
 vasm_check(fronte MODE DUMPS PROGRAM test_fronte EXPECT "1 1 0"
            ARGS --eco-cmd "python3 ${CMAKE_SOURCE_DIR}/tools/mare.py ${CMAKE_CURRENT_SOURCE_DIR}/fronte.scena")
+
+vasm_object(t_tracker SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_tracker.vasm
+                      INTERFACES vinc_eco)
+
+vasm_program(test_tracker OBJECTS t_tracker LINK lib_eco)
+
+# test_tracker — TRACKER: L'ALFA/BETA CON L'INERZIA (20/10/2026).
+#
+# Otto sweep di misure scritte a mano, la finestra in retroazione: una perdita
+# nell'inizializzazione, i due punti, il filtro, un clutter, una perdita in
+# inerzia. Per ogni sweep esito, residuo e finestra, contati a mano nel
+# sorgente. Visto rosso con quattro mutanti: la perdita che fa avanzare n (il
+# difetto di m_attivita), la perdita senza inerzia, il clutter non scartato,
+# beta a zero.
+vasm_check(tracker MODE DUMPS PROGRAM test_tracker
+           EXPECT "1 0 60010 0 0 60009 0 0 60010 0 0 60010 0 -1.5 60009 2 4.03516 60009 1 0 60009 0 0.558594 60009")

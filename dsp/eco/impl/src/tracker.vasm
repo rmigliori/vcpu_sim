@@ -1,0 +1,109 @@
+; dsp/eco/impl/src/tracker.vasm — TRACKER: l'alfa/beta con l'inerzia
+; (20/10/2026). Il contratto, lo stato e il limite sono in eco/eco.vinc.
+;
+; Viene da m_attivita.vasm (§3.86, 86 / 91 / 126 cicli), con quattro differenze:
+;   una perdita durante l'inizializzazione non fa avanzare n (in m_attivita
+;     si', e un primo sweep perso rompeva il filtro: eco.vinc);
+;   lo stato e' del chiamante, in r3, non un buffer della libreria;
+;   l'esito distingue la perdita dal clutter, che falliscono in modi diversi
+;     (§3.89);
+;   alfa, beta e i 3 gate sono .equ, e beta la calcola l'assembler.
+;
+; --- NIENTE CONFRONTI FLOAT: il segno passa dalla memoria ---
+; Come in fronte.vasm: ECO_RES_MAX - |residuo| si scrive come float e si
+; rilegge come intero, negativo vuol dire clutter. A |residuo| = 3 esatti la
+; misura passa.
+;
+; --- INTERO <-> FLOAT col numero magico (§3.86) ---
+; intero -> float: l'intero sommato ai bit di 1.5*2^23, riletto come float,
+; meno 1.5*2^23. float -> intero: piu' 1.5*2^23, riletto come intero, meno i
+; bit; l'arrotondamento e' quello della somma, al pari piu' vicino. Esatti per
+; |valore| < 2^22: il ritardo a 90 km e' ~60.000.
+
+.include "eco/eco.vinc"
+
+.equ MAGIC_HI  0x4B400000        ; i bit di 1.5 * 2^23
+.equ ANTICIPO  -(ECO_W / 2)      ; l'eco al centro della finestra
+
+  .text
+  .global tracker
+
+tracker:
+  lw r4, 8(r3)                   ; n
+  flw f2, 0(r3)                  ; x
+  flw f3, 4(r3)                  ; v
+  fadd f4, f2, f3                ; la predizione
+  beq r1, r0, tk_perso
+
+  ; --- la misura: z = (AT - TX) + 1 + posizione --------------------------
+  li r5, MAGIC_HI
+  add r5, r5, r2
+  sw r5, 12(r3)
+  flw f5, 12(r3)
+  fli f6, 12582912.0
+  fsub f5, f5, f6                ; AT - TX, in float
+  fli f6, 1.0
+  fadd f5, f5, f6
+  fadd f5, f5, f1                ; z
+  beq r4, r0, tk_primo
+  li r5, 1
+  beq r4, r5, tk_secondo
+
+  ; --- dalla terza misura: il residuo, il clutter, l'alfa/beta ------------
+  fsub f1, f5, f4                ; il residuo
+  fneg f6, f1
+  fmax f6, f6, f1
+  fli f7, ECO_RES_MAX
+  fsub f6, f7, f6                ; ECO_RES_MAX - |residuo|
+  fsw f6, 12(r3)
+  lw r5, 12(r3)
+  blt r5, r0, tk_clutter
+  fli f6, ECO_ALFA
+  fmul f7, f6, f1
+  fadd f2, f4, f7
+  fli f6, ECO_BETA
+  fmul f7, f6, f1
+  fadd f3, f3, f7
+  li r1, ECO_NOMINALE
+  j tk_avanti
+
+tk_primo:
+  fmov f2, f5
+  fli f3, 0.0
+  fli f1, 0.0
+  li r1, ECO_NOMINALE
+  j tk_avanti
+tk_secondo:
+  fsub f3, f5, f2
+  fmov f2, f5
+  fli f1, 0.0
+  li r1, ECO_NOMINALE
+  j tk_avanti
+tk_clutter:
+  fmov f2, f4                    ; l'inerzia; il residuo resta in f1
+  li r1, ECO_CLUTTER
+  j tk_avanti
+tk_perso:
+  fmov f2, f4                    ; l'inerzia
+  fli f1, 0.0
+  li r1, ECO_PERSO
+  li r5, 2
+  blt r4, r5, tk_fine            ; nell'inizializzazione n non avanza
+
+tk_avanti:
+  addi r4, r4, 1
+  sw r4, 8(r3)
+tk_fine:
+  fsw f2, 0(r3)
+  fsw f3, 4(r3)
+
+  ; --- la finestra dello sweep dopo: round(x + v) - ECO_W/2 ---------------
+  fadd f4, f2, f3
+  fli f5, 12582912.0
+  fadd f4, f4, f5
+  fsw f4, 12(r3)
+  lw r2, 12(r3)
+  li r5, MAGIC_HI
+  sub r2, r2, r5
+  addi r2, r2, ANTICIPO
+  ret

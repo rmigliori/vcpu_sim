@@ -2,7 +2,7 @@
 ;
 ; Le procedure che il super task chiama, una per slot (§3.89). Vengono da
 ; out/misure/m_attivita.vasm, codice di misura, e arrivano qui una alla volta,
-; ciascuna col suo test visto rosso. Per ora: FRONTE.
+; ciascuna col suo test visto rosso. Per ora: FRONTE e TRACKER.
 ;
 ; --- FRONTE: la MISURA, con la RIVELAZIONE prima ---
 ;     call fronte     r1 = il blocco dell'ADC: ECO_W campioni, I e Q ALTERNATI,
@@ -43,9 +43,57 @@
 ; Foglia. Usa r1..r8, f1..f7, v0..v2 e vmask, e lascia VL a ECO_W. Non tocca
 ; r9..r15. Lo scratch e' del chiamante per la stessa ragione della FFT: la
 ; libreria non possiede memoria.
+;
+; --- TRACKER: l'ANELLO, alfa/beta con l'inerzia (20/10/2026) ---
+;     call tracker    r1 = trovato, l'uscita di FRONTE
+;                     r2 = AT - TX, intero: l'istante armato in ADC_AT,
+;                          contato dal TX
+;                     f1 = la posizione di FRONTE nel blocco (letta solo se
+;                          trovato)
+;                     r3 = lo stato del CHIAMANTE, ECO_STATO byte, allineato
+;                          a 4: x, v (float), n (intero), una parola d'appoggio
+;     -> r1 = ECO_NOMINALE, ECO_PERSO o ECO_CLUTTER
+;        f1 = il RESIDUO, misura meno predizione, in gate: la casella d'esito
+;             (0 nei primi due punti e nella perdita)
+;        r2 = AT - TX dello sweep dopo: round(x + v) - ECO_W/2, l'eco al
+;             centro della finestra
+;
+; x e' il ritardo del FRONTE dal TX, in cicli: la misura e'
+; z = (AT - TX) + 1 + posizione, perche' il campione j e' preso a AT + j + 1.
+; Vale solo con ADC_PERIOD = 1, ed e' una PRECONDIZIONE: un gate e' un ciclo,
+; e la finestra si sposta di gate interi (§3.89). v e' in cicli per sweep.
+;
+; Le due prime misure inizializzano (x = z, poi v = z2 - z1); dalla terza,
+; alfa/beta. Un residuo oltre ECO_RES_MAX gate e' CLUTTER o un salto (§3.82):
+; la misura si scarta. In tutti e due i fallimenti il filtro va per INERZIA
+; (§3.89): x prende la predizione x + v, v resta.
+;
+; LO STATO LO INIZIALIZZA IL CHIAMANTE: x = il centro a priori, v = 0, n = 0.
+; Ripartire "con la finestra a priori" o "con la finestra dov'e'" (i
+; fallimenti di §3.82) e' una scrittura di questi tre valori. Finche' n < 2 una
+; perdita NON fa avanzare n: l'inizializzazione aspetta due misure vere, e
+; con v = 0 la finestra resta dov'e'. (In m_attivita la perdita lo faceva
+; avanzare: un primo sweep perso dava x = 0 e una velocita' di 60.000 cicli
+; a sweep.)
+; UN LIMITE, dichiarato: una perdita FRA il primo e il secondo punto fa
+; calcolare v su due sweep, cioe' il doppio. L'errore e' lo spostamento di uno
+; sweep, ~0,25 gate a 375 m/s, e l'alfa/beta lo assorbe in pochi sweep.
+;
+; beta = alfa^2 / (2 - alfa): la relazione di Benedict-Bordner (§3.82, citata
+; a memoria), calcolata qui e non a mano (§3.92).
+;
+; I REGISTRI: foglia, usa r1..r6 e f1..f7, non tocca r9..r15 ne' i vettori.
 ; --------------------------------------------------------------------------
 .equ ECO_W        64             ; i gate della finestra = i campioni del blocco
 .equ ECO_NR       16             ; i gate del rumore: i primi della finestra
 .equ ECO_K        20.0           ; trovato se picco > ECO_K x il rumore medio
 .equ ECO_K_SU_NR  ECO_K / ECO_NR ; 1.25: K sulla somma, invece che sulla media
 .equ ECO_SCRATCH  260            ; la potenza (ECO_W float) e una parola
+
+.equ ECO_STATO    16             ; lo stato di TRACKER: x, v, n, appoggio
+.equ ECO_ALFA     0.6
+.equ ECO_BETA     ECO_ALFA * ECO_ALFA / (2.0 - ECO_ALFA)   ; 0,2571429
+.equ ECO_RES_MAX  3.0            ; gate: oltre, la misura e' clutter
+.equ ECO_NOMINALE 0              ; gli esiti di TRACKER
+.equ ECO_PERSO    1              ; FRONTE non ha trovato: inerzia
+.equ ECO_CLUTTER  2              ; residuo oltre ECO_RES_MAX: inerzia
