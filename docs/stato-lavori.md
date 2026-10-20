@@ -158,10 +158,54 @@
 > - **`out/misure/` non viaggia col clone**: è fuori da git (§3.86), e l'utente
 >   l'ha copiata a mano dal Lenovo. `misura.sh` ha ancora dentro il percorso
 >   del Lenovo (`/home/roberto-migliori/...`): sul VPS non gira finché non
->   lo si corregge. Se versionare le misure fuori da `out/` è una decisione
->   aperta dell'utente.
+>   lo si corregge. **Versionarle è DECISO** (qui sotto).
 
-> ### ▶ RIPRENDI DA QUI (20/10/2026 o dopo)
+> ### ▶ RIPRENDI DA QUI (21/10/2026 o dopo)
+>
+> **Prima cosa: le misure in git.** Approvato dall'utente la sera del 20/10
+> («direi di sì»). Il piano, già discusso, non va ridiscusso:
+>
+> ```
+> sposta in misure/      (primo livello, accanto a tests/ e tools/) SETTE file:
+>                        m_taratura, m_attivazione, m_attivazione_v, m_banco,
+>                        m_attivita (.vasm), scena.scena, misura.sh
+> resta in out/misure/   i prodotti (.vo .vx .nm), le tracce (banco_r3.trace
+>                        e' 20 MB), le impronte, vec_eq_*.txt; e i tre .buono
+>                        e vcpu_sim_head, copie di stati che git ha gia': NON
+>                        cancellarli, restano dove sono
+> misura.sh              il repo dalla posizione dello script (non piu'
+>                        /home/roberto-migliori), i prodotti in out/misure/,
+>                        -I anche di dsp/eco, e in LINK anche lib_hal_banco
+>                        (prima di lib_hal): senza, m_banco non linka
+>                        (irq_arm_banco), quindi il suo numero era stato preso
+>                        con un comando diverso da quello salvato. Verificare
+>                        che gli altri quattro .vx NON cambino col link nuovo
+> NON in ctest           sono misure di costo: ogni modifica del kernel le
+>                        muove legittimamente
+> i riferimenti          a out/misure/ nel §0 aggiornati; le sezioni vecchie
+>                        restano com'erano, sono storia
+> ```
+>
+> **Verificato il 20/10 sera**, con la toolchain di oggi e i prodotti nello
+> scratchpad: tutte e cinque le misure ridanno i numeri delle loro sezioni.
+> `m_taratura` dà `0 1 20 7663`; `m_attivazione` 302–304; `m_attivazione_v`
+> 950 (il valore dopo FDIRTY, §3.86); `m_banco` 180–183 (§3.87), ma solo con
+> `lib_hal_banco`; `m_attivita`, con `--eco-cmd "python3 tools/mare.py
+> out/misure/scena.scena"`, dà FRONTE 891, TRACKER 86 / 91 / 126 con i residui
+> −0,14 −0,51 −0,13, BARKER 746 / 907, FFT 7663, MSG 14, copia 313. Dopo lo
+> spostamento i numeri devono essere questi.
+>
+> **Poi BARKER_ACC/DEC**, come qui sotto.
+>
+> **LA FORMULA PER RIPRENDERE (21/10):**
+>
+> ```
+> Leggi docs/stato-lavori.md, §0. Prima le misure in git, col piano gia'
+> approvato nel riquadro in cima; poi BARKER_ACC/DEC in lib_eco (§3.94,
+> §3.89, §3.86), con un test visto rosso.
+> ```
+>
+> ### Il 20/10 sera: TRACKER
 >
 > **Il 20/10 (§3.94): TRACKER è una procedura vera** in `lib_eco`, con
 > l'inerzia, l'esito a tre valori (nominale, perso, clutter) e lo stato del
