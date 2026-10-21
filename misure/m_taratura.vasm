@@ -1,0 +1,66 @@
+; m_taratura -- il metodo: due lw CLOCK_CYCLES, differenza meno 4.
+; Attesi: 0 (vuoto), 1 (una li), 20 (una div), 7663 (fft64, §3.77).
+.include "hal/clock.vinc"
+.include "hal/adc.vinc"
+.include "hal/amp.vinc"
+.include "fft/fft.vinc"
+.equ BLOCCO SHARED_BASE
+
+  .data
+re: .space 256
+im: .space 256
+
+  .text
+  .global main
+main:
+  li r12, CLOCK_CYCLES
+
+  lw r13, 0(r12)
+  lw r9, 0(r12)
+  sub r9, r9, r13
+  addi r9, r9, -4
+  dumps r9
+
+  lw r13, 0(r12)
+  li r1, 5
+  lw r9, 0(r12)
+  sub r9, r9, r13
+  addi r9, r9, -4
+  dumps r9
+
+  li r2, 7
+  lw r13, 0(r12)
+  div r1, r1, r2
+  lw r9, 0(r12)
+  sub r9, r9, r13
+  addi r9, r9, -4
+  dumps r9
+
+  li r1, ADC_ADDR
+  li r2, BLOCCO
+  sw r2, 0(r1)
+  li r1, ADC_COUNT
+  li r2, FFT_N
+  sw r2, 0(r1)
+  li r1, ADC_PERIOD
+  li r2, 100
+  sw r2, 0(r1)
+  li r1, ADC_CTRL
+  li r2, ADC_START
+  sw r2, 0(r1)
+  li r10, ADC_STATUS
+attesa:
+  lw r5, 0(r10)
+  srli r5, r5, ADC_DONE_SHIFT
+  beq r5, r0, attesa
+
+  li r1, BLOCCO
+  li r2, re
+  li r3, im
+  lw r13, 0(r12)
+  call fft64
+  lw r9, 0(r12)
+  sub r9, r9, r13
+  addi r9, r9, -4
+  dumps r9
+  halt

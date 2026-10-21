@@ -155,15 +155,36 @@
 >   solo l'utente.
 > - **Dopo il clone** è stato rifatto `git config blame.ignoreRevsFile
 >   .git-blame-ignore-revs` (§2).
-> - **`out/misure/` non viaggia col clone**: è fuori da git (§3.86), e l'utente
->   l'ha copiata a mano dal Lenovo. `misura.sh` ha ancora dentro il percorso
->   del Lenovo (`/home/roberto-migliori/...`): sul VPS non gira finché non
->   lo si corregge. **Versionarle è DECISO** (qui sotto).
+> - **Le misure sono in git dal 21/10**, in `misure/` (i sorgenti e
+>   `misura.sh`); i prodotti restano in `out/misure/`, fuori da git. Le
+>   sezioni vecchie e le formule di prima del 21/10 dicono `out/misure/`:
+>   sono storia, il sorgente adesso è `misure/`.
 
-> ### ▶ RIPRENDI DA QUI (21/10/2026 o dopo)
+> ### Il 21/10: le misure in git, FATTO
 >
-> **Prima cosa: le misure in git.** Approvato dall'utente la sera del 20/10
-> («direi di sì»). Il piano, già discusso, non va ridiscusso:
+> Sette file da `out/misure/` a **`misure/`**; `misura.sh` trova il repo
+> dalla propria posizione (gira da qualunque directory), scrive i prodotti in
+> `out/misure/` e ha `-I dsp/eco/interface`. **Una correzione al piano**, che
+> il piano stesso ha stanato col suo controllo: `lib_hal_banco` **prima** di
+> `lib_hal` per tutti era sbagliato. `lib_hal_banco` non è un'aggiunta, è un
+> HAL **alternativo** completo (`irq_arm`, `ctx_init`, `hal_ctx_block`… ci
+> sono tutti), e messa davanti il linker la prende per tutti:
+> `m_attivazione` e `m_attivazione_v` cambiavano `.vx` e uscivano con `word
+> load out of bounds at 0xfffffffffffffffe` dopo ~3.600 cicli. Ora va **al
+> posto** di `lib_hal` per `m_banco` soltanto, come `CONFIG banco` in CMake
+> (un `case` sul nome in `misura.sh`). Verificato: i quattro `.vx` senza banco
+> sono identici byte per byte al link di prima, `m_banco.vx` è identico a
+> quello del Lenovo, e tutte e cinque ridanno i numeri qui sotto. (I `.vx` di
+> `m_attivazione` e `m_attivazione_v` copiati dal Lenovo erano diversi anche
+> dal link di prima, a parità di `.vo`: linkati con un HAL più vecchio. I
+> numeri sono gli stessi.) Il comando per `m_attivita`:
+>
+> ```
+> misure/misura.sh m_attivita --eco-cmd "python3 tools/mare.py misure/scena.scena"
+> ```
+>
+> **Il piano com'era stato approvato il 20/10**, per la storia (la riga del
+> link è quella corretta qui sopra):
 >
 > ```
 > sposta in misure/      (primo livello, accanto a tests/ e tools/) SETTE file:

@@ -1,0 +1,487 @@
+; m_attivita -- il costo di ogni attivita' della tappa 4, su blocchi VERI
+; (tools/mare.py, la scena di §3.82 senza clutter). Cinque sweep a PRI 1 ms:
+; TX col segno del Barker, finestra dove dice il tracker, poi FRONTE, TRACKER,
+; BARKER_ACC. Alla fine BARKER_DEC, la FFT sull'ultimo blocco, il MSG.
+;
+; Ogni costo: lw CLOCK_CYCLES prima e dopo, differenza meno 4 (tarato in
+; m_taratura: 0, 1, 20, 7663). r12 = &CLOCK_CYCLES, r13 = l'istante prima:
+; nessuna procedura qui li tocca.
+.include "hal/clock.vinc"
+.include "hal/adc.vinc"
+.include "hal/amp.vinc"
+.include "fft/fft.vinc"
+
+.equ TX_LEN    0x100054
+.equ TX_CTRL   0x100058
+.equ TX_START  1
+.equ TX_SNEG   3              ; TX_START | TX_NEG
+.equ BLOCCO    SHARED_BASE
+.equ W         64
+.equ PRI       100000
+.equ T0        10000
+.equ APRIORI   59988          ; tau ~ 60042: l'eco 10 gate dopo il centro (§3.82)
+.equ MAGIC_HI  0x4B400000     ; i bit di 1.5 * 2^23
+
+  .data
+pot:     .space 256
+accI:    .space 256
+accQ:    .space 256
+re:      .space 256
+im:      .space 256
+tmp:     .word 0
+codice:  .word 1, 1, 1, -1, 1
+trk:     .float 0.0           ; x: il ritardo stimato, in cicli
+         .float 0.0           ; v: cicli per sweep
+         .word 0              ; n: le misure prese
+         .word 0              ; un appoggio per le conversioni
+off:     .word 0              ; la finestra, dal TX: APRIORI, scritto in main
+                              ; (.word col nome di una .equ da' 0 in silenzio)
+tx_t:    .word 0
+av_t:    .word 0
+
+  .text
+  .global main
+main:
+  li r1, TX_LEN
+  li r2, 5000
+  sw r2, 0(r1)
+  li r1, ADC_ADDR
+  li r2, BLOCCO
+  sw r2, 0(r1)
+  li r1, ADC_COUNT
+  li r2, W
+  sw r2, 0(r1)
+  li r1, ADC_PERIOD
+  li r2, 1
+  sw r2, 0(r1)
+  li r1, off
+  li r2, APRIORI
+  sw r2, 0(r1)
+  li r12, CLOCK_CYCLES
+  li r10, 0                   ; k, lo sweep
+
+sweep:
+  ; --- aspetta t0_k - 300, cosi' TX e' misurato senza attese dentro ---
+  li r1, PRI
+  mul r1, r1, r10
+  addi r1, r1, T0
+  addi r9, r1, -300
+ini:
+  lw r2, 0(r12)
+  blt r2, r9, ini
+
+  ; --- TX ---
+  li r3, codice
+  slli r4, r10, 2
+  add r3, r3, r4
+  lw r1, 0(r3)
+  lw r13, 0(r12)
+  call tx
+  lw r9, 0(r12)
+  sub r9, r9, r13
+  addi r9, r9, -4
+  dumps r9                    ; TX
+  li r3, tx_t
+  sw r1, 0(r3)
+
+  ; --- APRI: l'istante assoluto, poi attesa attiva ---
+  li r3, off
+  lw r2, 0(r3)
+  add r1, r1, r2              ; tx_letto + off
+  mov r11, r1
+  call apri                   ; r1 = istante letto prima della sw
+  sub r9, r1, r11
+  dumps r9                    ; APRI: letto - bersaglio, la precisione
+  li r3, av_t
+  sw r1, 0(r3)
+
+  ; --- l'attesa del blocco, dalla lettura prima dell'avvio ---
+  call blocco
+  lw r9, 0(r12)
+  li r3, av_t
+  lw r2, 0(r3)
+  sub r9, r9, r2
+  addi r9, r9, -4
+  dumps r9                    ; BLOCCO: avvio -> blocco visto
+
+  ; --- FRONTE ---
+  li r1, BLOCCO
+  fli f8, 40000.0             ; picco minimo: ampiezza 200, 10 sigma
+  lw r13, 0(r12)
+  call fronte
+  lw r9, 0(r12)
+  sub r9, r9, r13
+  addi r9, r9, -4
+  dumps r9                    ; FRONTE
+  dumpf f1                    ; la posizione nel blocco
+
+  ; --- TRACKER ---
+  li r3, av_t
+  lw r2, 0(r3)
+  li r3, tx_t
+  lw r4, 0(r3)
+  sub r2, r2, r4              ; avvio - tx (la stessa coppia lw;sw: esatto)
+  lw r13, 0(r12)
+  call tracker
+  lw r9, 0(r12)
+  sub r9, r9, r13
+  addi r9, r9, -4
+  dumps r9                    ; TRACKER
+  dumps r1                    ; esito
+  dumpf f1                    ; il residuo (0 nei primi due)
+  li r3, off
+  sw r2, 0(r3)
+
+  ; --- BARKER_ACC ---
+  li r3, codice
+  slli r4, r10, 2
+  add r3, r3, r4
+  lw r2, 0(r3)
+  li r1, BLOCCO
+  lw r13, 0(r12)
+  call barker_acc
+  lw r9, 0(r12)
+  sub r9, r9, r13
+  addi r9, r9, -4
+  dumps r9                    ; BARKER_ACC
+
+  addi r10, r10, 1
+  li r3, 5
+  bne r10, r3, sweep
+
+  ; --- BARKER_DEC, dopo il quinto ---
+  lw r13, 0(r12)
+  call barker_dec
+  lw r9, 0(r12)
+  sub r9, r9, r13
+  addi r9, r9, -4
+  dumps r9                    ; BARKER_DEC
+  dumps r1                    ; trovato
+  dumpf f1                    ; la posizione del fronte decodificato
+
+  ; --- FFT sull'ultimo blocco ---
+  li r1, BLOCCO
+  li r2, re
+  li r3, im
+  lw r13, 0(r12)
+  call fft64
+  lw r9, 0(r12)
+  sub r9, r9, r13
+  addi r9, r9, -4
+  dumps r9                    ; FFT
+
+  ; --- MSG: una parola all'altra CPU ---
+  li r2, re
+  lw r13, 0(r12)
+  call msg
+  lw r9, 0(r12)
+  sub r9, r9, r13
+  addi r9, r9, -4
+  dumps r9                    ; MSG
+
+  ; --- la copia dello spettro in RAM condivisa, se la FFT non ci scrive ---
+  lw r13, 0(r12)
+  call copia
+  lw r9, 0(r12)
+  sub r9, r9, r13
+  addi r9, r9, -4
+  dumps r9                    ; COPIA
+  halt
+
+; ==========================================================================
+;  tx(r1 = segno) -> r1 = l'istante letto subito prima della sw (TX = r1 + 4)
+; ==========================================================================
+tx:
+  li r2, TX_START
+  blt r0, r1, tx_pos
+  li r2, TX_SNEG
+tx_pos:
+  li r3, TX_CTRL
+  lw r1, 0(r12)
+  sw r2, 0(r3)
+  ret
+
+; ==========================================================================
+;  apri(r1 = istante) -> r1 = letto subito prima della sw (avvio = r1 + 4)
+; ==========================================================================
+apri:
+  li r3, ADC_CTRL
+  li r4, ADC_START
+  li r5, ADC_STATUS
+  lw r6, 0(r5)
+  srli r6, r6, ADC_DONE_SHIFT
+  li r5, tmp
+  sw r6, 0(r5)                ; i blocchi finiti prima di questo
+ap_spin:
+  lw r2, 0(r12)
+  blt r2, r1, ap_spin
+  lw r1, 0(r12)
+  sw r4, 0(r3)
+  ret
+
+; ==========================================================================
+;  blocco: aspetta che il contatore dei blocchi superi quello di prima
+; ==========================================================================
+blocco:
+  li r5, tmp
+  lw r6, 0(r5)
+  li r5, ADC_STATUS
+bl_poll:
+  lw r2, 0(r5)
+  srli r2, r2, ADC_DONE_SHIFT
+  beq r2, r6, bl_poll
+  ret
+
+; ==========================================================================
+;  fronte(r1 = blocco grezzo, f8 = picco minimo in potenza)
+;    -> r1 = 1 trovato / 0 no; f1 = la posizione del 50% d'ampiezza, in
+;       campioni dall'inizio del blocco (frazionaria)
+;  fronte_comune: lo stesso da v0 = I, v1 = Q gia' in float
+; ==========================================================================
+fronte:
+  li r2, W
+  setvl r2, r2
+  li r3, 8
+  vload v0, r1, r3
+  addi r4, r1, 4
+  vload v1, r4, r3
+  vcvt v0, v0
+  vcvt v1, v1
+fronte_comune:
+  vmul v0, v0, v0
+  vmul v1, v1, v1
+  vadd v0, v0, v1             ; la potenza
+  li r4, pot
+  vstore v0, r4
+  vredmax f1, v0
+  fsub f3, f1, f8
+  li r5, tmp
+  fsw f3, 0(r5)
+  lw r6, 0(r5)
+  blt r6, r0, fr_no           ; il segno del float: niente confronti float
+  fli f2, 0.25
+  fmul f2, f1, f2             ; meta' ampiezza = un quarto della potenza
+  vsplat v2, f2
+  vmsgt v0, v2
+  mfvmask r6
+  mov r11, r15                ; non e' una foglia: il link in r11
+  call bitbasso               ; r2 = il primo gate sopra soglia
+  mov r15, r11
+  beq r2, r0, fr_zero
+  slli r7, r2, 2
+  add r7, r4, r7
+  flw f4, 0(r7)               ; p[k]
+  flw f5, -4(r7)              ; p[k-1]
+  fsub f6, f2, f5
+  fsub f7, f4, f5
+  fdiv f6, f6, f7             ; la frazione, in [0, 1)
+  addi r8, r2, -1
+  li r9, MAGIC_HI             ; k - 1 in float: intero -> float senza vcvt
+  add r9, r9, r8
+  sw r9, 0(r5)
+  flw f1, 0(r5)
+  fli f3, 12582912.0
+  fsub f1, f1, f3
+  fadd f1, f1, f6
+  li r1, 1
+  ret
+fr_zero:
+  fli f1, 0.0
+  li r1, 1
+  ret
+fr_no:
+  li r1, 0
+  ret
+
+; ==========================================================================
+;  bitbasso(r6 = maschera != 0) -> r2 = l'indice del bit piu' basso.
+;  Isola il bit, poi ricerca binaria: sei passi, al piu' 4 cicli l'uno.
+; ==========================================================================
+bitbasso:
+  sub r7, r0, r6
+  and r6, r6, r7
+  li r2, 0
+  slli r7, r6, 32
+  bne r7, r0, bb16
+  addi r2, r2, 32
+  srli r6, r6, 32
+bb16:
+  slli r7, r6, 48
+  bne r7, r0, bb8
+  addi r2, r2, 16
+  srli r6, r6, 16
+bb8:
+  slli r7, r6, 56
+  bne r7, r0, bb4
+  addi r2, r2, 8
+  srli r6, r6, 8
+bb4:
+  slli r7, r6, 60
+  bne r7, r0, bb2
+  addi r2, r2, 4
+  srli r6, r6, 4
+bb2:
+  slli r7, r6, 62
+  bne r7, r0, bb1
+  addi r2, r2, 2
+  srli r6, r6, 2
+bb1:
+  slli r7, r6, 63
+  bne r7, r0, bb_fine
+  addi r2, r2, 1
+bb_fine:
+  ret
+
+; ==========================================================================
+;  tracker(r1 = trovato, r2 = avvio - tx, f1 = posizione nel blocco)
+;    -> r1 = 0 nominale / 1 clutter o perso; f1 = il residuo;
+;       r2 = la finestra dello sweep dopo, dal TX: round(x + v) - W/2
+;  Inizializzazione a due punti, poi alfa/beta (0,6 / 0,26).
+; ==========================================================================
+tracker:
+  li r3, trk
+  lw r4, 8(r3)                ; n
+  li r9, MAGIC_HI             ; z = (avvio - tx) + 1 + pos, in float
+  add r9, r9, r2
+  sw r9, 12(r3)
+  flw f2, 12(r3)
+  fli f3, 12582912.0
+  fsub f2, f2, f3
+  fli f3, 1.0
+  fadd f2, f2, f3
+  fadd f9, f2, f1             ; z
+  flw f2, 0(r3)               ; x
+  flw f3, 4(r3)               ; v
+  fadd f4, f2, f3             ; la predizione
+  beq r1, r0, tk_perso
+  beq r4, r0, tk_primo
+  li r5, 1
+  beq r4, r5, tk_secondo
+  fsub f1, f9, f4             ; il residuo
+  fneg f5, f1
+  fmax f5, f5, f1
+  fli f6, 3.0
+  fsub f5, f6, f5             ; 3 - |r|
+  fsw f5, 12(r3)
+  lw r5, 12(r3)
+  blt r5, r0, tk_clutter
+  fli f6, 0.6
+  fmul f7, f6, f1
+  fadd f2, f4, f7
+  fli f6, 0.2571429
+  fmul f7, f6, f1
+  fadd f3, f3, f7
+  li r1, 0
+  j tk_fine
+tk_primo:
+  fmov f2, f9
+  fli f3, 0.0
+  fli f1, 0.0
+  li r1, 0
+  j tk_fine
+tk_secondo:
+  fsub f3, f9, f2
+  fmov f2, f9
+  fli f1, 0.0
+  li r1, 0
+  j tk_fine
+tk_clutter:
+tk_perso:
+  fmov f2, f4                 ; si prosegue sulla predizione
+  li r1, 1
+tk_fine:
+  fsw f2, 0(r3)
+  fsw f3, 4(r3)
+  addi r4, r4, 1
+  sw r4, 8(r3)
+  fadd f4, f2, f3             ; dove sara' allo sweep dopo
+  fli f5, 12582912.0
+  fadd f4, f4, f5             ; float -> intero, arrotondato
+  fsw f4, 12(r3)
+  lw r2, 12(r3)
+  li r5, MAGIC_HI
+  sub r2, r2, r5
+  addi r2, r2, -32
+  ret
+
+; ==========================================================================
+;  barker_acc(r1 = blocco grezzo, r2 = segno): accI/accQ += segno * blocco
+; ==========================================================================
+barker_acc:
+  li r3, W
+  setvl r3, r3
+  li r3, 8
+  vload v0, r1, r3
+  addi r4, r1, 4
+  vload v1, r4, r3
+  vcvt v0, v0
+  vcvt v1, v1
+  li r5, accI
+  vload v2, r5
+  li r6, accQ
+  vload v3, r6
+  blt r2, r0, ba_neg
+  vadd v2, v2, v0
+  vadd v3, v3, v1
+  j ba_st
+ba_neg:
+  vsub v2, v2, v0
+  vsub v3, v3, v1
+ba_st:
+  vstore v2, r5
+  vstore v3, r6
+  ret
+
+; ==========================================================================
+;  barker_dec -> r1, f1 come fronte, sulla somma decodificata. Il picco
+;  minimo e' 8 volte la potenza media dei primi 16 gate: il RUMORE, prima
+;  del fronte. (La media di tutta la finestra no: l'eco ha un plateau che ne
+;  riempie meta', e "picco > 8 x media" non passerebbe mai.)
+; ==========================================================================
+barker_dec:
+  li r3, 16
+  setvl r3, r3
+  li r5, accI
+  vload v0, r5
+  li r6, accQ
+  vload v1, r6
+  vmul v2, v0, v0
+  vmul v3, v1, v1
+  vadd v2, v2, v3
+  vredsum f8, v2
+  fli f3, 0.5                 ; 8 / 16
+  fmul f8, f8, f3
+  li r3, W
+  setvl r3, r3
+  vload v0, r5
+  vload v1, r6
+  j fronte_comune
+
+; ==========================================================================
+;  msg(r2 = la parola) -> r3 = l'overrun, se la spedizione si e' persa
+; ==========================================================================
+msg:
+  li r1, MBOX_SEND
+  sw r2, 0(r1)
+  li r1, MBOX_STATUS
+  lw r3, 0(r1)
+  li r4, MBOX_OVERRUN
+  and r3, r3, r4
+  ret
+
+; ==========================================================================
+;  copia: re e im (64 float l'uno) in RAM condivisa, dopo il blocco
+; ==========================================================================
+copia:
+  li r3, W
+  setvl r3, r3
+  li r1, re
+  vload v0, r1
+  li r1, im
+  vload v1, r1
+  li r1, BLOCCO
+  addi r1, r1, 512
+  vstore v0, r1
+  addi r1, r1, 256
+  vstore v1, r1
+  ret

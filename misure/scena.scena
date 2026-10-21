@@ -1,0 +1,3 @@
+# la scena di §3.82, senza clutter e senza perdite: solo per misurare i costi
+quota 90000   velocita 375   ampiezza 1000   fronte 4.5   coda 1000
+fase 0.785    rumore 20      seme 1
