@@ -56,3 +56,19 @@ vasm_program(test_tracker OBJECTS t_tracker LINK lib_eco)
 # beta a zero.
 vasm_check(tracker MODE DUMPS PROGRAM test_tracker
            EXPECT "1 0 60010 0 0 60009 0 0 60010 0 0 60010 0 -1.5 60009 2 4.03516 60009 1 0 60009 0 0.558594 60009")
+
+vasm_object(t_barker SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_barker.vasm
+                     INTERFACES vinc_eco)
+
+vasm_program(test_barker OBJECTS t_barker LINK lib_eco)
+
+# test_barker — BARKER_ACC E BARKER_DEC: LA SOMMA ALLINEATA (21/10/2026).
+#
+# Cinque blocchi scritti dal test, un bersaglio fermo, il Barker + + + - + e
+# finestre che saltano (d = 0, +3, -5, +1): la somma allineata ha il fronte a
+# 30,375 e il plateau a 5 volte il blocco. Poi la somma che riparte con
+# |d| >= 64 e quella che torna a zero, non trovata. Visto rosso con cinque
+# mutanti: senza spostamento, lo spostamento al contrario, il segno ignorato,
+# il bordo non azzerato, n = 0 che accumula. Il conto nel sorgente.
+vasm_check(barker MODE DUMPS PROGRAM test_barker
+           EXPECT "1 2 3 4 5 1 30.375 750 3000 600 1 600 2 0")

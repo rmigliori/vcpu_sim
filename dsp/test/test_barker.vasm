@@ -1,0 +1,178 @@
+; dsp/test/test_barker.vasm — BARKER_ACC e BARKER_DEC: la somma allineata
+; (21/10/2026).
+;
+; Niente ADC e niente mondo, come test_tracker: i blocchi li scrive il test,
+; con l'eco di un bersaglio FERMO a T0 = 60030 cicli dal TX. Fermo apposta:
+; allineata, la somma e' un fronte netto e il conto si fa sulla carta. Il
+; gate j di un blocco con finestra D e' il ritardo t = D + 1 + j, e l'eco,
+; con u = t - T0:
+;     u < 0    I = 0     Q = 0       potenza 0
+;     u = 0    150       200         250^2
+;     u = 1    450       600         750^2
+;     u >= 2   600       800         1000^2
+; I e Q in rapporto 3:4, cosi' l'ampiezza e' esatta. Il mondo moltiplica il
+; blocco per il segno del TX, e BARKER_ACC lo toglie.
+;
+; --- IL CONTO ---
+; Cinque sweep col Barker + + + - +, e finestre che SALTANO: D = 60000,
+; 60000, 60003, 59998, 59999, cioe' d = 0, +3, -5, +1. Lo stato parte con
+; l'accumulatore pieno di 12345 e una finestra di prima a 60000, n = 0.
+;
+;   n                    1 2 3 4 5
+;   la somma, nella finestra 59999: il gate i e' t = 60000 + i, quindi il
+;   fronte (u = 0) e' al gate 30, e tutti e cinque i blocchi lo coprono:
+;     gate 30   750 = 5 x 150
+;     gate 40   3000 = 5 x 600, il plateau
+;     gate 63   t = 60063: lo sweep 4 (finestra 59998, fino a 60062) l'ha
+;               lasciato fuori, ed e' rientrato dalla coda allo sweep 5 a
+;               zero: 600, un blocco solo
+;   BARKER_DEC  trovato; il primo gate oltre 1/4 del picco (25e6/4) e' il 31
+;               (14,0625e6), interpolato col 30 (1,5625e6): 30 + 4,6875 / 12,5
+;               = 30,375, esatto in float
+;
+; Poi una finestra a +100: |d| >= 64, la somma riparte. n = 1, e il gate 0
+; (t = 60100, plateau) vale 600, non 600 + il vecchio. Poi LO STESSO blocco
+; col segno sbagliato (-1, d = 0): la somma torna a zero esatto, n = 2, e
+; BARKER_DEC dice non trovato (lo zero non e' trovato: fronte.vasm).
+;
+; --- I NUMERI ---
+;   1 2 3 4 5 | 1 30.375 | 750 3000 600 | 1 600 | 2 0
+;
+; --- ROSSO, su BARKER_ACC mutata (previsti con un'emulazione, 21/10) ---
+;   senza spostamento (d preso 0): fronte 29,75, gate 30 1650, gate 63 3000,
+;     e la finestra a +100 non fa ripartire: n 6 e 7
+;   lo spostamento col segno sbagliato: fronte 29,0
+;   il segno del Barker ignorato: il blocco col meno sottrae, gate 40 1800
+;   i gate dal bordo non azzerati: gate 63 3000, il valore vecchio
+;   con n = 0 si accumula invece di scrivere: i 12345 entrano nella somma,
+;     anche nei gate del rumore, e BARKER_DEC dice NON trovato. Si vede solo
+;     perche' la finestra di prima e' vicina (60000): con una lontana |d| >= 64
+;     farebbe ripartire la somma comunque, e il mutante resterebbe verde.
+
+.include "eco/eco.vinc"
+
+.equ T0  60030                   ; il fronte, in cicli dal TX
+
+  .data
+; .space conta PAROLE, e un nome gli da' 0 in silenzio (atoll): le riserve
+; sono letterali, ECO_BARKER e ECO_SCRATCH (byte) divisi per 4 a mano.
+blocco:  .space 128              ; ECO_W coppie I, Q
+stato:   .space 130              ; ECO_BARKER = 520 byte
+scratch: .space 65               ; ECO_SCRATCH = 260 byte
+codice:  .word 1, 1, 1, -1, 1
+fin:     .word 60000, 60000, 60003, 59998, 59999
+
+  .text
+  .global main
+
+; Uno sweep: il mondo scrive il blocco, BARKER_ACC lo somma, si stampa n.
+; r9 = la finestra, r10 = il segno.
+.macro ACC
+  mov r1, r9
+  mov r2, r10
+  call genera
+  li r1, blocco
+  mov r2, r10
+  mov r3, r9
+  li r4, stato
+  call barker_acc
+  dumps r1
+.endmacro
+
+main:
+  ; lo stato di un'ACQ di prima: spazzatura, una finestra vicina, n = 0
+  li r1, ECO_W
+  setvl r1, r1
+  fli f1, 12345.0
+  vsplat v0, f1
+  li r1, stato
+  vstore v0, r1
+  addi r1, r1, ECO_BK_Q
+  vstore v0, r1
+  li r1, stato
+  li r2, 60000
+  sw r2, ECO_BK_AT(r1)
+  sw r0, ECO_BK_N(r1)
+
+  ; --- i cinque sweep di ACQ ---
+  li r11, 0
+sweep:
+  slli r12, r11, 2
+  li r1, fin
+  add r1, r1, r12
+  lw r9, 0(r1)
+  li r1, codice
+  add r1, r1, r12
+  lw r10, 0(r1)
+  ACC
+  addi r11, r11, 1
+  li r1, 5
+  bne r11, r1, sweep
+
+  li r1, stato
+  li r2, scratch
+  call barker_dec
+  dumps r1
+  dumpf f1
+  li r11, stato
+  flw f1, 120(r11)               ; gate 30
+  dumpf f1
+  flw f1, 160(r11)               ; gate 40
+  dumpf f1
+  flw f1, 252(r11)               ; gate 63
+  dumpf f1
+
+  ; --- la finestra a +100: la somma riparte ---
+  li r9, 60099
+  li r10, 1
+  ACC
+  flw f1, 0(r11)                 ; gate 0
+  dumpf f1
+
+  ; --- lo stesso blocco col segno sbagliato: la somma torna a zero ---
+  li r1, blocco
+  li r2, -1
+  mov r3, r9
+  li r4, stato
+  call barker_acc
+  dumps r1
+  li r1, stato
+  li r2, scratch
+  call barker_dec
+  dumps r1
+  halt
+
+; ==========================================================================
+;  genera(r1 = la finestra D, r2 = il segno del TX): il blocco del mondo,
+;  ECO_W coppie I, Q interi a 32 bit, come li scrive l'ADC
+; ==========================================================================
+genera:
+  li r3, blocco
+  li r5, T0
+  sub r4, r1, r5
+  addi r4, r4, 1                 ; u del gate 0
+  li r5, 0
+gn_gate:
+  li r6, 0
+  li r7, 0
+  blt r4, r0, gn_scrivi
+  li r6, 150
+  li r7, 200
+  beq r4, r0, gn_scrivi
+  li r6, 450
+  li r7, 600
+  li r8, 1
+  beq r4, r8, gn_scrivi
+  li r6, 600
+  li r7, 800
+gn_scrivi:
+  mul r6, r6, r2
+  mul r7, r7, r2
+  sw r6, 0(r3)
+  sw r7, 4(r3)
+  addi r3, r3, 8
+  addi r4, r4, 1
+  addi r5, r5, 1
+  li r8, ECO_W
+  blt r5, r8, gn_gate
+  ret

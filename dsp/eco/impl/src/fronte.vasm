@@ -20,6 +20,11 @@
 ; sopra soglia, e la ricerca del bit su una maschera vuota non finirebbe bene.
 ;
 ; --- INTERO -> FLOAT col numero magico: k-1 aggiunto ai bit di 1.5*2^23 ---
+;
+; --- fronte_iq: IL SECONDO INGRESSO, per BARKER_DEC (21/10/2026) ---
+; Dopo le vcvt: v0 = I, v1 = Q gia' in float, VL = r3 = ECO_W, r2 = lo
+; scratch. E' lo stesso codice, non una copia: la somma di ACQ si rivela come
+; il blocco di uno sweep, e le istruzioni di FRONTE non sono cambiate.
 
 .include "eco/eco.vinc"
 
@@ -27,6 +32,7 @@
 
   .text
   .global fronte
+  .global fronte_iq
 
 fronte:
   li r3, ECO_W
@@ -37,6 +43,7 @@ fronte:
   vload v1, r5, r4               ; Q
   vcvt v0, v0
   vcvt v1, v1
+fronte_iq:                       ; da qui anche BARKER_DEC, sulla somma
   vmul v0, v0, v0
   vmul v1, v1, v1
   vadd v0, v0, v1                ; la potenza, gate per gate

@@ -160,6 +160,36 @@
 >   sezioni vecchie e le formule di prima del 21/10 dicono `out/misure/`:
 >   sono storia, il sorgente adesso è `misure/`.
 
+> ### ▶ RIPRENDI DA QUI (22/10/2026 o dopo)
+>
+> **Il 21/10, due cose FATTE.** Le misure sono in git, in `misure/`, con
+> una correzione al piano (qui sotto). **BARKER_ACC/DEC (§3.95)** è in
+> `lib_eco`: la somma allineata nelle coordinate dell'ultima finestra, e
+> BARKER_DEC che rivela con FRONTE. `test_barker` è stato visto rosso con
+> cinque mutanti, tutti come previsti. `ctest` **85/85**.
+>
+> **Da decidere, prima del codice:**
+>
+> - **il budget di BARKER_ACC.** Con lo spostamento costa 1.115 cicli nel
+>   caso peggiore, contro i 746 su cui era stato accettato lo slot da 1.300.
+>   Con la regola fa 1.800. BARKER_DEC scende da 1.500 a 1.300 (§3.95).
+> - **`.space NOME` dà 0 in silenzio**, ed è la terza trappola della
+>   famiglia. È costata la prima corsa del test, e `test_fronte` aveva uno
+>   scratch di 0 byte dal 14/10 (corretto). Far leggere le `.equ` o
+>   rifiutare il nome è una modifica dell'assembler. Insieme c'è il vecchio
+>   `.word` che tronca a 32 bit.
+>
+> Poi **MSG**, e la macchina a stati. Il ritardo di ~½ gate della somma
+> allineata (§3.95) si misura quando ACQ gira davvero.
+>
+> **LA FORMULA PER RIPRENDERE (22/10):**
+>
+> ```
+> Leggi docs/stato-lavori.md, §0 e poi §3.95, §3.89 (la forma), §3.86 (i
+> budget). Prima le due decisioni: il budget di BARKER_ACC e .space che
+> non legge i nomi. Poi MSG in lib_eco, con un test visto rosso.
+> ```
+>
 > ### Il 21/10: le misure in git, FATTO
 >
 > Sette file da `out/misure/` a **`misure/`**; `misura.sh` trova il repo
@@ -4037,6 +4067,111 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.95 BARKER_ACC E BARKER_DEC: la somma allineata, e `.space` che non legge i nomi (21/10/2026)
+
+Il punto 2 di §3.89, terza attività. Il contratto è stato proposto prima di
+scriverlo e **approvato dall'utente** («scrivilo»).
+
+```
+dsp/eco/impl/src/barker.vasm    barker_acc(r1 blocco, r2 segno, r3 AT-TX,
+                                r4 stato) -> r1 n; barker_dec(r1 stato,
+                                r2 scratch) -> r1 trovato, f1 posizione
+dsp/eco/impl/src/fronte.vasm    un'etichetta in piu', fronte_iq, dopo le vcvt:
+                                le istruzioni sono le stesse (il .vo cambia
+                                solo nella tabella dei simboli)
+eco/eco.vinc                    il contratto; ECO_BK_Q, ECO_BK_AT, ECO_BK_N,
+                                ECO_BARKER = 520 byte
+dsp/test/test_barker.vasm       cinque blocchi scritti dal test, bersaglio
+                                fermo, finestre che saltano
+```
+
+**Le scelte.** La somma sta nelle coordinate della finestra dell'**ultimo**
+blocco. Prima di aggiungere un blocco, la somma si sposta di `d = (AT−TX) −
+(AT−TX)` di prima, gate interi, e i gate che entrano dal bordo valgono 0.
+Così la posizione di BARKER_DEC dice la stessa cosa di quella di FRONTE. Con
+n = 0 la somma si **scrive**: il chiamante azzera solo n. Con |d| ≥ 64 non si
+sovrappone niente, la somma riparte e n torna a 1. BARKER_DEC entra in FRONTE
+dopo le `vcvt` (`fronte_iq`) e rivela con la sua stessa soglia, K = 20: il
+CFAR guarda un rapporto, e sommare n blocchi moltiplica per n anche il
+rumore. Lo spostamento passa dalla memoria, perché l'ISA non sposta le
+corsie.
+
+**Il test.** Bersaglio fermo a 60030, Barker + + + − +, finestre 60000,
+60000, 60003, 59998, 59999 (d = 0, +3, −5, +1), stato iniziale pieno di
+12345 con una finestra di prima vicina. Atteso, contato a mano: `1 2 3 4 5 |
+1 30.375 | 750 3000 600 | 1 600 | 2 0`, cioè n, il fronte della somma (esatto
+in float), i gate 30, 40 e 63 (quest'ultimo rientrato dalla coda: un blocco
+solo), la ripartenza con d = +100 e la somma riportata a zero dal segno
+sbagliato, che deve dare "non trovato".
+
+**Rosso, cinque mutanti, tutti come previsti** da un'emulazione in Python
+fatta prima di farli girare:
+
+```
+senza spostamento                 29.7529 1650 3000 3000, e n 6, 7
+spostamento col segno sbagliato   29 1950 3000 1200
+il segno del Barker ignorato      30.375 450 1800 600
+il bordo non azzerato             gate 63: 3000
+n = 0 che accumula                non trovato, gate 40 15345
+```
+
+L'ultimo mutante, all'inizio, restava **verde**: la finestra di prima nello
+stato spazzatura era 777, quindi |d| ≥ 64 faceva ripartire la somma comunque.
+È diventato rosso mettendo nello stato una finestra di prima vicina (60000),
+che è anche il caso realistico. Scritto nel sorgente.
+
+**Una trappola dell'assembler, la terza della famiglia (`.word` §3.86, `fli`
+§3.91).** Alla prima corsa il test è uscito **rosso senza mutanti** (`1 1 1 2
+3`): `.space N` conta **parole** (lo dice il manuale: N × 4 byte), e un nome
+gli dà **0 in silenzio** (`atoll`). `stato: .space ECO_BARKER` era lungo 0
+byte, l'accumulatore scriveva sopra `codice` e `fin`, e le finestre lette
+erano bit di float. Lo stesso errore era in **`test_fronte` dal 14/10**:
+`scratch: .space ECO_SCRATCH`, 0 byte, all'indirizzo di `appoggio`. Passava
+per caso. Corretto in tutti e due i test con letterali in parole (65, 130),
+e `eco.vinc` lo dice. **Far leggere le `.equ` a `.space`, o rifiutare il
+nome, è una modifica dell'assembler: decide l'utente.**
+
+**I costi** (lw `CLOCK_CYCLES` prima e dopo, meno 4, un programma nello
+scratchpad):
+
+```
+BARKER_ACC   756   n = 0 (scrive)
+             770   d = 0          (m_attivita: 745-746, senza allineamento)
+            1112   d = -5
+            1115   d = +3         lo spostamento: ~345 cicli, una corsia sola
+                                  e due accumulatori da 64 float
+             765   |d| >= 64, riparte
+BARKER_DEC   774   trovato        (m_attivita: 907, il rumore a parte)
+             568   non trovato
+```
+
+**I budget di §3.86 non tengono per BARKER_ACC, e decide l'utente.** Con la
+regola accettata (327 + lavoro × 1,25, alle centinaia) il caso peggiore dà
+327 + 1115 × 1,25 = 1.721, cioè **1.800**, contro i 1.300 accettati su 746.
+BARKER_DEC scende: 327 + 774 × 1,25 = 1.294, cioè **1.300** contro 1.500. In
+ACQ il totale cresce di 500 a sweep, e di 300 al quinto. Lo
+spostamento in registro, se d > 0, risparmierebbe ~200 cicli. Se d < 0 no:
+bisognerebbe leggere prima dell'inizio del buffer. Il caso peggiore resta
+quindi ~1.110. Non fatto.
+
+**Un limite, stimato e non misurato:** l'allineamento tiene ferma la
+DISTANZA, non l'eco. A 375 m/s i cinque fronti nella somma stanno su ~1 gate,
+e il fronte della somma resta indietro di ~½ gate rispetto all'ultimo eco:
+metà del ±1 gate del criterio di ACQ. Da misurare con `mare.py` e una scena
+con velocità, quando la macchina a stati fa girare ACQ davvero. La cura vera
+compenserebbe anche il moto, con la v del tracker.
+
+| cosa | risultato |
+|---|---|
+| `ctest --timeout 60` | **85/85** (84 + `barker`) |
+| i 32 `.vx` di prima contro `HEAD` (build di inizio sessione) | **31 identici byte per byte**; `test_fronte` cambia: il simbolo `fronte_iq` e lo scratch lungo davvero 260 byte. Dà ancora `1 1 0` |
+| `lib_eco_fronte.vo` contro `HEAD` | diverso **solo** nella tabella dei simboli |
+
+**Si riprende da MSG**, poi la macchina a stati. Prima, due decisioni
+dell'utente: il budget di BARKER_ACC e `.space`.
 
 ---
 

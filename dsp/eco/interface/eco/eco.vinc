@@ -2,7 +2,8 @@
 ;
 ; Le procedure che il super task chiama, una per slot (§3.89). Vengono da
 ; out/misure/m_attivita.vasm, codice di misura, e arrivano qui una alla volta,
-; ciascuna col suo test visto rosso. Per ora: FRONTE e TRACKER.
+; ciascuna col suo test visto rosso. Per ora: FRONTE, TRACKER, BARKER_ACC e
+; BARKER_DEC.
 ;
 ; --- FRONTE: la MISURA, con la RIVELAZIONE prima ---
 ;     call fronte     r1 = il blocco dell'ADC: ECO_W campioni, I e Q ALTERNATI,
@@ -83,6 +84,52 @@
 ; a memoria), calcolata qui e non a mano (§3.92).
 ;
 ; I REGISTRI: foglia, usa r1..r6 e f1..f7, non tocca r9..r15 ne' i vettori.
+;
+; --- BARKER_ACC e BARKER_DEC: la somma di ACQ, ALLINEATA (21/10/2026) ---
+;     call barker_acc r1 = il blocco dell'ADC, come per FRONTE
+;                     r2 = il segno del Barker di questo sweep, +1 o -1: lo
+;                          stesso che il TX ha trasmesso (TX_NEG)
+;                     r3 = AT - TX di questo blocco
+;                     r4 = lo stato del CHIAMANTE, ECO_BARKER byte, allineato
+;                          a 4: accI e accQ (ECO_W float l'uno), l'AT - TX
+;                          dello sweep prima, n
+;     -> r1 = n, i blocchi nella somma dopo questo
+;
+;     call barker_dec r1 = lo stato di BARKER_ACC
+;                     r2 = lo scratch, ECO_SCRATCH byte, come per FRONTE
+;     -> r1, f1: il contratto di FRONTE, sulla somma
+;
+; La somma sta nelle coordinate della finestra dell'ULTIMO blocco: prima di
+; aggiungerlo si sposta di d = (AT - TX) - (AT - TX) di prima, gate interi
+; (esatto: con ADC_PERIOD = 1 un ciclo e' un gate, la precondizione di
+; TRACKER). Cosi' la posizione di BARKER_DEC dice la stessa cosa di quella di
+; FRONTE, campioni dall'inizio dell'ultimo blocco, e chi la legge non
+; converte niente. Il segno: acc += segno x blocco, e il Barker si decodifica
+; sommando (§3.82).
+;
+; LO STATO LO INIZIALIZZA IL CHIAMANTE, ed e' solo n = 0: con n = 0 la somma
+; si SCRIVE invece di accumularsi, e l'accumulatore puo' contenere qualunque
+; cosa. Con |d| >= ECO_W nessun gate si sovrappone: la somma riparte, n = 1,
+; e chi legge n lo vede (al quinto sweep di ACQ, n < 5).
+;
+; La rivelazione di BARKER_DEC e' quella di FRONTE, ECO_K compreso: sommare n
+; blocchi moltiplica per n la potenza del rumore come quella del segnale, e
+; il CFAR guarda il rapporto. BARKER_DEC entra in FRONTE dopo le vcvt
+; (fronte_iq), e da li' le istruzioni sono le stesse.
+;
+; DUE LIMITI, dichiarati:
+;   i gate che entrano dal bordo dopo uno spostamento valgono 0, e hanno meno
+;     blocchi degli altri. Se entrano dalla testa, il rumore stimato sui primi
+;     ECO_NR gate scende un poco. In ACQ gli spostamenti sono di pochi gate;
+;   l'allineamento tiene ferma la DISTANZA, non l'eco. Se l'eco si muove
+;     (375 m/s: 0,25 gate a sweep) i cinque fronti nella somma stanno su ~1
+;     gate, e il fronte della somma resta indietro rispetto all'ultimo eco di
+;     ~1/2 gate. STIMA, non misura. Non allineare sarebbe peggio quando la
+;     finestra salta (m_attivita: ~19 gate fra il primo e il secondo sweep);
+;     la cura vera compenserebbe anche il moto, con la v del tracker.
+;
+; I REGISTRI: foglie. BARKER_ACC usa r1..r8, f1, v0..v3 e lascia VL a ECO_W;
+; BARKER_DEC quelli di FRONTE. Nessuna tocca r9..r15.
 ; --------------------------------------------------------------------------
 .equ ECO_W        64             ; i gate della finestra = i campioni del blocco
 .equ ECO_NR       16             ; i gate del rumore: i primi della finestra
@@ -97,3 +144,12 @@
 .equ ECO_NOMINALE 0              ; gli esiti di TRACKER
 .equ ECO_PERSO    1              ; FRONTE non ha trovato: inerzia
 .equ ECO_CLUTTER  2              ; residuo oltre ECO_RES_MAX: inerzia
+
+.equ ECO_BK_Q     ECO_W * 4      ; lo stato di BARKER_ACC: accI da 0, accQ qui,
+.equ ECO_BK_AT    ECO_W * 8      ; l'AT - TX del blocco di prima,
+.equ ECO_BK_N     ECO_BK_AT + 4  ; n, i blocchi nella somma
+.equ ECO_BARKER   ECO_BK_N + 4   ; 520 byte
+
+; ECO_SCRATCH, ECO_STATO ed ECO_BARKER sono BYTE. `.space` conta parole e non
+; legge i nomi: `.space ECO_BARKER` riserva 0 byte in silenzio (21/10). Si
+; scrive il letterale, diviso per 4: .space 65, .space 4, .space 130.

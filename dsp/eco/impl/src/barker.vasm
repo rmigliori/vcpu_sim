@@ -1,0 +1,138 @@
+; dsp/eco/impl/src/barker.vasm — BARKER_ACC e BARKER_DEC: la somma coerente
+; dei cinque blocchi di ACQ, allineata (21/10/2026). Il contratto, lo stato e
+; i limiti sono in eco/eco.vinc.
+;
+; Viene da m_attivita.vasm (§3.86, 745-746 e 907 cicli), con quattro
+; differenze:
+;   la somma e' ALLINEATA: si sposta di d = (AT - TX) - (AT - TX) dello sweep
+;     prima, gate interi, e i gate che entrano dal bordo valgono 0 (§3.89);
+;   con n = 0 la somma si SCRIVE invece di accumularsi: il chiamante azzera
+;     n, non i 512 byte dell'accumulatore;
+;   lo stato e' del chiamante, in r4: accI, accQ, l'AT - TX di prima, n;
+;   BARKER_DEC rivela con FRONTE (ECO_K, il rumore sui primi ECO_NR gate),
+;     non con "8 volte il rumore" (la soglia di m_attivita).
+;
+; --- LO SPOSTAMENTO PASSA DALLA MEMORIA ---
+; L'ISA non sposta le corsie, e vload/vstore partono sempre dalla corsia 0
+; (lo stesso motivo per cui la FFT passa dalla memoria a ogni stadio, §3.77).
+; Si copiano ECO_W - |d| parole da un estremo all'altro dell'accumulatore, e
+; si azzerano le |d| rimaste: la vload legge tutto prima che la vstore
+; scriva, quindi la sovrapposizione e' innocua. Con d = 0 non si fa niente:
+; e' il caso di uno sweep su quattro, a 375 m/s.
+;
+; --- |d| >= ECO_W: LA STESSA STRADA DI n = 0 ---
+; Uno spostamento di ECO_W gate o piu' azzera tutto l'accumulatore, cioe'
+; e' una somma vuota: si prende la strada di n = 0, e n riparte da 1. E'
+; anche cio' che tiene la copia dentro lo stato: con |d| > ECO_W la sua
+; lunghezza sarebbe negativa.
+
+.include "eco/eco.vinc"
+
+  .text
+  .global barker_acc
+  .global barker_dec
+  .extern fronte_iq
+
+barker_acc:
+  lw r5, ECO_BK_N(r4)
+  li r6, ECO_W
+  beq r5, r0, ba_vuota
+  lw r7, ECO_BK_AT(r4)
+  sub r7, r3, r7                 ; d
+  beq r7, r0, ba_carica
+  blt r7, r0, ba_indietro
+
+  ; --- d > 0: la finestra e' andata avanti, la somma va verso il gate 0 ---
+  blt r7, r6, ba_avanti
+  j ba_vuota
+ba_avanti:
+  sub r8, r6, r7
+  mtvl r8                        ; ECO_W - d gate sopravvivono
+  slli r5, r7, 2
+  add r8, r4, r5
+  vload v2, r8                   ; accI[d..]
+  vstore v2, r4                  ;   -> accI[0..]
+  addi r8, r8, ECO_BK_Q
+  vload v2, r8                   ; accQ[d..]
+  addi r8, r4, ECO_BK_Q
+  vstore v2, r8                  ;   -> accQ[0..]
+  mtvl r7                        ; d gate entrano dalla coda
+  fli f1, 0.0
+  vsplat v2, f1
+  sub r8, r8, r5                 ; accQ - 4d = accI + 4(ECO_W - d)
+  vstore v2, r8
+  addi r8, r8, ECO_BK_Q
+  vstore v2, r8
+  j ba_carica
+
+  ; --- d < 0: la finestra e' andata indietro, la somma va verso la coda ---
+ba_indietro:
+  sub r7, r0, r7                 ; |d|
+  blt r7, r6, ba_dietro
+  j ba_vuota
+ba_dietro:
+  sub r8, r6, r7
+  mtvl r8                        ; ECO_W - |d| gate sopravvivono
+  slli r5, r7, 2
+  vload v2, r4                   ; accI[0..]
+  add r8, r4, r5
+  vstore v2, r8                  ;   -> accI[|d|..]
+  addi r8, r4, ECO_BK_Q
+  vload v2, r8                   ; accQ[0..]
+  add r8, r8, r5
+  vstore v2, r8                  ;   -> accQ[|d|..]
+  mtvl r7                        ; |d| gate entrano dalla testa
+  fli f1, 0.0
+  vsplat v2, f1
+  vstore v2, r4
+  addi r8, r4, ECO_BK_Q
+  vstore v2, r8
+
+ba_carica:
+  mtvl r6
+  vload v2, r4
+  addi r8, r4, ECO_BK_Q
+  vload v3, r8
+  j ba_somma
+
+ba_vuota:
+  mtvl r6
+  fli f1, 0.0
+  vsplat v2, f1
+  vsplat v3, f1
+  sw r0, ECO_BK_N(r4)            ; n riparte: questo blocco e' il primo
+
+  ; --- la somma: acc += segno x blocco -----------------------------------
+ba_somma:
+  li r5, 8
+  vload v0, r1, r5               ; I, a passo 8
+  addi r7, r1, 4
+  vload v1, r7, r5               ; Q
+  vcvt v0, v0
+  vcvt v1, v1
+  blt r2, r0, ba_meno
+  vadd v2, v2, v0
+  vadd v3, v3, v1
+  j ba_scrivi
+ba_meno:
+  vsub v2, v2, v0
+  vsub v3, v3, v1
+ba_scrivi:
+  vstore v2, r4
+  addi r8, r4, ECO_BK_Q
+  vstore v3, r8
+  sw r3, ECO_BK_AT(r4)
+  lw r1, ECO_BK_N(r4)
+  addi r1, r1, 1
+  sw r1, ECO_BK_N(r4)
+  ret
+
+; La somma in v0 = I, v1 = Q, VL = r3 = ECO_W: da li' e' FRONTE, che ritorna
+; al chiamante di barker_dec.
+barker_dec:
+  li r3, ECO_W
+  setvl r3, r3
+  vload v0, r1
+  addi r4, r1, ECO_BK_Q
+  vload v1, r4
+  j fronte_iq
