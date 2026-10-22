@@ -869,8 +869,8 @@ loop:   setvl r4, r3      ; 'loop' = indice di questa istruzione
 | `.data` | `.data` | passa alla sezione dati |
 | `.shared` | `.shared` | passa alla sezione della **RAM condivisa** (più CPU). Si **riserva** e non si inizializza — `.word`/`.float` lì dentro sono un errore — e i suoi simboli sono **globali per definizione**, senza `.global`. Vuole il linker: in un file singolo è un errore, perché l'indirizzo lo decide il file di collocazione (§4.2.7) |
 | `.float` | `.float a, b, c, ...` | scrive i valori come float (4 byte l'uno) e avanza il puntatore dati; un valore è un letterale o una costante `.equ` **definita prima** (l'intero diventa float). Altro è un errore |
-| `.word` | `.word a, b, c, ...` | scrive interi con segno a 32 bit (4 byte l'uno); accetta decimale, esadecimale (`0x...`) o una costante `.equ` **definita prima**. Altro è un errore |
-| `.space` | `.space N` | riserva `N` elementi (`N*4` byte) senza inizializzarli |
+| `.word` | `.word a, b, c, ...` | scrive parole a 32 bit (4 byte l'una); accetta decimale, esadecimale (`0x...`) o una costante `.equ` **definita prima**. Altro è un errore. Il valore deve **stare in 32 bit** in una lettura o nell'altra, `-2147483648`..`4294967295`: `0xFFFFFFFF` e `-1` sono la stessa parola (il segno lo mette l'istruzione che legge, `lw` lo estende). Fuori è un errore — fino al 22/10/2026 i bit alti sparivano in silenzio |
+| `.space` | `.space N` | riserva `N` **parole** (`N*4` byte) senza inizializzarli. `N` è un letterale o una costante `.equ` **definita prima**, non negativa; oltre la memoria è un errore. Fino al 22/10/2026 un nome valeva **0 in silenzio**. Una dimensione in byte va divisa per 4 in una `.equ` (`.equ S_W S / 4`): se non è un multiplo di 4 la divisione ferma l'assemblaggio (§4.2.8) |
 | `.equ` | `.equ NOME espressione` | definisce una **costante** di compile-time (`.set` è sinonimo), **intera o float**: il valore è un'espressione su letterali e costanti già definite, con le regole del C (§4.2.8) |
 | `.struct` | `.struct NOME` … `.ends` | apre/chiude un blocco struttura: gli offset dei campi diventano costanti `NOME.campo` |
 | `.field` | `.field campo [dim]` | dentro `.struct`: definisce `NOME.campo` = offset corrente e avanza di `dim` byte (default 4) |
@@ -902,7 +902,8 @@ n:   .word 5, -3, 0x10, 42 ; interi a 32 bit, letti con lw/scritti con sw
 **Costanti e strutture.** `.equ` e `.struct` producono **costanti simboliche** di
 compile-time (offset di campo, dimensioni, rapporti), risolte come letterali
 ovunque si legga un numero — displacement di `lw`/`sw`, immediati di `li`, i
-valori di `.word` e `.float` e l'immediato di `fli` — e **mai rilocate**. Una
+valori di `.word` e `.float`, il conteggio di `.space` e l'immediato di `fli` —
+e **mai rilocate**. Una
 costante ha un **tipo**: intera o float (§4.2.8). Dove serve un float l'intero
 diventa float; dove serve un intero una costante float è un **errore**, mai un
 troncamento. Fino al 14/10/2026 `.word`, `.float` e `fli` non conoscevano le

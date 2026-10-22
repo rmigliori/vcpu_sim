@@ -54,11 +54,11 @@
 .equ T0  60030                   ; il fronte, in cicli dal TX
 
   .data
-; .space conta PAROLE, e un nome gli da' 0 in silenzio (atoll): le riserve
-; sono letterali, ECO_BARKER e ECO_SCRATCH (byte) divisi per 4 a mano.
+; .space conta PAROLE. Fino al 22/10 un nome gli dava 0 in silenzio (atoll), e
+; la prima corsa di questo test e' uscita rossa per quello (§3.95, §3.96).
 blocco:  .space 128              ; ECO_W coppie I, Q
-stato:   .space 130              ; ECO_BARKER = 520 byte
-scratch: .space 65               ; ECO_SCRATCH = 260 byte
+stato:   .space ECO_BARKER_W     ; 520 byte
+scratch: .space ECO_SCRATCH_W    ; 260 byte
 codice:  .word 1, 1, 1, -1, 1
 fin:     .word 60000, 60000, 60003, 59998, 59999
 

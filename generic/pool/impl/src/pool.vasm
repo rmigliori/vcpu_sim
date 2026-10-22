@@ -71,8 +71,8 @@ pool_c512:  .res HEAD
 
 ; DIMENSIONAMENTO. Quante righe .res ci sono, tanti blocchi: per cambiarlo si
 ; aggiunge o si toglie una riga e l'etichetta di fine segue da sola, senza
-; costanti da tenere allineate a mano con l'allocazione (.space prende solo
-; letterali, quindi una costante li' sarebbe una trappola silenziosa).
+; costanti da tenere allineate a mano con l'allocazione (fino al 22/10 .space
+; prendeva solo letterali, e una costante li' valeva 0 in silenzio: §3.96).
 ;
 ;   classe 16: DIECI, quanti sono gli slot del vettore dei descrittori dei
 ;              timeout — il massimo di scadenze che possono cadere sullo stesso

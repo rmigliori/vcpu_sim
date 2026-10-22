@@ -160,13 +160,35 @@
 >   sezioni vecchie e le formule di prima del 21/10 dicono `out/misure/`:
 >   sono storia, il sorgente adesso è `misure/`.
 
-> ### ▶ RIPRENDI DA QUI (22/10/2026 o dopo)
+> ### ▶ RIPRENDI DA QUI (23/10/2026 o dopo)
+>
+> **Il 22/10 (§3.96), le tre decisioni PRESE e scritte.** Il budget:
+> BARKER_ACC **1.800**, BARKER_DEC **1.300**, ACQ **4.600 / 5.900**.
+> **`.space`** legge le `.equ` (errore per nome ignoto, negativo, oltre la
+> memoria); l'unità resta la parola, e `eco.vinc` ha le `_W`. **`.word`** è
+> un errore fuori da −2³¹..2³²−1. `ctest` **97/97**; i `.vx` e i `.vo` di
+> prima identici byte per byte. Aperto, visto per strada: un letterale oltre
+> i 64 bit con segno si satura in silenzio (`strtoll`), anche in `li`.
+>
+> **Si riprende da MSG** in `lib_eco`: il contratto si propone prima di
+> scriverlo, poi un test visto rosso. Poi la macchina a stati.
+>
+> **LA FORMULA PER RIPRENDERE (23/10):**
+>
+> ```
+> Leggi docs/stato-lavori.md, §0 e poi §3.96, §3.89 (la forma), §3.86 (i
+> budget). Riprendiamo da MSG in lib_eco: proponi il contratto, poi il
+> test visto rosso.
+> ```
+>
+> ### Il 21/10 e la mattina del 22/10
 >
 > **Il 21/10, due cose FATTE.** Le misure sono in git, in `misure/`, con
 > una correzione al piano (qui sotto). **BARKER_ACC/DEC (§3.95)** è in
 > `lib_eco`: la somma allineata nelle coordinate dell'ultima finestra, e
 > BARKER_DEC che rivela con FRONTE. `test_barker` è stato visto rosso con
-> cinque mutanti, tutti come previsti. `ctest` **85/85**.
+> cinque mutanti, tutti come previsti. `ctest` **85/85**. Tutto pushato su
+> GitHub e sulla Pi fino a `965a25a` (21/10 sera, verificato col fetch).
 >
 > **Da decidere, prima del codice:**
 >
@@ -4070,6 +4092,81 @@ il contratto scritto.
 
 ---
 
+### 3.96 `.space` legge i nomi, `.word` non tronca, e il budget di BARKER (22/10/2026)
+
+Le tre decisioni lasciate aperte dal §3.95, prese dall'utente («procedi con
+tutto»).
+
+**Il budget, con la regola accettata nel §3.86** (327 + lavoro × 1,25,
+arrotondato per eccesso alle centinaia, come tutta la tabella: TX 344,5 → 400):
+
+```
+slot          lavoro    durata
+BARKER_ACC     1.115     1.800    era 1.300 su 746: lo spostamento (§3.95)
+BARKER_DEC       774     1.300    era 1.500 su 907
+FRONTE           926     1.500    invariato (1.484,5)
+TRACKER          125       500    invariato (483)
+
+ACQ  4.600 a sweep, 5.900 al 5°   (erano 4.100 / 5.600, con lo slot RX tolto)
+```
+
+Lo spostamento in registro non si fa: risparmia ~200 cicli solo con d > 0, e
+il caso peggiore (d < 0) resta ~1.110. Sarebbe ottimizzare l'algoritmo, cosa
+che il §3.86 esclude.
+
+**`.space`.** In tutti e due gli assemblatori era `atoll(tok) * 4`. Leggendolo,
+oltre al nome che valeva 0 sono uscite due cose: un **negativo** veniva preso, e
+il puntatore dei dati tornava indietro, così l'etichetta dopo cadeva sopra
+quella prima; l'assemblatore **a file singolo** non controllava l'overflow.
+Ora c'è `space_count`, condiviso: `const_value`, un errore per il nome ignoto
+(o float), per il negativo e oltre la memoria, e il controllo del puntatore
+anche a file singolo. **L'unità non cambia**, `N` parole: cambiarla avrebbe
+cambiato il significato di 110 righe di sorgente. Una dimensione in byte si
+divide per 4 in una `.equ`. In `eco.vinc` ci sono `ECO_SCRATCH_W`,
+`ECO_STATO_W` ed `ECO_BARKER_W`: se una dimensione non è multipla di 4 la
+divisione con resto ferma l'assemblaggio (§3.92). `test_barker` e `test_fronte`
+le usano.
+
+**`.word`**, sempre nei due assemblatori: `word_value`, condiviso, con un
+errore fuori da **−2³¹..2³²−1**. In memoria il segno non c'è, lo mette
+l'istruzione che legge (osservazione dell'utente), quindi `0xFFFFFFFF` e `-1`
+sono la stessa parola. È l'intervallo di GNU as. L'alternativa, solo valori con
+segno, è stata scartata.
+
+```
+src/assembler.c          word_value, space_count (dopo float32_value); i
+                         quattro punti d'uso
+tests/test_space.vasm    "12 8 -1 -1 -2147483648", a file singolo e linkato
+tests/errori/            space_nome, space_negativo, space_troppo,
+                         word_sopra, word_sotto: due strade ciascuno, coi
+                         messaggi in PASS_REGULAR_EXPRESSION
+eco.vinc, test_barker,   le _W al posto dei letterali 130 e 65
+test_fronte
+manual.md                le righe di .word e .space nella tabella, e
+                         .space fra i lettori delle costanti
+pool.vasm                un commento che diceva "prende solo letterali"
+```
+
+| cosa | risultato |
+|---|---|
+| `test_space` con l'assembler di `HEAD`, le due strade | **rosso**: `0 8 -1 -1 -2147483648` |
+| i dieci casi d'errore con l'assembler di `HEAD` (worktree nello scratchpad) | **nove assemblano senza errori**; `space_troppo_obj` dà già `data overflow`, perché l'assemblatore a oggetti lo controllava: è verde anche su `HEAD`, ed è detto nel CMake |
+| `ctest --timeout 60` | **97/97** (85 + 2 + 10) |
+| i 34 `.vx` e i 57 `.vo` di prima, contro un build di `HEAD` | **identici byte per byte**, compresi `test_barker` e `test_fronte` coi nomi |
+| i cinque sorgenti di `misure/`, assemblati come in `misura.sh` | `.vo` **identici** a quelli di `out/misure/` |
+
+**Visto per strada, non fatto:** `const_value` usa `strtoll` senza
+controllare `errno`, quindi un letterale oltre i 64 bit con segno
+(`0xFFFFFFFFFFFFFFFF`) si satura a `0x7FFF…` in silenzio. Verificato:
+`li r1, 0xFFFFFFFFFFFFFFFF` dà `9223372036854775807`, e lo stesso
+`9223372036854775808`. Vale per `li` e per tutti i lettori. È la stessa
+famiglia: lo decide l'utente.
+
+**Si riprende da MSG**, col contratto da proporre prima di scriverlo, poi la
+macchina a stati.
+
+---
+
 ### 3.95 BARKER_ACC E BARKER_DEC: la somma allineata, e `.space` che non legge i nomi (21/10/2026)
 
 Il punto 2 di §3.89, terza attività. Il contratto è stato proposto prima di
@@ -5003,8 +5100,8 @@ TX                14       400
 RX                87       600    <- SPARISCE con ADC_AT, qui sotto
 FRONTE           891     1.500
 TRACKER          126       500    arma ADC_AT per lo sweep dopo
-BARKER_ACC       746     1.300    ACQ, ogni sweep
-BARKER_DEC       907     1.500    ACQ, solo al 5°
+BARKER_ACC       746     1.300    ACQ, ogni sweep  (1.800 dal 22/10, §3.96)
+BARKER_DEC       907     1.500    ACQ, solo al 5°  (1.300 dal 22/10, §3.96)
 FFT            7.663    10.000
 MSG               14       400    la FFT scrive gia' in RAM condivisa
 DECIDI            --       400    NON misurato: e' la macchina a stati

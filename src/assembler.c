@@ -490,6 +490,50 @@ static int float32_value(const char* tok, float* out)
   return 0;
 }
 
+// L'operando di .word (22/10/2026, §3.96), per i due assemblatori. Prima il
+// valore a 64 bit finiva in un (int32_t) e i bit alti sparivano in silenzio:
+// `.word 0x100000005` scriveva 5. In memoria il segno non c'e' -- lo mette
+// l'istruzione che legge -- quindi va bene tutto cio' che si scrive in 32 bit
+// in una lettura o nell'altra: -2^31..2^32-1, come GNU as.
+static int word_value(const char* tok, int32_t* out, char* err, size_t errsz)
+{
+  int64_t v;
+  if (const_value(tok, &v) != 0)
+  {
+    if (!float_const_as_int(tok, err, errsz))
+      snprintf(err, errsz, "'%s' non e' un numero ne' una .equ definita prima", tok);
+    return -1;
+  }
+  if (v < INT32_MIN || v > (int64_t) UINT32_MAX)
+  {
+    snprintf(err, errsz, "'%s' vale %lld: non sta in 32 bit (-2147483648..4294967295)",
+             tok, (long long) v);
+    return -1;
+  }
+  *out = (int32_t) (uint32_t) v;
+  return 0;
+}
+
+// L'operando di .space (22/10/2026, §3.96): N PAROLE, cioe' N*4 byte -- l'unita'
+// non cambia. Prima era atoll, e un nome valeva 0 in silenzio: `.space
+// ECO_BARKER` riservava 0 byte (§3.95). Un negativo faceva tornare indietro il
+// puntatore dei dati, e l'etichetta dopo si sovrapponeva a quella prima. Il
+// tetto qui e' la memoria intera: chi chiama controlla dove arriva il puntatore.
+static int space_count(const char* tok, int64_t* words, char* err, size_t errsz)
+{
+  if (const_value(tok, words) != 0)
+  {
+    if (!float_const_as_int(tok, err, errsz))
+      snprintf(err, errsz, "'%s' non e' un numero ne' una .equ definita prima", tok);
+    return -1;
+  }
+  if (*words < 0)
+  { snprintf(err, errsz, "'%s' vale %lld: il conteggio e' negativo", tok, (long long) *words); return -1; }
+  if (*words > (int64_t) (MEM_SIZE / 4))
+  { snprintf(err, errsz, "'%s' vale %lld parole: piu' della memoria", tok, (long long) *words); return -1; }
+  return 0;
+}
+
 // Compile-time directives (.equ/.struct/.field/.ends). Returns 1 if 'first' was
 // one of them (handled), 0 if not one of them, -1 on error (err filled). Struct
 // fields become qualified constants "NAME.field"; .ends also defines "NAME.size".
@@ -2412,17 +2456,10 @@ static int assemble_unit(const char* path, uint8_t* mem, Instr* prog, char* err,
       {
         for (int i = k + 1; i < n; ++i)
         {
-          int64_t v;
-          if (const_value(toks[i], &v) != 0)
-          {
-            char why[160];
-            if (float_const_as_int(toks[i], why, sizeof why))
-            { snprintf(err, errsz, "line %d: .word: %s", lineno, why); fclose(fp); return -1; }
-            snprintf(err, errsz, "line %d: .word: '%s' non e' un numero ne' una .equ "
-                                 "definita prima", lineno, toks[i]);
-            fclose(fp); return -1;
-          }
-          int32_t val = (int32_t) v;
+          int32_t val;
+          char why[200];
+          if (word_value(toks[i], &val, why, sizeof why) != 0)
+          { snprintf(err, errsz, "line %d: .word: %s", lineno, why); fclose(fp); return -1; }
           if ((uint64_t) data_ptr + 4 > MEM_SIZE)
           {
             snprintf(err, errsz, "line %d: data overflow", lineno);
@@ -2435,7 +2472,12 @@ static int assemble_unit(const char* path, uint8_t* mem, Instr* prog, char* err,
       else if (strcmp(first, ".space") == 0)
       {
         if (k + 1 >= n) { snprintf(err, errsz, "line %d: .space needs a count", lineno); fclose(fp); return -1; }
-        data_ptr += (int64_t) atoll(toks[k + 1]) * 4;
+        int64_t words;
+        char why[200];
+        if (space_count(toks[k + 1], &words, why, sizeof why) != 0)
+        { snprintf(err, errsz, "line %d: .space: %s", lineno, why); fclose(fp); return -1; }
+        data_ptr += words * 4;
+        if ((uint64_t) data_ptr > MEM_SIZE) { snprintf(err, errsz, "line %d: data overflow", lineno); fclose(fp); return -1; }
       }
       else if (strcmp(first, ".res") == 0)
       {
@@ -2718,17 +2760,10 @@ static int assemble_object_unit(const char* path, VObject* obj, const char* expa
           }
           else
           {
-            int64_t v;
-            if (const_value(toks[i], &v) != 0)
-            {
-              char why[160];
-              if (float_const_as_int(toks[i], why, sizeof why))
-              { snprintf(err, errsz, "line %d: .word: %s", lineno, why); goto fail; }
-              snprintf(err, errsz, "line %d: .word: '%s' non e' un numero ne' una .equ "
-                                   "definita prima", lineno, toks[i]);
-              goto fail;
-            }
-            int32_t val = (int32_t) v;
+            int32_t val;
+            char why[200];
+            if (word_value(toks[i], &val, why, sizeof why) != 0)
+            { snprintf(err, errsz, "line %d: .word: %s", lineno, why); goto fail; }
             memcpy(&data[data_ptr], &val, 4);
           }
           data_ptr += 4;
@@ -2737,8 +2772,12 @@ static int assemble_object_unit(const char* path, VObject* obj, const char* expa
       else if (strcmp(first, ".space") == 0)
       {
         if (k + 1 >= n) { snprintf(err, errsz, "line %d: .space needs a count", lineno); goto fail; }
+        int64_t words;
+        char why[200];
+        if (space_count(toks[k + 1], &words, why, sizeof why) != 0)
+        { snprintf(err, errsz, "line %d: .space: %s", lineno, why); goto fail; }
         int64_t* p = (section == SEC_SHARED) ? &shared_ptr : &data_ptr;
-        *p += (int64_t) atoll(toks[k + 1]) * 4;
+        *p += words * 4;
         if ((uint64_t) *p > MEM_SIZE) { snprintf(err, errsz, "line %d: data overflow", lineno); goto fail; }
       }
       else if (strcmp(first, ".res") == 0)

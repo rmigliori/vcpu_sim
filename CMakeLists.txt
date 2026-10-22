@@ -231,6 +231,35 @@ set_tests_properties(posizioni_include posizioni_include_obj PROPERTIES
                      PASS_REGULAR_EXPRESSION "${_pos_inc}")
 set_tests_properties(posizioni_macro posizioni_macro_obj PROPERTIES
                      PASS_REGULAR_EXPRESSION "${_pos_mac}")
+
+# test_space — .space NOME E .word OLTRE I 32 BIT (22/10/2026, §3.96). .space
+# leggeva un nome come 0 (atoll), .word buttava via i 32 bit alti. Due volte,
+# come test_costanti. Visto rosso con l'assembler di prima: "0 8 -1 -1
+# -2147483648", su tutte e due le strade. I casi d'errore in tests/errori/, su
+# tutte e due le strade, come le posizioni: con l'assembler di prima
+# assemblavano tutti senza errori, tranne space_troppo_obj -- l'assemblatore a
+# oggetti l'overflow lo controllava gia', ed e' verde anche su HEAD.
+set(_space "12 8 -1 -1 -2147483648")
+vasm_check(space      MODE DUMPS EXPECT "${_space}"
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_space.vasm)
+vasm_object(t_space SOURCE ${CMAKE_SOURCE_DIR}/tests/test_space.vasm)
+vasm_program(test_space OBJECTS t_space)
+vasm_check(space_obj  MODE DUMPS EXPECT "${_space}"
+           PROGRAM test_space)
+set(_err_space_nome     "space_nome[.]vasm:4: [.]space: 'NESSUNO' non e' un numero")
+set(_err_space_negativo "space_negativo[.]vasm:8: [.]space: 'MENO' vale -2: il conteggio e' negativo")
+set(_err_space_troppo   "space_troppo[.]vasm:7: data overflow")
+set(_err_word_sopra     "word_sopra[.]vasm:6: [.]word: 'GRANDE' vale 4294967301: non sta in 32 bit")
+set(_err_word_sotto     "word_sotto[.]vasm:4: [.]word: '-2147483649' vale -2147483649: non sta in 32 bit")
+foreach(caso space_nome space_negativo space_troppo word_sopra word_sotto)
+  add_test(NAME errore_${caso}
+           COMMAND vcpu_sim ${CMAKE_SOURCE_DIR}/tests/errori/${caso}.vasm)
+  add_test(NAME errore_${caso}_obj
+           COMMAND vcpu_sim asm ${CMAKE_SOURCE_DIR}/tests/errori/${caso}.vasm
+                   -o ${CMAKE_BINARY_DIR}/errore_${caso}.vo)
+  set_tests_properties(errore_${caso} errore_${caso}_obj PROPERTIES
+                       PASS_REGULAR_EXPRESSION "${_err_${caso}}")
+endforeach()
 # test_include gira in modalita' legacy a file singolo (non ha oggetti ne'
 # link), quindi i suoi -I se li scrive a mano invece di riceverli da
 # INTERFACES. La lista cresce di uno a ogni libreria che si sposta, ed e' il

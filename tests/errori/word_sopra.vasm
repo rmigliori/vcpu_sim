@@ -1,0 +1,9 @@
+; tests/errori/word_sopra.vasm — `.word` oltre i 32 bit, in alto (22/10/2026,
+; §3.96). Prima scriveva gli ultimi 32 bit in silenzio: 5. Il valore arriva da
+; una .equ, che e' a 64 bit. Deve assemblare MALE.
+.equ GRANDE  0x100000005
+  .data
+a:  .word 0xFFFFFFFF, GRANDE
+  .text
+main:
+  halt

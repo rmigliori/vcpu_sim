@@ -150,6 +150,10 @@
 .equ ECO_BK_N     ECO_BK_AT + 4  ; n, i blocchi nella somma
 .equ ECO_BARKER   ECO_BK_N + 4   ; 520 byte
 
-; ECO_SCRATCH, ECO_STATO ed ECO_BARKER sono BYTE. `.space` conta parole e non
-; legge i nomi: `.space ECO_BARKER` riserva 0 byte in silenzio (21/10). Si
-; scrive il letterale, diviso per 4: .space 65, .space 4, .space 130.
+; ECO_SCRATCH, ECO_STATO ed ECO_BARKER sono BYTE; `.space` conta PAROLE, e dal
+; 22/10 legge i nomi (§3.96). Le riserve si scrivono con le _W: la divisione
+; per 4 e' intera, quindi una dimensione non multipla di 4 ferma
+; l'assemblaggio (§3.92) invece di riservare una parola di meno.
+.equ ECO_SCRATCH_W  ECO_SCRATCH / 4     ; 65
+.equ ECO_STATO_W    ECO_STATO / 4       ; 4
+.equ ECO_BARKER_W   ECO_BARKER / 4      ; 130

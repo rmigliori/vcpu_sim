@@ -1,0 +1,52 @@
+; tests/test_space.vasm — `.space NOME` e `.word` oltre i 32 bit (22/10/2026, §3.96).
+;
+; Fino al 22/10 `.space` passava il token ad atoll: un NOME valeva 0 in
+; silenzio. `stato: .space ECO_BARKER` era lungo 0 byte, e la prima corsa di
+; test_barker e' uscita rossa per questo (§3.95); test_fronte aveva uno scratch
+; di 0 byte dal 14/10, e passava per caso. Adesso `.space` passa da
+; const_value, come `.word` dal §3.91. L'unita' NON cambia: `.space N` riserva
+; N parole, N*4 byte.
+;
+; `.word` prendeva gli ultimi 32 bit in silenzio: `.word 0x100000005` scriveva
+; 5. Adesso un valore che non si scrive in 32 bit e' un errore. Il segno in
+; memoria non c'e' (lo mette l'istruzione che legge), quindi si accetta
+; tutto -2^31..2^32-1: 0xFFFFFFFF e -1 sono la stessa parola. I casi d'errore
+; sono in tests/errori/.
+;
+; Gira due volte (CMakeLists di primo livello): a file singolo e come oggetto
+; linkato, perche' i due assemblatori hanno ciascuno il suo `.space` e `.word`.
+;
+; --- I CINQUE NUMERI, tutti derivabili a mano ---
+;   12   b - a: `.space PAROLE`, PAROLE = 3 parole
+;    8   c - b: `.space 2` accanto, i letterali non cambiano
+;   -1   .word 0xFFFFFFFF, il bordo alto, letto da lw (che estende il segno)
+;   -1   .word -1: la stessa parola
+;  -2147483648   .word -2147483648, il bordo basso
+;
+; Visto rosso con l'assembler di prima: "0 8 -1 -1 -2147483648" (il nome vale
+; 0; i bordi di .word erano gia' giusti, il troncamento si vede negli errori).
+
+.equ PAROLE  3
+
+  .data
+a:  .space PAROLE
+b:  .space 2
+c:  .word 0xFFFFFFFF, -1, -2147483648
+
+  .text
+  .global main
+main:
+  li r1, a
+  li r2, b
+  sub r3, r2, r1
+  dumps r3                       ; 12
+  li r1, c
+  sub r3, r1, r2
+  dumps r3                       ; 8
+  lw r2, 0(r1)
+  dumps r2                       ; -1
+  lw r2, 4(r1)
+  dumps r2                       ; -1
+  lw r2, 8(r1)
+  dumps r2                       ; -2147483648
+  halt

@@ -1,0 +1,12 @@
+; tests/errori/space_negativo.vasm — `.space` negativo (22/10/2026, §3.96).
+; Prima il puntatore dei dati tornava indietro e `b` cadeva sopra `a`. Il
+; conteggio arriva da una .equ: prova anche che il nome si legge. Deve
+; assemblare MALE.
+.equ MENO  0 - 2
+  .data
+a:  .word 1, 2
+    .space MENO
+b:  .word 3
+  .text
+main:
+  halt

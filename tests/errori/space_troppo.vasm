@@ -1,0 +1,10 @@
+; tests/errori/space_troppo.vasm — `.space` oltre la memoria (22/10/2026, §3.96).
+; L'assemblatore a file singolo non controllava dove arrivava il puntatore dei
+; dati. Due riserve da 200000 parole: ciascuna sta in 1 MiB, insieme (1,6 MB)
+; no. Deve assemblare MALE.
+  .data
+a:  .space 200000
+b:  .space 200000
+  .text
+main:
+  halt

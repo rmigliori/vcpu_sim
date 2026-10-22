@@ -1,0 +1,7 @@
+; tests/errori/word_sotto.vasm — `.word` oltre i 32 bit, in basso (22/10/2026,
+; §3.96). -2147483649 scriveva 2147483647 in silenzio. Deve assemblare MALE.
+  .data
+a:  .word -2147483648, -2147483649
+  .text
+main:
+  halt

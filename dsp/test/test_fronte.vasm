@@ -54,10 +54,10 @@
 .equ PRI         100000
 
   .data
-; .space conta PAROLE, e un nome gli da' 0 in silenzio (atoll): fino al
-; 21/10 qui c'era `.space ECO_SCRATCH`, cioe' 0 byte, e lo scratch stava sopra
-; appoggio. Il test passava per caso.
-scratch: .space 65               ; ECO_SCRATCH = 260 byte
+; .space conta PAROLE. Fino al 21/10 qui c'era `.space ECO_SCRATCH`, che
+; valeva 0 byte (atoll), e lo scratch stava sopra appoggio: il test passava
+; per caso. Dal 22/10 il nome si legge (§3.96).
+scratch: .space ECO_SCRATCH_W    ; 260 byte
 appoggio: .word 0
 
   .text

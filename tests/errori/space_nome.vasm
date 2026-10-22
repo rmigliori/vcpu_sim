@@ -1,0 +1,7 @@
+; tests/errori/space_nome.vasm — `.space` con un nome che non e' una .equ
+; (22/10/2026, §3.96). Prima valeva 0 in silenzio (atoll). Deve assemblare MALE.
+  .data
+a:  .space NESSUNO
+  .text
+main:
+  halt
