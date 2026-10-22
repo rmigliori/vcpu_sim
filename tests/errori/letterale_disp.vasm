@@ -1,0 +1,6 @@
+; tests/errori/letterale_disp.vasm — uno spiazzamento oltre i 64 bit
+; (22/10/2026, §3.97). Prima saturava in silenzio. Deve assemblare MALE.
+  .text
+main:
+  lw r2, 0x10000000000000000(r1)
+  halt

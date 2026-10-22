@@ -1,0 +1,45 @@
+; tests/test_letterali.vasm — i letterali interi oltre i 64 bit con segno
+; (22/10/2026, §3.97).
+;
+; Fino al 22/10 i lettori di interi dell'assembler erano strtoll senza errno,
+; che oltre 2^63-1 SATURA in silenzio: `li r1, 0xFFFFFFFFFFFFFFFF` caricava
+; 0x7FFFFFFFFFFFFFFF. Adesso passano tutti da scan_int, con la regola di
+; .word portata a 64 bit: il segno lo mette l'istruzione che legge, quindi va
+; bene tutto cio' che si scrive in 64 bit in una lettura o nell'altra,
+; -2^63..2^64-1. Fuori e' un errore: i casi sono in tests/errori/.
+;
+; Gira due volte (CMakeLists di primo livello): a file singolo e come oggetto
+; linkato, perche' i due assemblatori leggono l'immediato di li ciascuno a
+; modo suo.
+;
+; --- I SEI NUMERI, tutti derivabili a mano ---
+;   -1                     li 0xFFFFFFFFFFFFFFFF: 64 bit a uno
+;   -9223372036854775808   li 0x8000000000000000: solo il bit 63
+;   -9223372036854775808   li -9223372036854775808: il bordo basso, gia' giusto
+;   -1                     li TUTTI, una .equ esadecimale: il letterale
+;                          nell'espressione
+;   -1                     li ALTO, 18446744073709551615 in decimale
+;    9223372036854775807   li 9223372036854775807: il bordo alto con segno
+;
+; Visto rosso con l'assembler di prima: 9223372036854775807 al posto dei
+; quattro -1 e del primo -9223372036854775808.
+
+.equ TUTTI  0xFFFFFFFFFFFFFFFF
+.equ ALTO   18446744073709551615
+
+  .text
+  .global main
+main:
+  li r1, 0xFFFFFFFFFFFFFFFF
+  dumps r1                       ; -1
+  li r1, 0x8000000000000000
+  dumps r1                       ; -9223372036854775808
+  li r1, -9223372036854775808
+  dumps r1                       ; -9223372036854775808
+  li r1, TUTTI
+  dumps r1                       ; -1
+  li r1, ALTO
+  dumps r1                       ; -1
+  li r1, 9223372036854775807
+  dumps r1                       ; 9223372036854775807
+  halt

@@ -1,0 +1,6 @@
+; tests/errori/letterale_negativo.vasm — sotto -2^63 (22/10/2026, §3.97). Prima
+; saturava a -9223372036854775808 in silenzio. Deve assemblare MALE.
+  .text
+main:
+  li r1, -9223372036854775809
+  halt

@@ -1,0 +1,7 @@
+; tests/errori/letterale_equ.vasm — un letterale oltre i 64 bit dentro una
+; .equ, cioe' nell'espressione (22/10/2026, §3.97). 2^64: prima diventava
+; 2^63-1 in silenzio. Deve assemblare MALE.
+.equ X  18446744073709551616 - 1
+  .text
+main:
+  halt

@@ -1,0 +1,8 @@
+; tests/errori/letterale_offset.vasm — l'offset di un simbolo oltre i 64 bit
+; (22/10/2026, §3.97). Prima saturava in silenzio. Deve assemblare MALE.
+  .data
+a:  .word 0
+  .text
+main:
+  li r1, a+0x10000000000000000
+  halt

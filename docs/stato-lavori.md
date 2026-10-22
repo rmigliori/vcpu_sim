@@ -166,9 +166,11 @@
 > BARKER_ACC **1.800**, BARKER_DEC **1.300**, ACQ **4.600 / 5.900**.
 > **`.space`** legge le `.equ` (errore per nome ignoto, negativo, oltre la
 > memoria); l'unità resta la parola, e `eco.vinc` ha le `_W`. **`.word`** è
-> un errore fuori da −2³¹..2³²−1. `ctest` **97/97**; i `.vx` e i `.vo` di
-> prima identici byte per byte. Aperto, visto per strada: un letterale oltre
-> i 64 bit con segno si satura in silenzio (`strtoll`), anche in `li`.
+> un errore fuori da −2³¹..2³²−1. **E (§3.97) i letterali**: un letterale
+> oltre 2⁶³−1 saturava in silenzio (`strtoll`), anche in `li`; ora c'è un
+> lettore solo, `scan_int`, con −2⁶³..2⁶⁴−1 e un errore fuori. `ctest`
+> **109/109**; i `.vx` e i `.vo` di prima identici byte per byte. Fuori:
+> `locator.c`, stessa trappola, non toccato.
 >
 > **Si riprende da MSG** in `lib_eco`: il contratto si propone prima di
 > scriverlo, poi un test visto rosso. Poi la macchina a stati.
@@ -176,9 +178,9 @@
 > **LA FORMULA PER RIPRENDERE (23/10):**
 >
 > ```
-> Leggi docs/stato-lavori.md, §0 e poi §3.96, §3.89 (la forma), §3.86 (i
-> budget). Riprendiamo da MSG in lib_eco: proponi il contratto, poi il
-> test visto rosso.
+> Leggi docs/stato-lavori.md, §0 e poi §3.96-§3.97, §3.89 (la forma),
+> §3.86 (i budget). Riprendiamo da MSG in lib_eco, col contratto proposto
+> in §3.96 in fondo, poi il test visto rosso.
 > ```
 >
 > ### Il 21/10 e la mattina del 22/10
@@ -4092,6 +4094,47 @@ il contratto scritto.
 
 ---
 
+### 3.97 I letterali oltre i 64 bit: un lettore solo, e nessuna saturazione (22/10/2026)
+
+Visto per strada nel §3.96 e deciso dall'utente («correggiamo anche `li r1,
+0xFFFFFFFFFFFFFFFF`»). I lettori di interi dell'assembler erano **quattro**, e
+tutti `strtoll` senza `errno`: `const_value` (`li` con una costante o un
+letterale, spiazzamenti, `.word`, `.space`, `.field`), i letterali dentro le
+`.equ`, l'immediato di `li` che può essere un simbolo, e il suo `+N`. Oltre
+2⁶³−1 `strtoll` **satura**: `0xFFFFFFFFFFFFFFFF` e `0x8000000000000000`
+caricavano tutti e due `0x7FFFFFFFFFFFFFFF`.
+
+**La regola è quella di `.word` portata a 64 bit**: un registro è una
+configurazione di bit, e il segno lo mette l'istruzione che la legge. Va bene
+quindi tutto ciò che si scrive in 64 bit in una lettura o nell'altra,
+**−2⁶³..2⁶⁴−1**, e `0xFFFFFFFFFFFFFFFF` è `-1`. Fuori è un errore, con lo
+stesso messaggio dappertutto: «non sta in 64 bit».
+
+```
+scan_int          il lettore solo: '-' davanti -> strtoll, altrimenti
+                  strtoull; ERANGE -> -2. const_value ritorna -2 per il
+                  letterale fuori, e i chiamanti lo dicono
+l'offset `+N`     il '+' si toglie a mano, perche' strtoull accetterebbe un
+                  segno in piu': a+-5 e a++5 restano errori come prima
+                  (provato, con a+8, a-4, a+0x10 che danno 8 -4 16)
+```
+
+| cosa | risultato |
+|---|---|
+| `test_letterali`, a file singolo e linkato | `-1 -9223372036854775808 -9223372036854775808 -1 -1 9223372036854775807`; **rosso** con l'assembler di `HEAD` (`3bf0ebc`): `9223372036854775807` al posto dei quattro `-1` e del primo `-2^63` |
+| i cinque casi d'errore (`li`, negativo, `.equ`, offset, spiazzamento), due strade | **tutti e dieci assemblavano** con l'assembler di `HEAD` |
+| `ctest --timeout 60` | **109/109** (97 + 2 + 10) |
+| i 34 `.vx` e i 57 `.vo` di prima | **identici byte per byte** |
+| i cinque sorgenti di `misure/` | `.vo` **identici** a `out/misure/` |
+
+**Fuori, e di proposito:** `locator.c` legge `ORIGIN` e `LENGTH` con
+`strtoll` senza `errno`. È la stessa trappola, ma in un altro strumento e con
+valori che sono indirizzi. Una riga, da fare se si vuole. In `toolchain.c`
+il `.vo` si rilegge con `strtoll(…, NULL, 10)`: è un formato che scriviamo noi,
+non un sorgente.
+
+---
+
 ### 3.96 `.space` legge i nomi, `.word` non tronca, e il budget di BARKER (22/10/2026)
 
 Le tre decisioni lasciate aperte dal §3.95, prese dall'utente («procedi con
@@ -4162,8 +4205,35 @@ controllare `errno`, quindi un letterale oltre i 64 bit con segno
 `9223372036854775808`. Vale per `li` e per tutti i lettori. È la stessa
 famiglia: lo decide l'utente.
 
-**Si riprende da MSG**, col contratto da proporre prima di scriverlo, poi la
-macchina a stati.
+**MSG, il contratto proposto e approvato dall'utente** («sì»). In
+`m_attivita` sono 14 cicli: una `sw` su `MBOX_SEND` e la lettura dell'overrun,
+con un segnaposto come parola (l'indirizzo di `re`). I problemi veri sono tre:
+
+```
+lo spettro        la FFT scrive in RAM condivisa senza copia (§3.86), e quella
+                  dello sweep dopo riscriverebbe gli stessi indirizzi 1 ms piu'
+                  tardi. DUE record in .shared, alternati per parita' dello
+                  sweep: una testa (numero di sweep, AT-TX, posizione, esito di
+                  TRACKER) e re[64], im[64]. La FFT scrive nel record dello
+                  sweep, MSG scrive la testa e spedisce il NUMERO DI SWEEP. La
+                  CPU1 ricava il record dalla parita', vede uno sweep perso da
+                  un buco nei numeri, e rilegge il numero alla fine per
+                  accorgersi di un record riscritto mentre lo leggeva: il
+                  SEQLOCK di Linux, all'osso
+l'overrun         FIFO da 4: piena, la parola si perde. MSG non riprova (il
+                  foreground non aspetta): il bit va in una casella d'esito,
+                  per DECIDI e poi per le statistiche
+il grafo          MSG nomina MBOX_SEND: lib_eco prende vinc_hal. La regola di
+                  dsp/ vieta rtos/, e l'HAL e' il fondo del grafo (il CMake di
+                  dsp/test lo dice gia'); e' la prima libreria di dsp/ che
+                  parla col ferro
+```
+
+Costo stimato una trentina di cicli (quattro `sw` di testa + i 14), nei 400
+dello slot. Il test vuole le due CPU, come `test_amp`. Rossi attesi: un record
+solo con la CPU1 lenta (il seqlock lo vede) e l'overrun non riportato.
+
+**Si riprende da MSG**, in questa forma, poi la macchina a stati.
 
 ---
 

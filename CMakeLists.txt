@@ -251,7 +251,28 @@ set(_err_space_negativo "space_negativo[.]vasm:8: [.]space: 'MENO' vale -2: il c
 set(_err_space_troppo   "space_troppo[.]vasm:7: data overflow")
 set(_err_word_sopra     "word_sopra[.]vasm:6: [.]word: 'GRANDE' vale 4294967301: non sta in 32 bit")
 set(_err_word_sotto     "word_sotto[.]vasm:4: [.]word: '-2147483649' vale -2147483649: non sta in 32 bit")
-foreach(caso space_nome space_negativo space_troppo word_sopra word_sotto)
+# test_letterali — I LETTERALI OLTRE I 64 BIT CON SEGNO (22/10/2026, §3.97).
+# strtoll senza errno saturava in silenzio: li 0xFFFFFFFFFFFFFFFF caricava
+# 2^63-1. Ora -2^63..2^64-1, la regola di .word a 64 bit. Visto rosso con
+# l'assembler di prima, sulle due strade. I casi d'errore qui sotto, ognuno un
+# lettore: li, il negativo, il letterale in una .equ, l'offset di un simbolo,
+# lo spiazzamento. Tutti assemblavano senza errori con l'assembler di prima.
+set(_letterali "-1 -9223372036854775808 -9223372036854775808 -1 -1 9223372036854775807")
+vasm_check(letterali     MODE DUMPS EXPECT "${_letterali}"
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_letterali.vasm)
+vasm_object(t_letterali SOURCE ${CMAKE_SOURCE_DIR}/tests/test_letterali.vasm)
+vasm_program(test_letterali OBJECTS t_letterali)
+vasm_check(letterali_obj MODE DUMPS EXPECT "${_letterali}"
+           PROGRAM test_letterali)
+set(_err_64 "non sta in 64 bit")
+set(_err_letterale_li       "letterale_li[.]vasm:5: '0x10000000000000000' ${_err_64}")
+set(_err_letterale_negativo "letterale_negativo[.]vasm:5: '-9223372036854775809' ${_err_64}")
+set(_err_letterale_equ      "letterale_equ[.]vasm:4: [.]equ X: '18446744073709551616' ${_err_64}")
+set(_err_letterale_offset   "letterale_offset[.]vasm:7: '[+]0x10000000000000000' ${_err_64}")
+set(_err_letterale_disp     "letterale_disp[.]vasm:5: '0x10000000000000000' ${_err_64}")
+foreach(caso space_nome space_negativo space_troppo word_sopra word_sotto
+             letterale_li letterale_negativo letterale_equ letterale_offset
+             letterale_disp)
   add_test(NAME errore_${caso}
            COMMAND vcpu_sim ${CMAKE_SOURCE_DIR}/tests/errori/${caso}.vasm)
   add_test(NAME errore_${caso}_obj

@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <errno.h>
 
 // ---------------------------------------------------------------------------
 //  Symbol table: code labels map to instruction indices, data labels to
@@ -187,6 +188,23 @@ static int float_const_as_int(const char* tok, char* err, size_t errsz)
   return 1;
 }
 
+// Un letterale intero, da 'p' fino a dove arriva (22/10/2026, §3.97): tutti i
+// lettori di interi passano di qui. Prima erano strtoll senza errno, che oltre
+// i 64 bit con segno SATURA in silenzio: `li r1, 0xFFFFFFFFFFFFFFFF` caricava
+// 0x7FFFFFFFFFFFFFFF. La regola e' quella di .word portata a 64 bit: il segno
+// in un registro lo mette l'istruzione che legge, quindi va bene tutto cio'
+// che si scrive in 64 bit in una lettura o nell'altra, -2^63..2^64-1, e
+// 0xFFFFFFFFFFFFFFFF e' -1. Ritorna -2 fuori da li'.
+static int scan_int(const char* p, char** end, int64_t* out)
+{
+  errno = 0;
+  if (*p == '-') *out = (int64_t) strtoll(p, end, 0);
+  else           *out = (int64_t) (uint64_t) strtoull(p, end, 0);
+  return (errno == ERANGE) ? -2 : 0;
+}
+
+#define INT64_RANGE_MSG "non sta in 64 bit (-9223372036854775808..18446744073709551615)"
+
 static int def_const_typed(const char* name, int is_float, int64_t value, double fvalue,
                            char* err, size_t errsz)
 {
@@ -262,10 +280,16 @@ static int e_primary(EScan* s, EVal* v)
     // ("1.25", "20.", "1e3"). "0x10" e' intero per tutti e due.
     char* ei = NULL;
     char* ef = NULL;
-    long long iv = strtoll(p, &ei, 0);
-    double    fv = strtod(p, &ef);
+    int64_t iv;
+    int     ir = scan_int(p, &ei, &iv);
+    double  fv = strtod(p, &ef);
     if (ef > ei) { v->is_float = 1; v->f = fv; s->p = ef; }
-    else         { v->is_float = 0; v->i = (int64_t) iv; s->p = ei; }
+    else
+    {
+      if (ir != 0)
+      { snprintf(s->err, s->errsz, "'%.*s' " INT64_RANGE_MSG, (int) (ei - p), p); return -1; }
+      v->is_float = 0; v->i = iv; s->p = ei;
+    }
     if (s->p == p || isalnum((unsigned char) *s->p) || *s->p == '_')
     { snprintf(s->err, s->errsz, "numero non valido in '%s'", s->src); return -1; }
     return 0;
@@ -454,13 +478,14 @@ static int eval_expr(const char* src, EVal* v, char* err, size_t errsz)
 }
 
 // Resolve an integer token: a known constant, or a decimal/hex literal.
+// -1 se non e' ne' l'una ne' l'altro, -2 se e' un letterale oltre i 64 bit.
 static int const_value(const char* tok, int64_t* out)
 {
   if (find_const(tok, out)) return 0;
   char* end = NULL;
-  *out = (int64_t) strtoll(tok, &end, 0);
+  int r = scan_int(tok, &end, out);
   if (end == tok || *end != '\0') return -1;
-  return 0;
+  return r;
 }
 
 // Il gemello float di const_value (14/10/2026): una costante (intera, resa
@@ -498,7 +523,9 @@ static int float32_value(const char* tok, float* out)
 static int word_value(const char* tok, int32_t* out, char* err, size_t errsz)
 {
   int64_t v;
-  if (const_value(tok, &v) != 0)
+  int r = const_value(tok, &v);
+  if (r == -2) { snprintf(err, errsz, "'%s' " INT64_RANGE_MSG, tok); return -1; }
+  if (r != 0)
   {
     if (!float_const_as_int(tok, err, errsz))
       snprintf(err, errsz, "'%s' non e' un numero ne' una .equ definita prima", tok);
@@ -521,7 +548,9 @@ static int word_value(const char* tok, int32_t* out, char* err, size_t errsz)
 // tetto qui e' la memoria intera: chi chiama controlla dove arriva il puntatore.
 static int space_count(const char* tok, int64_t* words, char* err, size_t errsz)
 {
-  if (const_value(tok, words) != 0)
+  int r = const_value(tok, words);
+  if (r == -2) { snprintf(err, errsz, "'%s' " INT64_RANGE_MSG, tok); return -1; }
+  if (r != 0)
   {
     if (!float_const_as_int(tok, err, errsz))
       snprintf(err, errsz, "'%s' non e' un numero ne' una .equ definita prima", tok);
@@ -666,9 +695,11 @@ static int parse_int(const char* tok, int64_t* out, char* err, size_t errsz)
     if (*p == '+' || *p == '-')
     {
       char* aend = NULL;
-      addend = (int64_t) strtoll(p, &aend, 0);   // strtoll consumes the sign
-      if (aend == p || *aend != '\0')
+      const char* ap = (*p == '+') ? p + 1 : p;   // scan_int consumes the '-'
+      int ar = scan_int(ap, &aend, &addend);
+      if (!isdigit((unsigned char) ap[*p == '-']) || aend == ap || *aend != '\0')
       { snprintf(err, errsz, "invalid offset in '%s'", tok); return -1; }
+      if (ar != 0) { snprintf(err, errsz, "'%s' " INT64_RANGE_MSG, p); return -1; }
     }
     else if (*p != '\0')
     { snprintf(err, errsz, "invalid symbol operand '%s'", tok); return -1; }
@@ -690,12 +721,13 @@ static int parse_int(const char* tok, int64_t* out, char* err, size_t errsz)
     return 0;
   }
   char* end = NULL;
-  *out = (int64_t) strtoll(tok, &end, 0);
+  int r = scan_int(tok, &end, out);
   if (end == tok || *end != '\0')
   {
     snprintf(err, errsz, "invalid integer '%s'", tok);
     return -1;
   }
+  if (r != 0) { snprintf(err, errsz, "'%s' " INT64_RANGE_MSG, tok); return -1; }
   return 0;
 }
 
@@ -731,7 +763,9 @@ static int parse_mem(const char* tok, int64_t* disp, int* reg, char* err, size_t
   { snprintf(err, errsz, "invalid displacement in '%s'", tok); return -1; }
   memcpy(dbuf, tok, dlen);
   dbuf[dlen] = '\0';
-  if (const_value(dbuf, disp) != 0)
+  int dr = const_value(dbuf, disp);
+  if (dr == -2) { snprintf(err, errsz, "'%s' " INT64_RANGE_MSG, dbuf); return -1; }
+  if (dr != 0)
   {
     if (float_const_as_int(dbuf, err, errsz)) return -1;
     snprintf(err, errsz, "invalid displacement in '%s'", tok);

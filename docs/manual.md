@@ -851,7 +851,12 @@ tastiera alla CPU 1 attraverso il distributore.
     successiva (target di salto).
   - Una label nella sezione **dati** vale l'**indirizzo di memoria** corrente.
 - **Immediati interi:** decimali (`10`), esadecimali (`0x2a`) oppure il **nome
-  di un simbolo** (risolto al suo valore, es. l'indirizzo di un array).
+  di un simbolo** (risolto al suo valore, es. l'indirizzo di un array). Un
+  letterale deve **stare in 64 bit** in una lettura o nell'altra,
+  `-9223372036854775808`..`18446744073709551615`: `0xFFFFFFFFFFFFFFFF` è `-1`,
+  come `0xFFFFFFFF` in `.word`. Fuori è un errore, ovunque si legga un intero
+  (`li`, spiazzamenti, offset dei simboli, `.equ`, `.word`, `.space`). Fino al
+  22/10/2026 un letterale oltre `2^63-1` diventava `2^63-1` in silenzio.
 - **Immediati float:** notazione decimale (`2.5`).
 
 Esempio:

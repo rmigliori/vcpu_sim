@@ -1,0 +1,6 @@
+; tests/errori/letterale_li.vasm — un immediato di li a 65 bit (22/10/2026,
+; §3.97). Prima saturava a 0x7FFFFFFFFFFFFFFF in silenzio. Deve assemblare MALE.
+  .text
+main:
+  li r1, 0x10000000000000000
+  halt
