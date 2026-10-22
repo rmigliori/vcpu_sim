@@ -1,0 +1,126 @@
+; dsp/test/test_msg0.vasm — ECO_APRI e MSG: la CPU 0, chi scrive (22/10/2026).
+;
+; Gira con test_msg1.vasm sulla CPU 1, chi legge: `vcpu_sim run test_msg0.vx
+; test_msg1.vx`. Niente ADC e niente FFT: lo "spettro" dello sweep k sono le
+; 128 parole k*1000 + i, i = 0..127, scritte qui al posto di fft64. Cosi' chi
+; legge sa da quale sweep viene ogni parola.
+;
+; --- COSA FA ---
+;   all'avvio apre TUTTI E DUE i record (eco.vinc)
+;   sweep 0, 1, 2: eco_apri, lo spettro, msg con la testa AT - TX = 60000 + k,
+;     posizione k + 0,5, esito k. Prima di aprire lo sweep 2 aspetta che la
+;     CPU 1 abbia letto META' del record 0 (lo sweep 0, stessa parita'); poi
+;     lo riapre, lo riscrive tutto, e prima di msg aspetta che la CPU 1 abbia
+;     finito di leggerlo. La lettura lenta sta COSI' a cavallo della
+;     riscrittura, senza contare i cicli
+;   quando la CPU 1 non legge piu': cinque msg di fila (sweep 3..7) a una FIFO
+;     di MBOX_DEPTH = 4. Il quinto si perde
+;
+; --- GLI OTTO NUMERI DELLA CPU 0: l'overrun di ogni msg ---
+;   0 0 0        sweep 0..2: la CPU 1 legge
+;   0 0 0 0 1    sweep 3..7: la quinta parola e' persa, e msg lo dice
+;
+; I numeri della CPU 1, e i rossi, sono in test_msg1.vasm.
+
+.include "eco/eco.vinc"
+
+  .extern record
+  .extern letto_meta
+  .extern a_meta
+  .extern ripresa
+  .extern fine
+  .extern eco_apri
+  .extern msg
+
+.equ SPETTRO_W  ECO_W * 2        ; re e im: le parole dopo la testa
+
+; r13 = il record dello sweep r10: record + (r10 & 1) * ECO_REC
+.macro RECORD
+  li r11, 1
+  and r11, r10, r11
+  li r12, ECO_REC
+  mul r11, r11, r12
+  add r13, r9, r11
+.endmacro
+
+  .text
+  .global main
+
+main:
+  li r9, record
+  addi r1, r9, 0
+  call eco_apri
+  addi r1, r9, ECO_REC
+  call eco_apri
+
+  li r10, 0                      ; lo sweep
+  li r14, 0                      ; k * 1000
+  fli f9, 0.5                    ; k + 0,5
+sweep:
+  RECORD
+  li r11, 2
+  bne r10, r11, apri
+  li r11, letto_meta             ; sweep 2: la CPU 1 e' a meta' del record 0
+aspetta_meta:
+  lw r12, 0(r11)
+  beq r12, r0, aspetta_meta
+apri:
+  addi r1, r13, 0
+  call eco_apri
+
+  ; --- lo "spettro": SPETTRO_W parole k*1000 + i --------------------------
+  addi r1, r13, ECO_REC_RE
+  addi r2, r14, 0
+  li r3, SPETTRO_W
+  add r3, r3, r14                ; la prima parola che non si scrive
+spettro:
+  sw r2, 0(r1)
+  addi r1, r1, 4
+  addi r2, r2, 1
+  bne r2, r3, spettro
+
+  li r11, 2
+  bne r10, r11, spedisci
+  li r11, a_meta                 ; sweep 2: riscritto; aspetta che la CPU 1
+  li r12, 1                      ; finisca di leggerlo
+  sw r12, 0(r11)
+  li r11, ripresa
+aspetta_ripresa:
+  lw r12, 0(r11)
+  beq r12, r0, aspetta_ripresa
+spedisci:
+  addi r1, r13, 0
+  addi r2, r10, 0
+  li r3, 60000
+  add r3, r3, r10
+  fmov f1, f9
+  addi r4, r10, 0
+  call msg
+  dumps r1                       ; 0, 0, 0
+
+  addi r10, r10, 1
+  addi r14, r14, 1000
+  fli f8, 1.0
+  fadd f9, f9, f8
+  li r11, 3
+  bne r10, r11, sweep
+
+  ; --- l'overrun: cinque msg a una FIFO di quattro -------------------------
+  li r11, fine
+aspetta_fine:
+  lw r12, 0(r11)
+  beq r12, r0, aspetta_fine
+raffica:
+  RECORD
+  addi r1, r13, 0
+  addi r2, r10, 0
+  li r3, 60000
+  add r3, r3, r10
+  fmov f1, f9
+  addi r4, r10, 0
+  call msg
+  dumps r1                       ; 0, 0, 0, 0, 1
+  addi r10, r10, 1
+  li r11, 8
+  bne r10, r11, raffica
+  halt

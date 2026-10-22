@@ -72,3 +72,29 @@ vasm_program(test_barker OBJECTS t_barker LINK lib_eco)
 # il bordo non azzerato, n = 0 che accumula. Il conto nel sorgente.
 vasm_check(barker MODE DUMPS PROGRAM test_barker
            EXPECT "1 2 3 4 5 1 30.375 750 3000 600 1 600 2 0")
+
+vasm_object(t_msg0       SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_msg0.vasm
+                         INTERFACES vinc_eco)
+vasm_object(t_msg1       SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_msg1.vasm
+                         INTERFACES vinc_eco vinc_hal)
+vasm_object(t_msg_shared SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_msg_shared.vasm
+                         INTERFACES vinc_eco)
+vasm_program(test_msg0 OBJECTS t_msg0 t_msg_shared LINK lib_eco)
+vasm_program(test_msg1 OBJECTS t_msg1 t_msg_shared)
+get_target_property(_msg1_vx test_msg1 VASM_OUTPUT)
+
+# test_msg — ECO_APRI E MSG: IL SEQLOCK FRA LE DUE CPU (22/10/2026).
+#
+# La CPU 0 scrive tre sweep in due record alternati, e la CPU 1 legge il primo
+# LENTA: a meta' aspetta che la CPU 0 abbia riaperto e riscritto lo stesso
+# record con lo sweep 2. Il lettore deve buttarlo (0 2) e prendere interi gli
+# altri due. Poi cinque msg a una FIFO di quattro: il quinto dice overrun.
+# Visto rosso con tre mutanti: eco_apri vuota (il record misto esce buono, "0
+# 0 0 2127"), un record solo nella CPU 0 (lo sweep 1 esce perso, "1 1"),
+# l'overrun non riportato (l'ultimo 0). L'ordine e' quello del tempo simulato.
+set(_msg "cpu0:0 cpu0:0 cpu1:0 cpu1:2 cpu0:0"
+         "cpu1:1 cpu1:0 cpu1:1000 cpu1:1127 cpu1:60001 cpu1:1.5 cpu1:1"
+         "cpu1:2 cpu1:0 cpu1:2000 cpu1:2127 cpu1:60002 cpu1:2.5 cpu1:2"
+         "cpu0:0 cpu0:0 cpu0:0 cpu0:0 cpu0:1")
+string(JOIN " " _msg ${_msg})
+vasm_check(msg MODE DUMPS PROGRAM test_msg0 ARGS ${_msg1_vx} EXPECT "${_msg}")

@@ -1,0 +1,39 @@
+; dsp/eco/impl/src/msg.vasm — ECO_APRI e MSG: lo sweep all'altra CPU
+; (22/10/2026). Il contratto, il record e il protocollo sono in eco/eco.vinc.
+;
+; Viene da m_attivita.vasm (§3.86, 14 cicli), dove MSG era una `sw` in mailbox
+; con un segnaposto come parola. Le differenze:
+;   la parola e' n, il numero dello sweep, e il record e' uno di due,
+;     alternati per parita' (eco.vinc): la FFT dello sweep dopo non riscrive
+;     quello che l'altra CPU sta leggendo;
+;   msg scrive la testa e n per ULTIMO, e eco_apri apre il record prima della
+;     FFT: il seqlock (eco.vinc);
+;   l'overrun esce come 0 o 1, invece che come il bit di MBOX_STATUS.
+
+.include "eco/eco.vinc"
+.include "hal/amp.vinc"
+
+.equ OVERRUN_BIT  9              ; MBOX_OVERRUN = 1 << 9
+
+  .text
+  .global eco_apri
+  .global msg
+
+eco_apri:
+  li r2, ECO_APERTO
+  sw r2, ECO_REC_N(r1)
+  ret
+
+msg:
+  sw r3, ECO_REC_AT(r1)
+  fsw f1, ECO_REC_POS(r1)
+  sw r4, ECO_REC_ESITO(r1)
+  sw r2, ECO_REC_N(r1)           ; per ULTIMO: da qui il record e' di n
+  li r5, MBOX_SEND
+  sw r2, 0(r5)
+  li r5, MBOX_STATUS
+  lw r1, 0(r5)                   ; la lettura abbassa l'overrun
+  li r5, MBOX_OVERRUN
+  and r1, r1, r5
+  srli r1, r1, OVERRUN_BIT
+  ret

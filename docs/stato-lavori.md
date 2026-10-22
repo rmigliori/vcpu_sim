@@ -172,15 +172,23 @@
 > **109/109**; i `.vx` e i `.vo` di prima identici byte per byte. Fuori:
 > `locator.c`, stessa trappola, non toccato.
 >
-> **Si riprende da MSG** in `lib_eco`: il contratto si propone prima di
-> scriverlo, poi un test visto rosso. Poi la macchina a stati.
+> **E (§3.98) MSG è FATTO**: `eco_apri` e `msg` in `lib_eco`, con il
+> seqlock fra le due CPU. Il contratto di §3.96 aveva un buco, che ho
+> trovato prima del codice: la FFT riscriveva il record mentre la testa
+> diceva ancora n−2. `test_msg` gira sulle due CPU, rosso con tre mutanti.
+> Costi: 7 e 31 cicli, gli slot non cambiano. `ctest` **110/110**.
+>
+> **Le attività sono tutte in `lib_eco`. Si riprende dalla MACCHINA A
+> STATI** (il punto 3 di §3.89).
 >
 > **LA FORMULA PER RIPRENDERE (23/10):**
 >
 > ```
-> Leggi docs/stato-lavori.md, §0 e poi §3.96-§3.97, §3.89 (la forma),
-> §3.86 (i budget). Riprendiamo da MSG in lib_eco, col contratto proposto
-> in §3.96 in fondo, poi il test visto rosso.
+> Leggi docs/stato-lavori.md, §0 e poi §3.98, §3.89 (la forma, tutta),
+> §3.86 e §3.96 (i budget), §3.88 (il cpuometro e il task delle
+> statistiche), §3.74-§3.75 (il meccanismo). Riprendiamo dalla macchina a
+> stati: proponi prima la forma del codice, poi il percorso nominale con
+> un test visto rosso.
 > ```
 >
 > ### Il 21/10 e la mattina del 22/10
@@ -4091,6 +4099,76 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.98 ECO_APRI E MSG: lo sweep all'altra CPU, col seqlock (22/10/2026)
+
+Il punto 2 di §3.89, ultima attività. Il contratto di §3.96 aveva **un buco,
+trovato da me prima di scrivere il codice e detto all'utente**. La FFT dello
+sweep n scrive lo spettro nel record dello sweep n−2, in uno slot che viene
+prima di MSG. In quel momento la testa dice ancora «n−2», quindi un lettore
+lento che rilegge il numero alla fine lo trova uguale e prende per buono un
+record mezzo riscritto. Il seqlock regge solo se lo scrittore segna il record
+**prima** di toccare i dati. **Deciso dall'utente («sì»): la coppia** di Linux,
+`write_seqcount_begin`/`end`. L'alternativa scartata faceva riaprire l'altro
+record a MSG(n): un solo punto, ma ~1 ms di tempo per leggere invece di
+~1,9 ms, e l'apertura lontana da chi scrive.
+
+```
+dsp/eco/impl/src/msg.vasm   eco_apri(r1 record): ECO_REC_N = ECO_APERTO (-1),
+                            PRIMA di fft64. msg(r1 record, r2 n, r3 AT-TX,
+                            f1 posizione, r4 esito) -> r1 overrun 0/1: la
+                            testa, POI n, POI n in mailbox
+eco/eco.vinc                il record (ECO_REC 528 byte: n, AT-TX, posizione,
+                            esito, re[64], im[64]), due alternati per parita'
+                            e scelti dal chiamante; il protocollo di chi
+                            legge; all'avvio lo scrittore apre tutti e due
+lib_eco                     prende vinc_hal: la prima libreria di dsp/ che
+                            parla col ferro
+dsp/test/test_msg0/1        due CPU; test_msg_shared i record e quattro flag
+                            che mettono la lettura lenta a cavallo della
+                            riscrittura senza contare i cicli
+```
+
+Funziona senza barriere perché la RAM condivisa non ha cache né riordini
+(`amp.vinc`). Su un chip vero ne servirebbero, ed è scritto. Il limite: n non
+deve valere `0xFFFFFFFF`, cioè 49 giorni a uno sweep al millisecondo.
+
+**Il test.** La CPU0 scrive tre sweep, la CPU1 legge il primo lenta: a metà
+aspetta che lo stesso record sia stato riaperto e riscritto con lo sweep 2.
+Poi la CPU0 fa cinque `msg` di fila a una FIFO da quattro. Uscita, nell'ordine
+del tempo simulato: la CPU1 dà `0 2` (riscritto, si butta), poi `1 0 1000 1127
+60001 1.5 1` e `2 0 2000 2127 60002 2.5 2` (n, verdetto, prima e ultima parola,
+testa); la CPU0 `0 0 0` e poi `0 0 0 0 1`. Previsto prima di farlo girare.
+
+**Rossi, tre mutanti** su copie nello scratchpad:
+
+```
+eco_apri vuota             il primo esce BUONO: "0 0 0 2127 60000 0.5 0", la
+                           prima parola dello sweep 0 e l'ultima dello sweep 2
+un record solo (CPU 0)     lo sweep 1 esce "1 1", perso: il record dispari e'
+                           rimasto aperto dall'avvio. Il primo, che non sapevo
+                           prevedere, "0 2"
+overrun non riportato      l'ultimo della CPU 0 e' 0
+```
+
+Non provato, e scritto nel test: `msg` che scrive n **prima** della testa,
+perché chi legge non si trova mai a cavallo di `msg`.
+
+**I costi** (lw `CLOCK_CYCLES` prima e dopo, meno 4, su una copia del test):
+`eco_apri` **7**, `msg` **31**, `call` e `ret` comprese, uguali a ogni sweep.
+In `m_attivita` erano 14. Gli slot non cambiano: MSG 327 + 31 × 1,25 = 366,
+quindi **400**; la FFT con `eco_apri` 7.670, quindi **10.000**.
+
+| cosa | risultato |
+|---|---|
+| `ctest --timeout 60` | **110/110** (109 + `msg`) |
+| i 34 `.vx` e i 57 `.vo` di prima | **identici byte per byte**: chi linka `lib_eco` non prende `msg` |
+
+**Le attività del punto 2 di §3.89 sono tutte in `lib_eco`.** Si riprende
+dalla **macchina a stati** (il punto 3): il super task, i tre modi e DECIDI,
+coi budget di §3.86 e §3.96 e il cpuometro di §3.88 nell'idle.
 
 ---
 

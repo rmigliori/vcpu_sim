@@ -1,0 +1,20 @@
+; dsp/test/test_msg_shared.vasm — cio' che le due CPU di test_msg si scambiano
+; (22/10/2026). Nessun codice: e' linkato in tutte e due le immagini, come
+; tests/test_amp_shared.vasm, e l'indirizzo lo decide la regione SHARED del
+; file di collocazione.
+;
+; I quattro flag servono SOLO al test, per mettere la lettura lenta della CPU 1
+; esattamente a cavallo della riscrittura (test_msg0.vasm): con il conto dei
+; cicli il test dipenderebbe da quanto costa ogni istruzione. Partono da 0,
+; come `pronto` in test_amp.
+
+.include "eco/eco.vinc"
+
+.equ DUE_REC_W  ECO_REC_W * 2
+
+  .shared
+record:      .space DUE_REC_W    ; i due record di MSG, alternati per parita'
+letto_meta:  .space 1            ; CPU 1: ho letto meta' del record 0
+a_meta:      .space 1            ; CPU 0: ho riaperto e riscritto il record 0
+ripresa:     .space 1            ; CPU 1: ho finito di leggerlo
+fine:        .space 1            ; CPU 1: non leggo piu' la mailbox

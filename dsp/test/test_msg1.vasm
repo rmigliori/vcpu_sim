@@ -1,0 +1,129 @@
+; dsp/test/test_msg1.vasm — ECO_APRI e MSG: la CPU 1, chi legge (22/10/2026).
+;
+; Il compagno di test_msg0.vasm, che dice cosa scrive e quando. Qui c'e' il
+; lettore del protocollo di eco.vinc -- il seqlock -- scritto per il test:
+; un consumatore vero sulla CPU 1 non c'e' ancora.
+;
+; --- COSA FA, per ognuno dei tre messaggi ---
+;   riceve n dalla mailbox (in polling: niente interrupt), ricava il record
+;     dalla parita', legge ECO_REC_N (s1), legge TUTTO il record, rilegge
+;     ECO_REC_N (s2). Il verdetto: 1 perso se s1 != n, 2 riscritto se s2 != n,
+;     0 buono. Il record si legge tutto anche quando s1 != n, cosi' i passi
+;     di sincronia con la CPU 0 non dipendono dal verdetto
+;   al primo (lo sweep 0) si ferma a META' dello spettro e aspetta che la CPU
+;     0 abbia riaperto e riscritto lo stesso record con lo sweep 2: e' la CPU
+;     1 lenta, e la seconda meta' che legge e' dello sweep 2
+;   poi dice alla CPU 0 che non legge piu'
+;
+; --- I NUMERI DELLA CPU 1 ---
+;   per ogni messaggio n e il verdetto; se e' buono anche la prima e
+;   l'ultima parola dello spettro, AT - TX, la posizione, l'esito:
+;   0 2                              lo sweep 0 e' stato riscritto mentre lo
+;                                    leggeva: s2 = ECO_APERTO, e si butta
+;   1 0  1000 1127  60001 1.5 1      lo sweep 1, intero
+;   2 0  2000 2127  60002 2.5 2      lo sweep 2, intero
+;
+; --- I ROSSI, previsti prima di farli girare ---
+;   eco_apri vuota      il primo messaggio esce BUONO, "0 0 0 2127 60000 0.5
+;                       0": prima parola dello sweep 0, ultima dello sweep 2.
+;                       Un record misto preso per buono, ed e' il buco che
+;                       eco_apri chiude
+;   un record solo      (nella CPU 0, RECORD sempre a `record`) il secondo esce
+;                       "1 1", perso: il record della parita' dispari e' rimasto
+;                       aperto dall'avvio. Il primo dipende da dove cade la
+;                       lettura, e non si prevedeva a mano: e' uscito "0 2"
+;   overrun non         l'ultimo numero della CPU 0 esce 0 invece di 1
+;   riportato
+; NON lo prova: msg che scrive n PRIMA della testa. Chi legge non sta mai a
+; cavallo di msg.
+
+.include "eco/eco.vinc"
+.include "hal/amp.vinc"
+
+  .extern record
+  .extern letto_meta
+  .extern a_meta
+  .extern ripresa
+  .extern fine
+
+.equ META_W  ECO_W               ; meta' dello spettro: re
+
+  .text
+  .global main
+
+main:
+  li r9, record
+  li r10, 0                      ; i messaggi letti
+ricevi:
+  li r1, MBOX_STATUS
+  lw r2, 0(r1)
+  li r3, MBOX_COUNT_MASK
+  and r2, r2, r3
+  beq r2, r0, ricevi
+  li r1, MBOX_RECV
+  lw r11, 0(r1)                  ; n
+  li r1, 1                       ; il record: record + (n & 1) * ECO_REC
+  and r1, r11, r1
+  li r2, ECO_REC
+  mul r1, r1, r2
+  add r13, r9, r1
+
+  lw r12, ECO_REC_N(r13)         ; s1
+  addi r1, r13, ECO_REC_RE
+  lw r14, 0(r1)                  ; la prima parola
+  li r2, META_W
+prima_meta:
+  lw r3, 0(r1)
+  addi r1, r1, 4
+  addi r2, r2, -1
+  bne r2, r0, prima_meta
+
+  bne r10, r0, seconda           ; al primo messaggio: la CPU 1 lenta
+  li r2, letto_meta
+  li r3, 1
+  sw r3, 0(r2)
+  li r2, a_meta
+aspetta_meta:
+  lw r3, 0(r2)
+  beq r3, r0, aspetta_meta
+seconda:
+  li r2, META_W
+seconda_meta:
+  lw r3, 0(r1)                   ; l'ultima resta in r3
+  addi r1, r1, 4
+  addi r2, r2, -1
+  bne r2, r0, seconda_meta
+  lw r4, ECO_REC_N(r13)          ; s2
+
+  dumps r11                      ; n
+  li r5, 1
+  bne r12, r11, verdetto         ; perso
+  li r5, 2
+  bne r4, r11, verdetto          ; riscritto
+  li r5, 0
+  dumps r5                       ; 0
+  dumps r14                      ; la prima parola
+  dumps r3                       ; l'ultima
+  lw r2, ECO_REC_AT(r13)
+  dumps r2
+  flw f1, ECO_REC_POS(r13)
+  dumpf f1
+  lw r2, ECO_REC_ESITO(r13)
+  dumps r2
+  j dopo
+verdetto:
+  dumps r5                       ; 1 o 2
+dopo:
+  bne r10, r0, prossimo          ; al primo: finito di leggere
+  li r2, ripresa
+  li r3, 1
+  sw r3, 0(r2)
+prossimo:
+  addi r10, r10, 1
+  li r2, 3
+  bne r10, r2, ricevi
+
+  li r2, fine
+  li r3, 1
+  sw r3, 0(r2)
+  halt

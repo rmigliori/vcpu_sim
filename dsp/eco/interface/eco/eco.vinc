@@ -2,8 +2,9 @@
 ;
 ; Le procedure che il super task chiama, una per slot (§3.89). Vengono da
 ; out/misure/m_attivita.vasm, codice di misura, e arrivano qui una alla volta,
-; ciascuna col suo test visto rosso. Per ora: FRONTE, TRACKER, BARKER_ACC e
-; BARKER_DEC.
+; ciascuna col suo test visto rosso. Per ora: FRONTE, TRACKER, BARKER_ACC,
+; BARKER_DEC, e MSG con ECO_APRI. MSG e' l'unica che parla col ferro (la
+; mailbox, hal/amp.vinc): lib_eco prende vinc_hal, che e' il fondo del grafo.
 ;
 ; --- FRONTE: la MISURA, con la RIVELAZIONE prima ---
 ;     call fronte     r1 = il blocco dell'ADC: ECO_W campioni, I e Q ALTERNATI,
@@ -130,6 +131,52 @@
 ;
 ; I REGISTRI: foglie. BARKER_ACC usa r1..r8, f1, v0..v3 e lascia VL a ECO_W;
 ; BARKER_DEC quelli di FRONTE. Nessuna tocca r9..r15.
+;
+; --- ECO_APRI e MSG: lo sweep all'altra CPU (22/10/2026) ---
+;     call eco_apri   r1 = il record di questo sweep
+;     (nessuna uscita)
+;
+;     call msg        r1 = il record di questo sweep, gia' scritto dalla FFT
+;                     r2 = n, il numero dello sweep
+;                     r3 = AT - TX, f1 = la posizione di FRONTE, r4 = l'esito
+;                          di TRACKER: la testa
+;     -> r1 = 1 se la parola e' andata persa (la FIFO dell'altra CPU era
+;             piena: MBOX_OVERRUN), 0 se no
+;
+; IL RECORD sta in RAM condivisa: una testa (n, AT - TX, posizione, esito) e
+; lo spettro, re[ECO_W] e im[ECO_W] -- le uscite r2 e r3 di fft64, che li'
+; scrive senza copia. I record sono DUE, del chiamante, alternati per parita':
+;     record = base + (n & 1) * ECO_REC
+; cosi' la FFT dello sweep n+1 non riscrive quello che l'altra CPU sta
+; ancora leggendo. Il chiamante lo calcola una volta, per eco_apri, fft64 e
+; msg. La parola spedita e' n: chi riceve ricava il record dalla parita'.
+;
+; IL PROTOCOLLO e' il seqlock di Linux, all'osso. Lo scrittore, a ogni sweep:
+;     eco_apri   ECO_REC_N = ECO_APERTO, PRIMA che la FFT scriva lo spettro
+;     fft64      lo spettro
+;     msg        la testa, POI ECO_REC_N = n, POI n in mailbox
+; Chi legge, ricevuto n:
+;     ECO_REC_N != n  -> perso: e' gia' stato riaperto o riscritto
+;     legge tutto
+;     ECO_REC_N != n  -> riscritto MENTRE leggeva: si butta
+; Senza eco_apri il secondo controllo non vedrebbe niente: la FFT riscrive
+; lo spettro mentre la testa dice ancora n - 2, e msg la aggiorna solo dopo.
+; All'avvio lo scrittore apre TUTTI E DUE i record: un record mai scritto
+; non deve sembrare lo sweep 0.
+;
+; Vale perche' qui la RAM condivisa non ha cache ne' riordini (hal/amp.vinc):
+; le scritture si vedono nell'ordine del programma. Su un chip vero fra la
+; testa e n, e fra le letture, servirebbero delle barriere.
+;
+; MSG NON RIPROVA: il foreground non aspetta. L'overrun e' la casella d'esito,
+; per DECIDI e per le statistiche. Leggere MBOX_STATUS lo abbassa, quindi
+; dice di QUESTA spedizione se msg e' l'unico che spedisce da questa CPU.
+;
+; UN LIMITE: n non deve valere ECO_APERTO, cioe' 0xFFFFFFFF come parola. A uno
+; sweep al millisecondo ci vogliono 49 giorni.
+;
+; I REGISTRI: foglie. eco_apri usa r1, r2; msg r1..r5 e legge f1. Nessuna
+; tocca r9..r15 ne' i vettori.
 ; --------------------------------------------------------------------------
 .equ ECO_W        64             ; i gate della finestra = i campioni del blocco
 .equ ECO_NR       16             ; i gate del rumore: i primi della finestra
@@ -150,6 +197,15 @@
 .equ ECO_BK_N     ECO_BK_AT + 4  ; n, i blocchi nella somma
 .equ ECO_BARKER   ECO_BK_N + 4   ; 520 byte
 
+.equ ECO_REC_N     0                       ; il record di MSG: n,
+.equ ECO_REC_AT    4                       ; AT - TX,
+.equ ECO_REC_POS   8                       ; la posizione (float),
+.equ ECO_REC_ESITO 12                      ; l'esito di TRACKER,
+.equ ECO_REC_RE    16                      ; re[ECO_W] e
+.equ ECO_REC_IM    ECO_REC_RE + ECO_W * 4  ; im[ECO_W], float
+.equ ECO_REC       ECO_REC_IM + ECO_W * 4  ; 528 byte
+.equ ECO_APERTO    -1                      ; ECO_REC_N: in scrittura
+
 ; ECO_SCRATCH, ECO_STATO ed ECO_BARKER sono BYTE; `.space` conta PAROLE, e dal
 ; 22/10 legge i nomi (§3.96). Le riserve si scrivono con le _W: la divisione
 ; per 4 e' intera, quindi una dimensione non multipla di 4 ferma
@@ -157,3 +213,4 @@
 .equ ECO_SCRATCH_W  ECO_SCRATCH / 4     ; 65
 .equ ECO_STATO_W    ECO_STATO / 4       ; 4
 .equ ECO_BARKER_W   ECO_BARKER / 4      ; 130
+.equ ECO_REC_W      ECO_REC / 4         ; 132
