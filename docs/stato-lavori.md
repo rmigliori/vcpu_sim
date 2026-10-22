@@ -178,6 +178,14 @@
 > diceva ancora n−2. `test_msg` gira sulle due CPU, rosso con tre mutanti.
 > Costi: 7 e 31 cicli, gli slot non cambiano. `ctest` **110/110**.
 >
+> **Tutto pushato su GitHub e sulla Pi fino a `75373fc`** (22/10 sera,
+> verificato col fetch). Questo aggiornamento del §0 è un commit dopo.
+>
+> **Aperto, da chiedere per primo:** il 22/10, prima del lavoro, l'utente ha
+> detto «poi ho visto altri problemi» e poi «procedi con tutto», senza
+> dirli. Non sono stati guardati: chiederglieli prima della macchina a
+> stati, perché potrebbero toccare l'assembler o il lavoro di oggi.
+>
 > **Le attività sono tutte in `lib_eco`. Si riprende dalla MACCHINA A
 > STATI** (il punto 3 di §3.89).
 >
@@ -186,9 +194,9 @@
 > ```
 > Leggi docs/stato-lavori.md, §0 e poi §3.98, §3.89 (la forma, tutta),
 > §3.86 e §3.96 (i budget), §3.88 (il cpuometro e il task delle
-> statistiche), §3.74-§3.75 (il meccanismo). Riprendiamo dalla macchina a
-> stati: proponi prima la forma del codice, poi il percorso nominale con
-> un test visto rosso.
+> statistiche), §3.74-§3.75 (il meccanismo). Prima chiedimi gli "altri
+> problemi" che ho visto il 22/10. Poi la macchina a stati: proponi prima
+> la forma del codice, poi il percorso nominale con un test visto rosso.
 > ```
 >
 > ### Il 21/10 e la mattina del 22/10
