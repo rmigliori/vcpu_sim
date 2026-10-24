@@ -160,7 +160,32 @@
 >   sezioni vecchie e le formule di prima del 21/10 dicono `out/misure/`:
 >   sono storia, il sorgente adesso è `misure/`.
 
-> ### ▶ RIPRENDI DA QUI (23/10/2026 o dopo)
+> ### ▶ RIPRENDI DA QUI (dopo il 24/10/2026)
+>
+> **Il 24/10 (§3.99), la FORMA DEL CODICE della macchina a stati, PROPOSTA
+> e NON ancora approvata.** Sessione di sola lettura e proposta, nessun
+> codice. L'utente ha chiuso prima di rispondere: la prima cosa è
+> fargliela approvare (o correggere). In breve: un'applicazione nuova in
+> `altimetro/`; la time line come **tabelle per modo** (CAL, ACQ, ACQ5,
+> TRACK) di voci `{ancora, durata, procedura}` con tre ancore (T0,
+> FINESTRA, PREC); DECIDI restituisce la tabella del frame dopo; il giro
+> «arma CMP0 per la voce DOPO, chiama, wait». Tre punti detti all'utente
+> perché non tornano con lo scritto: `pending` arriva al massimo a 1 (il
+> «di quanto» è `CLOCK_CYCLES − istante`); ADC_AT armato con lo scarto del
+> TX di questo sweep, e alle attività l'AT−TX MISURATO; i registri del TX
+> non sono nell'HAL (`hal/tx.vinc` come primo commit, a sé).
+>
+> **LA FORMULA PER RIPRENDERE (dopo il 24/10):**
+>
+> ```
+> Leggi docs/stato-lavori.md, §0 e poi §3.99 (la proposta), e quanto
+> serve di §3.98, §3.89, §3.86/§3.96 (i budget), §3.88, §3.74-§3.75.
+> Rifammi in breve la proposta di §3.99 e aspetta che la approvi o la
+> corregga. Poi: hal/tx.vinc, poi il percorso nominale con un test
+> visto rosso.
+> ```
+>
+> ### Il 22/10 e il 23-24/10
 >
 > **Il 22/10 (§3.96), le tre decisioni PRESE e scritte.** Il budget:
 > BARKER_ACC **1.800**, BARKER_DEC **1.300**, ACQ **4.600 / 5.900**.
@@ -181,22 +206,21 @@
 > **Tutto pushato su GitHub e sulla Pi fino a `75373fc`** (22/10 sera,
 > verificato col fetch). Questo aggiornamento del §0 è un commit dopo.
 >
-> **Aperto, da chiedere per primo:** il 22/10, prima del lavoro, l'utente ha
-> detto «poi ho visto altri problemi» e poi «procedi con tutto», senza
-> dirli. Non sono stati guardati: chiederglieli prima della macchina a
-> stati, perché potrebbero toccare l'assembler o il lavoro di oggi.
+> **Chiuso il 24/10:** gli «altri problemi» del 22/10 non esistono —
+> l'utente aveva letto male un output. Niente da guardare.
 >
 > **Le attività sono tutte in `lib_eco`. Si riprende dalla MACCHINA A
 > STATI** (il punto 3 di §3.89).
 >
-> **LA FORMULA PER RIPRENDERE (23/10):**
+> **LA FORMULA PER RIPRENDERE (23/10), superata da quella del 24/10 qui
+> sopra:**
 >
 > ```
 > Leggi docs/stato-lavori.md, §0 e poi §3.98, §3.89 (la forma, tutta),
 > §3.86 e §3.96 (i budget), §3.88 (il cpuometro e il task delle
-> statistiche), §3.74-§3.75 (il meccanismo). Prima chiedimi gli "altri
-> problemi" che ho visto il 22/10. Poi la macchina a stati: proponi prima
-> la forma del codice, poi il percorso nominale con un test visto rosso.
+> statistiche), §3.74-§3.75 (il meccanismo). Poi la macchina a stati:
+> proponi prima la forma del codice, poi il percorso nominale con un test
+> visto rosso.
 > ```
 >
 > ### Il 21/10 e la mattina del 22/10
@@ -4107,6 +4131,100 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.99 LA FORMA DEL CODICE DELLA MACCHINA A STATI, proposta (24/10/2026)
+
+**Sessione di sola lettura e proposta, nessun codice. NON approvata**:
+l'utente ha chiuso prima di rispondere. In apertura ha chiuso una voce di
+§0: gli «altri problemi» del 22/10 non esistono, aveva letto male un
+output.
+
+#### La proposta
+
+**Dove sta.** È un'applicazione, non una libreria: usa `lib_eco` e
+`lib_fft` (dsp) e `wait` e il kernel (rtos), e `dsp/` non può dipendere da
+`rtos/`. Una cartella nuova in cima, `altimetro/` (`src/`, `test/`). Il
+motore degli slot da solo sembrerebbe un servizio del kernel (la schedule
+table di OSEK), ma ha un'ancora di dominio, la finestra: resta
+nell'applicazione finché non ha un secondo cliente.
+
+**La time line è una tabella per modo**, voci `{ancora, durata,
+procedura}`. Le ancore sono la regola di §3.89 («tutto calcolato da t0»)
+scritta come dato:
+
+```
+T0        t0_k = T0 + k·PRI                  il TX
+FINESTRA  AT + ECO_W                         FRONTE, a fine blocco
+PREC      istante della voce prima + durata  tutto il resto
+
+CAL    TX 400 · FRONTE 1500 · TRACKER 500 · DECIDI 400                        2.800
+ACQ    ... · BARKER_ACC 1800 · DECIDI                                         4.600
+ACQ5   ... · BARKER_ACC · BARKER_DEC 1300 · DECIDI                            5.900
+TRACK  ... · FFT 10000 (con eco_apri) · MSG 400 · DECIDI                     13.200
+```
+
+I totali tornano con §3.86 e §3.96. **ACQ5** è ACQ al quinto sweep: il «solo
+al 5°» non diventa un `if` in uno slot. **DECIDI restituisce la tabella del
+frame dopo**: decidere e applicare coincidono al confine (§3.74). Le ancore
+sono un campo a sé e non una durata 0 con un significato nascosto (§3.60).
+
+**Il giro del super task, per ogni voce:** arma CMP0 all'istante della voce
+DOPO, chiama la procedura, `wait`. Armare prima di lavorare è ciò che fa
+raggiungere dalla trap un'attività che sfora (`current == tcb`, la trap torna
+dentro di lei) e fa trovare `pending = 1` alla `wait` dopo. Lo stato è tutto
+in memoria (attraverso la `wait` non si conserva niente); le procedure della
+tabella sono ADATTATORI: leggono lo stato, chiamano l'attività di `lib_eco`,
+scrivono l'esito nelle caselle. Il resto è il meccanismo di `test_banco`: via
+veloce (`irq_arm_banco CAUSE_CMP0`), `.interrupt` che disarma e segnala, il
+cane da guardia su CMP1. CMP_CTRL scritto con una costante come in
+`test_banco`; il vincolo di `clock.vinc` sul read-modify-write (§3.75, aperto)
+diventa vero quando CMP1 avrà un altro utente.
+
+**DECIDI intero subito**, coi criteri di §3.82 (CAL: residui degli sweep 3..5
+sotto 1 gate e nessun clutter; ACQ: BARKER_DEC trovato e il suo fronte entro
+±1 gate dalla posizione del tracker, nelle coordinate del blocco; TRACK: 2
+fallimenti di fila), perché il nominale ha bisogno dei criteri. I rami di
+fallimento si vedono rossi solo al punto 4, con la scena vera: dichiararlo.
+Il Barker: segno del codice negli sweep di ACQ, + negli altri.
+
+#### Tre cose dette all'utente, che non tornano con lo scritto
+
+1. **La scala 0 / 1 / ≥2 di §3.74 non si vede.** CMP0 è un colpo singolo e
+   l'ISR lo disarma: `pending` arriva al massimo a 1. Uno sforamento lungo è
+   una FILA di 1 su `wait` consecutive (lo slot dopo arma un istante già
+   passato e scatta subito). Il «di quanto» è `CLOCK_CYCLES − istante` al
+   ritorno dalla `wait`, nella casella.
+2. **ADC_AT e il jitter del TX.** Il TRACKER dello sweep k arma la finestra di
+   k+1, ma il TX di k+1 non è ancora avvenuto, e parte a t0 + la sveglia
+   (180-183, qualche ciclo di jitter). Proposta: AT = t0ₖ₊₁ + lo scarto del TX
+   visto in QUESTO sweep + (AT−TX) predetto; alle attività sempre l'AT−TX
+   MISURATO (AT armato meno TX letto). Il jitter sposta la finestra di 1-2
+   gate e non entra nella misura (§3.86).
+3. **Il TX non è nell'HAL.** `TX_LEN/CTRL/STATUS` sono a mano in `test_tx`,
+   `test_eco`, `test_adc_at`, `test_fronte` (e `m_attivita`); l'applicazione
+   sarebbe il quinto. **`hal/tx.vinc` come primo commit, a sé**, con i `.vx`
+   identici byte per byte.
+
+#### Il test nominale, e i rossi
+
+Due CPU come `test_msg` (la CPU1 riceve gli sweep di TRACK e verifica il
+seqlock); la scena di §3.82 senza clutter né perdite; 5 CAL + 5 ACQ + 5 TRACK,
+~1,5 M cicli per CPU, senza traccia. `EXPECT` tutto derivabile: la sequenza
+dei modi; sforamenti, blocchi non finiti a FRONTE, overrun della mailbox, a 0;
+gli n ricevuti dalla CPU1; il fronte dell'ultimo sweep entro ½ gate dal τ
+calcolato DAL TEST, non da `mare.py`. DECIDI misurato contro i suoi 400.
+
+Mutanti, con l'uscita prevista prima: FRONTE ancorato a PREC (blocco non
+finito, errore registrato); il segno del Barker ignorato (ACQ non passa, mai
+TRACK); ADC_AT contato da t0 invece che dal TX (eco perso); CMP0 armato DOPO
+l'attività (si vede solo con uno sforamento provocato, come il passo 2 di
+`test_banco`).
+
+**Il task delle statistiche (§3.88)** subito dopo il nominale, come passo a
+sé: DECIDI gli fa una send, il cpuometro misura il respiro dopo di lui. Prima
+serve la time line che gira.
 
 ---
 
