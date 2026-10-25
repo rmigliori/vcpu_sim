@@ -160,25 +160,29 @@
 >   sezioni vecchie e le formule di prima del 21/10 dicono `out/misure/`:
 >   sono storia, il sorgente adesso è `misure/`.
 
-> ### ▶ RIPRENDI DA QUI (dopo il 25/10/2026)
+> ### ▶ RIPRENDI DA QUI (dopo il 25/10/2026, sera)
 >
-> **Il 25/10 (§3.100): la proposta di §3.99 APPROVATA, `hal/tx.vinc` FATTO,
-> e TX_AT FATTO** (`e07cac0`): il TX a un istante programmato, deciso
-> dall'utente dopo che il primo sweep e lo scarto della sveglia hanno mostrato
-> un buco nella proposta. `ctest` 111/111, tracce identiche a `HEAD`. **La
-> forma di §3.99 cambia in tre punti** (in fondo a §3.100): niente slot TX, il
-> TRACKER arma ADC_AT, DECIDI arma TX_AT col segno del modo deciso.
+> **Il 25/10: la proposta di §3.99 APPROVATA; `hal/tx.vinc` e TX_AT FATTI
+> (§3.100); IL PERCORSO NOMINALE FATTO (§3.101)** in `altimetro/`: 15 frame
+> su due CPU, la sequenza 111112222233333, nessun ritardo, gli sweep di TRACK
+> ricevuti buoni dalla CPU 1, il fronte dell'ultimo entro mezzo gate dal tau
+> contato a mano. Cinque mutanti previsti prima. **Le durate degli slot
+> rifatte** col lavoro misurato, giro compreso: con quelle di §3.86 il TRACKER
+> aveva una ventina di cicli di margine. `ctest` 112/112.
 >
-> **Il prossimo passo è il percorso nominale** in `altimetro/`, con il test
-> visto rosso (§3.99, «Il test nominale, e i rossi»).
+> **Niente pushato** dopo `75373fc`: i commit del 25/10 aspettano l'utente.
 >
-> **LA FORMULA PER RIPRENDERE (25/10):**
+> **Il prossimo passo** (§3.99): il **task delle statistiche** (§3.88), a sé:
+> DECIDI gli fa una send, il cpuometro misura il respiro dopo di lui. Poi il
+> punto 4: la scena vera e i rami di fallimento, dove si vedono il segno del
+> Barker e l'ordine dell'armamento (§3.101, «Aperti»).
+>
+> **LA FORMULA PER RIPRENDERE (25/10, sera):**
 >
 > ```
-> Leggi docs/stato-lavori.md, §0 e poi §3.100 e §3.99 (la forma, con le
-> correzioni di §3.100), e quanto serve di §3.98, §3.89, §3.86/§3.96 (i
-> budget), §3.88, §3.74-§3.75. Poi il percorso nominale in altimetro/, con
-> un test visto rosso.
+> Leggi docs/stato-lavori.md, §0 e poi §3.101, §3.100 e §3.99, e quanto
+> serve di §3.88 (il cpuometro e il task delle statistiche) e §3.74-§3.75.
+> Poi il task delle statistiche: proponi prima la forma.
 > ```
 
 > ### Il 24/10 (superato dal 25/10 qui sopra)
@@ -4152,6 +4156,112 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.101 IL PERCORSO NOMINALE della macchina a stati: `altimetro/` (25/10/2026)
+
+La forma di §3.99 con le correzioni di §3.100, scritta, verde e vista rossa.
+
+```
+altimetro/interface/altimetro/altimetro.vinc   la configurazione (ALT_PRI,
+                     ALT_T0 = 20000, ALT_APRIORI = 59999, la guardia a 5 ms),
+                     i modi (CAL 1, ACQ 2, TRACK 3), le ancore, i simboli
+altimetro/src/altimetro.vasm   lib_altimetro: l'avvio (`j altimetro_parti`,
+                     non torna), il giro, le tabelle, gli adattatori, DECIDI,
+                     l'ISR. Nelle tabelle un INDICE di procedura e una tabella
+                     di `j`: `.word` non prende etichette
+altimetro/src/altimetro_shared.vasm   alt_record e alt_blocco in RAM condivisa,
+                     da linkare in tutte le immagini
+altimetro/test/      test_altimetro0/1 (due CPU), nominale.scena (= quella
+                     di misure/), test_altimetro_shared (il flag `fine`)
+```
+
+**Scelte emerse scrivendo, e dette qui:** il giro tiene il PUNTATORE alla voce
+(con l'indice e la `mul` costava ~17 cicli in più a voce); la prima voce di
+ogni tabella è ancorata alla finestra, ed è un invariante (il giro arma la
+prima voce del frame dopo prima che DECIDI scelga la tabella); CAL passa se
+**tutti e 5** gli sweep sono nominali e i residui 3..5 sotto 1 gate (una
+perdita nei primi due lascerebbe un residuo «0» che non è una misura); il cane
+da guardia lo **riarma DECIDI** a ogni frame, e se scatta la macchina si ferma
+con `99999` (un reset vero non c'è); l'idle del test è il **testimone**: a ogni
+`alt_k` che cresce aggiunge una cifra, il modo del frame.
+
+**Il test** (`test_altimetro`, 15 frame, ~1,49 M cicli per CPU, 0,06 s):
+
+```
+cpu0  111112222233333 0 0 0 0   i modi; ritardi; blocchi non finiti;
+                                armamenti in ritardo; parole perse
+cpu1  5 0 14 1                  record buoni (10..14); altri; l'ultimo n; il
+                                fronte dello sweep 14 entro 1/2 gate da tau =
+                                60.045,1647, contato a mano dal modello
+```
+
+Verde al primo colpo. Dentro, con una copia strumentata: il fronte del frame 0
+a 60.041,7 dal TX (tau 60.041,66); i residui di CAL −0,39 −0,06 −0,19; il
+fronte della somma Barker a 0,47 gate dal tracker (il ritardo di ~½ gate
+stimato in §3.95); la x finale 60.045,2.
+
+#### I budget di §3.86 non bastavano, e il verde lo nascondeva
+
+Una sonda di ~20 cicli nel TRACKER lo faceva sforare: la voce dopo partiva
+**1.800 cicli** in ritardo, perché la trap raggiunge il super task coi vettori
+sporchi e prende la via canonica (§3.86: ~1.820 di contesto). I 327 di
+meccanismo erano stati misurati con un giro che non faceva niente; il giro
+vero, con l'adattatore, costa ~150 cicli a voce. **Il lavoro misurato qui**,
+dal ritorno della `wait` alla `wait` dopo (durate raddoppiate nella copia,
+così niente sfora; la sonda stessa ~35 cicli, dentro), e la regola accettata:
+
+```
+voce         lavoro   durata   prima (§3.86/§3.96/§3.98)
+FRONTE        1071     1700     1500
+TRACKER        304      800      500   <- ~20 cicli di margine
+BARKER_ACC    1246     1900     1800
+BARKER_DEC     910     1500     1300
+FFT           7811    10100    10000
+MSG            183      600      400
+DECIDI         363      800      400   misurato per la prima volta
+attivazione   <= 192            (180-183 in m_banco)
+
+CAL 3.300   ACQ 5.200   ACQ5 6.700   TRACK 14.000 (la catena finisce verso
+t0 + 74.000, il TX dopo e' a t0 + 100.000)
+```
+
+**Il lavoro adesso comprende il giro**: è un cambio di cosa vuol dire
+«lavoro» rispetto a §3.86, dove era la sola attività.
+
+#### Rossi: cinque mutanti, previsti prima (nel sorgente di test_altimetro1)
+
+```
+M1 FRONTE ancorato a PREC     111111111111111 0 14 0 0 | 0 0 -1 0   previsto
+M2 segno del Barker ignorato  VERDE, previsto: §3.99 lo dava rosso e sbagliava
+                              -- 3 echi invece di 5, e il picco sta ~1.250
+                              volte sopra il rumore. Serve una scena povera
+M3 ADC_AT senza + ALT_PRI     previsto "0 14 15 0": SBAGLIATO. Uscito
+                              "11111111111111 3 1 1 0": at_dopo e' anche
+                              l'ancora del FRONTE dopo, e la time line si
+                              assesta UN FRAME INDIETRO, coerente con se stessa
+M4 CMP0 armato dopo           VERDE, previsto: vuole uno sforamento provocato
+M5 ACQ5 mai scelta            111112222211111 0 0 0 0 | 0 0 -1 0    previsto
+```
+
+Prima delle durate nuove M4 era uscito rosso (19 ritardi) per le sue quattro
+istruzioni in più nel TRACKER, non per l'ordine; e M1 non stampava niente:
+un livelock dedotto, non visto in traccia -- le voci incatenate sforavano
+tutte e DECIDI riarmava lo stesso il cane da guardia.
+
+#### Aperti, e detti
+
+- **Il cane riarmato da DECIDI non vede una time line che gira a vuoto**
+  (M1 con le durate vecchie): vede solo una time line ferma.
+- **Il testimone può perdere un frame** se due frame vanno di fila senza idle
+  in mezzo (M3): la sequenza ha una cifra in meno, che è già un segnale.
+- **Il caso 3 di §3.100** (la DMA che riscrive il blocco mentre la FFT lo
+  legge) non è strumentato: chi legge il blocco non rilegge il contatore.
+- **Il segno del Barker e l'ordine dell'armamento** si vedono solo coi rami di
+  fallimento e una scena con poco margine: il punto 4.
+
+Commit `2bf2e2a`. `ctest` **112/112**. Nessun cambiamento al simulatore.
 
 ---
 
