@@ -162,12 +162,12 @@
 
 > ### ▶ RIPRENDI DA QUI (dopo il 25/10/2026)
 >
-> **Il 25/10 la proposta di §3.99 è APPROVATA così com'è**, senza
-> correzioni. **`hal/tx.vinc` è FATTO** (`9118d1a`, a sé): i registri del TX
-> nell'HAL; lo usano `test_fronte` e `m_attivita`, mentre `test_tx`,
-> `test_eco` e `test_adc_at` restano a file singolo e se li ricopiano, come
-> `test_adc`. I 37 `.vx` di `out/vasm` e `m_attivita.vx` identici byte per
-> byte, l'uscita di `m_attivita` identica, `ctest` 110/110.
+> **Il 25/10 (§3.100): la proposta di §3.99 APPROVATA, `hal/tx.vinc` FATTO,
+> e TX_AT FATTO** (`e07cac0`): il TX a un istante programmato, deciso
+> dall'utente dopo che il primo sweep e lo scarto della sveglia hanno mostrato
+> un buco nella proposta. `ctest` 111/111, tracce identiche a `HEAD`. **La
+> forma di §3.99 cambia in tre punti** (in fondo a §3.100): niente slot TX, il
+> TRACKER arma ADC_AT, DECIDI arma TX_AT col segno del modo deciso.
 >
 > **Il prossimo passo è il percorso nominale** in `altimetro/`, con il test
 > visto rosso (§3.99, «Il test nominale, e i rossi»).
@@ -175,10 +175,10 @@
 > **LA FORMULA PER RIPRENDERE (25/10):**
 >
 > ```
-> Leggi docs/stato-lavori.md, §0 e poi §3.99 (la proposta, APPROVATA), e
-> quanto serve di §3.98, §3.89, §3.86/§3.96 (i budget), §3.88,
-> §3.74-§3.75. Poi il percorso nominale in altimetro/, con un test visto
-> rosso.
+> Leggi docs/stato-lavori.md, §0 e poi §3.100 e §3.99 (la forma, con le
+> correzioni di §3.100), e quanto serve di §3.98, §3.89, §3.86/§3.96 (i
+> budget), §3.88, §3.74-§3.75. Poi il percorso nominale in altimetro/, con
+> un test visto rosso.
 > ```
 
 > ### Il 24/10 (superato dal 25/10 qui sopra)
@@ -4152,6 +4152,103 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.100 TX_AT: il TX a un istante programmato, e perché (25/10/2026)
+
+**La proposta di §3.99 APPROVATA** senza correzioni, e **`hal/tx.vinc`
+fatto** (`9118d1a`): i registri del TX nell'HAL, usati da `test_fronte` e
+`m_attivita`; `test_tx`, `test_eco`, `test_adc_at` restano a file singolo e se
+li ricopiano, come `test_adc`. I 37 `.vx` e `m_attivita` identici.
+
+#### Il buco trovato prima del codice: il primo sweep, e lo scarto che cresce
+
+§3.99 diceva: il TRACKER dello sweep k arma ADC_AT per k+1 a t0ₖ₊₁ + lo scarto
+del TX visto in k + l'AT−TX predetto. **Il primo sweep non ha uno scarto**, e lo
+scarto è la sveglia del super task, 180-183 cicli: con 0 la finestra cade 183
+gate prima, su 64. Servirebbe un nominale, un numero magico che si muove a ogni
+modifica del kernel.
+
+**Una proposta mia, RITIRATA:** far armare ADC_AT al TX, per il proprio sweep
+(AT = TX + predetto). L'utente ha chiesto «come si propaga l'informazione da
+tracker a tx?»: una casella in memoria, letta in fila dallo stesso super task.
+Ma seguendola la proposta cadeva: il giro arma CMP0 per la voce DOPO *prima* di
+chiamare la procedura, e la voce dopo il TX è FRONTE, ancorata ad AT + 64, che
+il TX calcolerebbe solo dopo.
+
+**E un problema più grosso, della versione approvata:** lo scarto vale 180-183
+solo con l'idle vuoto. Col banco 0 carico (il task delle statistiche, le
+sezioni del kernel a interrupt chiusi, un'ISR) la sveglia può ritardare molto di
+più (§3.71 misurava 406 cicli di interrupt disable time, in un'altra
+configurazione: qui non misurato), e armare k+1 con lo scarto di k sposterebbe
+la finestra di centinaia di gate. «Il jitter sposta la finestra di 1-2 gate» di
+§3.99 vale solo con l'idle vuoto.
+
+**DECISO dall'utente: TX_AT**, la scelta hardware come per ADC_AT («l'hw è più
+preciso del sw»). La sua domanda prima di decidere: *se quando scatta il TX la
+macchina a stati sta ancora girando?* Il TX parte lo stesso: l'hardware non
+aspetta il software, ed è il punto. Tre casi, detti all'utente:
+
+```
+sfora oltre il TX, il TRACKER       istanti armati: TX e finestra giusti. Il
+  ha gia' girato                    software e' in ritardo, la misura no; la
+                                    time line lo vede (pending, CLOCK - istante)
+sfora PRIMA del TRACKER (~38.000    l'armamento arriva tardi: NON parte, alza
+  cicli di FRONTE)                  TX_AT_LATE. Sweep senza TX: FRONTE non trova
+                                    e il tracker va per inerzia. Regola di
+                                    ADC_AT, accettata («Si»)
+sfora fino alla finestra dopo       la DMA riscrive il blocco mentre la FFT lo
+  (~87.000 cicli)                   legge: l'unico caso in cui l'hardware
+                                    CORROMPE invece di segnalare. Remoto; da
+                                    rendere visibile rileggendo il contatore dei
+                                    blocchi alla fine di chi legge il blocco
+```
+
+#### La forma, approvata («Si»), e scritta
+
+```
+TX_AT  0x74   l'istante ASSOLUTO, base CLOCK_CYCLES: il TX parte li', esatto
+              al tick. TX_LEN e il SEGNO si congelano all'armamento; il secondo
+              armamento sostituisce il primo; passato -> non parte, TX_AT_LATE;
+              all'istante col TX acceso -> TX_OVERRUN. Lettura: bit 0 armato,
+              bit 1 ritardo, abbassato leggendo
+il segno      una CONFIGURAZIONE come TX_LEN: ogni scrittura di TX_CTRL registra
+              TX_NEG, TX_START in piu' trasmette subito (prima una scrittura
+              senza TX_START non faceva niente, e nessuno la usava)
+la scheda     il TX armato scatta a ogni confine d'istruzione PRIMA dell'ADC, e
+              prima di ogni accesso al ferro: una lettura di TX_STATUS lo trova
+              acceso, un TX_START nella stessa istruzione arriva dopo di lui
+```
+
+`devices.h/.c`, `machine.c`, `hal/tx.vinc`, `manual.md`. **`test_tx_at`**, a
+file singolo con `eco_piatto.scena`: tre giri (in anticipo col segno negativo,
+all'ultimo con segno e durata cambiati dopo, riarmato con l'istante dentro una
+`div`) danno tutti 60042; poi ritardo, nessun TX, TX acceso. Verde al primo
+colpo. **Rosso con sei mutanti**, uscite previste prima e annotate nel
+sorgente: confine invece dell'istante (giro 3 a 60059; i giri 1 e 2 verdi per
+fase, previsto), all'armamento (previsto il giro 2 fra 60002 e 60008: 60008),
+segno, ritardo, overrun, durata non congelati.
+
+| cosa | risultato |
+|---|---|
+| `ctest --timeout 60` | **111/111** (110 + `tx_at`) |
+| `tools/equiv.py` contro `HEAD` | **83 programmi su 84 con tracce identiche**; diverso solo `tx_at`, che `HEAD` non sa eseguire |
+| i 37 `.vx` | identici byte per byte |
+
+Commit `e07cac0`.
+
+#### Cosa cambia nella forma di §3.99
+
+- **Lo slot TX sparisce dalle tabelle**, come lo slot RX con ADC_AT. Le ancore
+  restano due: FINESTRA (FRONTE) e PREC. La prima voce di ogni tabella è
+  FRONTE, e il suo istante è noto perché ADC_AT è stato armato nel frame prima.
+- **Chi arma.** Il TRACKER arma ADC_AT = t0ₖ₊₁ + l'AT−TX predetto. Il **segno**
+  del TX dopo dipende dal modo del frame dopo, che decide DECIDI, che viene
+  DOPO il TRACKER: quindi **TX_AT lo arma DECIDI**, col segno del modo deciso
+  (decidere e applicare al confine, §3.74). L'avvio arma i due istanti del
+  frame 0 con l'AT−TX a priori: il primo sweep non è più un caso speciale.
+- **L'AT−TX è esatto per costruzione**: niente scarto da misurare.
 
 ---
 
