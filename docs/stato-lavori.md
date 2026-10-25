@@ -160,7 +160,28 @@
 >   sezioni vecchie e le formule di prima del 21/10 dicono `out/misure/`:
 >   sono storia, il sorgente adesso è `misure/`.
 
-> ### ▶ RIPRENDI DA QUI (dopo il 24/10/2026)
+> ### ▶ RIPRENDI DA QUI (dopo il 25/10/2026)
+>
+> **Il 25/10 la proposta di §3.99 è APPROVATA così com'è**, senza
+> correzioni. **`hal/tx.vinc` è FATTO** (`9118d1a`, a sé): i registri del TX
+> nell'HAL; lo usano `test_fronte` e `m_attivita`, mentre `test_tx`,
+> `test_eco` e `test_adc_at` restano a file singolo e se li ricopiano, come
+> `test_adc`. I 37 `.vx` di `out/vasm` e `m_attivita.vx` identici byte per
+> byte, l'uscita di `m_attivita` identica, `ctest` 110/110.
+>
+> **Il prossimo passo è il percorso nominale** in `altimetro/`, con il test
+> visto rosso (§3.99, «Il test nominale, e i rossi»).
+>
+> **LA FORMULA PER RIPRENDERE (25/10):**
+>
+> ```
+> Leggi docs/stato-lavori.md, §0 e poi §3.99 (la proposta, APPROVATA), e
+> quanto serve di §3.98, §3.89, §3.86/§3.96 (i budget), §3.88,
+> §3.74-§3.75. Poi il percorso nominale in altimetro/, con un test visto
+> rosso.
+> ```
+
+> ### Il 24/10 (superato dal 25/10 qui sopra)
 >
 > **Il 24/10 (§3.99), la FORMA DEL CODICE della macchina a stati, PROPOSTA
 > e NON ancora approvata.** Sessione di sola lettura e proposta, nessun
@@ -4136,8 +4157,8 @@ il contratto scritto.
 
 ### 3.99 LA FORMA DEL CODICE DELLA MACCHINA A STATI, proposta (24/10/2026)
 
-**Sessione di sola lettura e proposta, nessun codice. NON approvata**:
-l'utente ha chiuso prima di rispondere. In apertura ha chiuso una voce di
+**Sessione di sola lettura e proposta, nessun codice. APPROVATA il
+25/10** senza correzioni (l'utente aveva chiuso prima di rispondere). In apertura ha chiuso una voce di
 §0: gli «altri problemi» del 22/10 non esistono, aveva letto male un
 output.
 
