@@ -16,8 +16,9 @@
 ; hal.vinc): lo stato e' tutto in memoria, e il giro lo rilegge ogni volta.
 ;
 ; --- LE PROCEDURE SONO ADATTATORI ---
-; Leggono lo stato, chiamano l'attivita' di lib_eco o la FFT, scrivono
-; l'esito nelle caselle. Nelle tabelle c'e' un INDICE, non un indirizzo:
+; Leggono lo stato, chiamano l'attivita' di lib_eco, scrivono l'esito nelle
+; caselle. La FFT non c'e' (25/10): e' del prodotto, non dell'inseguimento, e
+; la fa la CPU 1 leggendo lo stesso blocco nel ping-pong dell'ADC (ADC_BUF). Nelle tabelle c'e' un INDICE, non un indirizzo:
 ; `.word` non prende etichette, e il salto passa da una tabella di `j`.
 ;
 ; --- CHI ARMA IL FERRO (§3.100) ---
@@ -38,7 +39,6 @@
 .include "hal/adc.vinc"
 .include "hal/tx.vinc"
 .include "eco/eco.vinc"
-.include "fft/fft.vinc"
 .include "altimetro/altimetro.vinc"
 
 .struct VOCE
@@ -52,9 +52,8 @@
 .equ P_TRACKER     2
 .equ P_BARKER_ACC  3
 .equ P_BARKER_DEC  4
-.equ P_FFT         5
-.equ P_MSG         6
-.equ P_DECIDI      7
+.equ P_MSG         5
+.equ P_DECIDI      6
 
 ; Le durate: la regola di §3.86, 327 di meccanismo + il lavoro x 1,25,
 ; arrotondato per eccesso alle centinaia. IL LAVORO E' MISURATO QUI (25/10),
@@ -68,8 +67,7 @@
 .equ D_TRACKER     800         ;  304      500
 .equ D_BARKER_ACC  1900        ; 1246     1800
 .equ D_BARKER_DEC  1500        ;  910     1300
-.equ D_FFT         10100       ; 7811    10000
-.equ D_MSG         600         ;  183      400
+.equ D_MSG         600         ;  203      400   eco_apri, il blocco, msg
 .equ D_DECIDI      800         ;  363      400   l'ultima voce: la sua durata
                                ;                 non arma niente, la voce dopo
                                ;                 e' alla finestra del frame dopo
@@ -103,7 +101,6 @@ tab_acq5:  .word ALT_FINESTRA, D_FRONTE,     P_FRONTE
            .word 0, 0, P_FINE
 tab_track: .word ALT_FINESTRA, D_FRONTE,     P_FRONTE
            .word ALT_PREC,     D_TRACKER,    P_TRACKER
-           .word ALT_PREC,     D_FFT,        P_FFT
            .word ALT_PREC,     D_MSG,        P_MSG
            .word ALT_PREC,     D_DECIDI,     P_DECIDI
            .word 0, 0, P_FINE
@@ -124,7 +121,6 @@ st_attx_dopo: .word 0            ; DECIDI (tabella e segno) e il TRACKER
 st_at_dopo:   .word 0            ; (la finestra)
 st_segno_dopo: .word 0
 st_visti:     .word 0            ; i blocchi dell'ADC visti da FRONTE
-st_record:    .word 0            ; il record di MSG di questo sweep
 
 ; --- la macchina a stati ---
 st_modo:      .word 0
@@ -171,7 +167,6 @@ stack_top:                       ; byte, quando una trap lo raggiunge sforando
   .global alt_ritardi
   .global alt_overrun
   .extern alt_record
-  .extern alt_blocco
   .extern current
   .extern wait_init
   .extern wait
@@ -184,7 +179,6 @@ stack_top:                       ; byte, quando una trap lo raggiunge sforando
   .extern barker_dec
   .extern eco_apri
   .extern msg
-  .extern fft64
 
 ; ==========================================================================
 ;  L'AVVIO: il ferro, lo stato, il frame 0. A IE = 0, dal boot.
@@ -200,7 +194,7 @@ altimetro_parti:
   li r2, ALT_TX_LEN
   sw r2, 0(r1)
   li r1, ADC_ADDR
-  li r2, alt_blocco
+  li r2, ADC_BUF                 ; il ping-pong: chi legge vede il blocco intero
   sw r2, 0(r1)
   li r1, ADC_COUNT
   li r2, ECO_W
@@ -213,7 +207,7 @@ altimetro_parti:
   li r1, alt_record
   call eco_apri
   li r1, alt_record
-  addi r1, r1, ECO_REC
+  addi r1, r1, ECO_REC_TESTA     ; solo la testa: lo spettro non viaggia
   call eco_apri
 
   ; --- lo stato: CAL, la finestra a priori ---
@@ -400,7 +394,6 @@ salti:
   j p_tracker
   j p_barker_acc
   j p_barker_dec
-  j p_fft
   j p_msg
   j p_decidi
 
@@ -421,7 +414,7 @@ p_fronte:
   lw r4, 0(r3)
   beq r2, r4, fr_non_finito
   sw r2, 0(r3)
-  li r1, alt_blocco
+  li r1, ADC_BUF
   li r2, scratch
   call fronte
   j fr_fine
@@ -474,7 +467,7 @@ p_tracker:
 p_barker_acc:
   addi r14, r14, -4
   sw r15, 0(r14)
-  li r1, alt_blocco
+  li r1, ADC_BUF
   li r2, st_segno
   lw r2, 0(r2)
   li r3, st_attx
@@ -500,37 +493,29 @@ p_barker_dec:
   addi r14, r14, 4
   ret
 
-; La FFT nel record di questo sweep: eco_apri PRIMA (il seqlock, eco.vinc).
-p_fft:
-  addi r14, r14, -4
-  sw r15, 0(r14)
-  li r2, alt_k                   ; il record: base + (n & 1) * ECO_REC
-  lw r2, 0(r2)
-  li r3, 1
-  and r2, r2, r3
-  li r3, ECO_REC
-  mul r2, r2, r3
-  li r1, alt_record
-  add r1, r1, r2
-  li r2, st_record
-  sw r1, 0(r2)
-  call eco_apri
-  li r1, st_record
-  lw r1, 0(r1)
-  addi r2, r1, ECO_REC_RE
-  addi r3, r1, ECO_REC_IM
-  li r1, alt_blocco
-  call fft64
-  lw r15, 0(r14)
-  addi r14, r14, 4
-  ret
-
-; MSG: la testa, n, e la parola all'altra CPU. n e' il numero del frame.
+; MSG: la testa all'altra CPU, n e' il numero del frame. Il record e' uno
+; dei due, alternati per parita'; eco_apri, poi il blocco dell'ADC (il
+; contatore che FRONTE ha visto: con quello l'altra CPU sa se il banco
+; davanti di ADC_BUF e' ancora questo), poi msg, che scrive n per ultimo.
 p_msg:
   addi r14, r14, -4
   sw r15, 0(r14)
-  li r1, st_record
-  lw r1, 0(r1)
+  li r2, alt_k                   ; il record: base + (n & 1) * ECO_REC_TESTA
+  lw r2, 0(r2)
+  li r3, 1
+  and r2, r2, r3
+  li r3, ECO_REC_TESTA
+  mul r2, r2, r3
+  li r1, alt_record
+  add r1, r1, r2
+  addi r14, r14, -4
+  sw r1, 0(r14)
+  call eco_apri
+  lw r1, 0(r14)
+  addi r14, r14, 4
+  li r2, st_visti
+  lw r2, 0(r2)
+  sw r2, ECO_REC_BLOCCO(r1)
   li r2, alt_k
   lw r2, 0(r2)
   li r3, st_attx

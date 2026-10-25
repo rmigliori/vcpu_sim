@@ -1,12 +1,29 @@
-; altimetro/test/test_altimetro1.vasm — IL PERCORSO NOMINALE: la CPU 1, chi
-; riceve gli sweep di TRACK (25/10/2026). Il compagno di test_altimetro0.vasm.
+; altimetro/test/test_altimetro1.vasm — IL PERCORSO NOMINALE: la CPU 1, il
+; PRODOTTO (25/10/2026). Il compagno di test_altimetro0.vasm.
 ;
-; --- COSA FA ---
-; In polling, niente interrupt: riceve n dalla mailbox, ricava il record
-; dalla parita' e lo legge col protocollo di eco.vinc -- ECO_REC_N prima e
-; dopo, e in mezzo tutto il record, spettro compreso. Un record e' BUONO se
-; e' intatto e il suo esito e' ECO_NOMINALE. Quando la CPU 0 alza `fine`, e
-; la mailbox e' vuota, stampa.
+; --- COSA FA, per ogni sweep di TRACK ---
+; In polling, niente interrupt. Riceve n dalla mailbox, ricava la testa dalla
+; parita' (passo ECO_REC_TESTA) e la legge col seqlock di eco.vinc: ECO_REC_N
+; prima e dopo. Una testa e' BUONA se e' intatta e il suo esito e'
+; ECO_NOMINALE. Poi la FFT, sullo STESSO blocco che FRONTE ha visto: lo legge
+; nel ping-pong dell'ADC, ADC_BUF, e il contatore dei blocchi dev'essere
+; ECO_REC_BLOCCO prima e dopo la FFT. Se no il banco davanti e' gia' un altro:
+; SUPERATO, e la FFT si butta. Quando la CPU 0 alza `fine`, e la mailbox e'
+; vuota, stampa.
+;
+; --- LO SWEEP 12, LETTO TARDI APPOSTA ---
+; Come la CPU 1 lenta di test_msg: prima della FFT dello sweep 12 aspetta che
+; il contatore dei blocchi sia andato avanti, cioe' che il blocco 13 sia
+; finito e i banchi si siano scambiati. Senza contare i cicli: il controllo
+; del contatore DEVE dire superato. E' l'unico modo di vederlo nel nominale.
+;
+; --- LO SPETTRO, contato a mano ---
+; Nel modello I + iQ = a(t) e^(i fase), con fase 0,785 rad e il segno + in
+; TRACK: la DC, X[0] = e^(i fase) * somma di a, sta a 45 gradi. re[0] > 0 e
+; |re[0] - im[0]| < re[0] / 20. Il margine: somma di a ~33.000 (il plateau da
+; ~31 gate), quindi re[0] ~23.000; cos e sin di 0,785 differiscono di 0,0006
+; (14 su 23.000), e il rumore, sigma 20 a campione, ne fa ~160 su re[0] e su
+; im[0]: la soglia, ~1.150, e' a 5 sigma della differenza.
 ;
 ; --- IL FRONTE DELL'ULTIMO SWEEP, contato a mano e non da mare.py ---
 ; Il TX del frame k parte a t_k = ALT_T0 + k ALT_PRI, esatto (TX_AT). Il
@@ -18,39 +35,46 @@
 ; gate. FRONTE stima la meta' del PICCO, e il rumore lo gonfia: su 30 semi
 ; test_fronte misurava il fronte +0,09 gate in media, sigma 0,12.
 ;
-; --- I QUATTRO NUMERI DELLA CPU 1 ---
-;   5    i record buoni: gli sweep 10..14, i cinque di TRACK
-;   0    gli altri: persi, riscritti mentre si leggevano, o non nominali
+; --- I SEI NUMERI DELLA CPU 1 ---
+;   5    le teste buone: gli sweep 10..14, i cinque di TRACK
+;   0    le altre: perse, riscritte mentre si leggevano, o non nominali
 ;   14   l'ultimo n buono
 ;   1    il fronte dello sweep 14 entro mezzo gate da tau
+;   4    gli spettri buoni: sul blocco giusto, X[0] a 45 gradi
+;   1    i superati: lo sweep 12, letto tardi apposta
 ;
-; --- ROSSO: le mutazioni di altimetro.vasm, e le uscite previste PRIMA ---
+; --- ROSSO: le mutazioni, e le uscite previste PRIMA ---
 ; In fondo al file.
 
 .include "eco/eco.vinc"
 .include "hal/amp.vinc"
+.include "hal/adc.vinc"
 
   .extern alt_record
   .extern fine
+  .extern fft64
 
 .equ N_ULTIMO   14
+.equ N_LENTO    12
 .equ TAU_ULTIMO 60045.1647       ; cicli, il conto qui sopra
-.equ SPETTRO_W  ECO_W * 2
 .equ MAGIC_HI   0x4B400000       ; i bit di 1,5 x 2^23: intero -> float
 .equ MAGIC      12582912.0
 
   .data
 appoggio: .word 0
+buoni:    .word 0
+altri:    .word 0
+ultimo:   .word -1
+vicino:   .word 0
+spettri:  .word 0
+superati: .word 0
+re:       .space ECO_W
+im:       .space ECO_W
 
   .text
   .global main
 
 main:
-  li r9, alt_record
-  li r10, 0                      ; buoni
-  li r11, 0                      ; gli altri
-  li r12, -1                     ; l'ultimo n buono
-  li r13, 0                      ; il fronte dell'ultimo, vicino a tau
 ricevi:
   li r1, MBOX_STATUS
   lw r2, 0(r1)
@@ -60,43 +84,57 @@ ricevi:
   li r1, fine
   lw r2, 0(r1)
   beq r2, r0, ricevi
-  dumps r10                      ; 5
-  dumps r11                      ; 0
-  dumps r12                      ; 14
-  dumps r13                      ; 1
+  li r1, buoni
+  lw r2, 0(r1)
+  dumps r2                       ; 5
+  li r1, altri
+  lw r2, 0(r1)
+  dumps r2                       ; 0
+  li r1, ultimo
+  lw r2, 0(r1)
+  dumps r2                       ; 14
+  li r1, vicino
+  lw r2, 0(r1)
+  dumps r2                       ; 1
+  li r1, spettri
+  lw r2, 0(r1)
+  dumps r2                       ; 4
+  li r1, superati
+  lw r2, 0(r1)
+  dumps r2                       ; 1
   halt
 
+; --- la testa, col seqlock: r9 = n, r10 = la testa ----------------------------
 leggi:
   li r1, MBOX_RECV
-  lw r4, 0(r1)                   ; n
-  li r1, 1                       ; il record: base + (n & 1) * ECO_REC
-  and r1, r4, r1
-  li r2, ECO_REC
+  lw r9, 0(r1)                   ; n
+  li r1, 1                       ; la testa: base + (n & 1) * ECO_REC_TESTA
+  and r1, r9, r1
+  li r2, ECO_REC_TESTA
   mul r1, r1, r2
-  add r5, r9, r1
-  lw r6, ECO_REC_N(r5)           ; s1
-  bne r6, r4, altro
-  lw r7, ECO_REC_AT(r5)
-  flw f1, ECO_REC_POS(r5)
-  lw r8, ECO_REC_ESITO(r5)
-  addi r1, r5, ECO_REC_RE        ; lo spettro, tutto, come un lettore vero
-  li r2, SPETTRO_W
-spettro:
-  lw r3, 0(r1)
-  addi r1, r1, 4
-  addi r2, r2, -1
-  bne r2, r0, spettro
-  lw r6, ECO_REC_N(r5)           ; s2
-  bne r6, r4, altro
-  bne r8, r0, altro              ; intatto, ma non nominale
-  addi r10, r10, 1
-  mov r12, r4
+  li r10, alt_record
+  add r10, r10, r1
+  lw r6, ECO_REC_N(r10)          ; s1
+  bne r6, r9, altro
+  lw r11, ECO_REC_AT(r10)
+  flw f9, ECO_REC_POS(r10)
+  lw r12, ECO_REC_ESITO(r10)
+  lw r13, ECO_REC_BLOCCO(r10)
+  lw r6, ECO_REC_N(r10)          ; s2
+  bne r6, r9, altro
+  bne r12, r0, altro             ; intatta, ma non nominale
+  li r1, buoni
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  li r1, ultimo
+  sw r9, 0(r1)
   li r1, N_ULTIMO
-  bne r4, r1, ricevi
+  bne r9, r1, prodotto
 
-  ; --- z = AT - TX + 1 + posizione, contro tau ---
+  ; --- z = AT - TX + 1 + posizione, contro tau ---------------------------------
   li r1, MAGIC_HI
-  add r1, r1, r7
+  add r1, r1, r11
   li r2, appoggio
   sw r1, 0(r2)
   flw f2, 0(r2)
@@ -104,7 +142,7 @@ spettro:
   fsub f2, f2, f3                ; AT - TX in float
   fli f3, 1.0
   fadd f2, f2, f3
-  fadd f2, f2, f1                ; z
+  fadd f2, f2, f9                ; z
   fli f3, TAU_ULTIMO
   fsub f2, f2, f3
   fneg f3, f2
@@ -113,24 +151,83 @@ spettro:
   fsub f2, f3, f2                ; positivo se entro mezzo gate
   fsw f2, 0(r2)
   lw r1, 0(r2)
+  blt r1, r0, prodotto
+  li r1, vicino
+  li r2, 1
+  sw r2, 0(r1)
+
+; --- il prodotto: la FFT del blocco r13, nel ping-pong ---------------------------
+prodotto:
+  li r1, N_LENTO
+  bne r9, r1, presto
+tardi:                           ; lo sweep 12: aspetta lo scambio dopo
+  li r1, ADC_STATUS
+  lw r2, 0(r1)
+  srli r2, r2, ADC_DONE_SHIFT
+  beq r2, r13, tardi
+presto:
+  li r1, ADC_STATUS
+  lw r2, 0(r1)
+  srli r2, r2, ADC_DONE_SHIFT
+  bne r2, r13, superato          ; il banco davanti non e' piu' il suo
+  li r1, ADC_BUF
+  li r2, re
+  li r3, im
+  call fft64                     ; tocca r4..r8, f1 e i vettori
+  li r1, ADC_STATUS
+  lw r2, 0(r1)
+  srli r2, r2, ADC_DONE_SHIFT
+  bne r2, r13, superato          ; cambiato MENTRE la FFT leggeva
+
+  ; --- X[0] a 45 gradi: re > 0 e |re - im| < re / 20 ---------------------------
+  li r1, re
+  flw f2, 0(r1)
+  li r1, im
+  flw f3, 0(r1)
+  li r2, appoggio
+  fsw f2, 0(r2)
+  lw r1, 0(r2)
+  blt r1, r0, ricevi             ; re[0] non positivo: non e' buono
+  fsub f4, f2, f3
+  fneg f5, f4
+  fmax f4, f4, f5                ; |re - im|
+  fli f5, 0.05
+  fmul f5, f2, f5                ; re / 20
+  fsub f4, f5, f4
+  fsw f4, 0(r2)
+  lw r1, 0(r2)
   blt r1, r0, ricevi
-  li r13, 1
+  li r1, spettri
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
+  j ricevi
+
+superato:
+  li r1, superati
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
   j ricevi
 
 altro:
-  addi r11, r11, 1
+  li r1, altri
+  lw r2, 0(r1)
+  addi r2, r2, 1
+  sw r2, 0(r1)
   j ricevi
 
 ; ==========================================================================
-;  ROSSO, mutazioni di altimetro.vasm su copie nello scratchpad (25/10/2026),
-;  con l'uscita prevista PRIMA. L'uscita giusta, CPU 0 | CPU 1:
-;      111112222233333 0 0 0 0 | 5 0 14 1
+;  ROSSO, mutazioni su copie nello scratchpad (25/10/2026), con l'uscita
+;  prevista PRIMA. L'uscita giusta, CPU 0 | CPU 1:
+;      111112222233333 0 0 0 0 | 5 0 14 1 4 1
 ;
+;  Di altimetro.vasm:
 ;  M1  FRONTE ancorato a PREC invece che alla finestra
-;        previsto e uscito:  111111111111111 0 14 0 0 | 0 0 -1 0
+;        previsto e uscito:  111111111111111 0 14 0 0 | 0 0 -1 0 0 0
 ;        Il frame 0 parte giusto (l'avvio arma la finestra); dal frame 1 i
-;        frame si incatenano a ~3.300 cicli, FRONTE trova il blocco non finito
-;        14 volte, il tracker non si inizializza e CAL non passa mai.
+;        frame si incatenano, FRONTE trova il blocco non finito 14 volte, il
+;        tracker non si inizializza e CAL non passa mai.
 ;        Con le durate di §3.86 la stessa mutazione non stampava niente: le
 ;        voci incatenate sforavano tutte, e DECIDI riarmava il cane da guardia
 ;        lo stesso. Un livelock, dedotto e non visto in traccia
@@ -139,8 +236,8 @@ altro:
 ;        segno ignorato la somma vale 3 echi invece di 5, e qui il picco sta
 ;        ~1.250 volte sopra il rumore. Lo vede solo una scena con poco margine
 ;  M3  ADC_AT armato senza + ALT_PRI: l'AT del frame corrente, gia' passato
-;        previsto il 25/10:  111111111111111 0 14 15 0 -- SBAGLIATO
-;        uscito:             11111111111111 3 1 1 0 | 0 0 -1 0
+;        previsto la prima volta: "0 14 15 0" -- SBAGLIATO
+;        uscito:             11111111111111 3 1 1 0 | 0 0 -1 0 0 0
 ;        Il ritardo c'e' una volta sola. at_dopo e' anche l'ancora del FRONTE
 ;        del frame dopo, che parte subito, in ritardo; e da li' la time line si
 ;        assesta UN FRAME INDIETRO, coerente con se stessa, sempre in CAL. Due
@@ -152,5 +249,16 @@ altro:
 ;        quattro istruzioni in piu' in un TRACKER che aveva venti cicli di
 ;        margine)
 ;  M5  DECIDI non sceglie mai ACQ5: BARKER_DEC non gira
-;        previsto e uscito:  111112222211111 0 0 0 0 | 0 0 -1 0
+;        previsto e uscito:  111112222211111 0 0 0 0 | 0 0 -1 0 0 0
+;  M6  MSG non scrive il blocco (0)
+;        previsto e uscito:  ... | 5 0 14 1 0 5 -- tutte le FFT superate
+;
+;  Di questo file:
+;  C1  niente controllo del contatore, ne' prima ne' dopo la FFT
+;        previsto e uscito:  ... | 5 0 14 1 5 0 -- lo sweep 12 fatto sul blocco
+;        13, preso per buono: anche il suo X[0] sta a 45 gradi
+;  C2  il contatore solo PRIMA della FFT
+;        previsto e uscito:  VERDE. Il lettore lento qui e' preso dal primo
+;        controllo; il secondo vede solo uno scambio DURANTE la FFT, che a
+;        ~7.800 cicli su 100.000 nel nominale non capita
 ; ==========================================================================

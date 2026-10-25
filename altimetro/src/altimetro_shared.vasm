@@ -3,14 +3,12 @@
 ; nello stesso ordine, perche' l'indirizzo lo decide la regione SHARED del
 ; file di collocazione e due immagini non d'accordo non partono (§3.80).
 ;
-; alt_blocco sta qui e non a SHARED_BASE scritto a mano: la DMA scrive solo
-; nella RAM condivisa, e i record di MSG ci stanno accanto.
+; Il blocco dell'ADC non sta qui dal 25/10: e' nel ping-pong dell'ADC
+; (ADC_BUF), dove tutte e due le CPU lo leggono intero.
 
 .include "eco/eco.vinc"
 
-.equ DUE_REC_W  ECO_REC_W * 2
-.equ BLOCCO_W   ECO_W * 2        ; I e Q, una parola ciascuno
+.equ DUE_REC_W  ECO_REC_TESTA_W * 2
 
   .shared
-alt_record:  .space DUE_REC_W    ; i due record di MSG, alternati per parita'
-alt_blocco:  .space BLOCCO_W     ; il blocco dell'ADC
+alt_record:  .space DUE_REC_W    ; le due teste di MSG, alternate per parita'

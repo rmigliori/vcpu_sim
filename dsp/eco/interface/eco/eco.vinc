@@ -143,7 +143,8 @@
 ;     -> r1 = 1 se la parola e' andata persa (la FIFO dell'altra CPU era
 ;             piena: MBOX_OVERRUN), 0 se no
 ;
-; IL RECORD sta in RAM condivisa: una testa (n, AT - TX, posizione, esito) e
+; IL RECORD sta in RAM condivisa: una testa (n, AT - TX, posizione, esito,
+; blocco) e
 ; lo spettro, re[ECO_W] e im[ECO_W] -- le uscite r2 e r3 di fft64, che li'
 ; scrive senza copia. I record sono DUE, del chiamante, alternati per parita':
 ;     record = base + (n & 1) * ECO_REC
@@ -163,6 +164,17 @@
 ; lo spettro mentre la testa dice ancora n - 2, e msg la aggiorna solo dopo.
 ; All'avvio lo scrittore apre TUTTI E DUE i record: un record mai scritto
 ; non deve sembrare lo sweep 0.
+;
+; ECO_REC_BLOCCO (25/10/2026): il numero del blocco dell'ADC da cui viene lo
+; sweep, cioe' il contatore di ADC_STATUS che FRONTE ha visto. msg non lo
+; tocca: lo scrive il chiamante fra eco_apri e msg, dentro il seqlock. Serve
+; a chi fa la FFT dall'altra parte, leggendo il blocco nel ping-pong
+; (ADC_BUF): se il contatore non e' piu' questo, il banco davanti e' un altro.
+;
+; LA SOLA TESTA PUO' BASTARE: un chiamante che non manda lo spettro --
+; l'altimetro dal 25/10, dove la FFT la fa chi riceve -- usa record di
+; ECO_REC_TESTA byte, alternati con quel passo. eco_apri e msg scrivono solo
+; la testa.
 ;
 ; Vale perche' qui la RAM condivisa non ha cache ne' riordini (hal/amp.vinc):
 ; le scritture si vedono nell'ordine del programma. Su un chip vero fra la
@@ -201,9 +213,11 @@
 .equ ECO_REC_AT    4                       ; AT - TX,
 .equ ECO_REC_POS   8                       ; la posizione (float),
 .equ ECO_REC_ESITO 12                      ; l'esito di TRACKER,
-.equ ECO_REC_RE    16                      ; re[ECO_W] e
+.equ ECO_REC_BLOCCO 16                     ; il blocco dell'ADC, del chiamante;
+.equ ECO_REC_TESTA 20                      ; fin qui la testa, poi
+.equ ECO_REC_RE    ECO_REC_TESTA           ; re[ECO_W] e
 .equ ECO_REC_IM    ECO_REC_RE + ECO_W * 4  ; im[ECO_W], float
-.equ ECO_REC       ECO_REC_IM + ECO_W * 4  ; 528 byte
+.equ ECO_REC       ECO_REC_IM + ECO_W * 4  ; 532 byte
 .equ ECO_APERTO    -1                      ; ECO_REC_N: in scrittura
 
 ; ECO_SCRATCH, ECO_STATO ed ECO_BARKER sono BYTE; `.space` conta PAROLE, e dal
@@ -213,4 +227,5 @@
 .equ ECO_SCRATCH_W  ECO_SCRATCH / 4     ; 65
 .equ ECO_STATO_W    ECO_STATO / 4       ; 4
 .equ ECO_BARKER_W   ECO_BARKER / 4      ; 130
-.equ ECO_REC_W      ECO_REC / 4         ; 132
+.equ ECO_REC_W      ECO_REC / 4         ; 133
+.equ ECO_REC_TESTA_W ECO_REC_TESTA / 4   ; 5

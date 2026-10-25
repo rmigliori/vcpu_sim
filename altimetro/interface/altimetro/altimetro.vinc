@@ -1,8 +1,15 @@
 ; altimetro/altimetro.vinc — l'altimetro: la macchina a stati della time line
 ; (25/10/2026, la forma di §3.99 con le correzioni di §3.100).
 ;
-; E' un'APPLICAZIONE, non una libreria: usa le attivita' di lib_eco e la FFT
-; (dsp/) e il kernel con `wait` (rtos/), e dsp/ non puo' dipendere da rtos/.
+; E' un'APPLICAZIONE, non una libreria: usa le attivita' di lib_eco (dsp/) e
+; il kernel con `wait` (rtos/), e dsp/ non puo' dipendere da rtos/.
+;
+; --- LE DUE CPU (25/10/2026): il CONTROLLO e il PRODOTTO ---
+; La CPU 0 e' lo strumento: la time line, l'inseguimento, l'anello chiuso a
+; 1 ms. La FFT e' del prodotto, non dell'inseguimento (§3.89), e la fa la
+; CPU 1: MSG le manda la testa dello sweep e il numero del blocco, e lei
+; legge lo stesso blocco nel ping-pong dell'ADC (ADC_BUF), intero, finche' il
+; contatore dei blocchi dice che e' ancora quello.
 ;
 ; --- COME SI AVVIA ---
 ;     j altimetro_parti     dal boot, a IE = 0, dopo sched_init e dopo aver
@@ -28,7 +35,7 @@
 ;     ACQ    5 sweep: + BARKER_ACC; al quinto (ACQ5) + BARKER_DEC. Passa se
 ;            BARKER_DEC trova e il suo fronte sta entro 1 gate dal tracker;
 ;            se no torna in CAL, con la finestra dov'e'
-;     TRACK  + FFT (con eco_apri) e MSG. Due sweep non nominali DI FILA: da
+;     TRACK  + MSG, alla CPU 1. Due sweep non nominali DI FILA: da
 ;            capo, in CAL con la finestra a priori
 ;
 ; --- I SIMBOLI PUBBLICATI: le statistiche, che nessuno azzera ---
@@ -40,8 +47,8 @@
 ;     alt_ritardi      un armamento di TX_AT o ADC_AT in ritardo
 ;     alt_overrun      le parole di MSG perse nella mailbox
 ; e in RAM CONDIVISA (altimetro_shared.vasm, da linkare in tutte le immagini):
-;     alt_record       i due record di MSG (eco.vinc), alternati per parita'
-;     alt_blocco       il blocco dell'ADC: la DMA scrive solo li'
+;     alt_record       le due teste di MSG (eco.vinc), alternate per parita'
+;                      con passo ECO_REC_TESTA: lo spettro non viaggia
 ; --------------------------------------------------------------------------
 .equ ALT_PRI       100000        ; un frame, 1 ms: cicli
 .equ ALT_T0        20000         ; il TX del frame 0, assoluto: dopo il boot
