@@ -168,20 +168,32 @@
 > hardware dell'ADC** (`ADC_BUF`, un'idea dell'utente). La CPU 0 è il
 > controllo: la catena di TRACK passa da 14.000 a 3.900 cicli. `ctest` 113/113.
 >
+> **E (§3.103) IL TASK DELLE STATISTICHE: la forma APPROVATA, il passo 2
+> FATTO.** Il super task scrive un record di quattro parole per voce in un
+> anello in RAM locale e a fine frame fa `sem_post` (un semaforo, non una
+> `wait_post`: l'ha detto l'utente). Il lettore `alt_statistiche` è scritto, il
+> test non lo chiama ancora. Il primo tentativo ha mandato il VPS **in OOM**:
+> `.space` di un'espressione riservava un quarto dell'anello, e l'assemblatore
+> ora lo rifiuta (anche per `.res`). `ctest` **117/117**.
+>
 > **Niente pushato** dopo `75373fc`: i commit del 25/10 aspettano l'utente.
 >
-> **Il prossimo passo** (§3.99): il **task delle statistiche** (§3.88) sulla
-> CPU 0, a sé: DECIDI gli fa una send, il cpuometro misura il respiro dopo di
-> lui. Poi il punto 4: la scena vera e i rami di fallimento, dove si vedono il
-> segno del Barker e l'ordine dell'armamento (§3.101, «Aperti»). Il kernel
-> sulla CPU 1 (multi-look, telemetria) è aperto, non deciso (§3.102).
+> **Il prossimo passo** (§3.103, «Aperti»): il **passo 3**, il task al livello
+> 6 che chiama `alt_statistiche` e diventa il testimone; prima la frase di
+> `semaphore.vasm` sul post che «restituisce», promessa e non fatta. **Prima
+> di ogni test nuovo il tetto contro l'OOM non c'è ancora**: lanciarlo a mano
+> con `timeout 5 ... | head -c`, e `ctest --timeout 20`. Poi il passo 4 (l'idle
+> onda del cpuometro), e il punto 4 di §3.101: la scena vera e i rami di
+> fallimento. Il kernel sulla CPU 1 (multi-look, telemetria) è aperto, non
+> deciso (§3.102).
 >
-> **LA FORMULA PER RIPRENDERE (25/10, sera):**
+> **LA FORMULA PER RIPRENDERE (25/10, notte):**
 >
 > ```
-> Leggi docs/stato-lavori.md, §0 e poi §3.102, §3.101, §3.100 e §3.99, e
+> Leggi docs/stato-lavori.md, §0 e poi §3.103, §3.102, §3.101 e §3.99, e
 > quanto serve di §3.88 (il cpuometro e il task delle statistiche) e
-> §3.74-§3.75. Poi il task delle statistiche: proponi prima la forma.
+> §3.74-§3.75. Poi il passo 3 delle statistiche, dopo il tetto contro l'OOM
+> o con i test lanciati a mano.
 > ```
 
 > ### Il 24/10 (superato dal 25/10 qui sopra)
@@ -4155,6 +4167,123 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.103 IL TASK DELLE STATISTICHE: lo scrittore dell'anello, e un `.space` che ha mandato il VPS in OOM (25/10/2026, notte)
+
+**La forma, proposta e approvata.** Il task misura il tempo della time line
+stessa, per voce: il **ritardo** della sveglia (sveglia − istante programmato,
+oggi 180-183 cicli, e il banco 0 carico lo può far crescere), il **lavoro**
+(fine − sveglia), il **margine** (l'istante della voce dopo − fine). Una
+tabella pubblicata, `alt_stat`, una riga per procedura, che nessuno azzera: la
+misura dei budget di §3.101, fatta una volta con strumentazione provvisoria,
+diventa permanente. Il predecessore è il *high water mark* di FreeRTOS, sul
+tempo invece che sullo stack; AUTOSAR OS fa la stessa misura (timing
+protection) ma uccide chi sfora, qui si osserva. I contatori che il super task
+già tiene restano suoi: devono valere anche quando le statistiche non trovano
+margine.
+
+Tre differenze da §3.88, dette all'utente:
+
+- **Il record ha quattro parole**, non due: procedura, istante programmato,
+  sveglia, fine, tutte prese alla sorgente. Senza l'istante il task dovrebbe
+  rileggere le tabelle del super task, e ne dipenderebbe. **Approvato.**
+- **L'attivazione è un semaforo.** Io proponevo una `wait_post` nel kernel (il
+  gemello da task di `wait_signal`, la task notification di FreeRTOS); l'utente:
+  «non basterebbe un semaforo?». Basta: il super task è un task e `sem_post`
+  da task c'è, la risorsa contata è il frame da leggere, il
+  produttore/consumatore di Dijkstra. Il conto delle attivazioni perse, che
+  era l'unico vantaggio della WAIT, lo dà meglio l'anello: `alt_k` dice quanti
+  frame sono passati, i record quali. **Il kernel non si tocca.**
+- **Il testimone passa dall'idle al task** (passo 3), e l'idle torna l'onda del
+  cpuometro (passo 4). Il task **non usa i vettori**: il super task lo
+  interrompe a ogni slot, e la via veloce da 327 cicli vale solo per chi non li
+  ha sporchi. È una regola del programmatore, come lo stack.
+
+Una colonna in più l'ho aggiunta io, senza che fosse approvata: **regola**, il
+minimo di durata − 327 − 1,25 × lavoro, la regola dei budget di §3.86
+controllata a ogni slot. Negativa vuol dire che lo slot è stretto per la regola
+anche se non ha sforato. Detto all'utente; da confermare quando il passo 3 ne
+mostra i numeri.
+
+#### Il passo 2: lo scrittore (commit `63c858c`)
+
+```
+altimetro.vinc     ALT_REC {proc, istante, sveglia, fine}, ALT_REC_BUCO 256,
+                   ALT_ANELLO 64 record (1 KiB, una dozzina di frame di TRACK),
+                   ALT_STAT {conteggio, ritardo, lavoro, margine, regola};
+                   gli indici ALT_P_* (prima P_* in altimetro.vasm): sono
+                   anche le righe di alt_stat
+altimetro.vasm     alla sveglia: proc, istante, sveglia nello slot in testa; a
+                   fine_voce, appena prima della wait dopo: la fine, e solo
+                   allora alt_testa si sposta (PUBBLICATO). Pieno: il record si
+                   butta, alt_stat_persi++, e il prossimo porta ALT_REC_BUCO.
+                   A fine frame, dopo alt_k++: sem_post(alt_sem)
+statistiche.vasm   l'anello, alt_sem, alt_stat, e il lettore alt_statistiche:
+                   sem_wait, svuota l'anello, r1 = i frame da quando era
+                   tornata. Scritto, NON ancora chiamato da nessuno
+```
+
+Un solo scrittore e un solo lettore sulla stessa CPU: il lettore non
+interrompe mai lo scrittore, niente interrupt chiusi. La previsione, scritta
+prima: **verde, la stessa uscita**; in 15 frame CAL 3×5 + ACQ 4×4+5 + TRACK 4×5
+= 56 record < 63, nessuno perso. Verde con la stessa uscita **verificato**;
+**i 56 record e alt_stat_persi = 0 non li ha guardati nessuno**, né il costo
+del giro (stimato ~30 istruzioni a voce). Li mostra il passo 3.
+
+#### Il crash, e l'OOM
+
+Il primo `ctest -R altimetro` non è tornato: la CPU 0 non arrivava all'`halt`
+e il simulatore stampava `runtime error: word ... out of bounds` senza fine.
+`cmake/vasm_check.cmake` raccoglie l'uscita in variabili (`execute_process
+OUTPUT_VARIABLE`), i test non hanno `TIMEOUT` (il default di ctest è 1500 s) e
+`vcpu_sim` non ha un tetto di cicli: in 8 minuti `cmake -P` ha riempito la RAM,
+e alle 20:48 l'OOM killer ha chiuso il pane di tmux con la sessione dentro.
+È il secondo OOM dopo quello del 29/09 (§0, «Limiti»), e per la stessa via:
+un'uscita senza tetto in memoria.
+
+La causa, trovata la sessione dopo:
+
+- Il primo errore è della CPU 0, in `dequeue_head_nc` (`sw r1, 4(r4)` con
+  `r4 = 0x1c0c0000`): un puntatore di coda fatto di istanti di clock.
+- `alt_anello: .space ALT_ANELLO * ALT_REC.size / 4` riservava **64 parole su
+  256**: `alt_testa` stava a +256 byte. Provato su un file a parte: `.space`
+  leggeva il primo token e **ignorava il resto in silenzio**; la stessa
+  espressione in una `.equ` dà 1024 byte.
+- Dal diciassettesimo record lo scrittore scriveva sopra `alt_testa`,
+  `alt_coda`, `alt_stat_persi` e `alt_sem`, e il `sem_post` a fine frame
+  toglieva da una coda sporca. (Il passaggio da `sem_post` a `dequeue_head_nc`
+  è dedotto, non visto nel trace; il test tornato verde con l'anello giusto lo
+  conferma.)
+
+**Le correzioni:** in `statistiche.vasm` la dimensione è una `.equ
+ALT_ANELLO_W`; e l'assemblatore (commit `13b3791`) rifiuta un token in più
+dopo l'operando di `.space` **e di `.res`**, che aveva lo stesso difetto, su
+tutte e due le strade. Il manuale diceva già «un letterale o una `.equ`»:
+l'espressione si rifiuta, non si accetta (accettarla cambierebbe il
+linguaggio, e la scelta è dell'utente). `tests/errori/space_espressione` e
+`res_extra`, rossi con l'assemblatore di prima. `ctest` **117/117**.
+
+#### Aperti
+
+- **Il tetto contro l'OOM non c'è.** Un test appeso sotto `ctest` senza
+  `--timeout` può ancora riempire la RAM. Le strade: un `TIMEOUT` di pochi
+  secondi sui test vasm, o `vasm_check.cmake` che scrive l'uscita in un file
+  con un tetto, o un tetto di cicli nel simulatore. Fino ad allora: un test
+  nuovo o modificato si lancia la prima volta a mano, `timeout 5 ... | head -c
+  3000`, e `ctest --timeout 20`.
+- **La frase di `semaphore.vasm`** (riga 60: chi fa post «RESTITUISCE» sempre
+  una risorsa presa prima con una wait) esclude il produttore/consumatore
+  senza motivo. Promessa all'utente e **non ancora corretta**: va detto cosa
+  voleva escludere davvero, il post da ISR, che resta vietato.
+- **Il passo 3:** il task al livello 6 che chiama `alt_statistiche`, testimone
+  dei modi al posto dell'idle. I lavori massimi devono tornare con §3.101 (MSG
+  203); i budget si ricalcolano col costo del record nel giro.
+- **Il passo 4:** l'idle come onda del cpuometro (prescaler N≈100, §3.88), con
+  una categoria di marche per il task in `tools/marks.py`.
+- L'anello verso la CPU 1 in RAM condivisa resta per dopo: cambia il
+  trasporto, non il formato.
 
 ---
 
