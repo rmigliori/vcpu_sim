@@ -41,11 +41,8 @@
 .include "hal/adc.vinc"
 .include "hal/amp.vinc"
 .include "hal/clock.vinc"
+.include "hal/tx.vinc"
 .include "eco/eco.vinc"
-
-.equ TX_LEN      0x100054        ; da devices.h, ricopiati come in test_eco:
-.equ TX_CTRL     0x100058        ; hal/tx.vinc non c'e' ancora
-.equ TX_START    1
 
 .equ BLOCCO_1    SHARED_BASE     ; un blocco per sweep: un blocco rimasto dallo
 .equ BLOCCO_2    0x200200        ; sweep prima darebbe un verde falso

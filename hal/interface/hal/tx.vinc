@@ -1,0 +1,44 @@
+; hal/tx.vinc — il trasmettitore e l'accecamento del ricevitore (25/10/2026).
+;
+; Il device c'e' dal 07/10 (devices.h, §3.83), e fino al 25/10 le sue
+; costanti non avevano un header: test_tx, test_eco e test_adc_at girano a
+; file singolo e se le ricopiano, di proposito, come test_adc; ma se le
+; ricopiavano anche test_fronte e m_attivita, che sono linkati, e la macchina
+; a stati sarebbe stata la sesta copia (§3.99). Il perche' di ogni bit sta in
+; devices.h, accanto ai registri; qui ci sono gli indirizzi e i bit.
+;
+; --- TX_LEN, in tick delle PERIFERICHE ---
+; La durata dell'impulso, come ADC_PERIOD: 5000 = 50 us oggi. E' un registro
+; perche' il chirp lo progetta il programma. Non positivo e' un errore di
+; COSTRUZIONE, e la macchina lo dice.
+;
+; --- TX_CTRL: TX_START, e il segno del Barker ---
+; Una scrittura con TX_START trasmette. TX_NEG e' il segno del codice di
+; Barker di QUESTO TX: la macchina lo conserva per il mondo, che lo rimette
+; nell'eco. Un avvio col TX acceso e' IGNORATO e alza TX_OVERRUN: un errore
+; di TEMPO della time line, che il programma deve vedere.
+;
+; --- TX_STATUS, e la lettura abbassa BLIND e OVERRUN ---
+;     bit 0      TX_ON         sta trasmettendo
+;     bit 1      TX_BLIND      un campione e' uscito accecato
+;     bit 2      TX_OVERRUN    un avvio col TX acceso
+; Un campione preso col TX acceso, o entro TX_TR_US dalla fine, esce
+; SATURATO -- ADC_MAX su I e su Q -- e alza TX_BLIND.
+;
+; --- LA COMMUTAZIONE T/R E' DELLA SCHEDA, non un registro ---
+; TX_TR_US e' in MICROSECONDI, e la macchina lo converte in tick master
+; all'accensione. Chi lo usa per contare tick lo converte con la frequenza.
+;
+; NESSUN INTERRUPT, come l'ADC: chi trasmette e' la time line, e sa quando.
+; --------------------------------------------------------------------------
+.equ TX_LEN      0x100054        ; lettura/scrittura: la durata, tick periferiche
+.equ TX_CTRL     0x100058        ; scrittura: TX_START, TX_NEG
+.equ TX_STATUS   0x10005C        ; lettura: i bit qui sopra
+
+.equ TX_START        1           ; TX_CTRL, bit 0
+.equ TX_NEG          2           ; TX_CTRL, bit 1: il segno Barker
+.equ TX_ON           1           ; TX_STATUS, bit 0
+.equ TX_BLIND        2           ; TX_STATUS, bit 1
+.equ TX_OVERRUN      4           ; TX_STATUS, bit 2
+
+.equ TX_TR_US       10           ; la commutazione T/R, in microsecondi

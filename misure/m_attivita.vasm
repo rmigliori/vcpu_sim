@@ -9,12 +9,10 @@
 .include "hal/clock.vinc"
 .include "hal/adc.vinc"
 .include "hal/amp.vinc"
+.include "hal/tx.vinc"
 .include "fft/fft.vinc"
 
-.equ TX_LEN    0x100054
-.equ TX_CTRL   0x100058
-.equ TX_START  1
-.equ TX_SNEG   3              ; TX_START | TX_NEG
+.equ TX_SNEG   TX_START | TX_NEG
 .equ BLOCCO    SHARED_BASE
 .equ W         64
 .equ PRI       100000
