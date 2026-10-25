@@ -1,0 +1,169 @@
+; altimetro/src/statistiche.vasm — le statistiche della time line: l'anello
+; dei record e chi lo legge (25/10/2026, §3.103). Il contratto e' in
+; altimetro.vinc; lo scrittore e' il giro del super task, in altimetro.vasm.
+;
+; --- PERCHE' UN SEMAFORO, e non una WAIT ---
+; Il super task e' un task, e sem_post da un task c'e' gia'. La risorsa contata
+; e' il FRAME DA LEGGERE: il produttore/consumatore di Dijkstra. Una WAIT
+; avrebbe restituito quante sveglie si erano accumulate, ma lo dice meglio
+; alt_k: quanti frame sono passati, e l'anello quali.
+;
+; --- IL MARGINE VUOLE DUE RECORD ---
+; L'istante della voce dopo sta nel record dopo: il margine di una voce si
+; calcola quando arriva la successiva, e fra un'attivazione e l'altra la voce
+; in sospeso aspetta in st_prec. Un record col BUCO la azzera: fra i due ne
+; mancano, e la differenza non sarebbe di una voce.
+
+.include "queue/queue.vinc"
+.include "semaphore/semaphore.vinc"
+.include "altimetro/altimetro.vinc"
+
+; La dimensione in una .equ: .space prende un nome o un letterale, e di
+; un'espressione il resto lo ignora in silenzio (riservava 64 parole su 256).
+.equ ALT_ANELLO_W  ALT_ANELLO * ALT_REC.size / 4
+
+  .data
+alt_anello:     .space ALT_ANELLO_W
+alt_testa:      .word 0          ; byte, li scrive solo il super task
+alt_coda:       .word 0          ; byte, li scrive solo il lettore
+alt_stat_persi: .word 0
+alt_sem:        .res SEMAPHORE
+
+; Una riga per procedura; il margine e la regola partono dal piu' grande
+; positivo, cosi' il primo record e' gia' un minimo.
+alt_stat:       .word 0, 0, 0, 0x7FFFFFFF, 0x7FFFFFFF
+                .word 0, 0, 0, 0x7FFFFFFF, 0x7FFFFFFF
+                .word 0, 0, 0, 0x7FFFFFFF, 0x7FFFFFFF
+                .word 0, 0, 0, 0x7FFFFFFF, 0x7FFFFFFF
+                .word 0, 0, 0, 0x7FFFFFFF, 0x7FFFFFFF
+                .word 0, 0, 0, 0x7FFFFFFF, 0x7FFFFFFF
+                .word 0, 0, 0, 0x7FFFFFFF, 0x7FFFFFFF
+
+st_prec:        .word 0          ; la riga della voce in sospeso, 0 = nessuna
+st_prec_ist:    .word 0          ; il suo istante
+st_prec_fine:   .word 0          ; la sua fine
+st_prec_lav:    .word 0          ; il suo lavoro
+st_frame:       .word 0          ; alt_k all'ultimo ritorno
+
+  .text
+  .global alt_statistiche
+  .global alt_anello
+  .global alt_testa
+  .global alt_coda
+  .global alt_stat
+  .global alt_stat_persi
+  .global alt_sem
+  .extern alt_k
+  .extern sem_wait
+
+; ==========================================================================
+;  alt_statistiche() -> r1 = i frame finiti dall'ultimo ritorno.
+;  Aspetta, svuota l'anello, torna. Clobber: r1..r10.
+; ==========================================================================
+alt_statistiche:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  li r1, alt_sem
+  call sem_wait
+
+st_giro:
+  li r2, alt_testa
+  lw r2, 0(r2)
+  li r3, alt_coda
+  lw r3, 0(r3)
+  beq r2, r3, st_vuoto
+  li r4, alt_anello
+  add r4, r4, r3
+  lw r5, ALT_REC.proc(r4)
+  lw r6, ALT_REC.istante(r4)
+  lw r7, ALT_REC.sveglia(r4)
+  lw r8, ALT_REC.fine(r4)
+  addi r3, r3, ALT_REC.size      ; il record e' copiato: lo slot si libera
+  li r2, ALT_ANELLO_MASK
+  and r3, r3, r2
+  li r2, alt_coda
+  sw r3, 0(r2)
+
+  li r2, ALT_REC_BUCO
+  blt r5, r2, st_contiguo
+  sub r5, r5, r2
+  li r2, st_prec                 ; ne mancano: la voce in sospeso non ha
+  sw r0, 0(r2)                   ; piu' una voce dopo
+st_contiguo:
+
+  ; --- la voce in sospeso: il margine e la regola, dall'istante di questa ---
+  li r2, st_prec
+  lw r10, 0(r2)
+  beq r10, r0, st_riga
+  li r2, st_prec_fine
+  lw r2, 0(r2)
+  sub r1, r6, r2
+  call st_32                     ; r1 = il margine
+  lw r3, ALT_STAT.margine(r10)
+  blt r3, r1, st_regola
+  sw r1, ALT_STAT.margine(r10)
+st_regola:
+  li r2, st_prec_ist
+  lw r2, 0(r2)
+  sub r1, r6, r2
+  call st_32                     ; r1 = la durata
+  li r2, ALT_MECCANISMO
+  sub r1, r1, r2
+  li r2, st_prec_lav
+  lw r2, 0(r2)
+  sub r1, r1, r2
+  srai r2, r2, 2
+  sub r1, r1, r2                 ; durata - 327 - 1,25 x lavoro
+  lw r3, ALT_STAT.regola(r10)
+  blt r3, r1, st_riga
+  sw r1, ALT_STAT.regola(r10)
+
+  ; --- la riga di questa voce ---
+st_riga:
+  slli r10, r5, 4                ; proc x 20 = proc x 16 + proc x 4
+  slli r2, r5, 2
+  add r10, r10, r2
+  li r2, alt_stat
+  add r10, r10, r2
+  lw r2, ALT_STAT.conteggio(r10)
+  addi r2, r2, 1
+  sw r2, ALT_STAT.conteggio(r10)
+  sub r1, r7, r6
+  call st_32                     ; r1 = il ritardo
+  lw r3, ALT_STAT.ritardo(r10)
+  blt r1, r3, st_lavoro
+  sw r1, ALT_STAT.ritardo(r10)
+st_lavoro:
+  sub r1, r8, r7
+  call st_32                     ; r1 = il lavoro
+  lw r3, ALT_STAT.lavoro(r10)
+  blt r1, r3, st_sospesa
+  sw r1, ALT_STAT.lavoro(r10)
+st_sospesa:
+  li r2, st_prec_lav
+  sw r1, 0(r2)
+  li r2, st_prec
+  sw r10, 0(r2)
+  li r2, st_prec_ist
+  sw r6, 0(r2)
+  li r2, st_prec_fine
+  sw r8, 0(r2)
+  j st_giro
+
+st_vuoto:
+  li r2, alt_k
+  lw r2, 0(r2)
+  li r3, st_frame
+  lw r1, 0(r3)
+  sw r2, 0(r3)
+  sub r1, r2, r1
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; st_32(r1) -> r1 con il segno della parola bassa: una differenza di istanti
+; a 32 bit, modulo 2^32 come i comparatori. Foglia.
+st_32:
+  slli r1, r1, 32
+  srai r1, r1, 32
+  ret

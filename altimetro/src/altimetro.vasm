@@ -11,7 +11,10 @@
 ;      di lei, current == tcb) e fa trovare pending = 1 alla wait dopo
 ;   3  chiama la procedura della voce
 ;   4  avanza: se la voce era l'ultima, il frame dopo, con la tabella che
-;      DECIDI ha scelto
+;      DECIDI ha scelto, e il frame finito si posta al task delle statistiche
+;   5  il RECORD della voce (altimetro.vinc): procedura, istante e sveglia si
+;      scrivono alla sveglia, la fine appena prima della wait dopo, e solo
+;      allora il record si pubblica
 ; Attraverso la wait non si conserva niente (la regola della via veloce,
 ; hal.vinc): lo stato e' tutto in memoria, e il giro lo rilegge ogni volta.
 ;
@@ -47,13 +50,8 @@
   .field proc          ; l'indice nella tabella dei salti; 0 = fine tabella
 .ends
 
-.equ P_FINE        0             ; gli indici delle procedure
-.equ P_FRONTE      1
-.equ P_TRACKER     2
-.equ P_BARKER_ACC  3
-.equ P_BARKER_DEC  4
-.equ P_MSG         5
-.equ P_DECIDI      6
+; Gli indici delle procedure (ALT_P_*) sono in altimetro.vinc: sono anche le
+; righe di alt_stat.
 
 ; Le durate: la regola di §3.86, 327 di meccanismo + il lavoro x 1,25,
 ; arrotondato per eccesso alle centinaia. IL LAVORO E' MISURATO QUI (25/10),
@@ -83,27 +81,27 @@
 
   .data
 
-; --- le tabelle: {ancora, durata, procedura}, chiuse da P_FINE ---
-tab_cal:   .word ALT_FINESTRA, D_FRONTE,     P_FRONTE
-           .word ALT_PREC,     D_TRACKER,    P_TRACKER
-           .word ALT_PREC,     D_DECIDI,     P_DECIDI
-           .word 0, 0, P_FINE
-tab_acq:   .word ALT_FINESTRA, D_FRONTE,     P_FRONTE
-           .word ALT_PREC,     D_TRACKER,    P_TRACKER
-           .word ALT_PREC,     D_BARKER_ACC, P_BARKER_ACC
-           .word ALT_PREC,     D_DECIDI,     P_DECIDI
-           .word 0, 0, P_FINE
-tab_acq5:  .word ALT_FINESTRA, D_FRONTE,     P_FRONTE
-           .word ALT_PREC,     D_TRACKER,    P_TRACKER
-           .word ALT_PREC,     D_BARKER_ACC, P_BARKER_ACC
-           .word ALT_PREC,     D_BARKER_DEC, P_BARKER_DEC
-           .word ALT_PREC,     D_DECIDI,     P_DECIDI
-           .word 0, 0, P_FINE
-tab_track: .word ALT_FINESTRA, D_FRONTE,     P_FRONTE
-           .word ALT_PREC,     D_TRACKER,    P_TRACKER
-           .word ALT_PREC,     D_MSG,        P_MSG
-           .word ALT_PREC,     D_DECIDI,     P_DECIDI
-           .word 0, 0, P_FINE
+; --- le tabelle: {ancora, durata, procedura}, chiuse da ALT_P_FINE ---
+tab_cal:   .word ALT_FINESTRA, D_FRONTE,     ALT_P_FRONTE
+           .word ALT_PREC,     D_TRACKER,    ALT_P_TRACKER
+           .word ALT_PREC,     D_DECIDI,     ALT_P_DECIDI
+           .word 0, 0, ALT_P_FINE
+tab_acq:   .word ALT_FINESTRA, D_FRONTE,     ALT_P_FRONTE
+           .word ALT_PREC,     D_TRACKER,    ALT_P_TRACKER
+           .word ALT_PREC,     D_BARKER_ACC, ALT_P_BARKER_ACC
+           .word ALT_PREC,     D_DECIDI,     ALT_P_DECIDI
+           .word 0, 0, ALT_P_FINE
+tab_acq5:  .word ALT_FINESTRA, D_FRONTE,     ALT_P_FRONTE
+           .word ALT_PREC,     D_TRACKER,    ALT_P_TRACKER
+           .word ALT_PREC,     D_BARKER_ACC, ALT_P_BARKER_ACC
+           .word ALT_PREC,     D_BARKER_DEC, ALT_P_BARKER_DEC
+           .word ALT_PREC,     D_DECIDI,     ALT_P_DECIDI
+           .word 0, 0, ALT_P_FINE
+tab_track: .word ALT_FINESTRA, D_FRONTE,     ALT_P_FRONTE
+           .word ALT_PREC,     D_TRACKER,    ALT_P_TRACKER
+           .word ALT_PREC,     D_MSG,        ALT_P_MSG
+           .word ALT_PREC,     D_DECIDI,     ALT_P_DECIDI
+           .word 0, 0, ALT_P_FINE
 
 codice:    .word 1, 1, 1, -1, 1  ; il Barker-5, uno per sweep di ACQ
 
@@ -121,6 +119,7 @@ st_attx_dopo: .word 0            ; DECIDI (tabella e segno) e il TRACKER
 st_at_dopo:   .word 0            ; (la finestra)
 st_segno_dopo: .word 0
 st_visti:     .word 0            ; i blocchi dell'ADC visti da FRONTE
+st_buco:      .word 0            ; ALT_REC_BUCO dopo un record buttato
 
 ; --- la macchina a stati ---
 st_modo:      .word 0
@@ -167,6 +166,13 @@ stack_top:                       ; byte, quando una trap lo raggiunge sforando
   .global alt_ritardi
   .global alt_overrun
   .extern alt_record
+  .extern alt_anello
+  .extern alt_testa
+  .extern alt_coda
+  .extern alt_stat_persi
+  .extern alt_sem
+  .extern sem_init
+  .extern sem_post
   .extern current
   .extern wait_init
   .extern wait
@@ -188,6 +194,9 @@ altimetro_parti:
   li r1, wT
   li r2, tcb_alt
   call wait_init
+  li r1, alt_sem                 ; le statistiche: nessun frame da leggere
+  li r2, 0
+  call sem_init
 
   ; --- il ferro: si configura una volta, e ogni armamento lo congela ---
   li r1, TX_LEN
@@ -284,9 +293,30 @@ altimetro_parti:
 ; ==========================================================================
 ;  IL GIRO
 ; ==========================================================================
+fine_voce:
+  ; --- il record della voce finita: la fine, e lo si pubblica ---
+  li r2, CLOCK_CYCLES
+  lw r3, 0(r2)
+  li r2, alt_testa
+  lw r4, 0(r2)
+  li r5, alt_anello
+  add r5, r5, r4
+  sw r3, ALT_REC.fine(r5)
+  addi r4, r4, ALT_REC.size
+  li r5, ALT_ANELLO_MASK
+  and r4, r4, r5
+  li r5, alt_coda
+  lw r5, 0(r5)
+  beq r4, r5, rec_perso          ; pieno: lo slot si riscrive alla voce dopo
+  sw r4, 0(r2)                   ; PUBBLICATO
+  li r2, st_buco
+  sw r0, 0(r2)
+
 giro:
   li r1, wT
   call wait                      ; r1 = pending, letto alla chiamata
+  li r2, CLOCK_CYCLES
+  lw r12, 0(r2)                  ; la sveglia, per il record
   beq r1, r0, puntuale
 
   ; --- la voce corrente parte in ritardo: di quanto ---
@@ -294,11 +324,9 @@ giro:
   lw r3, 0(r2)
   addi r3, r3, 1
   sw r3, 0(r2)
-  li r2, CLOCK_CYCLES
-  lw r3, 0(r2)
   li r2, st_istante
   lw r4, 0(r2)
-  sub r3, r3, r4
+  sub r3, r12, r4
   li r2, alt_sfora_max
   lw r4, 0(r2)
   blt r3, r4, puntuale
@@ -308,6 +336,22 @@ puntuale:
   ; --- la voce dopo, e il suo istante ---
   li r2, st_voce
   lw r11, 0(r2)                  ; la voce corrente
+
+  ; --- il record, alla sorgente: procedura, istante, sveglia ---
+  li r2, alt_testa
+  lw r3, 0(r2)
+  li r2, alt_anello
+  add r3, r3, r2
+  lw r2, VOCE.proc(r11)
+  li r4, st_buco
+  lw r4, 0(r4)
+  add r2, r2, r4
+  sw r2, ALT_REC.proc(r3)
+  li r2, st_istante
+  lw r2, 0(r2)
+  sw r2, ALT_REC.istante(r3)
+  sw r12, ALT_REC.sveglia(r3)
+
   lw r2, DOPO_PROC(r11)
   bne r2, r0, stesso_frame
   li r2, st_tab                  ; il frame finisce: la prima voce, ancorata
@@ -356,7 +400,7 @@ arma:
   lw r3, VOCE.proc(r11)
   beq r3, r0, frame_dopo
   sw r11, 0(r2)
-  j giro
+  j fine_voce
 
 frame_dopo:
   li r3, st_tab_dopo
@@ -385,11 +429,23 @@ frame_dopo:
   lw r3, 0(r2)
   addi r3, r3, 1
   sw r3, 0(r2)
+  li r1, alt_sem                 ; il frame e' finito: il task delle
+  call sem_post                  ; statistiche ha qualcosa da leggere
+  j fine_voce
+
+rec_perso:
+  li r2, alt_stat_persi
+  lw r3, 0(r2)
+  addi r3, r3, 1
+  sw r3, 0(r2)
+  li r2, st_buco
+  li r3, ALT_REC_BUCO
+  sw r3, 0(r2)
   j giro
 
 ; Un indice, un salto: `jalr r15` qui, e la `ret` della procedura torna al giro.
 salti:
-  halt                           ; P_FINE: mai chiamata
+  halt                           ; ALT_P_FINE: mai chiamata
   j p_fronte
   j p_tracker
   j p_barker_acc

@@ -46,6 +46,8 @@
 ;     alt_non_finiti   FRONTE ha trovato il blocco non finito
 ;     alt_ritardi      un armamento di TX_AT o ADC_AT in ritardo
 ;     alt_overrun      le parole di MSG perse nella mailbox
+;     alt_stat         il tempo della time line, per procedura (sotto)
+;     alt_stat_persi   i record buttati con l'anello pieno
 ; e in RAM CONDIVISA (altimetro_shared.vasm, da linkare in tutte le immagini):
 ;     alt_record       le due teste di MSG (eco.vinc), alternate per parita'
 ;                      con passo ECO_REC_TESTA: lo spettro non viaggia
@@ -64,3 +66,71 @@
 
 .equ ALT_FINESTRA  0             ; le ancore
 .equ ALT_PREC      1
+;
+.equ ALT_P_FINE        0         ; gli indici delle procedure: nelle tabelle
+.equ ALT_P_FRONTE      1         ; della time line, e le righe di alt_stat
+.equ ALT_P_TRACKER     2
+.equ ALT_P_BARKER_ACC  3
+.equ ALT_P_BARKER_DEC  4
+.equ ALT_P_MSG         5
+.equ ALT_P_DECIDI      6
+.equ ALT_P_N           7         ; le righe, la 0 non si usa
+
+; --------------------------------------------------------------------------
+;  LE STATISTICHE DELLA TIME LINE (25/10/2026, §3.103)
+;
+;  IL RECORD lo scrive il super task, ALLA SORGENTE (§3.88): una voce, quattro
+;  parole. I tre istanti sono tutti in base CLOCK_CYCLES:
+;      proc      l'indice della procedura, + ALT_REC_BUCO se prima di questo
+;                record il super task ne ha buttati (l'anello era pieno)
+;      istante   quello PROGRAMMATO, cioe' armato in CMP0
+;      sveglia   letto appena la wait torna
+;      fine      letto appena prima della wait dopo: comprende il giro
+;  Gli istanti si sottraggono modulo 2^32, come i comparatori.
+;
+;  L'ANELLO, in RAM locale: alt_anello, ALT_ANELLO record. Uno scrittore, il
+;  super task, che riempie lo slot in testa alla sveglia e alla fine lo
+;  PUBBLICA spostando alt_testa; un lettore, che sposta alt_coda. Sulla stessa
+;  CPU il lettore non interrompe mai lo scrittore: niente interrupt chiusi.
+;  Pieno, lo scrittore butta il record e lo conta: non aspetta mai.
+;
+;  IL LETTORE e' alt_statistiche, chiamata in giro dal TASK DELLE
+;  STATISTICHE, che e' dell'integratore (il livello, lo stack, cosa fare dopo):
+;      call alt_statistiche    aspetta un frame finito (sem_wait su alt_sem,
+;                              che il super task posta a ogni frame), svuota
+;                              l'anello in alt_stat; r1 = i frame finiti da
+;                              quando era tornata l'ultima volta. 0 se il
+;                              frame l'aveva gia' visto, > 1 se gliene sono
+;                              sfuggiti. Clobber: r1..r10
+;  Il task NON USA I VETTORI: il super task lo interrompe a ogni slot, e la via
+;  veloce vale solo per chi non li ha sporchi (hal.vinc).
+;
+;  alt_stat, una riga di ALT_STAT per procedura, che nessuno azzera:
+;      conteggio  i record
+;      ritardo    il massimo di sveglia - istante: la sveglia del super task
+;      lavoro     il massimo di fine - sveglia
+;      margine    il minimo di (l'istante della voce dopo) - fine. Fra due
+;                 record con un buco in mezzo non si calcola
+;      regola     il minimo di durata - ALT_MECCANISMO - 1,25 x lavoro, con
+;                 durata = l'istante della voce dopo - istante: la regola dei
+;                 budget di §3.86. Negativo = lo slot e' stretto per la regola,
+;                 anche se non ha sforato
+; --------------------------------------------------------------------------
+.struct ALT_REC
+  .field proc
+  .field istante
+  .field sveglia
+  .field fine
+.ends
+.equ ALT_REC_BUCO    256
+.equ ALT_ANELLO      64          ; record: 1 KiB, una dozzina di frame di TRACK
+.equ ALT_ANELLO_MASK ALT_ANELLO * ALT_REC.size - 1
+
+.struct ALT_STAT
+  .field conteggio
+  .field ritardo
+  .field lavoro
+  .field margine
+  .field regola
+.ends
+.equ ALT_MECCANISMO  327         ; i cicli di meccanismo a slot (§3.86)
