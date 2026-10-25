@@ -163,26 +163,25 @@
 > ### ▶ RIPRENDI DA QUI (dopo il 25/10/2026, sera)
 >
 > **Il 25/10: la proposta di §3.99 APPROVATA; `hal/tx.vinc` e TX_AT FATTI
-> (§3.100); IL PERCORSO NOMINALE FATTO (§3.101)** in `altimetro/`: 15 frame
-> su due CPU, la sequenza 111112222233333, nessun ritardo, gli sweep di TRACK
-> ricevuti buoni dalla CPU 1, il fronte dell'ultimo entro mezzo gate dal tau
-> contato a mano. Cinque mutanti previsti prima. **Le durate degli slot
-> rifatte** col lavoro misurato, giro compreso: con quelle di §3.86 il TRACKER
-> aveva una ventina di cicli di margine. `ctest` 112/112.
+> (§3.100); IL PERCORSO NOMINALE FATTO (§3.101); e (§3.102) LA CPU 1 È IL
+> PRODOTTO**: la FFT si è spostata lì, leggendo il blocco nel **ping-pong
+> hardware dell'ADC** (`ADC_BUF`, un'idea dell'utente). La CPU 0 è il
+> controllo: la catena di TRACK passa da 14.000 a 3.900 cicli. `ctest` 113/113.
 >
 > **Niente pushato** dopo `75373fc`: i commit del 25/10 aspettano l'utente.
 >
-> **Il prossimo passo** (§3.99): il **task delle statistiche** (§3.88), a sé:
-> DECIDI gli fa una send, il cpuometro misura il respiro dopo di lui. Poi il
-> punto 4: la scena vera e i rami di fallimento, dove si vedono il segno del
-> Barker e l'ordine dell'armamento (§3.101, «Aperti»).
+> **Il prossimo passo** (§3.99): il **task delle statistiche** (§3.88) sulla
+> CPU 0, a sé: DECIDI gli fa una send, il cpuometro misura il respiro dopo di
+> lui. Poi il punto 4: la scena vera e i rami di fallimento, dove si vedono il
+> segno del Barker e l'ordine dell'armamento (§3.101, «Aperti»). Il kernel
+> sulla CPU 1 (multi-look, telemetria) è aperto, non deciso (§3.102).
 >
 > **LA FORMULA PER RIPRENDERE (25/10, sera):**
 >
 > ```
-> Leggi docs/stato-lavori.md, §0 e poi §3.101, §3.100 e §3.99, e quanto
-> serve di §3.88 (il cpuometro e il task delle statistiche) e §3.74-§3.75.
-> Poi il task delle statistiche: proponi prima la forma.
+> Leggi docs/stato-lavori.md, §0 e poi §3.102, §3.101, §3.100 e §3.99, e
+> quanto serve di §3.88 (il cpuometro e il task delle statistiche) e
+> §3.74-§3.75. Poi il task delle statistiche: proponi prima la forma.
 > ```
 
 > ### Il 24/10 (superato dal 25/10 qui sopra)
@@ -4156,6 +4155,85 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.102 IL CONTROLLO E IL PRODOTTO: la FFT sulla CPU 1, e il ping-pong dell'ADC (25/10/2026)
+
+**La domanda dell'utente:** «ha senso avere due CPU esattamente uguali? qual è
+il piano per la seconda?». Il piano scritto (§3.78) diceva solo «CPU 1: task
+asincroni»; che cosa calcolasse non era deciso. Le CPU identiche sono una
+comodità del simulatore, non una scelta: l'eterogeneità vera (un controllore e
+un DSP, come gli OMAP di TI, a memoria) sarebbe una configurazione dello stesso
+core. Proposto il taglio classico degli strumenti: **la CPU 0 il CONTROLLO**
+(time line, inseguimento, anello a 1 ms), **la CPU 1 il PRODOTTO**. E la FFT,
+che §3.89 chiamava già «il prodotto», sta sulla CPU 1. **Deciso dall'utente**
+(«visto che l'FFT è sw...»).
+
+**Il trasporto: un'idea dell'utente, il ping-pong IN HARDWARE.** Io proponevo
+due blocchi alternati dal TRACKER; l'utente: «le CPU leggono sempre allo stesso
+indirizzo e l'hw cambia il buffer sotto». È la forma giusta (le RAM ping-pong
+delle FPGA dei radar, il double buffering della grafica). Detto prima di
+farlo: lo scambio protegge chi SCRIVE, non chi legge -- un lettore più lento di
+un blocco si vede rileggendo il contatore prima e dopo (il seqlock con la
+sequenza dell'hardware); il triplo buffer lo eviterebbe, e non serve. Il
+ping-pong fra le CPU (al posto del seqlock di MSG) discusso e NON fatto.
+
+#### `ADC_BUF` (commit `342954b`)
+
+```
+ADC_BUF 0x300000   la finestra, sola lettura, la stessa per tutte le CPU; due
+                   banchi di ADC_BUF_MAX = 256 campioni nella memoria dell'ADC
+la scelta          ADC_ADDR = ADC_BUF esatto: la DMA scrive nel banco NASCOSTO,
+                   e a blocco finito i banchi si scambiano INSIEME al contatore.
+                   Con ADC_ADDR in RAM condivisa, tutto come prima
+la scheda          read_ptr: le letture (lw e vload) passano dalla finestra;
+                   una scrittura e' un errore per nome
+```
+
+`test_adc_pp`: senza segnale, i blocchi riconosciuti dal TX (accecati 2047,
+puliti 0); a metà del blocco dopo si vede ancora quello intero, anche coi
+vettori. Tre mutanti, come previsti: niente scambio, scambio all'avvio, vettori
+fuori dalla finestra. `equiv.py`: 85 programmi su 86 identici a `HEAD`.
+
+#### L'altimetro sulle due CPU (commit `04850f0`)
+
+- **CPU 0:** FRONTE e BARKER leggono `ADC_BUF`; la tabella di TRACK è FRONTE,
+  TRACKER, MSG, DECIDI: **3.900 cicli invece di 14.000**. MSG fa `eco_apri`,
+  scrive il blocco e chiama `msg`: 203 di lavoro, lo slot resta 600.
+- **eco.vinc:** `ECO_REC_BLOCCO` (il contatore che FRONTE ha visto, scritto dal
+  chiamante dentro il seqlock) e `ECO_REC_TESTA`: l'altimetro manda solo la
+  testa, 20 byte, alternata per parità. Il record pieno resta per `test_msg`.
+- **CPU 1:** legge la testa, poi la FFT su `ADC_BUF` col contatore uguale a
+  `ECO_REC_BLOCCO` prima e dopo, se no **superato**. Lo **sweep 12 lo legge
+  tardi apposta** (aspetta lo scambio dopo), come la CPU lenta di `test_msg`:
+  l'unico modo di vedere il controllo nel nominale.
+
+```
+cpu0  111112222233333 0 0 0 0
+cpu1  5 0 14 1 4 1     teste buone; altre; l'ultimo n; il fronte vicino a tau;
+                       spettri buoni (X[0] a 45 gradi, la fase 0,785 della
+                       scena: |re - im| < re/20, a 5 sigma); superati (il 12)
+```
+
+Otto mutanti, previsti e usciti uguali (in fondo a `test_altimetro1.vasm`):
+i cinque di §3.101 coi due numeri nuovi; **MSG senza il blocco** (tutte
+superate, `0 5`); la **CPU 1 senza contatore** (`5 0`: lo sweep 12 fatto sul
+blocco 13 e preso per buono); il **contatore solo prima** (verde, previsto: il
+lento lo prende il primo controllo, il secondo vede solo uno scambio durante la
+FFT).
+
+`ctest` **113/113**.
+
+#### Aperti
+
+- La CPU 1 è un programma nudo in polling. Il **multi-look** e la
+  **telemetria** vorranno il suo kernel: la seconda istanza dello scheduler.
+- Leggere `ADC_STATUS` dalla CPU 1 **abbassa `ADC_OVERRUN`**, che è della
+  scheda: oggi non lo legge nessun altro, ma è un effetto collaterale
+  condiviso. Un registro del solo contatore, senza effetti, lo toglierebbe.
+- Con la FFT via, la CPU 0 non prova più il contesto vettoriale nello slot
+  lungo: il meccanismo era già misurato sotto quel carico (§3.86).
 
 ---
 
