@@ -1,0 +1,106 @@
+; altimetro/test/test_altimetro0.vasm — IL PERCORSO NOMINALE della macchina a
+; stati: la CPU 0 (25/10/2026). Gira con test_altimetro1.vasm sulla CPU 1 e
+; col mondo di altimetro/test/nominale.scena: l'acqua a 90 km, senza clutter
+; ne' perdite.
+;
+; --- COSA FA ---
+; Il boot del kernel e l'idle, poi `j altimetro_parti`: da li' la CPU 0 e'
+; l'altimetro. L'IDLE e' il testimone: gira nel banco 0 senza vettori (la
+; regola della via veloce), e a ogni frame finito -- alt_k che cresce --
+; aggiunge una cifra, il modo del frame, a una sequenza. Fra la fine di un
+; frame e il FRONTE del frame dopo ci sono ~87.000 cicli d'idle: nessun frame
+; gli sfugge. Dopo ALT_FRAMI frame stampa e ferma la scheda.
+;
+; --- I CINQUE NUMERI DELLA CPU 0, tutti derivabili ---
+;   111112222233333   i modi dei 15 frame: 5 CAL, 5 ACQ, 5 TRACK. CAL passa
+;                     al quinto (i residui degli sweep 3..5 sotto 1 gate,
+;                     §3.86 li misurava a -0,14 -0,51 -0,13), ACQ al quinto
+;                     (BARKER_DEC entro 1 gate dal tracker)
+;   0                 le voci partite in ritardo: nessuno slot ha sforato
+;   0                 i blocchi non finiti a FRONTE
+;   0                 gli armamenti in ritardo di TX_AT e ADC_AT
+;   0                 le parole di MSG perse: la CPU 1 legge in tempo
+; I numeri della CPU 1 e i rossi sono in test_altimetro1.vasm.
+
+.include "tcb/tcb.vinc"
+.include "queue/queue_api.vinc"
+.include "altimetro/altimetro.vinc"
+
+.equ ALT_FRAMI  15               ; 5 CAL + 5 ACQ + 5 TRACK
+
+  .data
+tcbI:       .res TCB
+stackI:     .space 256           ; l'idle non usa i vettori: frame piccolo
+stackI_top:
+stack_boot: .space 64
+stack_boot_top:
+
+  .text
+  .global main
+  .extern altimetro_parti
+  .extern alt_k
+  .extern alt_modo_svolto
+  .extern alt_sforamenti
+  .extern alt_non_finiti
+  .extern alt_ritardi
+  .extern alt_overrun
+  .extern fine
+  .extern pcb7
+  .extern sched_init
+  .extern ctx_init
+
+main:
+  li r14, stack_boot_top
+  call sched_init
+
+  ; --- l'idle (livello 7) ---
+  li r1, stackI_top
+  li r2, idle
+  call ctx_init
+  li r3, tcbI
+  sw r1, TCB.sp(r3)
+  li r4, pcb7
+  sw r4, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r1, r4
+  mov r2, r3
+  call enqueue_tail
+
+  j altimetro_parti              ; non torna
+
+; ==========================================================================
+;  L'idle: il testimone dei frame
+; ==========================================================================
+idle:
+  li r9, alt_k
+  li r10, 0                      ; i frame visti
+  li r11, 0                      ; la sequenza dei modi, in cifre
+  li r12, 10
+idle_giro:
+  lw r1, 0(r9)
+  beq r1, r10, idle_giro
+  mov r10, r1
+  li r2, alt_modo_svolto
+  lw r2, 0(r2)
+  mul r11, r11, r12
+  add r11, r11, r2
+  li r3, ALT_FRAMI
+  bne r10, r3, idle_giro
+
+  dumps r11                      ; 111112222233333
+  li r1, alt_sforamenti
+  lw r2, 0(r1)
+  dumps r2                       ; 0
+  li r1, alt_non_finiti
+  lw r2, 0(r1)
+  dumps r2                       ; 0
+  li r1, alt_ritardi
+  lw r2, 0(r1)
+  dumps r2                       ; 0
+  li r1, alt_overrun
+  lw r2, 0(r1)
+  dumps r2                       ; 0
+  li r1, fine
+  li r2, 1
+  sw r2, 0(r1)
+  halt

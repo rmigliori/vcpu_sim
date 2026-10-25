@@ -1,0 +1,832 @@
+; altimetro/src/altimetro.vasm — la macchina a stati della time line
+; (25/10/2026). Il contratto, i modi e le ancore sono in altimetro.vinc; la
+; forma e' quella di §3.99, con le correzioni di §3.100.
+;
+; --- IL GIRO DEL SUPER TASK, per ogni voce ---
+;   1  `wait` torna: e' l'istante della voce corrente. Con pending > 0 la
+;      voce parte in RITARDO -- quella prima ha sforato -- e il ritardo,
+;      CLOCK_CYCLES - istante, va nelle statistiche
+;   2  ARMA CMP0 all'istante della voce DOPO, prima di lavorare: e' cio' che
+;      fa raggiungere dalla trap un'attivita' che sfora (la trap torna dentro
+;      di lei, current == tcb) e fa trovare pending = 1 alla wait dopo
+;   3  chiama la procedura della voce
+;   4  avanza: se la voce era l'ultima, il frame dopo, con la tabella che
+;      DECIDI ha scelto
+; Attraverso la wait non si conserva niente (la regola della via veloce,
+; hal.vinc): lo stato e' tutto in memoria, e il giro lo rilegge ogni volta.
+;
+; --- LE PROCEDURE SONO ADATTATORI ---
+; Leggono lo stato, chiamano l'attivita' di lib_eco o la FFT, scrivono
+; l'esito nelle caselle. Nelle tabelle c'e' un INDICE, non un indirizzo:
+; `.word` non prende etichette, e il salto passa da una tabella di `j`.
+;
+; --- CHI ARMA IL FERRO (§3.100) ---
+;   il TRACKER   ADC_AT del frame dopo: t0 + ALT_PRI + l'AT - TX predetto
+;   DECIDI       TX_AT del frame dopo, col segno del modo deciso; e, quando
+;                ricomincia da capo, di nuovo ADC_AT con l'AT - TX a priori
+;   l'avvio      i due istanti del frame 0
+; L'AT - TX e' esatto per costruzione: il TX parte a t0 al tick.
+;
+; I REGISTRI: le librerie non toccano r9..r15; gli adattatori sono non-foglie
+; e salvano r15 sullo stack del super task, che attraversa la wait (r14 e'
+; condiviso fra i banchi).
+
+.include "tcb/tcb.vinc"
+.include "wait/wait.vinc"
+.include "hal/hal.vinc"
+.include "hal/clock.vinc"
+.include "hal/adc.vinc"
+.include "hal/tx.vinc"
+.include "eco/eco.vinc"
+.include "fft/fft.vinc"
+.include "altimetro/altimetro.vinc"
+
+.struct VOCE
+  .field ancora        ; ALT_FINESTRA o ALT_PREC
+  .field durata        ; cicli: l'istante della voce dopo, se e' ancorata qui
+  .field proc          ; l'indice nella tabella dei salti; 0 = fine tabella
+.ends
+
+.equ P_FINE        0             ; gli indici delle procedure
+.equ P_FRONTE      1
+.equ P_TRACKER     2
+.equ P_BARKER_ACC  3
+.equ P_BARKER_DEC  4
+.equ P_FFT         5
+.equ P_MSG         6
+.equ P_DECIDI      7
+
+; Le durate: la regola di §3.86, 327 di meccanismo + il lavoro x 1,25,
+; arrotondato per eccesso alle centinaia. IL LAVORO E' MISURATO QUI (25/10),
+; dal ritorno della wait alla wait dopo: comprende il giro e l'adattatore,
+; ~150 cicli a voce che i 327 -- misurati con un giro che non faceva niente
+; -- non contano. Con le durate di §3.86 il TRACKER (126 di attivita', 304 di
+; lavoro) stava in 500 con una ventina di cicli di margine: bastava una sonda
+; per farlo sforare, e una trap con i vettori sporchi costa ~1800 cicli.
+;                    lavoro    durata    (§3.86)
+.equ D_FRONTE      1700        ; 1071     1500
+.equ D_TRACKER     800         ;  304      500
+.equ D_BARKER_ACC  1900        ; 1246     1800
+.equ D_BARKER_DEC  1500        ;  910     1300
+.equ D_FFT         10100       ; 7811    10000
+.equ D_MSG         600         ;  183      400
+.equ D_DECIDI      800         ;  363      400   l'ultima voce: la sua durata
+                               ;                 non arma niente, la voce dopo
+                               ;                 e' alla finestra del frame dopo
+
+.equ CMP_TL        CMP_ARM0_CYC | CMP_ARM1   ; la sveglia, e il cane resta
+.equ MAGIC_HI      0x4B400000    ; i bit di 1,5 x 2^23: intero -> float
+.equ MAGIC         12582912.0    ; 1,5 x 2^23
+.equ META_W        ECO_W / 2
+.equ DOPO_ANCORA   VOCE.size + VOCE.ancora   ; i campi della voce dopo
+.equ DOPO_PROC     VOCE.size + VOCE.proc
+.equ PRI_APRIORI   ALT_PRI + ALT_APRIORI     ; da capo: la finestra a priori
+.equ ULTIMO_ACQ    ALT_SWEEP - 1 ; lo sweep di ACQ con BARKER_DEC, da 0
+
+  .data
+
+; --- le tabelle: {ancora, durata, procedura}, chiuse da P_FINE ---
+tab_cal:   .word ALT_FINESTRA, D_FRONTE,     P_FRONTE
+           .word ALT_PREC,     D_TRACKER,    P_TRACKER
+           .word ALT_PREC,     D_DECIDI,     P_DECIDI
+           .word 0, 0, P_FINE
+tab_acq:   .word ALT_FINESTRA, D_FRONTE,     P_FRONTE
+           .word ALT_PREC,     D_TRACKER,    P_TRACKER
+           .word ALT_PREC,     D_BARKER_ACC, P_BARKER_ACC
+           .word ALT_PREC,     D_DECIDI,     P_DECIDI
+           .word 0, 0, P_FINE
+tab_acq5:  .word ALT_FINESTRA, D_FRONTE,     P_FRONTE
+           .word ALT_PREC,     D_TRACKER,    P_TRACKER
+           .word ALT_PREC,     D_BARKER_ACC, P_BARKER_ACC
+           .word ALT_PREC,     D_BARKER_DEC, P_BARKER_DEC
+           .word ALT_PREC,     D_DECIDI,     P_DECIDI
+           .word 0, 0, P_FINE
+tab_track: .word ALT_FINESTRA, D_FRONTE,     P_FRONTE
+           .word ALT_PREC,     D_TRACKER,    P_TRACKER
+           .word ALT_PREC,     D_FFT,        P_FFT
+           .word ALT_PREC,     D_MSG,        P_MSG
+           .word ALT_PREC,     D_DECIDI,     P_DECIDI
+           .word 0, 0, P_FINE
+
+codice:    .word 1, 1, 1, -1, 1  ; il Barker-5, uno per sweep di ACQ
+
+; --- lo stato del giro ---
+st_tab:       .word 0            ; la tabella del frame corrente
+st_voce:      .word 0            ; la voce corrente: il suo indirizzo
+st_istante:   .word 0            ; il suo istante, base CLOCK_CYCLES
+st_dopo:      .word 0            ; l'istante della voce dopo, armato in CMP0
+st_t0:        .word 0            ; il TX del frame corrente
+st_attx:      .word 0            ; AT - TX del frame corrente
+st_at:        .word 0            ; AT del frame corrente
+st_segno:     .word 0            ; il segno del TX del frame corrente
+st_tab_dopo:  .word 0            ; cio' che il frame dopo sara': lo scrivono
+st_attx_dopo: .word 0            ; DECIDI (tabella e segno) e il TRACKER
+st_at_dopo:   .word 0            ; (la finestra)
+st_segno_dopo: .word 0
+st_visti:     .word 0            ; i blocchi dell'ADC visti da FRONTE
+st_record:    .word 0            ; il record di MSG di questo sweep
+
+; --- la macchina a stati ---
+st_modo:      .word 0
+st_conta:     .word 0            ; gli sweep finiti nel modo corrente
+st_cal_ok:    .word 0            ; CAL: finora tutto bene
+st_falliti:   .word 0            ; TRACK: sweep non nominali di fila
+
+; --- le caselle d'esito, scritte dagli adattatori e lette da DECIDI ---
+c_trovato:    .word 0
+c_pos:        .float 0.0
+c_esito:      .word 0
+c_res:        .float 0.0
+c_dec:        .word 0
+c_dec_pos:    .float 0.0
+appoggio:     .word 0            ; le conversioni e i segni dei float
+
+; --- le statistiche (altimetro.vinc) ---
+alt_k:           .word 0
+alt_modo_svolto: .word 0
+alt_sforamenti:  .word 0
+alt_sfora_max:   .word 0
+alt_non_finiti:  .word 0
+alt_ritardi:     .word 0
+alt_overrun:     .word 0
+
+; --- la memoria delle attivita': la libreria non ne possiede ---
+scratch:   .space ECO_SCRATCH_W
+trk:       .space ECO_STATO_W
+bk:        .space ECO_BARKER_W
+
+wT:        .res WAIT
+  .supertask tcb_alt
+
+stack:     .space 1024           ; 4 KB: il frame canonico coi vettori, 2192
+stack_top:                       ; byte, quando una trap lo raggiunge sforando
+
+  .text
+  .global altimetro_parti
+  .global alt_k
+  .global alt_modo_svolto
+  .global alt_sforamenti
+  .global alt_sfora_max
+  .global alt_non_finiti
+  .global alt_ritardi
+  .global alt_overrun
+  .extern alt_record
+  .extern alt_blocco
+  .extern current
+  .extern wait_init
+  .extern wait
+  .extern wait_signal
+  .extern irq_install
+  .extern irq_arm_banco
+  .extern fronte
+  .extern tracker
+  .extern barker_acc
+  .extern barker_dec
+  .extern eco_apri
+  .extern msg
+  .extern fft64
+
+; ==========================================================================
+;  L'AVVIO: il ferro, lo stato, il frame 0. A IE = 0, dal boot.
+; ==========================================================================
+altimetro_parti:
+  li r14, stack_top
+  li r1, wT
+  li r2, tcb_alt
+  call wait_init
+
+  ; --- il ferro: si configura una volta, e ogni armamento lo congela ---
+  li r1, TX_LEN
+  li r2, ALT_TX_LEN
+  sw r2, 0(r1)
+  li r1, ADC_ADDR
+  li r2, alt_blocco
+  sw r2, 0(r1)
+  li r1, ADC_COUNT
+  li r2, ECO_W
+  sw r2, 0(r1)
+  li r1, ADC_PERIOD
+  li r2, 1                       ; un gate e' un ciclo: la precondizione di TRACKER
+  sw r2, 0(r1)
+
+  ; --- MSG: tutti e due i record aperti, uno mai scritto non e' lo sweep 0 ---
+  li r1, alt_record
+  call eco_apri
+  li r1, alt_record
+  addi r1, r1, ECO_REC
+  call eco_apri
+
+  ; --- lo stato: CAL, la finestra a priori ---
+  li r1, ALT_CAL
+  li r2, st_modo
+  sw r1, 0(r2)
+  li r1, 1
+  li r2, st_cal_ok
+  sw r1, 0(r2)
+  li r2, st_segno
+  sw r1, 0(r2)
+  li r1, tab_cal
+  li r2, st_tab
+  sw r1, 0(r2)
+  li r2, st_voce
+  sw r1, 0(r2)
+  li r1, ALT_T0
+  li r2, st_t0
+  sw r1, 0(r2)
+  li r2, ALT_APRIORI
+  li r3, st_attx
+  sw r2, 0(r3)
+  add r1, r1, r2                 ; AT = t0 + AT - TX
+  li r2, st_at
+  sw r1, 0(r2)
+  li r1, ALT_APRIORI
+  call apriori                   ; il tracker: x al centro, v = 0, n = 0
+
+  ; --- il frame 0: il TX positivo, e la finestra ---
+  li r1, TX_CTRL
+  sw r0, 0(r1)                   ; il segno +, senza trasmettere
+  li r1, ALT_T0
+  call arma_tx
+  li r1, st_at
+  lw r1, 0(r1)
+  call arma_adc
+
+  ; --- il cane da guardia, sui millisecondi ---
+  li r1, CLOCK_MS
+  lw r2, 0(r1)
+  addi r2, r2, ALT_GUARDIA
+  li r1, CMP1
+  sw r2, 0(r1)
+
+  li r1, isr
+  call irq_install
+  li r1, CAUSE_CMP0
+  call irq_arm_banco             ; la via veloce, per la sveglia del super task
+
+  ; --- il super task parte a freddo, RUNNING ---
+  li r3, tcb_alt
+  li r1, current
+  sw r3, 0(r1)
+  li r5, RUNNING
+  sw r5, TCB.state(r3)
+
+  ; --- la prima voce: FRONTE del frame 0, alla finestra ---
+  li r1, st_at
+  lw r1, 0(r1)
+  addi r1, r1, ECO_W
+  li r2, st_istante
+  sw r1, 0(r2)
+  li r2, CMP0
+  sw r1, 0(r2)
+  li r1, CMP_CTRL
+  li r2, CMP_TL
+  sw r2, 0(r1)
+
+  ; --- NEL BANCO ALTERNATIVO (la regola di hal.vinc), a IE = 1 ---
+  li r1, PSW_IE_BANK
+  mtpsw r1
+  j giro
+
+; ==========================================================================
+;  IL GIRO
+; ==========================================================================
+giro:
+  li r1, wT
+  call wait                      ; r1 = pending, letto alla chiamata
+  beq r1, r0, puntuale
+
+  ; --- la voce corrente parte in ritardo: di quanto ---
+  li r2, alt_sforamenti
+  lw r3, 0(r2)
+  addi r3, r3, 1
+  sw r3, 0(r2)
+  li r2, CLOCK_CYCLES
+  lw r3, 0(r2)
+  li r2, st_istante
+  lw r4, 0(r2)
+  sub r3, r3, r4
+  li r2, alt_sfora_max
+  lw r4, 0(r2)
+  blt r3, r4, puntuale
+  sw r3, 0(r2)
+
+puntuale:
+  ; --- la voce dopo, e il suo istante ---
+  li r2, st_voce
+  lw r11, 0(r2)                  ; la voce corrente
+  lw r2, DOPO_PROC(r11)
+  bne r2, r0, stesso_frame
+  li r2, st_tab                  ; il frame finisce: la prima voce, ancorata
+  lw r2, 0(r2)                   ; alla finestra del frame dopo
+  lw r2, VOCE.ancora(r2)
+  li r3, st_at_dopo
+  lw r3, 0(r3)
+  j valuta
+stesso_frame:
+  lw r2, DOPO_ANCORA(r11)
+  li r3, st_at
+  lw r3, 0(r3)
+valuta:
+  li r4, ALT_FINESTRA
+  bne r2, r4, prec
+  addi r5, r3, ECO_W             ; il blocco finito
+  j arma
+prec:
+  li r4, st_istante
+  lw r5, 0(r4)
+  lw r6, VOCE.durata(r11)
+  add r5, r5, r6
+arma:
+  li r4, st_dopo
+  sw r5, 0(r4)
+  li r4, CMP0
+  sw r5, 0(r4)
+  li r4, CMP_CTRL
+  li r6, CMP_TL
+  sw r6, 0(r4)                   ; da qui la trap puo' raggiungere la voce
+
+  ; --- la procedura ---
+  lw r2, VOCE.proc(r11)
+  li r3, salti
+  add r3, r3, r2
+  jalr r15, r3
+
+  ; --- avanti ---
+  li r2, st_dopo
+  lw r3, 0(r2)
+  li r2, st_istante
+  sw r3, 0(r2)
+  li r2, st_voce
+  lw r11, 0(r2)
+  addi r11, r11, VOCE.size
+  lw r3, VOCE.proc(r11)
+  beq r3, r0, frame_dopo
+  sw r11, 0(r2)
+  j giro
+
+frame_dopo:
+  li r3, st_tab_dopo
+  lw r3, 0(r3)
+  sw r3, 0(r2)                   ; la prima voce della tabella nuova
+  li r2, st_tab
+  sw r3, 0(r2)
+  li r2, st_t0
+  lw r3, 0(r2)
+  li r4, ALT_PRI
+  add r3, r3, r4
+  sw r3, 0(r2)
+  li r2, st_attx_dopo
+  lw r3, 0(r2)
+  li r2, st_attx
+  sw r3, 0(r2)
+  li r2, st_at_dopo
+  lw r3, 0(r2)
+  li r2, st_at
+  sw r3, 0(r2)
+  li r2, st_segno_dopo
+  lw r3, 0(r2)
+  li r2, st_segno
+  sw r3, 0(r2)
+  li r2, alt_k
+  lw r3, 0(r2)
+  addi r3, r3, 1
+  sw r3, 0(r2)
+  j giro
+
+; Un indice, un salto: `jalr r15` qui, e la `ret` della procedura torna al giro.
+salti:
+  halt                           ; P_FINE: mai chiamata
+  j p_fronte
+  j p_tracker
+  j p_barker_acc
+  j p_barker_dec
+  j p_fft
+  j p_msg
+  j p_decidi
+
+; ==========================================================================
+;  GLI ADATTATORI
+; ==========================================================================
+
+; FRONTE. Il blocco dev'essere FINITO: il contatore dell'ADC e' oltre quello
+; visto l'ultima volta. Se no e' un ERRORE da registrare, non un'attesa
+; (§3.89), e lo sweep vale "non trovato".
+p_fronte:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  li r1, ADC_STATUS
+  lw r2, 0(r1)
+  srli r2, r2, ADC_DONE_SHIFT
+  li r3, st_visti
+  lw r4, 0(r3)
+  beq r2, r4, fr_non_finito
+  sw r2, 0(r3)
+  li r1, alt_blocco
+  li r2, scratch
+  call fronte
+  j fr_fine
+fr_non_finito:
+  li r2, alt_non_finiti
+  lw r3, 0(r2)
+  addi r3, r3, 1
+  sw r3, 0(r2)
+  li r1, 0
+fr_fine:
+  li r2, c_trovato
+  sw r1, 0(r2)
+  li r2, c_pos
+  fsw f1, 0(r2)
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; TRACKER, e la finestra del frame dopo.
+p_tracker:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  li r2, c_trovato
+  lw r1, 0(r2)
+  li r2, c_pos
+  flw f1, 0(r2)
+  li r2, st_attx
+  lw r2, 0(r2)
+  li r3, trk
+  call tracker
+  li r3, c_esito
+  sw r1, 0(r3)
+  li r3, c_res
+  fsw f1, 0(r3)
+  li r3, st_attx_dopo
+  sw r2, 0(r3)
+  li r3, st_t0                   ; AT = t0 + ALT_PRI + AT - TX
+  lw r1, 0(r3)
+  li r3, ALT_PRI
+  add r1, r1, r3
+  add r1, r1, r2
+  li r3, st_at_dopo
+  sw r1, 0(r3)
+  call arma_adc
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; BARKER_ACC, col segno che il TX di questo sweep ha trasmesso.
+p_barker_acc:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  li r1, alt_blocco
+  li r2, st_segno
+  lw r2, 0(r2)
+  li r3, st_attx
+  lw r3, 0(r3)
+  li r4, bk
+  call barker_acc
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; BARKER_DEC, al quinto sweep di ACQ.
+p_barker_dec:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  li r1, bk
+  li r2, scratch
+  call barker_dec
+  li r2, c_dec
+  sw r1, 0(r2)
+  li r2, c_dec_pos
+  fsw f1, 0(r2)
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; La FFT nel record di questo sweep: eco_apri PRIMA (il seqlock, eco.vinc).
+p_fft:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  li r2, alt_k                   ; il record: base + (n & 1) * ECO_REC
+  lw r2, 0(r2)
+  li r3, 1
+  and r2, r2, r3
+  li r3, ECO_REC
+  mul r2, r2, r3
+  li r1, alt_record
+  add r1, r1, r2
+  li r2, st_record
+  sw r1, 0(r2)
+  call eco_apri
+  li r1, st_record
+  lw r1, 0(r1)
+  addi r2, r1, ECO_REC_RE
+  addi r3, r1, ECO_REC_IM
+  li r1, alt_blocco
+  call fft64
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; MSG: la testa, n, e la parola all'altra CPU. n e' il numero del frame.
+p_msg:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  li r1, st_record
+  lw r1, 0(r1)
+  li r2, alt_k
+  lw r2, 0(r2)
+  li r3, st_attx
+  lw r3, 0(r3)
+  li r4, c_pos
+  flw f1, 0(r4)
+  li r4, c_esito
+  lw r4, 0(r4)
+  call msg
+  li r2, alt_overrun
+  lw r3, 0(r2)
+  add r3, r3, r1
+  sw r3, 0(r2)
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; ==========================================================================
+;  DECIDI: l'ultima voce. Applica i criteri di §3.82 a questo sweep, sceglie
+;  la tabella del frame dopo e arma il suo TX. Decidere e applicare
+;  coincidono al confine (§3.74).
+; ==========================================================================
+p_decidi:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  li r2, st_modo
+  lw r9, 0(r2)                   ; r9 = il modo di questo sweep
+  li r2, alt_modo_svolto
+  sw r9, 0(r2)
+  li r2, st_conta
+  lw r10, 0(r2)
+  addi r10, r10, 1               ; r10 = gli sweep del modo, questo compreso
+  li r2, c_esito
+  lw r11, 0(r2)                  ; r11 = l'esito del TRACKER
+
+  li r2, ALT_CAL
+  beq r9, r2, de_cal
+  li r2, ALT_ACQ
+  beq r9, r2, de_acq
+
+  ; --- TRACK: due sweep non nominali di fila, e si ricomincia da capo ---
+  li r2, st_falliti
+  lw r3, 0(r2)
+  addi r3, r3, 1
+  beq r11, r0, de_tr_buono
+  j de_tr_conta
+de_tr_buono:
+  li r3, 0
+de_tr_conta:
+  sw r3, 0(r2)
+  li r4, 2
+  bne r3, r4, de_scegli
+  call da_capo
+  li r9, ALT_CAL
+  li r10, 0
+  j de_scegli
+
+  ; --- CAL: tutti nominali, e dal terzo residui sotto 1 gate ---
+de_cal:
+  li r2, st_cal_ok
+  bne r11, r0, de_cal_no
+  li r3, 3
+  blt r10, r3, de_cal_fine
+  li r3, c_res
+  flw f1, 0(r3)
+  call sotto_un_gate             ; r1 = 1 se |f1| < 1
+  bne r1, r0, de_cal_fine
+de_cal_no:
+  li r2, st_cal_ok
+  sw r0, 0(r2)
+de_cal_fine:
+  li r3, ALT_SWEEP
+  bne r10, r3, de_scegli
+  li r10, 0
+  li r2, st_cal_ok
+  lw r3, 0(r2)
+  li r4, 1
+  sw r4, 0(r2)                   ; il prossimo giro di CAL riparte pulito
+  beq r3, r0, de_cal_resta
+  li r9, ALT_ACQ                 ; CAL passa: ACQ, con la somma vuota
+  li r2, bk
+  sw r0, ECO_BK_N(r2)
+  j de_scegli
+de_cal_resta:
+  call dov_e                     ; resta in CAL, la finestra dov'e'
+  j de_scegli
+
+  ; --- ACQ: al quinto, la somma trovata ed entro 1 gate dal tracker ---
+de_acq:
+  li r3, ALT_SWEEP
+  bne r10, r3, de_scegli
+  li r10, 0
+  li r2, c_dec
+  lw r3, 0(r2)
+  beq r3, r0, de_acq_no
+  ; il fronte della somma come ritardo dal TX: AT - TX + 1 + posizione,
+  ; contro la x del tracker -- la stessa grandezza (eco.vinc)
+  li r2, st_attx
+  lw r1, 0(r2)
+  call in_float                  ; f1 = AT - TX
+  fli f2, 1.0
+  fadd f1, f1, f2
+  li r2, c_dec_pos
+  flw f2, 0(r2)
+  fadd f1, f1, f2
+  li r2, trk
+  flw f2, 0(r2)                  ; x
+  fsub f1, f1, f2
+  call sotto_un_gate             ; "entro 1 gate": |d| = 1 esatto, che con un
+  bne r1, r0, de_acq_si          ; float non capita, resta fuori
+de_acq_no:
+  li r9, ALT_CAL                 ; ACQ fallisce: in CAL, la finestra dov'e'
+  li r2, st_cal_ok
+  li r3, 1
+  sw r3, 0(r2)
+  call dov_e
+  j de_scegli
+de_acq_si:
+  li r9, ALT_TRACK
+  li r2, st_falliti
+  sw r0, 0(r2)
+
+  ; --- la tabella e il segno del frame dopo: r9 il modo, r10 gli sweep ---
+de_scegli:
+  li r2, st_modo
+  sw r9, 0(r2)
+  li r2, st_conta
+  sw r10, 0(r2)
+  li r5, 1                       ; il segno
+  li r4, tab_cal
+  li r2, ALT_CAL
+  beq r9, r2, de_arma
+  li r4, tab_track
+  li r2, ALT_TRACK
+  beq r9, r2, de_arma
+  li r2, codice                  ; ACQ: il segno del codice, sweep r10
+  slli r3, r10, 2
+  add r2, r2, r3
+  lw r5, 0(r2)
+  li r4, tab_acq
+  li r2, ULTIMO_ACQ
+  bne r10, r2, de_arma
+  li r4, tab_acq5
+de_arma:
+  li r2, st_tab_dopo
+  sw r4, 0(r2)
+  li r2, st_segno_dopo
+  sw r5, 0(r2)
+  li r1, TX_CTRL                 ; il segno, senza trasmettere
+  li r2, 0
+  blt r0, r5, de_positivo
+  li r2, TX_NEG
+de_positivo:
+  sw r2, 0(r1)
+  li r2, st_t0
+  lw r1, 0(r2)
+  li r2, ALT_PRI
+  add r1, r1, r2
+  call arma_tx
+
+  ; --- il cane da guardia: la time line e' viva ---
+  li r1, CLOCK_MS
+  lw r2, 0(r1)
+  addi r2, r2, ALT_GUARDIA
+  li r1, CMP1
+  sw r2, 0(r1)
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; ==========================================================================
+;  I SERVIZI DI DECIDI E DELL'AVVIO
+; ==========================================================================
+
+; Il tracker da capo con la finestra dove sta: x al centro della finestra
+; del frame dopo, che il TRACKER ha appena armato; v = 0, n = 0.
+dov_e:
+  li r1, st_attx_dopo
+  lw r1, 0(r1)
+  j apriori
+
+; apriori(r1 = AT - TX): x = AT - TX + ECO_W/2, v = 0, n = 0 (eco.vinc: lo
+; stato lo inizializza il chiamante). Non foglia: chiama in_float.
+apriori:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  addi r1, r1, META_W
+  call in_float
+  li r2, trk
+  fsw f1, 0(r2)
+  sw r0, 4(r2)                   ; v = 0.0: gli stessi bit di 0
+  sw r0, 8(r2)
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; Da capo: CAL con la finestra A PRIORI, e tutto azzerato (§3.82). La
+; finestra del frame dopo e' gia' armata dal TRACKER: si riarma, e il secondo
+; armamento sostituisce il primo.
+da_capo:
+  addi r14, r14, -4
+  sw r15, 0(r14)
+  li r2, st_falliti
+  sw r0, 0(r2)
+  li r2, st_cal_ok
+  li r3, 1
+  sw r3, 0(r2)
+  li r1, ALT_APRIORI
+  li r2, st_attx_dopo
+  sw r1, 0(r2)
+  call apriori
+  li r2, st_t0
+  lw r1, 0(r2)
+  li r2, PRI_APRIORI
+  add r1, r1, r2
+  li r2, st_at_dopo
+  sw r1, 0(r2)
+  call arma_adc
+  lw r15, 0(r14)
+  addi r14, r14, 4
+  ret
+
+; arma_tx(r1 = istante): TX_AT, col segno gia' registrato in TX_CTRL. Un
+; istante gia' passato non parte: si conta. Foglia.
+arma_tx:
+  li r2, TX_AT
+  sw r1, 0(r2)
+  lw r3, 0(r2)
+  li r4, TX_AT_LATE
+  j conta_ritardo
+
+; arma_adc(r1 = istante): ADC_AT, con la configurazione dell'avvio. Foglia.
+arma_adc:
+  li r2, ADC_AT
+  sw r1, 0(r2)
+  lw r3, 0(r2)
+  li r4, ADC_AT_LATE
+conta_ritardo:
+  and r3, r3, r4
+  beq r3, r0, cr_fine
+  li r2, alt_ritardi
+  lw r3, 0(r2)
+  addi r3, r3, 1
+  sw r3, 0(r2)
+cr_fine:
+  ret
+
+; in_float(r1 = intero, |r1| < 2^22) -> f1. Il numero magico: i bit di
+; 1,5 x 2^23 + r1 sono il float 1,5 x 2^23 + r1, esatto. Foglia.
+in_float:
+  li r2, MAGIC_HI
+  add r2, r2, r1
+  li r3, appoggio
+  sw r2, 0(r3)
+  flw f1, 0(r3)
+  fli f2, MAGIC
+  fsub f1, f1, f2
+  ret
+
+; sotto_un_gate(f1) -> r1 = 1 se |f1| < 1, 0 se no. Niente confronti float
+; nell'ISA: il segno di 1 - |f1|, letto come bit. Foglia.
+sotto_un_gate:
+  fneg f2, f1
+  fmax f2, f2, f1
+  fli f3, 1.0
+  fsub f2, f3, f2
+  li r3, appoggio
+  fsw f2, 0(r3)
+  lw r2, 0(r3)
+  li r1, 1
+  blt r0, r2, sg_fine
+  li r1, 0
+sg_fine:
+  ret
+
+; ==========================================================================
+;  L'ISR. DISARMA E SEGNALA (§3.74): chi la sveglia e' la WAIT, chi sfora lo
+;  vede la wait dopo. CMP1 e' il cane da guardia: la time line non l'ha
+;  riarmato per ALT_GUARDIA ms, e la macchina si ferma -- un reset vero qui
+;  non c'e'.
+; ==========================================================================
+  .interrupt isr
+  mfcause r3
+  li r4, CAUSE_CMP1
+  beq r3, r4, isr_guardia
+  li r4, CMP_CTRL
+  li r5, CMP_ARM1
+  sw r5, 0(r4)                   ; DISARMA il canale 0 (il cane resta armato)
+  li r1, wT
+  call wait_signal
+  .endinterrupt isr r1
+
+isr_guardia:
+  li r5, 99999
+  dumps r5
+  li r1, alt_k
+  lw r5, 0(r1)
+  dumps r5
+  halt

@@ -1,0 +1,6 @@
+# altimetro/test/nominale.scena -- la scena di §3.82, senza clutter e senza
+# perdite (25/10/2026): la stessa di misure/scena.scena, con cui si sono
+# misurati i costi. L'acqua a 90 km che si allontana a 375 m/s, cioe' 0,25
+# gate a sweep: abbastanza perche' il termine beta del tracker lavori.
+quota 90000   velocita 375   ampiezza 1000   fronte 4.5   coda 1000
+fase 0.785    rumore 20      seme 1

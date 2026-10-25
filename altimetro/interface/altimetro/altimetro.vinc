@@ -1,0 +1,59 @@
+; altimetro/altimetro.vinc — l'altimetro: la macchina a stati della time line
+; (25/10/2026, la forma di §3.99 con le correzioni di §3.100).
+;
+; E' un'APPLICAZIONE, non una libreria: usa le attivita' di lib_eco e la FFT
+; (dsp/) e il kernel con `wait` (rtos/), e dsp/ non puo' dipendere da rtos/.
+;
+; --- COME SI AVVIA ---
+;     j altimetro_parti     dal boot, a IE = 0, dopo sched_init e dopo aver
+;                           creato gli altri task. Non torna: diventa il SUPER
+;                           TASK, nel banco alternativo
+; Chi la chiama ha gia' fatto sched_init; tutto il resto -- la WAIT, l'ISR,
+; la via veloce, il ferro, il cane da guardia -- lo fa lei.
+;
+; --- LA TIME LINE E' UNA TABELLA PER MODO ---
+; Voci {ancora, durata, procedura}. Le ancore sono la regola di §3.89 ("tutto
+; calcolato da t0") scritta come dato:
+;     ALT_FINESTRA   AT + ECO_W: FRONTE, a blocco finito
+;     ALT_PREC       l'istante della voce prima + la sua durata
+; Il TX non ha uno slot: lo arma DECIDI con TX_AT, e la finestra la arma il
+; TRACKER con ADC_AT (§3.100). LA PRIMA VOCE DI OGNI TABELLA E' ANCORATA ALLA
+; FINESTRA: il giro arma la sveglia della prima voce del frame dopo PRIMA di
+; chiamare DECIDI, che sceglie la tabella, e la legge dalla tabella corrente.
+;
+; --- I MODI e la sequenza, §3.82 ---
+;     CAL    5 sweep: FRONTE, TRACKER. Passa se tutti e 5 sono NOMINALI e i
+;            residui degli sweep 3..5 stanno sotto 1 gate; se no resta in CAL,
+;            con la finestra dov'e' e il filtro da capo
+;     ACQ    5 sweep: + BARKER_ACC; al quinto (ACQ5) + BARKER_DEC. Passa se
+;            BARKER_DEC trova e il suo fronte sta entro 1 gate dal tracker;
+;            se no torna in CAL, con la finestra dov'e'
+;     TRACK  + FFT (con eco_apri) e MSG. Due sweep non nominali DI FILA: da
+;            capo, in CAL con la finestra a priori
+;
+; --- I SIMBOLI PUBBLICATI: le statistiche, che nessuno azzera ---
+;     alt_k            i frame finiti
+;     alt_modo_svolto  il modo del frame appena finito (lo scrive DECIDI)
+;     alt_sforamenti   le wait tornate con pending > 0: una voce in ritardo
+;     alt_sfora_max    il ritardo piu' grande, CLOCK_CYCLES - istante, in cicli
+;     alt_non_finiti   FRONTE ha trovato il blocco non finito
+;     alt_ritardi      un armamento di TX_AT o ADC_AT in ritardo
+;     alt_overrun      le parole di MSG perse nella mailbox
+; e in RAM CONDIVISA (altimetro_shared.vasm, da linkare in tutte le immagini):
+;     alt_record       i due record di MSG (eco.vinc), alternati per parita'
+;     alt_blocco       il blocco dell'ADC: la DMA scrive solo li'
+; --------------------------------------------------------------------------
+.equ ALT_PRI       100000        ; un frame, 1 ms: cicli
+.equ ALT_T0        20000         ; il TX del frame 0, assoluto: dopo il boot
+.equ ALT_APRIORI   59999         ; AT - TX a priori: con l'acqua a 90 km il
+                                 ; fronte cade ~10 gate dopo il centro (§3.82)
+.equ ALT_TX_LEN    5000          ; 50 us
+.equ ALT_GUARDIA   5             ; il cane da guardia, in ms: DECIDI lo riarma
+
+.equ ALT_CAL       1             ; i modi: da 1, cosi' una sequenza in cifre
+.equ ALT_ACQ       2             ; decimali si legge
+.equ ALT_TRACK     3
+.equ ALT_SWEEP     5             ; gli sweep di CAL e di ACQ
+
+.equ ALT_FINESTRA  0             ; le ancore
+.equ ALT_PREC      1

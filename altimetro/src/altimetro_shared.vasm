@@ -1,0 +1,16 @@
+; altimetro/src/altimetro_shared.vasm — la RAM condivisa dell'altimetro
+; (25/10/2026). Nessun codice: va linkato in TUTTE le immagini della scheda,
+; nello stesso ordine, perche' l'indirizzo lo decide la regione SHARED del
+; file di collocazione e due immagini non d'accordo non partono (§3.80).
+;
+; alt_blocco sta qui e non a SHARED_BASE scritto a mano: la DMA scrive solo
+; nella RAM condivisa, e i record di MSG ci stanno accanto.
+
+.include "eco/eco.vinc"
+
+.equ DUE_REC_W  ECO_REC_W * 2
+.equ BLOCCO_W   ECO_W * 2        ; I e Q, una parola ciascuno
+
+  .shared
+alt_record:  .space DUE_REC_W    ; i due record di MSG, alternati per parita'
+alt_blocco:  .space BLOCCO_W     ; il blocco dell'ADC

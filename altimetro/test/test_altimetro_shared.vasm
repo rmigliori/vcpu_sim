@@ -1,0 +1,6 @@
+; altimetro/test/test_altimetro_shared.vasm — cio' che le due CPU del test si
+; dicono oltre ai record (25/10/2026). Linkato in tutte e due le immagini,
+; dopo alt_shared e nello stesso ordine.
+
+  .shared
+fine:  .space 1                  ; CPU 0: i frame del test sono finiti
