@@ -5,7 +5,7 @@ Dove eravamo rimasti (25/10/2026, notte -- sessione 4c173ee5):
 - La sessione prima (4d336a1c) e' morta in OOM alle 20:48, durante il passo 2
   delle statistiche: tutto in §3.103. Causa trovata e corretta, commit
   13b3791 (assembler: .space e .res un operando solo) e 63c858c (altimetro:
-  lo scrittore dell'anello). ctest 117/117. Niente pushato.
+  lo scrittore dell'anello). ctest 117/117. Pushato su GitHub e sulla Pi.
 - docs/stato-lavori.md: §3.103 nuovo e il RIPRENDI DA QUI di §0 aggiornato,
   committati con questo file nel commit «§3.103». Una domanda aperta a Roberto: se
   sistemare la riga in testa ("Ultimo aggiornamento: 8 ottobre 2026", ferma

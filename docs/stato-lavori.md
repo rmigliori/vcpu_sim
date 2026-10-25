@@ -176,7 +176,7 @@
 > `.space` di un'espressione riservava un quarto dell'anello, e l'assemblatore
 > ora lo rifiuta (anche per `.res`). `ctest` **117/117**.
 >
-> **Niente pushato** dopo `75373fc`: i commit del 25/10 aspettano l'utente.
+> **Pushato il 25/10 notte** su `origin` e su `pi`, fino a §3.103 compreso.
 >
 > **Il prossimo passo** (§3.103, «Aperti»): il **passo 3**, il task al livello
 > 6 che chiama `alt_statistiche` e diventa il testimone; prima la frase di
