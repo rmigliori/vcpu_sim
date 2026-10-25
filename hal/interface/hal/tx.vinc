@@ -1,4 +1,5 @@
-; hal/tx.vinc — il trasmettitore e l'accecamento del ricevitore (25/10/2026).
+; hal/tx.vinc — il trasmettitore, l'accecamento del ricevitore e TX_AT
+; (25/10/2026).
 ;
 ; Il device c'e' dal 07/10 (devices.h, §3.83), e fino al 25/10 le sue
 ; costanti non avevano un header: test_tx, test_eco e test_adc_at girano a
@@ -13,7 +14,7 @@
 ; COSTRUZIONE, e la macchina lo dice.
 ;
 ; --- TX_CTRL: TX_START, e il segno del Barker ---
-; Una scrittura con TX_START trasmette. TX_NEG e' il segno del codice di
+; Una scrittura con TX_START trasmette subito. TX_NEG e' il segno del codice di
 ; Barker di QUESTO TX: la macchina lo conserva per il mondo, che lo rimette
 ; nell'eco. Un avvio col TX acceso e' IGNORATO e alza TX_OVERRUN: un errore
 ; di TEMPO della time line, che il programma deve vedere.
@@ -29,16 +30,38 @@
 ; TX_TR_US e' in MICROSECONDI, e la macchina lo converte in tick master
 ; all'accensione. Chi lo usa per contare tick lo converte con la frequenza.
 ;
+; --- TX_AT: il TX a un istante programmato (25/10/2026) ---
+; La forma di ADC_AT (hal/adc.vinc). Si scrive l'istante ASSOLUTO, nella base
+; di CLOCK_CYCLES, e il TX parte da solo li', esatto al tick: la latenza
+; della sveglia di chi lo arma non c'entra piu'. TX_LEN e il segno si
+; CONGELANO all'armamento. Un secondo armamento sostituisce il primo. Un
+; istante gia' passato non parte e alza TX_AT_LATE; all'istante col TX ancora
+; acceso e' un avvio col TX acceso, e alza TX_OVERRUN. La lettura di TX_AT:
+;     bit 0      TX_AT_ARMED   armato, l'istante non e' ancora arrivato
+;     bit 1      TX_AT_LATE    un armamento in ritardo: la lettura lo abbassa
+;
+; IL SEGNO E' UNA CONFIGURAZIONE, come TX_LEN: ogni scrittura di TX_CTRL
+; registra TX_NEG, e TX_START in piu' trasmette subito. Per armare un TX
+; negativo:
+;     li  r1, TX_CTRL
+;     li  r2, TX_NEG
+;     sw  r2, 0(r1)              ; il segno, senza trasmettere
+;     li  r1, TX_AT
+;     sw  r3, 0(r1)              ; r3 = l'istante: il segno si congela qui
+;
 ; NESSUN INTERRUPT, come l'ADC: chi trasmette e' la time line, e sa quando.
 ; --------------------------------------------------------------------------
 .equ TX_LEN      0x100054        ; lettura/scrittura: la durata, tick periferiche
-.equ TX_CTRL     0x100058        ; scrittura: TX_START, TX_NEG
+.equ TX_CTRL     0x100058        ; scrittura: TX_NEG sempre, TX_START trasmette
 .equ TX_STATUS   0x10005C        ; lettura: i bit qui sopra
+.equ TX_AT       0x100074        ; scrittura: l'istante; lettura: armato/ritardo
 
 .equ TX_START        1           ; TX_CTRL, bit 0
 .equ TX_NEG          2           ; TX_CTRL, bit 1: il segno Barker
 .equ TX_ON           1           ; TX_STATUS, bit 0
 .equ TX_BLIND        2           ; TX_STATUS, bit 1
 .equ TX_OVERRUN      4           ; TX_STATUS, bit 2
+.equ TX_AT_ARMED     1           ; lettura di TX_AT, bit 0
+.equ TX_AT_LATE      2           ; lettura di TX_AT, bit 1
 
 .equ TX_TR_US       10           ; la commutazione T/R, in microsecondi

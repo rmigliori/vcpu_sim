@@ -404,6 +404,20 @@ vasm_check(adc_at     MODE DUMPS EXPECT "1 0 60042 60042 60042 2 0 3 2 4 0"
            ARGS --eco-cmd "python3 ${CMAKE_SOURCE_DIR}/tools/mare.py ${CMAKE_SOURCE_DIR}/tests/eco_piatto.scena"
            SOURCE ${CMAKE_SOURCE_DIR}/tests/test_adc_at.vasm)
 
+# test_tx_at — IL TX A UN ISTANTE PROGRAMMATO (25/10/2026).
+#
+# TX_AT al posto della sw su TX_CTRL all'istante del TX: la latenza della
+# sveglia di chi lo arma non entra piu' nel tempo del TX. Tre giri, tre fasi
+# del programma -- armato in anticipo col segno negativo registrato da TX_CTRL
+# senza TX_START, all'ultimo con segno e durata cambiati dopo, riarmato con
+# l'istante dentro una div -- e lo stesso fronte, 60042 dal TX. Poi il ritardo
+# (2, abbassato: 0; nessun TX: 0) e l'istante dentro un TX acceso (TX_ON |
+# TX_OVERRUN, 5; disarmato, 0). I sei mutanti, con le uscite previste, in
+# fondo al sorgente.
+vasm_check(tx_at      MODE DUMPS EXPECT "1 0 60042 -1 1 60042 -1 60042 1 2 0 0 5 0"
+           ARGS --eco-cmd "python3 ${CMAKE_SOURCE_DIR}/tools/mare.py ${CMAKE_SOURCE_DIR}/tests/eco_piatto.scena"
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_tx_at.vasm)
+
 # test_amp — DUE CPU (29/09/2026, §3.79). Due programmi, uno per CPU, sulla
 # stessa scheda: `run test_amp0.vx test_amp1.vx`. Il soggetto e' la MACCHINA
 # -- la RAM condivisa, lo spinlock hardware, la mailbox -- e niente kernel.

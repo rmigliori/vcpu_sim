@@ -93,10 +93,29 @@ static VMbox* mbox_peer(VMachine* m, const VCpu* cpu)
   return &m->mbox[(cpu->id + 1) % NUM_CPU];
 }
 
+// Un mondo guasto ferma la scheda: la corsa non vale piu', e continuare
+// produrrebbe numeri che sembrano un risultato (§3.84).
+static void ferma_tutte(VMachine* m)
+{
+  for (int i = 0; i < NUM_CPU; ++i) m->cpu[i].halted = 1;
+}
+
+// Il TX armato (TX_AT) parte quando lo si vede: a ogni confine d'istruzione,
+// e prima di ogni accesso al ferro -- cosi' una lettura di TX_STATUS lo trova
+// acceso, e un TX_START dentro la stessa istruzione arriva DOPO di lui, che e'
+// l'ordine degli istanti. Si annuncia al mondo come quello di TX_CTRL.
+static void tx_scatta_mondo(VMachine* m, uint64_t t)
+{
+  if (tx_scatta(&m->tx, t, &m->clock) && m->mondo.on)
+    if (mondo_tx(&m->mondo, m->tx.start[0], m->tx.neg) != 0)
+      ferma_tutte(m);
+}
+
 static int32_t mmio_load(VMachine* m, VCpu* cpu, int64_t addr)
 {
   uint64_t t = machine_now(m, cpu);
   int32_t v;
+  tx_scatta_mondo(m, t);
   if (kbd_load(&m->kbd, addr, &v))                         return v;
   if (addr == CLOCK_MS)                                    return clock_ms(m, t);
   if (addr == CLOCK_CYCLES)                                return clock_cycles(t);
@@ -110,13 +129,6 @@ static int32_t mmio_load(VMachine* m, VCpu* cpu, int64_t addr)
   fprintf(stderr, "runtime error: MMIO load from unmapped register 0x%llx\n",
           (unsigned long long) addr);
   return 0;
-}
-
-// Un mondo guasto ferma la scheda: la corsa non vale piu', e continuare
-// produrrebbe numeri che sembrano un risultato (§3.84).
-static void ferma_tutte(VMachine* m)
-{
-  for (int i = 0; i < NUM_CPU; ++i) m->cpu[i].halted = 1;
 }
 
 // IL MONDO LO COLLEGA LA SCHEDA, non i device (§3.84): il trasmettitore e
@@ -158,6 +170,7 @@ static int tx_store_mondo(VMachine* m, int64_t addr, int32_t value, uint64_t t)
 static void mmio_store(VMachine* m, VCpu* cpu, int64_t addr, int32_t value)
 {
   uint64_t t = machine_now(m, cpu);
+  tx_scatta_mondo(m, t);
   if (kbd_store(&m->kbd, addr, value))                          return;
   if (cmp_store(&m->cmp[cpu->id], addr, value))                 return;
   if (adc_store_mondo(m, addr, value, t))                       return;
@@ -526,6 +539,7 @@ void machine_run(VMachine* m, RunMode mode)
     // linea della tastiera, col SUO timbro.
     int kt = m->intd.target[INTD_KBD];
     kbd_advance(&m->kbd, t, &m->marker[kt], &m->cpu[kt]);
+    tx_scatta_mondo(m, t);                                     // TX_AT, prima:
     if (adc_scatta(&m->adc, t, &m->clock, m->shared, &m->tx))   // ADC_AT
       adc_chiedi_mondo(m);
     adc_advance(&m->adc, t, &m->clock, m->shared, &m->tx);   // la DMA: solo RAM condivisa

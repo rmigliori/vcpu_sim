@@ -696,8 +696,10 @@ e cosa fa al ricevitore.
 | Registro | Indirizzo | Accesso | Significato |
 |---|---|---|---|
 | `TX_LEN` | `0x100054` | lettura/scrittura | la durata del TX in tick del clock periferiche (oggi cicli: 5000 = 50 µs) |
-| `TX_CTRL` | `0x100058` | scrittura | bit 0 `TX_START` = trasmetti; bit 1 `TX_NEG` = il segno del codice di Barker di questo TX |
+| `TX_CTRL` | `0x100058` | scrittura | bit 0 `TX_START` = trasmetti subito; bit 1 `TX_NEG` = il segno del codice di Barker, **registrato a ogni scrittura** |
 | `TX_STATUS` | `0x10005C` | lettura | bit 0 `TX_ON`; bit 1 `TX_BLIND`; bit 2 `TX_OVERRUN` — **e la lettura abbassa BLIND e OVERRUN** |
+| `TX_AT` | `0x100074` | scrittura | l'**istante** a cui il TX parte da solo, nella base di `CLOCK_CYCLES` |
+| | | lettura | bit 0 `TX_AT_ARMED`; bit 1 `TX_AT_LATE` — **e la lettura abbassa il ritardo** |
 
 **La commutazione T/R è della scheda, 10 µs.** Dal trasmettere al ricevere non
 si passa all'istante, e il tempo del commutatore è del ferro: non è un
@@ -713,10 +715,24 @@ blocchi. Saturato e non zero, perché zero è un campione plausibile.
 `TX_LEN` non positivo è un errore di costruzione, e il simulatore lo dice.
 Nessun interrupt: chi trasmette è la time line, e sa quando.
 
-`TX_NEG` oggi la macchina lo conserva e basta: è per il mondo esterno, che lo
-userà per il segno dell'eco. `tests/test_tx.vasm` prova lo stato, l'overrun e
-l'accecamento, compresa la commutazione. I registri non sono ancora in
-`hal/`: ci andranno col primo programma che li usa con le interfacce.
+`TX_NEG` la macchina lo conserva per il mondo esterno, che lo rimette nel
+segno dell'eco. `tests/test_tx.vasm` prova lo stato, l'overrun e
+l'accecamento, compresa la commutazione. I registri sono in `hal/tx.vinc`.
+
+**`TX_AT`, il TX a un istante programmato** (25/10/2026), nella forma di
+`ADC_AT`: si scrive l'istante **assoluto**, nella base di `CLOCK_CYCLES`, e il
+TX parte da solo lì, esatto al tick e non al confine d'istruzione. Così la
+latenza di chi lo arma, che dipende da ciò che gira, non entra nel tempo del
+TX. `TX_LEN` e il segno si **congelano all'armamento**, e un secondo
+armamento sostituisce il primo. Un istante già passato non parte e alza
+`TX_AT_LATE`; all'istante col TX ancora acceso è un avvio col TX acceso, e
+alza `TX_OVERRUN`.
+
+Il segno è una **configurazione**, come `TX_LEN`: ogni scrittura di `TX_CTRL`
+registra `TX_NEG`, e `TX_START` in più trasmette subito. Per armare un TX
+negativo si scrive `TX_NEG` in `TX_CTRL`, senza `TX_START`, e poi l'istante in
+`TX_AT`. `tests/test_tx_at.vasm` prova l'istante esatto anche dentro una
+`div`, il segno e la durata congelati, il ritardo e il TX acceso.
 
 #### Il mondo esterno: l'eco da un altro processo
 

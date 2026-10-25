@@ -1,0 +1,278 @@
+; tests/test_tx_at.vasm — IL TX A UN ISTANTE PROGRAMMATO (25/10/2026).
+;
+; TX_AT: si scrive l'istante assoluto, nella base di CLOCK_CYCLES, e il TX
+; parte da solo li'. Gira con --eco-cmd "python3 tools/mare.py
+; tests/eco_piatto.scena", l'acqua ferma a 90 km senza rumore, come
+; test_adc_at: il fronte cade a 60.041,5 tick da ogni TX.
+;
+; --- IL CONTO, che qui non dipende dalla fase del programma ---
+; Il TX parte a T, l'istante armato, e la finestra si arma a AT = T + RITARDO
+; con ADC_AT, che e' esatto (test_adc_at). Il campione j e' preso a
+; T + RITARDO + j + 1: il primo oltre meta' ampiezza e' j = 41, cioe' 60042
+; dal TX. In test_adc_at il TX era r9 + 4, il costo della sw; qui non c'e'
+; nessuna sw all'istante.
+;
+; --- TRE GIRI, TRE FASI DEL PROGRAMMA, UNO STESSO NUMERO ---
+;   1  armato 1000 cicli prima, col segno NEGATIVO registrato da TX_CTRL senza
+;      TX_START. TX_AT letto: 1 (armato) prima, 0 dopo. Il fronte, 60042, e il
+;      segno di I sul fronte, -1
+;   2  armato ALL'ULTIMO, una quarantina di cicli prima; e subito dopo il segno
+;      cambiato a + e TX_LEN a 100: durata e segno sono quelli
+;      dell'ARMAMENTO. TX_STATUS a T + 2000: 1, il TX e' ancora acceso (con
+;      100 sarebbe spento da 1900 cicli). Poi 60042 e -1
+;   3  armato a un istante sbagliato (30 dopo: il fronte uscirebbe a 60072) e
+;      RIARMATO a quello giusto; e l'istante cade nel mezzo di una catena di
+;      `div`, quindi il confine d'istruzione arriva dopo. 60042, e il segno +1
+; Ogni giro ha il suo blocco: un blocco rimasto dal giro prima darebbe un
+; verde falso.
+;
+; --- IL QUARTO: il ritardo e il TX acceso ---
+;   2  un armamento a un istante gia' passato: non parte, alza TX_AT_LATE e
+;      DISARMA quello di prima (armato a +3000)
+;   0  la seconda lettura: il bit si abbassa leggendo
+;   0  TX_STATUS a +3100: nessun TX e' partito, ne' il disarmato ne' il tardo
+;   5  TX_STATUS dentro un TX avviato con TX_START, dopo un istante armato a
+;      +1000 da lui: TX_ON | TX_OVERRUN. L'armato era un avvio col TX acceso
+;   0  TX_AT: scattato, non e' piu' armato
+;
+; --- ROSSO, sei mutanti di devices.c, con l'uscita prevista PRIMA ---
+; In fondo al file.
+
+.equ TX_LEN      0x100054        ; li dichiara hal/tx.vinc; qui sono ricopiati
+.equ TX_CTRL     0x100058        ; perche' il test gira a file singolo, come
+.equ TX_STATUS   0x10005C        ; test_adc_at
+.equ TX_AT       0x100074
+.equ TX_START    1
+.equ TX_NEG      2
+
+.equ ADC_ADDR    0x100040
+.equ ADC_COUNT   0x100044
+.equ ADC_PERIOD  0x100048
+.equ ADC_STATUS  0x100050
+.equ ADC_AT      0x100070
+
+.equ CLOCK_CYCLES 0x100030
+
+.equ BLOCCO_1    0x200000        ; 64 campioni: 512 byte ciascuno
+.equ BLOCCO_2    0x200200
+.equ BLOCCO_3    0x200400
+.equ PARTENZA    10000           ; il primo TX non parte a zero (test_eco)
+.equ ANTICIPO    1000            ; T = la lettura + ANTICIPO
+.equ RITARDO     60000           ; AT - T
+.equ ULTIMO      960             ; giro 2: si arma una quarantina di cicli prima
+.equ ACCESO      3000            ; giro 2: TX_STATUS a T + 2000
+.equ SBAGLIATO   1030            ; giro 3: 30 cicli dopo l'istante giusto
+.equ VICINO      990             ; giro 3: le div partono a ridosso dell'istante
+.equ SOGLIA      250000          ; (1000 / 2)^2: meta' ampiezza, al quadrato
+
+  .text
+main:
+  li r1, TX_LEN
+  li r2, 5000                    ; 50 us
+  sw r2, 0(r1)
+  li r1, ADC_COUNT
+  li r2, 64
+  sw r2, 0(r1)
+  li r1, ADC_PERIOD
+  li r2, 1
+  sw r2, 0(r1)
+
+  li r1, CLOCK_CYCLES
+  li r11, TX_CTRL
+  li r12, TX_AT
+  li r13, ADC_AT
+
+  li r2, PARTENZA
+partenza:
+  lw r3, 0(r1)
+  blt r3, r2, partenza
+
+  ; --- giro 1: armato in anticipo, col segno negativo ------------------------
+  li r2, ADC_ADDR
+  li r3, BLOCCO_1
+  sw r3, 0(r2)
+  li r2, TX_NEG
+  sw r2, 0(r11)                  ; il segno, senza trasmettere
+  lw r9, 0(r1)
+  addi r10, r9, ANTICIPO         ; T
+  sw r10, 0(r12)
+  lw r2, 0(r12)
+  dumps r2                       ; 1
+  li r2, RITARDO
+  add r2, r2, r10
+  sw r2, 0(r13)                  ; AT = T + RITARDO
+  li r4, 1
+  call aspetta_blocchi
+  lw r2, 0(r12)
+  dumps r2                       ; 0
+  li r3, BLOCCO_1
+  call fronte
+  dumps r2                       ; 60042
+  dumps r6                       ; -1
+
+  ; --- giro 2: armato all'ultimo, poi segno e durata cambiati ----------------
+  li r2, ADC_ADDR
+  li r3, BLOCCO_2
+  sw r3, 0(r2)
+  lw r9, 0(r1)
+  addi r10, r9, ANTICIPO
+  li r2, RITARDO
+  add r2, r2, r10
+  sw r2, 0(r13)                  ; la finestra prima, il TX all'ultimo
+  li r2, ULTIMO
+ultimo:
+  lw r3, 0(r1)
+  sub r3, r3, r9
+  blt r3, r2, ultimo
+  sw r10, 0(r12)
+  sw r0, 0(r11)                  ; il segno +: dopo l'armamento, non conta
+  li r2, TX_LEN
+  li r3, 100
+  sw r3, 0(r2)                   ; nemmeno questa
+  li r2, ACCESO
+acceso:
+  lw r3, 0(r1)
+  sub r3, r3, r9
+  blt r3, r2, acceso
+  li r2, TX_STATUS
+  lw r3, 0(r2)
+  dumps r3                       ; 1
+  li r2, TX_LEN
+  li r3, 5000
+  sw r3, 0(r2)
+  li r4, 2
+  call aspetta_blocchi
+  li r3, BLOCCO_2
+  call fronte
+  dumps r2                       ; 60042
+  dumps r6                       ; -1
+
+  ; --- giro 3: riarmato, e l'istante dentro una div -------------------------
+  li r2, ADC_ADDR
+  li r3, BLOCCO_3
+  sw r3, 0(r2)
+  lw r9, 0(r1)
+  addi r10, r9, SBAGLIATO
+  sw r10, 0(r12)                 ; il primo armamento: sbagliato
+  addi r10, r9, ANTICIPO
+  sw r10, 0(r12)                 ; il secondo lo sostituisce
+  li r2, RITARDO
+  add r2, r2, r10
+  sw r2, 0(r13)
+  li r2, VICINO
+vicino:
+  lw r3, 0(r1)
+  sub r3, r3, r9
+  blt r3, r2, vicino
+  li r5, 1000
+  li r6, 7
+  div r5, r5, r6                 ; 20 cicli l'una: l'istante cade qui dentro
+  div r5, r5, r6
+  div r5, r5, r6
+  li r4, 3
+  call aspetta_blocchi
+  li r3, BLOCCO_3
+  call fronte
+  dumps r2                       ; 60042
+  dumps r6                       ; 1
+
+  ; --- il quarto: il ritardo, e l'istante col TX acceso ----------------------
+  lw r9, 0(r1)
+  addi r2, r9, 3000
+  sw r2, 0(r12)                  ; armato lontano
+  lw r10, 0(r1)
+  sw r10, 0(r12)                 ; gia' passato: la sw viene dopo la lettura
+  lw r2, 0(r12)
+  dumps r2                       ; 2
+  lw r2, 0(r12)
+  dumps r2                       ; 0
+  li r2, 3100
+spento:
+  lw r3, 0(r1)
+  sub r3, r3, r9
+  blt r3, r2, spento
+  li r2, TX_STATUS
+  lw r3, 0(r2)
+  dumps r3                       ; 0
+
+  li r3, TX_START
+  lw r9, 0(r1)
+  sw r3, 0(r11)                  ; un TX subito: 5000 cicli
+  addi r2, r9, 1000
+  sw r2, 0(r12)                  ; l'istante cade dentro il TX
+  li r2, 1100
+dentro:
+  lw r3, 0(r1)
+  sub r3, r3, r9
+  blt r3, r2, dentro
+  li r2, TX_STATUS
+  lw r3, 0(r2)
+  dumps r3                       ; 5
+  lw r2, 0(r12)
+  dumps r2                       ; 0
+  halt
+
+; Aspetta che i blocchi finiti siano r4: il CONTATORE di ADC_STATUS.
+aspetta_blocchi:
+  li r5, ADC_STATUS
+attesa:
+  lw r2, 0(r5)
+  srli r2, r2, 2
+  bne r2, r4, attesa
+  ret
+
+; r3 = il blocco. Torna in r2 l'istante, dal TX, del primo campione oltre
+; meta' ampiezza: RITARDO + j + 1; e in r6 il segno di I su quel campione.
+; Se non c'e': -1000000, e segno 0.
+fronte:
+  li r4, 0                       ; j
+  li r5, 64
+  li r6, SOGLIA
+cerca:
+  lw r7, 0(r3)                   ; I
+  lw r8, 4(r3)                   ; Q
+  mul r2, r7, r7
+  mul r8, r8, r8
+  add r2, r2, r8
+  blt r2, r6, avanti
+  li r2, 60001                   ; RITARDO + 1
+  add r2, r2, r4
+  li r6, 1
+  blt r0, r7, positivo
+  li r6, -1
+positivo:
+  ret
+avanti:
+  addi r3, r3, 8
+  addi r4, r4, 1
+  bne r4, r5, cerca
+  li r2, -1000000
+  li r6, 0
+  ret
+
+; ==========================================================================
+;  ROSSO, sei mutanti di src/devices.c (25/10/2026), su copie nello
+;  scratchpad, con l'uscita prevista PRIMA e poi quella uscita.
+;  L'uscita giusta:  1 0 60042 -1  1 60042 -1  60042 1  2 0 0 5 0
+;
+;  M1  il TX parte al CONFINE d'istruzione invece che all'istante
+;        previsto: giro 3 a 60042 + d, d fra 1 e 19 (l'istante dentro una
+;        div); i giri 1 e 2 forse verdi, per caso di fase
+;        uscito:   giro 3 a 60059, d = 17; i giri 1 e 2 verdi
+;  M2  il TX parte all'ARMAMENTO
+;        previsto: 0 0 -1000000 0 (TX_AT mai armato; il TX ~1000 prima, e
+;                  nella finestra c'e' la coda a ~1500 m dal fronte, 0,22
+;                  dell'ampiezza: sotto meta'); giro 2 armato ~40 prima, il
+;                  fronte fra 60002 e 60008; giro 3 -1000000 0; quarto
+;                  2 0 5 5 0 (l'armamento lontano trasmette subito, e
+;                  l'overrun del giro 3 non l'aveva letto nessuno)
+;        uscito:   0 0 -1000000 0  1 60008 -1  -1000000 0  2 0 5 5 0
+;  M3  il segno non si congela: quello di TX_CTRL allo scatto
+;        previsto e uscito: giro 2, il segno 1 invece di -1
+;  M4  niente ritardo: l'istante passato non alza TX_AT_LATE
+;        previsto e uscito: quarto, 0 0 invece di 2 0
+;  M5  niente overrun all'istante: il TX acceso non lo alza
+;        previsto e uscito: quarto, 1 invece di 5
+;  M6  la durata non si congela: quella di TX_LEN allo scatto
+;        previsto e uscito: giro 2, TX_STATUS 0 invece di 1
+; ==========================================================================

@@ -432,10 +432,27 @@
 //  positivo invece e' un errore di COSTRUZIONE, e si dice.
 //
 //  NESSUN INTERRUPT, come l'ADC: chi trasmette e' la time line, e sa quando.
+//
+//  --- TX_AT: il TX a un istante programmato (25/10/2026) ---
+//  La forma di ADC_AT (§3.86), per la stessa ragione detta dall'altra parte:
+//  il software arriva all'istante con la latenza della sveglia, che dipende
+//  da cio' che gira, e un TX in ritardo sposta la finestra calcolata dal
+//  tracker. Si scrive l'istante ASSOLUTO, nella base di CLOCK_CYCLES, e il TX
+//  parte da solo li', esatto al tick. TX_LEN e il segno si CONGELANO
+//  all'armamento; un secondo armamento sostituisce il primo; un istante gia'
+//  passato non parte e alza TX_AT_LATE; all'istante col TX ancora acceso e'
+//  un avvio col TX acceso, e alza TX_OVERRUN. La lettura di TX_AT:
+//      bit 0 TX_AT_ARMED   armato, l'istante non e' ancora arrivato
+//      bit 1 TX_AT_LATE    un armamento in ritardo: la lettura lo abbassa
+//
+//  IL SEGNO E' UNA CONFIGURAZIONE, come TX_LEN: ogni scrittura di TX_CTRL
+//  registra TX_NEG, e TX_START in piu' trasmette subito. Fino al 25/10 una
+//  scrittura senza TX_START non faceva niente, e nessun programma la usava.
 // ---------------------------------------------------------------------------
 #define TX_LEN       (MMIO_BASE + 0x54)
 #define TX_CTRL      (MMIO_BASE + 0x58)
 #define TX_STATUS    (MMIO_BASE + 0x5C)
+#define TX_AT        (MMIO_BASE + 0x74)
 
 #define TX_START        1   // TX_CTRL, bit 0
 #define TX_NEG          2   // TX_CTRL, bit 1: il segno Barker
@@ -443,6 +460,8 @@
 #define TX_BLIND        2   // TX_STATUS, bit 1
 #define TX_OVERRUN      4   // TX_STATUS, bit 2
 #define TX_TR_US       10   // la commutazione T/R, in microsecondi
+#define TX_AT_ARMED     1   // lettura di TX_AT, bit 0
+#define TX_AT_LATE      2   // lettura di TX_AT, bit 1
 
 // ---------------------------------------------------------------------------
 //  PIU' CPU: la RAM CONDIVISA, la MAILBOX e lo SPINLOCK  (29/09/2026, §3.79)
@@ -813,8 +832,15 @@ typedef struct
   uint32_t n;                // i TX partiti dall'accensione
   uint64_t tsw;              // la commutazione T/R, in tick master
   unsigned char neg;         // il segno Barker dell'ultimo TX
+  unsigned char cfg_neg;     // il segno registrato da TX_CTRL, per il prossimo
   unsigned char blind;       // un campione e' uscito accecato
   unsigned char overrun;     // un avvio col TX acceso
+  // TX_AT: l'avvio armato, con durata e segno congelati all'armamento
+  unsigned char armed;
+  unsigned char late;        // un armamento in ritardo, finche' non si legge
+  uint64_t at;               // l'istante, in tick master
+  int32_t  at_len;
+  unsigned char at_neg;
 } VTx;
 
 // La mailbox di UNA CPU: la sua FIFO d'ingresso, e i suoi due bit. Chi
@@ -903,6 +929,7 @@ int  adc_set_signal(VAdc* a, const char* spec, char* err, size_t errsz);
 // TX_LEN da tick periferiche a tick master.
 int  tx_load(VTx* x, int64_t addr, uint64_t t, int32_t* out);
 int  tx_store(VTx* x, int64_t addr, int32_t value, uint64_t t, const struct VClock* ck);
+int  tx_scatta(VTx* x, uint64_t t, const struct VClock* ck);   // 1 = TX_AT e' partito
 int  tx_blinds(const VTx* x, uint64_t ts);   // il campione preso a ts e' accecato
 
 // La mailbox: `mine` e' quella della CPU che fa l'accesso, `peer` l'altra.

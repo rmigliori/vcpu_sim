@@ -530,14 +530,55 @@ int tx_load(VTx* x, int64_t addr, uint64_t t, int32_t* out)
     return 1;
   }
   if (addr == TX_LEN) { *out = x->len; return 1; }
+  // TX_AT si legge come uno stato, e la lettura abbassa il ritardo (ADC_AT).
+  if (addr == TX_AT)
+  {
+    *out = (x->armed ? TX_AT_ARMED : 0) | (x->late ? TX_AT_LATE : 0);
+    x->late = 0;
+    return 1;
+  }
   return 0;
+}
+
+// L'avvio, all'istante t0: la durata e il segno sono gia' decisi.
+static void tx_parti(VTx* x, uint64_t t0, int32_t len, int neg, const VClock* ck)
+{
+  x->start[1] = x->start[0];
+  x->end[1]   = x->end[0];
+  x->start[0] = t0;
+  x->end[0]   = t0 + (uint64_t) len * ck->div_periph;
+  x->neg      = neg ? 1 : 0;
+  x->n       += 1;
 }
 
 int tx_store(VTx* x, int64_t addr, int32_t value, uint64_t t, const VClock* ck)
 {
   if (addr == TX_LEN) { x->len = value; return 1; }
+
+  if (addr == TX_AT)
+  {
+    // Un secondo armamento sostituisce il primo, anche quando e' in ritardo.
+    x->armed = 0;
+    // Il confronto wrappante di ADC_AT: uguale vuol dire gia' passato.
+    int32_t manca = (int32_t) ((uint32_t) value - (uint32_t) t);
+    if (manca <= 0) { x->late = 1; return 1; }
+    // Una durata impossibile si dice all'armamento, che e' dove si congela.
+    if (x->len <= 0)
+    {
+      fprintf(stderr, "runtime error: TX, durata impossibile (len %d)\n", x->len);
+      return 1;
+    }
+    x->at     = t + (uint64_t) manca;
+    x->at_len = x->len;
+    x->at_neg = x->cfg_neg;
+    x->armed  = 1;
+    return 1;
+  }
+
   if (addr != TX_CTRL) return 0;
 
+  // Il segno e' una configurazione: lo registra ogni scrittura (25/10/2026).
+  x->cfg_neg = (value & TX_NEG) ? 1 : 0;
   if (!(value & TX_START)) return 1;
   if (tx_on(x, t)) { x->overrun = 1; return 1; }
   if (x->len <= 0)
@@ -545,12 +586,18 @@ int tx_store(VTx* x, int64_t addr, int32_t value, uint64_t t, const VClock* ck)
     fprintf(stderr, "runtime error: TX, durata impossibile (len %d)\n", x->len);
     return 1;
   }
-  x->start[1] = x->start[0];
-  x->end[1]   = x->end[0];
-  x->start[0] = t;
-  x->end[0]   = t + (uint64_t) x->len * ck->div_periph;
-  x->neg      = (value & TX_NEG) ? 1 : 0;
-  x->n       += 1;
+  tx_parti(x, t, x->len, x->cfg_neg, ck);
+  return 1;
+}
+
+// L'istante armato, visto a t (un confine d'istruzione, o un accesso al
+// ferro). Il TX parte all'ISTANTE, non a t: e' il punto per cui esiste.
+int tx_scatta(VTx* x, uint64_t t, const VClock* ck)
+{
+  if (!x->armed || t < x->at) return 0;
+  x->armed = 0;
+  if (tx_on(x, x->at)) { x->overrun = 1; return 0; }
+  tx_parti(x, x->at, x->at_len, x->at_neg, ck);
   return 1;
 }
 
