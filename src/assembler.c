@@ -563,6 +563,21 @@ static int space_count(const char* tok, int64_t* words, char* err, size_t errsz)
   return 0;
 }
 
+// L'operando di .space e di .res e' UNO (25/10/2026, §3.103): un'espressione si
+// fermava al primo token e il resto si ignorava in silenzio -- `.space
+// ALT_ANELLO * ALT_REC.size / 4` riservava 64 parole su 256. Un'espressione va
+// in una .equ.
+static const char SPACE_UNO[] = "il conteggio e' un numero o una .equ, "
+                                "un'espressione va in una .equ";
+static const char RES_UNO[]   = "il tipo e' un nome solo, piu' elementi si "
+                                "riservano con .space e una .equ";
+static void operand_extra(const char* dir, const char* why, char** toks, int k,
+                          int lineno, char* err, size_t errsz)
+{
+  snprintf(err, errsz, "line %d: %s: '%s' e' seguito da '%s': %s",
+           lineno, dir, toks[k + 1], toks[k + 2], why);
+}
+
 // Compile-time directives (.equ/.struct/.field/.ends). Returns 1 if 'first' was
 // one of them (handled), 0 if not one of them, -1 on error (err filled). Struct
 // fields become qualified constants "NAME.field"; .ends also defines "NAME.size".
@@ -2506,6 +2521,7 @@ static int assemble_unit(const char* path, uint8_t* mem, Instr* prog, char* err,
       else if (strcmp(first, ".space") == 0)
       {
         if (k + 1 >= n) { snprintf(err, errsz, "line %d: .space needs a count", lineno); fclose(fp); return -1; }
+        if (k + 2 < n) { operand_extra(".space", SPACE_UNO, toks, k, lineno, err, errsz); fclose(fp); return -1; }
         int64_t words;
         char why[200];
         if (space_count(toks[k + 1], &words, why, sizeof why) != 0)
@@ -2517,6 +2533,7 @@ static int assemble_unit(const char* path, uint8_t* mem, Instr* prog, char* err,
       {
         // .res TYPE : reserve TYPE.size bytes (size-aware .space); the label defines the symbol.
         if (k + 1 >= n) { snprintf(err, errsz, "line %d: .res needs a type name", lineno); fclose(fp); return -1; }
+        if (k + 2 < n) { operand_extra(".res", RES_UNO, toks, k, lineno, err, errsz); fclose(fp); return -1; }
         char fq[80]; snprintf(fq, sizeof fq, "%s.size", toks[k + 1]);
         int64_t sz;
         if (!find_const(fq, &sz)) { snprintf(err, errsz, "line %d: unknown struct '%s'", lineno, toks[k + 1]); fclose(fp); return -1; }
@@ -2806,6 +2823,7 @@ static int assemble_object_unit(const char* path, VObject* obj, const char* expa
       else if (strcmp(first, ".space") == 0)
       {
         if (k + 1 >= n) { snprintf(err, errsz, "line %d: .space needs a count", lineno); goto fail; }
+        if (k + 2 < n) { operand_extra(".space", SPACE_UNO, toks, k, lineno, err, errsz); goto fail; }
         int64_t words;
         char why[200];
         if (space_count(toks[k + 1], &words, why, sizeof why) != 0)
@@ -2818,6 +2836,7 @@ static int assemble_object_unit(const char* path, VObject* obj, const char* expa
       {
         // .res TYPE : reserve TYPE.size bytes (size-aware .space); the label defines the symbol.
         if (k + 1 >= n) { snprintf(err, errsz, "line %d: .res needs a type name", lineno); goto fail; }
+        if (k + 2 < n) { operand_extra(".res", RES_UNO, toks, k, lineno, err, errsz); goto fail; }
         char fq[80]; snprintf(fq, sizeof fq, "%s.size", toks[k + 1]);
         int64_t sz;
         if (!find_const(fq, &sz)) { snprintf(err, errsz, "line %d: unknown struct '%s'", lineno, toks[k + 1]); goto fail; }

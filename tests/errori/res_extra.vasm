@@ -1,0 +1,11 @@
+; tests/errori/res_extra.vasm — `.res` con qualcosa dopo il tipo (25/10/2026,
+; §3.103). L'operando e' uno solo: il resto si ignorava in silenzio, e `.res T
+; * 4` riservava un T. Deve assemblare MALE.
+.struct T
+  .field a
+.ends
+  .data
+x:  .res T * 4
+  .text
+main:
+  halt

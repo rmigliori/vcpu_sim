@@ -250,6 +250,8 @@ vasm_check(space_obj  MODE DUMPS EXPECT "${_space}"
 set(_err_space_nome     "space_nome[.]vasm:4: [.]space: 'NESSUNO' non e' un numero")
 set(_err_space_negativo "space_negativo[.]vasm:8: [.]space: 'MENO' vale -2: il conteggio e' negativo")
 set(_err_space_troppo   "space_troppo[.]vasm:7: data overflow")
+set(_err_space_espressione "space_espressione[.]vasm:7: [.]space: 'N' e' seguito da '[*]'")
+set(_err_res_extra      "res_extra[.]vasm:8: [.]res: 'T' e' seguito da '[*]'")
 set(_err_word_sopra     "word_sopra[.]vasm:6: [.]word: 'GRANDE' vale 4294967301: non sta in 32 bit")
 set(_err_word_sotto     "word_sotto[.]vasm:4: [.]word: '-2147483649' vale -2147483649: non sta in 32 bit")
 # test_letterali — I LETTERALI OLTRE I 64 BIT CON SEGNO (22/10/2026, §3.97).
@@ -271,7 +273,8 @@ set(_err_letterale_negativo "letterale_negativo[.]vasm:5: '-9223372036854775809'
 set(_err_letterale_equ      "letterale_equ[.]vasm:4: [.]equ X: '18446744073709551616' ${_err_64}")
 set(_err_letterale_offset   "letterale_offset[.]vasm:7: '[+]0x10000000000000000' ${_err_64}")
 set(_err_letterale_disp     "letterale_disp[.]vasm:5: '0x10000000000000000' ${_err_64}")
-foreach(caso space_nome space_negativo space_troppo word_sopra word_sotto
+foreach(caso space_nome space_negativo space_troppo space_espressione
+             res_extra word_sopra word_sotto
              letterale_li letterale_negativo letterale_equ letterale_offset
              letterale_disp)
   add_test(NAME errore_${caso}

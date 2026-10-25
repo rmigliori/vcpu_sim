@@ -1,0 +1,10 @@
+; tests/errori/space_espressione.vasm — `.space` con un'espressione (25/10/2026,
+; §3.103). L'operando e' uno solo: del resto prendeva il primo token e ignorava
+; gli altri in silenzio, e l'anello delle statistiche riservava 64 parole su
+; 256. Deve assemblare MALE.
+.equ N 64
+  .data
+a:  .space N * 16 / 4
+  .text
+main:
+  halt
