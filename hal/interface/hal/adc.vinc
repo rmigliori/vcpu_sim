@@ -44,9 +44,21 @@
 ; avvio mentre acquisisce, e alza ADC_OVERRUN. La lettura di ADC_AT:
 ;     bit 0      ADC_AT_ARMED  armato, l'istante non e' ancora arrivato
 ;     bit 1      ADC_AT_LATE   un armamento in ritardo: la lettura lo abbassa
+;
+; --- ADC_BUF: il buffer PING-PONG (25/10/2026) ---
+; Un'idea dell'utente: le CPU leggono sempre lo stesso indirizzo, e
+; l'hardware cambia il banco sotto. Con ADC_ADDR = ADC_BUF esatto (e
+; ADC_COUNT fino a ADC_BUF_MAX) la DMA scrive nel banco NASCOSTO della memoria
+; dell'ADC, e a blocco finito i banchi si scambiano insieme al contatore. Chi
+; legge ADC_BUF vede sempre un blocco INTERO, l'ultimo finito; con lw come con
+; vload. La finestra e' in SOLA LETTURA, la stessa per tutte le CPU.
+;
+; Lo scambio protegge chi scrive, non chi legge: un lettore piu' lento di un
+; blocco si ritrova il banco cambiato a meta'. Si vede rileggendo il
+; contatore di ADC_STATUS prima e dopo: se e' cambiato, il blocco e' un altro.
 ; --------------------------------------------------------------------------
 .equ ADC_ADDR    0x100040        ; lettura/scrittura: dove scrivere il blocco,
-                                 ; SOLO nella RAM condivisa (hal/amp.vinc)
+                                 ; nella RAM condivisa (hal/amp.vinc) o ADC_BUF
 .equ ADC_COUNT   0x100044        ; lettura/scrittura: N, campioni complessi
 .equ ADC_PERIOD  0x100048        ; lettura/scrittura: tick fra due campioni
 .equ ADC_CTRL    0x10004C        ; scrittura: ADC_START avvia
@@ -59,6 +71,9 @@
 .equ ADC_DONE_SHIFT  2           ; ADC_STATUS >> 2 = blocchi finiti
 .equ ADC_AT_ARMED    1           ; lettura di ADC_AT, bit 0
 .equ ADC_AT_LATE     2           ; lettura di ADC_AT, bit 1
+
+.equ ADC_BUF      0x300000       ; la finestra del ping-pong, sola lettura
+.equ ADC_BUF_MAX  256            ; campioni per banco
 
 .equ ADC_MAX      2047
 .equ ADC_MIN     -2048

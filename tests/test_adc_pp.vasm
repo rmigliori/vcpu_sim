@@ -1,0 +1,166 @@
+; tests/test_adc_pp.vasm — IL BUFFER PING-PONG DELL'ADC (25/10/2026).
+;
+; ADC_ADDR = ADC_BUF: la DMA scrive nel banco nascosto, e i banchi si
+; scambiano quando il blocco e' finito. Chi legge ADC_BUF vede sempre un
+; blocco intero, l'ultimo finito.
+;
+; --- COME SI RICONOSCE UN BLOCCO, senza segnale ---
+; Senza --adc un campione pulito vale (0, 0), e uno preso col TX acceso esce
+; ACCECATO, (2047, 2047) (test_tx). Tre blocchi: A col TX acceso (tutto
+; 2047), B a commutazione finita (tutto 0), C di nuovo col TX acceso. Si
+; legge I del campione 0 (ADC_BUF + 0) e Q del campione 63 (ADC_BUF + 508):
+; il primo e l'ultimo che la DMA scrive.
+;
+; --- I DODICI NUMERI ---
+;   0           prima di ogni blocco: la finestra nasce a zero
+;   2047 2047   A finito
+;   2047        B appena avviato: si vede ancora A
+;   2047 2047   B a meta': ancora A, intero -- senza ping-pong I0 sarebbe 0
+;   0 0         B finito
+;   0           C a meta': si vede B
+;   2047        C finito
+;   2047        vredmax su un vload a passo 8 dalla finestra: anche i vettori
+;               leggono il banco davanti
+;   2047        dopo una sw nella finestra: e' in sola lettura, la macchina lo
+;               dice su stderr e il banco non cambia
+;
+; --- ROSSO: tre mutanti di devices.c e machine.c, in fondo al file ---
+
+.equ TX_LEN      0x100054        ; li dichiara hal/tx.vinc; qui sono ricopiati
+.equ TX_CTRL     0x100058        ; perche' il test gira a file singolo, come
+.equ TX_START    1               ; test_adc
+
+.equ ADC_ADDR    0x100040
+.equ ADC_COUNT   0x100044
+.equ ADC_PERIOD  0x100048
+.equ ADC_CTRL    0x10004C
+.equ ADC_STATUS  0x100050
+.equ ADC_START   1
+.equ ADC_BUF     0x300000
+
+.equ CLOCK_CYCLES 0x100030
+.equ ULTIMO_Q    508             ; 8 * 63 + 4
+.equ LIBERO      6100            ; TX_LEN + la commutazione T/R, e un poco
+
+  .text
+main:
+  li r1, TX_LEN
+  li r2, 5000
+  sw r2, 0(r1)
+  li r1, ADC_ADDR
+  li r2, ADC_BUF
+  sw r2, 0(r1)
+  li r1, ADC_COUNT
+  li r2, 64
+  sw r2, 0(r1)
+  li r1, ADC_PERIOD
+  li r2, 1
+  sw r2, 0(r1)
+
+  li r9, ADC_BUF
+  li r10, ADC_CTRL
+  li r11, ADC_START
+  li r12, TX_CTRL
+  li r13, TX_START
+
+  lw r2, 0(r9)
+  dumps r2                       ; 0
+
+  ; --- A: col TX acceso ------------------------------------------------------
+  li r1, CLOCK_CYCLES
+  lw r8, 0(r1)                   ; per aspettare la fine del TX, dopo
+  sw r13, 0(r12)
+  sw r11, 0(r10)
+  li r4, 1
+  call aspetta_blocchi
+  lw r2, 0(r9)
+  dumps r2                       ; 2047
+  lw r2, ULTIMO_Q(r9)
+  dumps r2                       ; 2047
+
+  ; --- B: pulito ---------------------------------------------------------------
+  li r1, CLOCK_CYCLES
+  li r2, LIBERO
+  add r8, r8, r2
+libero:
+  lw r3, 0(r1)
+  blt r3, r8, libero
+  sw r11, 0(r10)
+  lw r2, 0(r9)
+  dumps r2                       ; 2047
+  call mezzo_blocco
+  lw r2, 0(r9)
+  dumps r2                       ; 2047
+  lw r2, ULTIMO_Q(r9)
+  dumps r2                       ; 2047
+  li r4, 2
+  call aspetta_blocchi
+  lw r2, 0(r9)
+  dumps r2                       ; 0
+  lw r2, ULTIMO_Q(r9)
+  dumps r2                       ; 0
+
+  ; --- C: di nuovo col TX acceso ----------------------------------------------
+  sw r13, 0(r12)
+  sw r11, 0(r10)
+  call mezzo_blocco
+  lw r2, 0(r9)
+  dumps r2                       ; 0
+  li r4, 3
+  call aspetta_blocchi
+  lw r2, 0(r9)
+  dumps r2                       ; 2047
+
+  ; --- i vettori ---------------------------------------------------------------
+  li r1, 64
+  setvl r1, r1
+  li r3, 8
+  vload v0, r9, r3               ; gli I, a passo 8
+  vcvt v0, v0
+  vredmax f1, v0
+  dumpf f1                       ; 2047
+
+  ; --- la finestra non si scrive ------------------------------------------------
+  sw r0, 0(r9)                   ; errore della macchina, su stderr
+  lw r2, 0(r9)
+  dumps r2                       ; 2047
+  halt
+
+; Aspetta che i blocchi finiti siano r4: il CONTATORE di ADC_STATUS.
+aspetta_blocchi:
+  li r5, ADC_STATUS
+attesa:
+  lw r2, 0(r5)
+  srli r2, r2, 2
+  bne r2, r4, attesa
+  ret
+
+; Una trentina di cicli: il blocco e' a meta'.
+mezzo_blocco:
+  li r5, 6
+mezzo:
+  addi r5, r5, -1
+  bne r5, r0, mezzo
+  ret
+
+; ==========================================================================
+;  ROSSO, tre mutanti (25/10/2026) su copie nello scratchpad, con l'uscita
+;  prevista PRIMA; usciti tutti e tre come previsti.
+;  L'uscita giusta:  0 2047 2047 2047 2047 2047 0 0 0 2047 2047 2047
+;
+;  P1  niente scambio: la DMA scrive nel banco davanti
+;        0 2047 2047 2047 0 2047 0 0 2047 2047 2047 2047
+;        B a meta' si vede scritto a meta' (I0 gia' 0, Q63 ancora 2047), e
+;        C a meta' ha gia' sporcato I0: e' il guasto che il ping-pong toglie
+;  P2  lo scambio all'AVVIO invece che alla fine
+;        0 0 0 2047 2047 2047 2047 2047 0 0 0 0
+;        si vede sempre il blocco di PRIMA, e la DMA riscrive quello appena
+;        mostrato
+;  P3  i vettori non leggono la finestra (machine_loadf sulla sola RAM)
+;        0 2047 2047 2047 2047 2047 0 0 0 2047 0 2047
+;        e un "float load out of bounds" per corsia
+;
+;  Non c'e' un mutante della sola lettura: la finestra non e' RAM, e senza il
+;  controllo una sw finisce in "word store out of bounds" -- il banco non
+;  cambia lo stesso. Il controllo serve al messaggio, non al comportamento.
+; ==========================================================================

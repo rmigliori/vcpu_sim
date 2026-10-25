@@ -351,11 +351,15 @@ int adc_load(VAdc* a, int64_t addr, int32_t* out)
 // LA DMA SCRIVE SOLO NELLA RAM CONDIVISA (decisione dell'utente, 29/09/2026):
 // nessuna periferica scrive nella memoria privata di una CPU. Un blocco che
 // non ci sta tutto dentro e' una configurazione impossibile.
+//
+// Oppure nel buffer ping-pong dell'ADC (25/10/2026): ADC_ADDR = ADC_BUF esatto,
+// e il blocco sta in un banco.
 static int adc_config_ok(const VAdc* a)
 {
   int64_t fine = (int64_t) a->addr + 8 * (int64_t) a->count;
   int in_shared = a->addr >= SHARED_BASE && fine <= SHARED_BASE + SHARED_SIZE;
-  if (a->count <= 0 || a->period <= 0 || !in_shared)
+  int in_buf    = a->addr == ADC_BUF && a->count <= ADC_BUF_MAX;
+  if (a->count <= 0 || a->period <= 0 || !(in_shared || in_buf))
   {
     fprintf(stderr, "runtime error: ADC, configurazione impossibile "
                     "(addr 0x%x, count %d, period %d)\n",
@@ -471,8 +475,10 @@ void adc_advance(VAdc* a, uint64_t t, const VClock* ck, uint8_t* shared, VTx* tx
       qv = adc_quantizza(a->amp * sin(fi));
     }
 
-    int64_t p = a->cur_addr + 8 * (int64_t) a->i;
-    uint8_t* dst = &shared[p - SHARED_BASE];
+    // Nel ping-pong la DMA scrive nel banco NASCOSTO; in RAM, all'indirizzo.
+    uint8_t* dst = a->cur_addr == ADC_BUF
+                 ? &a->pp[1 - a->fronte][8 * a->i]
+                 : &shared[a->cur_addr + 8 * (int64_t) a->i - SHARED_BASE];
     memcpy(dst,     &iv, sizeof iv);
     memcpy(dst + 4, &qv, sizeof qv);
 
@@ -482,8 +488,17 @@ void adc_advance(VAdc* a, uint64_t t, const VClock* ck, uint8_t* shared, VTx* tx
     {
       a->busy  = 0;
       a->done += 1;
+      // Il blocco e' intero: i banchi si scambiano insieme al contatore.
+      if (a->cur_addr == ADC_BUF) a->fronte = 1 - a->fronte;
     }
   }
+}
+
+const uint8_t* adc_buf_ptr(const VAdc* a, int64_t addr, int64_t len)
+{
+  if (addr >= ADC_BUF && addr + len <= ADC_BUF + 8 * ADC_BUF_MAX)
+    return &a->pp[a->fronte][addr - ADC_BUF];
+  return NULL;
 }
 
 int adc_set_signal(VAdc* a, const char* spec, char* err, size_t errsz)

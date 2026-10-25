@@ -419,6 +419,16 @@ vasm_check(tx_at      MODE DUMPS EXPECT "1 0 60042 -1 1 60042 -1 60042 1 2 0 0 5
            ARGS --eco-cmd "python3 ${CMAKE_SOURCE_DIR}/tools/mare.py ${CMAKE_SOURCE_DIR}/tests/eco_piatto.scena"
            SOURCE ${CMAKE_SOURCE_DIR}/tests/test_tx_at.vasm)
 
+# test_adc_pp — IL BUFFER PING-PONG DELL'ADC (25/10/2026).
+#
+# ADC_ADDR = ADC_BUF: la DMA scrive nel banco nascosto e i banchi si scambiano
+# a blocco finito. Senza segnale, i blocchi si riconoscono dal TX: A accecato
+# (2047), B pulito (0), C accecato. Chi legge vede sempre l'ultimo blocco
+# intero -- anche a meta' del blocco dopo --, coi vettori come con lw, e una sw
+# nella finestra non la cambia. Tre mutanti, nel sorgente.
+vasm_check(adc_pp     MODE DUMPS EXPECT "0 2047 2047 2047 2047 2047 0 0 0 2047 2047 2047"
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_adc_pp.vasm)
+
 # test_amp — DUE CPU (29/09/2026, §3.79). Due programmi, uno per CPU, sulla
 # stessa scheda: `run test_amp0.vx test_amp1.vx`. Il soggetto e' la MACCHINA
 # -- la RAM condivisa, lo spinlock hardware, la mailbox -- e niente kernel.

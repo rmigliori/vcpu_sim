@@ -196,10 +196,28 @@ static uint8_t* ram_ptr(VMachine* m, const VCpu* cpu, int64_t addr, int64_t len)
   return NULL;
 }
 
+// La finestra dell'ADC non e' RAM: scriverci e' un errore che si dice per nome.
+static int adc_buf_scritto(VMachine* m, int64_t addr, int64_t len)
+{
+  if (!adc_buf_ptr(&m->adc, addr, len)) return 0;
+  fprintf(stderr, "runtime error: store nel buffer dell'ADC a 0x%llx, che e' "
+                  "in sola lettura\n", (unsigned long long) addr);
+  return 1;
+}
+
+// IN LETTURA anche la finestra del ping-pong dell'ADC (ADC_BUF): il banco
+// davanti, lo stesso per tutte le CPU. In scrittura no, e lo dice ram_ptr
+// tornando NULL.
+static const uint8_t* read_ptr(VMachine* m, const VCpu* cpu, int64_t addr, int64_t len)
+{
+  const uint8_t* p = adc_buf_ptr(&m->adc, addr, len);
+  return p ? p : ram_ptr(m, cpu, addr, len);
+}
+
 float machine_loadf(const VMachine* m, const VCpu* cpu, int64_t addr)
 {
   float value = 0.0f;
-  const uint8_t* p = ram_ptr((VMachine*) m, cpu, addr, sizeof(value));
+  const uint8_t* p = read_ptr((VMachine*) m, cpu, addr, sizeof(value));
   if (!p)
   {
     fprintf(stderr, "runtime error: float load out of bounds at 0x%llx\n",
@@ -212,6 +230,7 @@ float machine_loadf(const VMachine* m, const VCpu* cpu, int64_t addr)
 
 void machine_storef(VMachine* m, const VCpu* cpu, int64_t addr, float value)
 {
+  if (adc_buf_scritto(m, addr, sizeof(value))) return;
   uint8_t* p = ram_ptr(m, cpu, addr, sizeof(value));
   if (!p)
   {
@@ -226,7 +245,7 @@ int32_t machine_load32(VMachine* m, VCpu* cpu, int64_t addr)
 {
   int32_t value = 0;
   if (is_mmio(addr)) return mmio_load(m, cpu, addr);
-  const uint8_t* p = ram_ptr(m, cpu, addr, sizeof(value));
+  const uint8_t* p = read_ptr(m, cpu, addr, sizeof(value));
   if (!p)
   {
     fprintf(stderr, "runtime error: word load out of bounds at 0x%llx\n",
@@ -240,6 +259,7 @@ int32_t machine_load32(VMachine* m, VCpu* cpu, int64_t addr)
 void machine_store32(VMachine* m, VCpu* cpu, int64_t addr, int32_t value)
 {
   if (is_mmio(addr)) { mmio_store(m, cpu, addr, value); return; }
+  if (adc_buf_scritto(m, addr, sizeof(value))) return;
   uint8_t* p = ram_ptr(m, cpu, addr, sizeof(value));
   if (!p)
   {

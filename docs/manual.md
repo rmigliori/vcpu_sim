@@ -686,6 +686,20 @@ una configurazione impossibile. Nessuna periferica scrive nella RAM privata di
 una CPU, e l'ADC non appartiene a nessuna: lo programma chi lo usa, e il blocco
 lo vede chiunque.
 
+**`ADC_BUF`, il buffer ping-pong** (25/10/2026, un'idea dell'utente). Con
+`ADC_ADDR` = `ADC_BUF` (`0x300000`) esatto, e `ADC_COUNT` fino a `ADC_BUF_MAX`
+(256), la DMA non scrive in RAM condivisa ma nella memoria dell'ADC: due banchi
+dietro una finestra sola. Scrive sempre nel banco **nascosto**, e a blocco
+finito i banchi si scambiano nello stesso istante in cui il contatore avanza.
+Chi legge `ADC_BUF` — con `lw` come con `vload` — vede sempre un blocco
+**intero**, l'ultimo finito, mai uno scritto a metà. La finestra è in **sola
+lettura** e la stessa per tutte le CPU; all'accensione è zero.
+
+Lo scambio protegge chi scrive, non chi legge: un lettore più lento di un
+blocco si ritrova il banco cambiato a metà, e lo vede rileggendo il contatore
+di `ADC_STATUS` prima e dopo. `tests/test_adc_pp.vasm` lo prova riconoscendo i
+blocchi dal TX: accecati (2047) o puliti (0).
+
 #### Il trasmettitore, e l'accecamento del ricevitore
 
 Dal 07/10/2026 l'altimetro ha anche la metà che parla. Il chirp vero non si

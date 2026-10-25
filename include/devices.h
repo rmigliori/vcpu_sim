@@ -374,15 +374,40 @@
 //  E' un AVVIO come quello di ADC_CTRL, e ne segue la regola: se all'istante
 //  l'ADC sta ancora acquisendo, l'avvio e' ignorato e alza ADC_OVERRUN.
 //  ADC_CTRL resta com'e', l'avvio immediato.
+//
+//  --- ADC_BUF: IL BUFFER PING-PONG DELL'ADC (25/10/2026) ---
+//  Un'idea dell'utente: le CPU leggono sempre lo STESSO indirizzo, e
+//  l'hardware cambia il banco sotto. Due banchi di ADC_BUF_MAX campioni nella
+//  memoria dell'ADC, dietro una finestra sola a ADC_BUF: la DMA scrive nel
+//  banco NASCOSTO, e quando il blocco e' finito i banchi si scambiano nello
+//  stesso istante in cui il contatore dei blocchi avanza. Chi legge vede
+//  sempre un blocco INTERO: l'ultimo finito, mai uno scritto a meta'.
+//
+//  Si sceglie con ADC_ADDR = ADC_BUF esatto, e ADC_COUNT fino a ADC_BUF_MAX
+//  (oltre e' una configurazione impossibile). Con ADC_ADDR in RAM condivisa
+//  l'ADC fa quello che faceva: i test di prima non si muovono.
+//
+//  LA FINESTRA E' IN SOLA LETTURA per le CPU, e tutte e due vedono lo stesso
+//  banco: scriverci e' un errore della macchina. All'accensione e' zero.
+//
+//  LO SCAMBIO PROTEGGE CHI SCRIVE, NON CHI LEGGE: un lettore che sta ancora
+//  leggendo quando finisce il blocco DOPO si ritrova il banco cambiato a
+//  meta'. Lo vede rileggendo il contatore dei blocchi prima e dopo (il
+//  seqlock, con la sequenza tenuta dall'hardware). Un triplo buffer, con lo
+//  scambio comandato da chi legge, lo eviterebbe: per noi il lettore lento e'
+//  un guasto da vedere, non un caso da servire.
 // ---------------------------------------------------------------------------
 // Dal 29/09/2026 la DMA scrive SOLO nella RAM condivisa: ADC_ADDR sta fra
-// SHARED_BASE e SHARED_BASE + SHARED_SIZE (qui sotto).
+// SHARED_BASE e SHARED_BASE + SHARED_SIZE (qui sotto). O, dal 25/10/2026,
+// nella memoria dell'ADC stesso: ADC_ADDR = ADC_BUF, il ping-pong.
 #define ADC_ADDR     (MMIO_BASE + 0x40)
 #define ADC_COUNT    (MMIO_BASE + 0x44)
 #define ADC_PERIOD   (MMIO_BASE + 0x48)
 #define ADC_CTRL     (MMIO_BASE + 0x4C)
 #define ADC_STATUS   (MMIO_BASE + 0x50)
 #define ADC_AT       (MMIO_BASE + 0x70)
+#define ADC_BUF      ((int64_t) 0x300000)   // la finestra del ping-pong
+#define ADC_BUF_MAX     256                 // campioni per banco
 
 #define ADC_START       1   // ADC_CTRL: avvia
 #define ADC_BUSY        1   // ADC_STATUS, bit 0
@@ -811,6 +836,10 @@ typedef struct
   unsigned char late;        // un armamento in ritardo, finche' non si legge
   uint64_t at;               // l'istante, in tick master
   int32_t  at_addr, at_count, at_period;
+  // ADC_BUF: i due banchi, I e Q alternati come in RAM; `fronte` e' quello
+  // che le CPU vedono, e la DMA scrive nell'altro
+  uint8_t  pp[2][8 * ADC_BUF_MAX];
+  int      fronte;
   double   freq;             // il mondo (--adc): Hz col segno
   double   amp;
   // Il mondo ESTERNO (--eco-cmd, §3.84): il segnale all'antenna per il blocco
@@ -924,6 +953,8 @@ int  adc_store(VAdc* a, int64_t addr, int32_t value, uint64_t t, const struct VC
 int  adc_scatta(VAdc* a, uint64_t t, const struct VClock* ck, uint8_t* shared, VTx* tx);
 void adc_advance(VAdc* a, uint64_t t, const struct VClock* ck, uint8_t* shared, VTx* tx);
 int  adc_set_signal(VAdc* a, const char* spec, char* err, size_t errsz);
+// La finestra di ADC_BUF, in lettura: il banco davanti. NULL fuori finestra.
+const uint8_t* adc_buf_ptr(const VAdc* a, int64_t addr, int64_t len);
 
 // Il trasmettitore: `t` serve a sapere se e' acceso, il clock a convertire
 // TX_LEN da tick periferiche a tick master.
