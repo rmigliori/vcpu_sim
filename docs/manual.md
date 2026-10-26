@@ -1040,16 +1040,22 @@ altri intorno, in ordine crescente/decrescente). In un listato prodotto con
 `--emit-expanded` (vedi `vcpu_sim asm`) la prima riga del prologo e l'ultima
 dell'epilogo portano un commento che nomina la `.proc` di origine e i
 registri auto-salvati/ripristinati, **ciascuno nell'ordine reale delle
-`sw`/`lw` sottostanti** (crescente nel prologo, decrescente nell'epilogo, r15
+`sd`/`ld` sottostanti** (crescente nel prologo, decrescente nell'epilogo, r15
 sempre agli estremi), cosi' si distinguono a colpo d'occhio dal corpo scritto
 a mano e il commento fa da traccia leggibile del blocco:
 
 ```
-  addi r14, r14, -4  ; .proc clobber: prologo auto (r15,r7,r8)
-  sw r15, 0(r14)
+  addi r14, r14, -8  ; .proc clobber: prologo auto (r15,r7,r8)
+  sd r15, 0(r14)
   ...
   ret  ; .proc clobber: fine epilogo auto (r8,r7,r15)
 ```
+
+I registri si salvano **interi**, con `sd`/`ld`: 8 byte l'uno sullo stack. Fino
+al 26/10/2026 il prologo usava `sw`/`lw`, e una procedura restituiva al
+chiamante un registro troncato a 32 bit, senza dirlo (§3.106). I cicli sono gli
+stessi; lo stack di una `.proc` raddoppia: 8 byte per r15 più 8 per ogni
+registro salvato.
 
 **Limite importante**: è un'analisi statica delle sole istruzioni scritte nel
 corpo, **non** vede cosa sporca una routine chiamata. Un registro il cui

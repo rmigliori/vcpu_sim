@@ -1,0 +1,32 @@
+; tests/test_proc64.vasm — .proc restituisce i registri INTERI (26/10/2026, §3.106).
+;
+; Il prologo di .proc salvava con sw e ripristinava con lw: un registro oltre i
+; 32 bit tornava al chiamante troncato, e col segno della parola bassa. Adesso
+; sd/ld, 8 byte per registro. Il chiamante tiene 0x123456789ABCDEF0 in r7 e in
+; r8 un negativo, la procedura li sporca tutti e due.
+;
+; --- I DUE NUMERI ---
+;   1311768467463790320   r7 dopo la chiamata, intero
+;   -5000000000           r8, un negativo che non sta in 32 bit
+;
+; Visto rosso col .proc di prima: "-1698898192 -705032704", le parole basse.
+
+  .data
+stack:      .space 16
+stack_top:
+
+  .text
+  .global main
+main:
+  li r14, stack_top
+  li r7, 0x123456789ABCDEF0
+  li r8, -5000000000
+  call sporca
+  dumps r7                       ; 1311768467463790320
+  dumps r8                       ; -5000000000
+  halt
+
+  .proc sporca
+  li r7, 5
+  li r8, 6
+  .endproc sporca

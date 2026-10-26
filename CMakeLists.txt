@@ -512,6 +512,15 @@ vasm_object(t_ld_sd SOURCE ${CMAKE_SOURCE_DIR}/tests/test_ld_sd.vasm)
 vasm_program(test_ld_sd OBJECTS t_ld_sd)
 vasm_check(ld_sd_obj MODE DUMPS EXPECT "${_ld_sd}"
            PROGRAM test_ld_sd)
+# test_proc64 — .proc RESTITUISCE I REGISTRI INTERI (26/10/2026, §3.106): il
+# prologo salva con sd. Visto rosso col .proc di prima, che salvava con sw:
+# "-1698898192 -705032704", le parole basse col loro segno.
+vasm_check(proc64     MODE DUMPS EXPECT "1311768467463790320 -5000000000"
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_proc64.vasm)
+vasm_object(t_proc64 SOURCE ${CMAKE_SOURCE_DIR}/tests/test_proc64.vasm)
+vasm_program(test_proc64 OBJECTS t_proc64)
+vasm_check(proc64_obj MODE DUMPS EXPECT "1311768467463790320 -5000000000"
+           PROGRAM test_proc64)
 add_test(NAME ld_mmio COMMAND vcpu_sim -I ${CMAKE_SOURCE_DIR}/hal/interface
                               ${CMAKE_SOURCE_DIR}/tests/test_ld_mmio.vasm)
 set_tests_properties(ld_mmio PROPERTIES

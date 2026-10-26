@@ -1574,19 +1574,23 @@ static int close_and_emit_proc(char* err, size_t errsz)
   strncat(pop_reglist, "r15", sizeof pop_reglist - strlen(pop_reglist) - 1);
   char prologue_line[192];
   snprintf(prologue_line, sizeof prologue_line,
-           "addi r14, r14, -4  ; .proc %s: prologo auto (%s)", g_proc_name, push_reglist);
+           "addi r14, r14, -8  ; .proc %s: prologo auto (%s)", g_proc_name, push_reglist);
   char epilogue_line[192];
   snprintf(epilogue_line, sizeof epilogue_line,
            "ret  ; .proc %s: fine epilogo auto (%s)", g_proc_name, pop_reglist);
 
+  // I registri si salvano INTERI, con sd: 8 byte l'uno (26/10/2026, §3.106).
+  // Fino a oggi era sw, e una procedura restituiva al chiamante un registro
+  // troncato a 32 bit, in silenzio. I cicli non cambiano (sd costa quanto sw),
+  // lo stack di una procedura si'.
   if (emit_synth_line(prologue_line, err, errsz) != 0) return -1;
-  if (emit_synth_line("sw r15, 0(r14)", err, errsz) != 0) return -1;
+  if (emit_synth_line("sd r15, 0(r14)", err, errsz) != 0) return -1;
   for (int r = 1; r <= 13; ++r)
   {
     if (!used[r]) continue;
     char line[32];
-    if (emit_synth_line("addi r14, r14, -4", err, errsz) != 0) return -1;
-    snprintf(line, sizeof line, "sw r%d, 0(r14)", r);
+    if (emit_synth_line("addi r14, r14, -8", err, errsz) != 0) return -1;
+    snprintf(line, sizeof line, "sd r%d, 0(r14)", r);
     if (emit_synth_line(line, err, errsz) != 0) return -1;
   }
 
@@ -1613,12 +1617,12 @@ static int close_and_emit_proc(char* err, size_t errsz)
   {
     if (!used[r]) continue;
     char line[32];
-    snprintf(line, sizeof line, "lw r%d, 0(r14)", r);
+    snprintf(line, sizeof line, "ld r%d, 0(r14)", r);
     if (emit_synth_line(line, err, errsz) != 0) return -1;
-    if (emit_synth_line("addi r14, r14, 4", err, errsz) != 0) return -1;
+    if (emit_synth_line("addi r14, r14, 8", err, errsz) != 0) return -1;
   }
-  if (emit_synth_line("lw r15, 0(r14)", err, errsz) != 0) return -1;
-  if (emit_synth_line("addi r14, r14, 4", err, errsz) != 0) return -1;
+  if (emit_synth_line("ld r15, 0(r14)", err, errsz) != 0) return -1;
+  if (emit_synth_line("addi r14, r14, 8", err, errsz) != 0) return -1;
   if (emit_synth_line(epilogue_line, err, errsz) != 0) return -1;
 
   // La DIMENSIONE della procedura, che adesso e' nota per esatto: prologo, corpo
