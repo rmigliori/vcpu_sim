@@ -508,8 +508,8 @@ endfunction()
 # quello stampava errori; un ciclo `dumps` / `j` va molto piu' svelto:
 # MISURATO, 281 MB in 3 s (~94 MB/s), e in 20 s sarebbe tutta la RAM. Quindi
 # 5 s: il test piu' lento ne prende 0,5, e il caso peggiore e' STIMATO ~470
-# MB, sotto i ~900 disponibili del 26/10. E' un tetto di tempo, non di byte:
-# quello vero sarebbe in vasm_check.cmake (§3.104, aperto). Un accesso fuori
+# MB, sotto i ~900 disponibili del 26/10. E' un tetto di tempo; quello di
+# byte e' in vasm_check.cmake (ulimit -f, 16 MiB, §3.105). Un accesso fuori
 # memoria ferma gia' la macchina (machine.c, fuori_memoria): questo resta per
 # il programma che gira per sempre senza sbagliare niente. Vale per ogni
 # vasm_check; gli add_test scritti a mano lo prendono in fondo al CMakeLists

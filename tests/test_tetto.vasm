@@ -1,0 +1,19 @@
+; tests/test_tetto.vasm — un programma che stampa PER SEMPRE (26/10/2026, §3.105).
+;
+; Non finisce mai, di proposito: e' il caso che il 25/10 ha mandato il VPS in
+; OOM (§3.103), un'uscita senza fine raccolta in memoria da vasm_check.cmake.
+; Misurato il 26/10: ~94 MB/s (§3.104). Il test `tetto` lo fa girare dentro
+; vasm_check e vuole il messaggio del tetto di byte: lo stdout arriva a 16 MiB,
+; il sistema lo ferma (ulimit -f), e vasm_check lo dice. Misurato il 26/10:
+; 1,4 s e 20 MB di memoria al massimo, sotto il TIMEOUT di 5 s.
+;
+; Visto rosso con vasm_check.cmake di prima: niente messaggio, ucciso dal
+; TIMEOUT di ctest dopo 5 s, con la RAM in salita.
+
+  .text
+  .global main
+main:
+  li r1, 7
+giro:
+  dumps r1
+  j giro

@@ -499,6 +499,16 @@ add_test(NAME guasto_amp COMMAND vcpu_sim run ${_guasto_vx} ${_amp1g_vx})
 set_tests_properties(guasto_amp PROPERTIES
   PASS_REGULAR_EXPRESSION "\\[cpu0\\] runtime error: float load out of bounds at 0x400000")
 
+# test_tetto — IL TETTO DI BYTE DI vasm_check (26/10/2026, §3.105). Un programma
+# che stampa per sempre, dentro il vero vasm_check.cmake: deve fermarsi a
+# 16 MiB col messaggio, in ~1,4 s e ~20 MB. Visto rosso con vasm_check di
+# prima: nessun messaggio, la memoria che sale finche' non lo uccide il tempo.
+add_test(NAME tetto
+         COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/cmake/vasm_check.cmake
+                 -- DUMPS 7 $<TARGET_FILE:vcpu_sim> ${CMAKE_SOURCE_DIR}/tests/test_tetto.vasm)
+set_tests_properties(tetto PROPERTIES
+  PASS_REGULAR_EXPRESSION "superato il tetto di 16777216 byte")
+
 # test_intd — IL DISTRIBUTORE DELLE INTERRUZIONI (29/09/2026, §3.79). La CPU 0
 # manda la linea della tastiera alla CPU 1, e un tasto a 500 cicli arriva la'.
 #   cpu0:1    la destinazione, riletta

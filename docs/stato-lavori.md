@@ -1,6 +1,10 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **8 ottobre 2026** (§3.86: misure, FDIRTY, il banco, i budget accettati, ADC_AT deciso); prima: **7 ottobre 2026, sera** (la ripresa riscritta in §0; §3.85 **`equiv.py` oltre il
+> Ultimo aggiornamento: **26 ottobre 2026** (§3.104–§3.105: il tetto contro
+> l'OOM). **Lo stato corrente e da dove si riprende è il §0.** Nel §3 le
+> sezioni dalla 3.1 alla 3.26 sono in ordine; dopo viene la più recente, e si
+> scende fino alla 3.27. Questo riquadro, da qui in giù, è la cronologia fino
+> all'8 ottobre e non è stato più tenuto: **8 ottobre 2026** (§3.86: misure, FDIRTY, il banco, i budget accettati, ADC_AT deciso); prima: **7 ottobre 2026, sera** (la ripresa riscritta in §0; §3.85 **`equiv.py` oltre il
 > tetto**, il passo 3: i primi 64 MB su disco e uno SHA-256 del flusso intero,
 > visto rosso con una `srai` a 2 cicli dopo i 64 MB; e prima §3.84 **il mondo esterno e
 > l'eco**, il passo 2: `tools/mare.py` in lockstep via `--eco-cmd`, la riga
@@ -181,12 +185,15 @@
 > **E il 26/10 (§3.104) IL TETTO CONTRO L'OOM**: un accesso fuori memoria
 > ferma la macchina (bus fault, codice d'uscita 3), e ogni test ha un
 > `TIMEOUT` di **5 s**. Non 20: misurato, un ciclo di `dumps` riempie ~94 MB/s.
-> `ctest` **120/120**. Aperto: un tetto di BYTE in `vasm_check.cmake`.
-> Lanciare a mano un programma nuovo resta `timeout 5 ... | head -c`.
+> **E (§3.105) il tetto di BYTE**: `vasm_check.cmake` scrive stdout e
+> stderr in due file sotto `ulimit -f` a 16 MiB; il programma che stampa
+> per sempre si ferma in 1,4 s e 20 MB. Fatta anche la frase di
+> `semaphore.vasm` (il produttore/consumatore, e l'ISR che resta escluso), e
+> la riga in testa al documento. `ctest` **121/121**. Fuori da ctest,
+> lanciare a mano un programma nuovo resta `timeout 5 ... | head -c`.
 >
 > **Il prossimo passo** (§3.103, «Aperti»): il **passo 3**, il task al livello
-> 6 che chiama `alt_statistiche` e diventa il testimone; prima la frase di
-> `semaphore.vasm` sul post che «restituisce», promessa e non fatta. Poi il passo 4 (l'idle
+> 6 che chiama `alt_statistiche` e diventa il testimone. Poi il passo 4 (l'idle
 > onda del cpuometro), e il punto 4 di §3.101: la scena vera e i rami di
 > fallimento. Il kernel sulla CPU 1 (multi-look, telemetria) è aperto, non
 > deciso (§3.102).
@@ -194,10 +201,10 @@
 > **LA FORMULA PER RIPRENDERE (25/10, notte):**
 >
 > ```
-> Leggi docs/stato-lavori.md, §0 e poi §3.104, §3.103, §3.102, §3.101 e
-> §3.99, e quanto serve di §3.88 (il cpuometro e il task delle statistiche)
-> e §3.74-§3.75. Prima la frase di semaphore.vasm, poi il passo 3 delle
-> statistiche.
+> Leggi docs/stato-lavori.md, §0 e poi §3.103, §3.102, §3.101 e §3.99, e
+> quanto serve di §3.88 (il cpuometro e il task delle statistiche) e
+> §3.74-§3.75; §3.104-§3.105 se tocchi i test. Riprendiamo dal passo 3
+> delle statistiche: il task al livello 6 che chiama alt_statistiche.
 > ```
 
 > ### Il 24/10 (superato dal 25/10 qui sopra)
@@ -4174,6 +4181,50 @@ il contratto scritto.
 
 ---
 
+### 3.105 IL TETTO DI BYTE in `vasm_check`, la frase del semaforo, la testa del documento (26/10/2026)
+
+L'aperto del §3.104, proposto e **approvato dall'utente** («vai»). I 5 s
+reggevano solo finché la RAM libera restava sui 900 MB, e il passo 3 porta test
+nuovi.
+
+```
+vasm_check.cmake   stdout e stderr in DUE FILE nella cartella di build (disco,
+                   non /tmp), sotto `ulimit -f` a 16 MiB l'uno: chi supera
+                   muore di SIGXFSZ, e il test fallisce dicendo "superato il
+                   tetto", con stdout, stderr, rc e i primi 400 byte. Separati
+                   perche' uno stdout bufferizzato si spezzerebbe a meta' di
+                   una riga di dumps. Letti e cancellati dopo
+bash, non sh       /bin/sh qui e' dash, che conta `ulimit -f` a blocchi da 512
+                   byte (provato: 4 blocchi = 2048 byte); bash a 1024
+il TIMEOUT di 5 s  resta, per chi gira per sempre senza stampare
+```
+
+**Misurato prima di scegliere il tetto:** delle 59 prove che passano da
+`vasm_check`, la più grande scrive **709 byte** (`msg`); lo stderr al massimo
+451. 16 MiB sono un margine enorme.
+
+| cosa | risultato |
+|---|---|
+| `tests/test_tetto.vasm` (dumps / j per sempre) nel `vasm_check` nuovo | fermato a 16.777.216 byte, `rc=SIGXFSZ`, **1,4 s e 20 MB** di memoria al massimo; nessun file lasciato |
+| lo stesso nel `vasm_check` di `HEAD` | **rosso**: nessun messaggio, ucciso da `timeout 2` a **150 MB** e in salita; nessun `vcpu_sim` rimasto |
+| `ctest` | **121/121** (120 + `tetto`), tutti con `TIMEOUT` 5 (`--show-only`); nessun `vasm_check_*` rimasto |
+
+**La frase di `semaphore.vasm`**, promessa nel §3.103. Diceva che chi fa post è
+«sempre qualcuno che RESTITUISCE» una risorsa presa con una wait, e così
+escludeva senza motivo il produttore/consumatore di Dijkstra, cioè il super
+task che a fine frame dà un frame da leggere alle statistiche. Ora dice i due
+modi, da task, e che da escludere era il post da **ISR**, che resta vietato. È
+solo un commento: `lib_semaphore_semaphore.vo` è identico byte per byte.
+
+**La riga in testa al documento** diceva «Ultimo aggiornamento: 8 ottobre
+2026». Ora dice il 26/10, rimanda al §0 e spiega l'ordine del §3: dalla 3.1
+alla 3.26 in ordine, poi dalla più recente a scendere fino alla 3.27. La
+cronologia di sotto è lasciata com'era, e lo si dice.
+
+**Si riprende dal passo 3** delle statistiche (§3.103).
+
+---
+
 ### 3.104 IL TETTO CONTRO L'OOM: il bus fault ferma la macchina, e un TIMEOUT di 5 s (26/10/2026)
 
 Il primo aperto di §3.103. **Una causa che §3.103 non nominava**, trovata
@@ -4233,11 +4284,9 @@ e la decisione era sul bus fault. Le misure di `misure/` non le ho rifatte
 girare: l'assemblatore non è cambiato, e un programma che non sbaglia gira
 uguale.
 
-**Aperto:** il tetto vero è di **byte**, non di tempo. `vasm_check.cmake`
-potrebbe far scrivere l'uscita in un file con `ulimit -f`, o passarla da
-`head -c`. Lo stderr va tenuto separato dallo stdout, perché uno stdout
-bufferizzato si spezzerebbe a metà di una riga di `dumps`. Il `TIMEOUT` di 5 s
-regge finché la RAM disponibile resta intorno ai 900 MB. Decide l'utente.
+**Aperto, e chiuso lo stesso giorno (§3.105):** il tetto vero è di **byte**,
+non di tempo. Ora `vasm_check.cmake` scrive l'uscita in due file sotto `ulimit
+-f`.
 
 ---
 

@@ -57,9 +57,14 @@
 ; sem_wait puo' bloccare, quindi e' di un task per definizione. sem_post lo e'
 ; per una ragione meno ovvia: la variante di SEGNALAZIONE non esiste (§3.26
 ; dell'handoff — un post che si perde e' un'attesa di evento, e gli eventi
-; passano dalla mailbox), quindi chi fa post e' sempre qualcuno che RESTITUISCE
-; una risorsa che aveva preso con una wait, cioe' un task. Non c'e' il caso che
-; ha reso raw la send, e le due entry si proteggono da se'.
+; passano dalla mailbox), quindi un sem_post da ISR non c'e'. Chi fa post e' un
+; task, in due modi: RESTITUISCE una risorsa che aveva preso con una wait,
+; oppure la PRODUCE per un altro task che la consuma -- il produttore/
+; consumatore di Dijkstra, come il super task che a fine frame da' alle
+; statistiche un frame da leggere (§3.103). Fino al 26/10 qui c'era "sempre
+; qualcuno che restituisce", e il secondo modo restava escluso senza motivo:
+; quello che c'era da escludere era l'ISR. Non c'e' il caso che ha reso raw la
+; send, e le due entry si proteggono da se'.
 ;
 ; --- E NESSUN TIMEOUT SU sem_wait (§13.8, sciolta in §3.26) ---
 ; Non e' una scelta fra due uscite, e' una deduzione: il timeout e' una consegna

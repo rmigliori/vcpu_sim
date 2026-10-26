@@ -1,21 +1,16 @@
 leggi il §0 di docs/stato-lavori.md e segui la formula per riprendere
 
-Dove eravamo rimasti (25/10/2026, notte -- sessione 4c173ee5):
+Dove eravamo rimasti (26/10/2026):
 
-- La sessione prima (4d336a1c) e' morta in OOM alle 20:48, durante il passo 2
-  delle statistiche: tutto in §3.103. Causa trovata e corretta, commit
-  13b3791 (assembler: .space e .res un operando solo) e 63c858c (altimetro:
-  lo scrittore dell'anello). ctest 117/117. Pushato su GitHub e sulla Pi.
-- docs/stato-lavori.md: §3.103 nuovo e il RIPRENDI DA QUI di §0 aggiornato,
-  committati con questo file nel commit «§3.103». Una domanda aperta a Roberto: se
-  sistemare la riga in testa ("Ultimo aggiornamento: 8 ottobre 2026", ferma
-  da allora).
-- Poi la scelta di Roberto: prima il tetto contro l'OOM (TIMEOUT sui test
-  vasm, o vasm_check.cmake che scrive l'uscita in un file con un tetto, o un
-  tetto di cicli in vcpu_sim) o prima il passo 3 (il task al livello 6 che
-  chiama alt_statistiche). Fino al tetto: ogni test nuovo a mano, con
-  timeout 5 ... | head -c 3000, e ctest --timeout 20.
-- Da fare prima del passo 3: la frase di semaphore.vasm riga 60 (il post che
-  "restituisce"), promessa e non corretta.
+- Il tetto contro l'OOM e' FATTO, in due commit: §3.104 (un accesso fuori
+  memoria ferma la macchina, codice d'uscita 3; TIMEOUT 5 s su ogni test) e
+  §3.105 (vasm_check.cmake scrive l'uscita in due file sotto ulimit -f a
+  16 MiB). Il TIMEOUT e' 5 e non 20 perche' misurato: un ciclo di dumps
+  riempie ~94 MB/s. ctest 121/121.
+- Fatte anche la frase di semaphore.vasm (il produttore/consumatore; l'ISR
+  resta escluso) e la riga in testa a stato-lavori.md.
+- Il prossimo passo: il passo 3 delle statistiche (§3.103), il task al
+  livello 6 che chiama alt_statistiche.
+- Fuori da ctest, un programma nuovo lanciato a mano: timeout 5 ... | head -c.
 - Fuori dal repo: il plugin di micro ~/.config/micro/plug/glow/glow.lua, F5
-  mostra il markdown con glow. Fatto e provato.
+  mostra il markdown con glow.

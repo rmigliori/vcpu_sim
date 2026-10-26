@@ -27,10 +27,42 @@ if(NOT argv)
   message(FATAL_ERROR "vasm_check: manca il comando da eseguire")
 endif()
 
-execute_process(COMMAND ${argv}
-                OUTPUT_VARIABLE out
-                ERROR_VARIABLE  err
+# IL TETTO DI BYTE (26/10/2026, §3.105). Fino a oggi l'uscita finiva in due
+# variabili, cioe' in RAM e senza limite: un programma che stampa per sempre
+# riempie ~94 MB/s (misurato, §3.104), e il 25/10 ha mandato il VPS in OOM.
+# Adesso stdout e stderr vanno in due FILE nella cartella di build (disco, non
+# /tmp che e' RAM), sotto `ulimit -f`: chi supera VASM_TETTO byte viene ucciso
+# dal sistema (SIGXFSZ) e il test fallisce dicendolo. I file sono separati
+# perche' uno stdout bufferizzato, mescolato allo stderr, si spezzerebbe a
+# meta' di una riga di dumps. Il TIMEOUT di ctest (5 s) resta per chi gira per
+# sempre senza stampare.
+#
+# bash e non sh: `ulimit -f` conta blocchi da 1024 byte in bash e da 512 in
+# dash, che qui e' /bin/sh (provato il 26/10). Il 26/10 l'uscita piu' grande
+# dei test era di 709 byte (msg).
+set(VASM_TETTO 16777216)                       # 16 MiB per file
+math(EXPR blocchi "${VASM_TETTO} / 1024")
+find_program(BASH bash REQUIRED)
+string(RANDOM LENGTH 12 tag)
+set(f_out "${CMAKE_CURRENT_BINARY_DIR}/vasm_check_${tag}.out")
+set(f_err "${CMAKE_CURRENT_BINARY_DIR}/vasm_check_${tag}.err")
+execute_process(COMMAND ${BASH} -c "ulimit -f ${blocchi} && exec \"$@\"" vasm_check ${argv}
+                OUTPUT_FILE     ${f_out}
+                ERROR_FILE      ${f_err}
                 RESULT_VARIABLE rc)
+file(SIZE ${f_out} n_out)
+file(SIZE ${f_err} n_err)
+if(n_out GREATER_EQUAL VASM_TETTO OR n_err GREATER_EQUAL VASM_TETTO)
+  file(READ ${f_out} out LIMIT 400)
+  file(READ ${f_err} err LIMIT 400)
+  file(REMOVE ${f_out} ${f_err})
+  message(FATAL_ERROR "l'uscita ha superato il tetto di ${VASM_TETTO} byte "
+                      "(stdout ${n_out}, stderr ${n_err}, rc=${rc}): il programma "
+                      "e' stato fermato. L'inizio:\n${out}\n--- stderr ---\n${err}")
+endif()
+file(READ ${f_out} out)
+file(READ ${f_err} err)
+file(REMOVE ${f_out} ${f_err})
 if(NOT rc EQUAL 0)
   message(FATAL_ERROR "il comando e' fallito (rc=${rc}):\n${out}${err}")
 endif()
