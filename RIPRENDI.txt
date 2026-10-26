@@ -1,14 +1,27 @@
-leggi il §0 di docs/stato-lavori.md e segui la formula per riprendere
+LA FRASE PER RIPRENDERE (dopo il 26/10/2026):
+
+  Leggi docs/stato-lavori.md, §0 e poi §3.106, §3.103 e §3.88 (il
+  cpuometro), e quanto serve di §3.101-§3.102; §3.104-§3.105 se tocchi i
+  test. Prima verifica i push (vedi sotto). Riprendiamo dal passo 4 delle
+  statistiche: l'idle come onda del cpuometro. Proponi prima la forma.
 
 Dove eravamo rimasti (26/10/2026, sera):
 
+- PUSH: GitHub e la Pi sono a 91a5677 (§3.105). I quattro commit di §3.106
+  (d459d46, 2df3262, 658212b, 658278f) e quello di questo file NON sono
+  pushati: GitHub lo fa Roberto (git push origin master dal terminale di VS
+  Code), la Pi la fa Claude.
 - Il tetto contro l'OOM e' FATTO (§3.104-§3.105): il bus fault ferma la
   macchina, TIMEOUT 5 s su ogni test, vasm_check sotto ulimit -f a 16 MiB.
 - Il passo 3 delle statistiche e' FATTO (§3.106): il testimone e' il task S
-  al livello 6. S ha trovato che il contesto salvava i registri a 32 bit:
-  ora ld/sd nella macchina, in .proc e nell'HAL (frame da 132 byte). Budget:
-  BARKER_ACC 2000, MSG 700. Nessuno stack straripa (verificato). ctest 126/126.
-- Il prossimo passo: il passo 4, l'idle come onda del cpuometro (§3.88).
+  al livello 6. S ha trovato che il contesto salvava i registri a 32 bit
+  (l'ISA aveva solo lw/sw). Roberto: "il contesto e' contesto e va salvato
+  rispettando le size". Ora ld/sd nella macchina, in .proc e nell'HAL (frame
+  da 132 / 196 / 2192 / 2256 byte). Budget: BARKER_ACC 2000, MSG 700.
+  Nessuno stack straripa (verificato con uno strumento provvisorio, non in
+  git). ctest 126/126.
+- Il prossimo passo: il passo 4, l'idle come onda del cpuometro (prescaler
+  N~100, §3.88), con una categoria di marche per S in tools/marks.py.
 - Fuori da ctest, un programma nuovo lanciato a mano: timeout 5 ... | head -c.
 - Fuori dal repo: il plugin di micro ~/.config/micro/plug/glow/glow.lua, F5
   mostra il markdown con glow.
