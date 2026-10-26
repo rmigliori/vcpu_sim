@@ -192,19 +192,27 @@
 > la riga in testa al documento. `ctest` **121/121**. Fuori da ctest,
 > lanciare a mano un programma nuovo resta `timeout 5 ... | head -c`.
 >
-> **Il prossimo passo** (§3.103, «Aperti»): il **passo 3**, il task al livello
-> 6 che chiama `alt_statistiche` e diventa il testimone. Poi il passo 4 (l'idle
-> onda del cpuometro), e il punto 4 di §3.101: la scena vera e i rami di
+> **E (§3.106) il PASSO 3 è FATTO**: il testimone è il task S al livello 6,
+> e l'atteso guarda anche i record per procedura e le regole negative. S ha
+> trovato un difetto vecchio: **il contesto salvava i registri a 32 bit**
+> (l'ISA aveva solo `lw`/`sw`). Ora `ld`/`sd`, in quattro commit: la
+> macchina, `.proc`, l'HAL (frame da 132 byte), i budget. BARKER_ACC 2.000,
+> MSG 700. Nessuno stack straripa (verificato con uno strumento provvisorio).
+> `ctest` **126/126**.
+>
+> **Il prossimo passo** (§3.103, «Aperti»): il **passo 4**, l'idle come
+> onda del cpuometro (prescaler N≈100, §3.88) con una categoria di marche
+> per S in `tools/marks.py`. Poi il punto 4 di §3.101: la scena vera e i rami di
 > fallimento. Il kernel sulla CPU 1 (multi-look, telemetria) è aperto, non
 > deciso (§3.102).
 >
-> **LA FORMULA PER RIPRENDERE (25/10, notte):**
+> **LA FORMULA PER RIPRENDERE (dopo il 26/10):**
 >
 > ```
-> Leggi docs/stato-lavori.md, §0 e poi §3.103, §3.102, §3.101 e §3.99, e
-> quanto serve di §3.88 (il cpuometro e il task delle statistiche) e
-> §3.74-§3.75; §3.104-§3.105 se tocchi i test. Riprendiamo dal passo 3
-> delle statistiche: il task al livello 6 che chiama alt_statistiche.
+> Leggi docs/stato-lavori.md, §0 e poi §3.106, §3.103 e §3.88 (il
+> cpuometro), e quanto serve di §3.101-§3.102; §3.104-§3.105 se tocchi i
+> test. Riprendiamo dal passo 4 delle statistiche: l'idle come onda del
+> cpuometro. Proponi prima la forma.
 > ```
 
 > ### Il 24/10 (superato dal 25/10 qui sopra)
@@ -4178,6 +4186,110 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.106 IL PASSO 3 DELLE STATISTICHE, e il contesto che salvava a 32 bit (26/10/2026)
+
+**La forma, proposta e approvata dall'utente** («vai»). In `test_altimetro0`
+il testimone diventa un task S al livello 6, senza vettori né float, che
+chiama `alt_statistiche` in giro. L'idle torna un giro vuoto (il passo 4 ne
+farà l'onda del cpuometro). Nell'atteso entrano solo numeri che si ricavano a
+mano: la sequenza dei modi, i contatori, i frame sfuggiti, i record persi, i
+record per procedura e **il numero di righe con la regola dei budget
+negativa**. Quest'ultimo è il guardiano permanente dei budget. I cicli
+(ritardo, lavoro, margine, regola) li stampa solo `test_altimetro0_tabella`
+(`-D STAT_TABELLA`), fuori da `ctest`. Lo stack di S, scritto nel sorgente: 4
+byte di `alt_statistiche`, 12 di `sem_wait`, sopra il frame del banco; 256
+byte.
+
+#### Il difetto che S ha trovato: i registri salvati a 32 bit
+
+La prima corsa ha dato **`1418285813`** invece di `111112222233333`, che è
+quel numero modulo 2³². I registri scalari sono a 64 bit, ma l'ISA aveva solo
+`lw`/`sw`: **nessuna istruzione sapeva salvare un registro intero**, e il
+contesto, il frame leggero e il prologo di `.proc` passavano da `sw`. L'idle
+non lo vedeva: gira nel banco 0 e la via veloce non salva i suoi registri. S
+invece si blocca in `sem_wait`. Non era scritto da nessuna parte.
+
+**Avevo proposto di dichiararlo come regola del programmatore, ed era
+sbagliato.** L'utente: «il contesto è contesto e va salvato rispettando le
+size». Ha ragione. Il principio «lo stack è del programmatore» vale per ciò che
+il programmatore decide; che il kernel restituisca i registri come li ha
+trovati è il contratto del kernel. Anche il mio argomento del Cortex-M4 non
+reggeva: lì registro e salvataggio hanno la stessa misura. **Deciso con
+l'utente: `ld`/`sd`**, il modello di RV64. Scartati i registri a 32 bit (è la
+decisione sulla larghezza che il §3.89 lascia aperta per VC e l'FPGA) e il
+salvataggio in due parole (~300 cicli a commutazione).
+
+```
+1/4 d459d46  ld e sd nella macchina e nell'assembler: little endian, nessun
+             allineamento, il costo di lw/sw, in coda all'enum (gli opcode di
+             prima non si spostano). Nell'MMIO fermano la macchina: i registri
+             dei device sono a 32 bit. test_ld_sd (otto numeri calcolati con
+             Python), ld_mmio. Le 127 immagini di HEAD identiche
+2/4 2df3262  .proc salva con sd/ld, 8 byte per registro. test_proc64, rosso col
+             .proc di prima ("-1698898192 -705032704"). Cambiano solo i .vo con
+             una .proc; i cicli no
+3/4 658212b  l'HAL: scalari, epc e psw con sd (sono uint64/int64 nel VCpu),
+             vmask con una sd (stessi byte delle due sw), vl e i float restano a
+             4. Taglie: 132 / 196 / 2192 / 2256 (erano 68 / 132 / 2128 / 2192),
+             il frame del banco 196, il leggero 20 (CTX_LEGGERO_SIZE, nuova)
+4/4          i budget, l'atteso del test, questa sezione
+```
+
+**Nessuno stack straripa**, verificato e non dedotto: uno strumento provvisorio
+nello scratchpad (una copia del simulatore che segna ogni store con base r14, e
+uno script che ricava gli stack dalle coppie `X`/`X_top` dei `.vo`, con la base
+dei dati di ogni oggetto dai suoi simboli globali) su tutti i 18 programmi
+linkati con stack dichiarati: ogni store cade in uno stack. Margini minimi 40
+byte (`proc64`), 84 (`mondo`, `stackP`), 96 (`tmgr`, `stackI`), 104
+(`altimetro`, `stackS`). Copre i percorsi che i test eseguono, non i programmi a
+file singolo.
+
+**Le misure:** `m_taratura`, `m_attivazione` (302–304), `m_banco` (180–183) e
+`m_attivita` danno i numeri di prima. `m_attivazione_v` dà **940–943**,
+rimisurato con l'HAL di prima a 949–952: −9 cicli, il `vmask` salvato con una
+`sd` e ripreso con una `ld` invece di due parole ricomposte.
+
+#### I budget, rimisurati dal testimone
+
+```
+procedura    record  lavoro  margine  regola  durata
+FRONTE         15     1082     429       21    1700
+TRACKER        15      315     296       80     800
+BARKER_ACC      5     1261     550       97    2000   <- 1900, regola -3
+BARKER_DEC      1      925     386       17    1500
+MSG             5      230     281       86     700   <- 600, regola -14
+DECIDI         15      522       --       --    800   (non vincola)
+ritardo della sveglia: 189 per tutte
+```
+
+Prima del cambio BARKER_ACC e MSG stavano sotto la regola, senza sforare: il
+record delle statistiche ha aggiunto lavoro al giro. **Deciso dall'utente:**
+2.000 e 700. ACQ 5.300, ACQ5 6.800, TRACK 4.000. Il lavoro per procedura è
+identico prima e dopo il cambio dell'HAL.
+
+#### I rossi del testimone, previsti prima
+
+```
+senza il sem_post          appeso: S non si sveglia mai             previsto
+ALT_ANELLO 4 (3 utili)     11 persi, record 15 15 5 0 5 5           previsto
+D_MSG di nuovo 600         1 regola negativa                        previsto
+S fermo dopo il frame 3    con 150.000 cicli VERDE, previsione SBAGLIATA: dalla
+                           fine del frame 3 a quella del 5 ci sono ~200.000
+                           cicli, e ne finisce uno solo, letto in ritardo e non
+                           perso. Con 250.000: 2 sfuggiti, previsto
+```
+
+| cosa | risultato |
+|---|---|
+| `ctest` | **126/126** |
+| uscita della CPU 0 | `111112222233333 0 0 0 0 0 0 15 15 5 1 5 15 0` |
+| la CPU 1 | `5 0 14 1 4 1`, come prima, in tutti i mutanti |
+
+**Si riprende dal passo 4** (§3.103): l'idle come onda del cpuometro, con una
+categoria di marche per il task in `tools/marks.py`.
 
 ---
 

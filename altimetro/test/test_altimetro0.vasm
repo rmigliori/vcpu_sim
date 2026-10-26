@@ -4,14 +4,23 @@
 ; ne' perdite.
 ;
 ; --- COSA FA ---
-; Il boot del kernel e l'idle, poi `j altimetro_parti`: da li' la CPU 0 e'
-; l'altimetro. L'IDLE e' il testimone: gira nel banco 0 senza vettori (la
-; regola della via veloce), e a ogni frame finito -- alt_k che cresce --
-; aggiunge una cifra, il modo del frame, a una sequenza. Fra la fine di un
-; frame e il FRONTE del frame dopo ci sono ~87.000 cicli d'idle: nessun frame
-; gli sfugge. Dopo ALT_FRAMI frame stampa e ferma la scheda.
+; Il boot del kernel, il TASK DELLE STATISTICHE S e l'idle, poi `j
+; altimetro_parti`: da li' la CPU 0 e' l'altimetro. Dal 26/10 (§3.106) il
+; testimone e' S, al livello 6, e non piu' l'idle: chiama alt_statistiche in
+; giro, che lo sveglia a ogni frame finito (il sem_post del super task) e
+; svuota l'anello dei record in alt_stat. A ogni ritorno S aggiunge una cifra,
+; il modo del frame, a una sequenza, e conta i ritorni che non dicono "un
+; frame": quelli in cui gliene e' sfuggito uno. Dopo ALT_FRAMI frame stampa e
+; ferma la scheda. L'idle e' un giro vuoto (il passo 4 ne fara' l'onda del
+; cpuometro).
 ;
-; --- I CINQUE NUMERI DELLA CPU 0, tutti derivabili ---
+; S NON USA NE' I VETTORI NE' I FLOAT: gira nel banco 0, e la via veloce del
+; super task vale solo per chi non li ha sporchi (hal.vinc). Il suo STACK, che
+; e' del programmatore: alt_statistiche ne spinge 4 byte, sem_wait 12, e sopra
+; il frame piu' grande che puo' capitarci, quello del banco (132 byte, se la
+; sveglia del super task arriva li' dentro). ~150 byte: 256.
+;
+; --- I QUATTORDICI NUMERI DELLA CPU 0, tutti derivabili ---
 ;   111112222233333   i modi dei 15 frame: 5 CAL, 5 ACQ, 5 TRACK. CAL passa
 ;                     al quinto (i residui degli sweep 3..5 sotto 1 gate,
 ;                     §3.86 li misurava a -0,14 -0,51 -0,13), ACQ al quinto
@@ -20,7 +29,39 @@
 ;   0                 i blocchi non finiti a FRONTE
 ;   0                 gli armamenti in ritardo di TX_AT e ADC_AT
 ;   0                 le parole di MSG perse: la CPU 1 legge in tempo
-; I numeri della CPU 1 e i rossi sono in test_altimetro1.vasm.
+;   0                 i frame sfuggiti a S: ~87.000 cicli liberi a frame
+;   0                 i record persi con l'anello pieno: in 15 frame 56, e
+;                     l'anello ne tiene 63
+;   15 15 5 1 5 15    i record per procedura, FRONTE TRACKER BARKER_ACC
+;                     BARKER_DEC MSG DECIDI: le tabelle dei modi. DECIDI conta
+;                     anche il quindicesimo: il suo record si pubblica dopo il
+;                     sem_post, ma prima della wait, e S corre solo dopo
+;   0                 le righe di alt_stat con la REGOLA negativa: nessuno slot
+;                     e' stretto per la regola dei budget (§3.86). E' il
+;                     guardiano permanente dei budget
+; I cicli -- ritardo, lavoro, margine e regola per procedura -- NON sono qui:
+; si muovono a ogni modifica del kernel, come le misure. Li stampa la variante
+; con -D STAT_TABELLA (test_altimetro0_tabella, fuori da ctest).
+;
+; --- I ROSSI DEL TESTIMONE (26/10/2026), previsti prima di farli girare ---
+;   senza il sem_post        S non si sveglia mai: niente uscita, appeso fino
+;                            al TIMEOUT
+;   ALT_ANELLO 4 (3 utili)   in un frame S non svuota: ogni ACQ perde DECIDI,
+;                            ACQ5 anche BARKER_DEC, ogni TRACK DECIDI. "... 0
+;                            11 15 15 5 0 5 5 0": undici persi
+;   D_MSG di nuovo 600       "... 15 1": la riga di MSG ha la regola negativa
+;   S fermo 250.000 cicli    "... 0 2 0 ...": un ritorno con due frame e uno
+;     dopo il terzo frame    con zero. La prima prova, con 150.000, era
+;                            uscita verde, e la previsione era SBAGLIATA: dalla
+;                            fine del frame 3 a quella del 5 ci sono ~200.000
+;                            cicli, e in 150.000 ne finisce uno solo -- letto
+;                            in ritardo, ma non perso
+; Durante tutte e quattro la CPU 1 dice le stesse cose.
+;
+; DA QUANDO S E' IL TESTIMONE si e' visto che il contesto salvava gli scalari
+; a 32 bit: la sequenza di 15 cifre usciva 1418285813, cioe' modulo 2^32. Il
+; contesto ora li salva interi (ld/sd, §3.106).
+; I numeri della CPU 1 e i suoi rossi sono in test_altimetro1.vasm.
 
 .include "tcb/tcb.vinc"
 .include "queue/queue_api.vinc"
@@ -29,6 +70,9 @@
 .equ ALT_FRAMI  15               ; 5 CAL + 5 ACQ + 5 TRACK
 
   .data
+tcbS:       .res TCB
+stackS:     .space 64            ; parole: 256 byte, il conto e' qui sopra
+stackS_top:
 tcbI:       .res TCB
 stackI:     .space 256           ; l'idle non usa i vettori: frame piccolo
 stackI_top:
@@ -44,7 +88,11 @@ stack_boot_top:
   .extern alt_non_finiti
   .extern alt_ritardi
   .extern alt_overrun
+  .extern alt_statistiche
+  .extern alt_stat
+  .extern alt_stat_persi
   .extern fine
+  .extern pcb6
   .extern pcb7
   .extern sched_init
   .extern ctx_init
@@ -52,6 +100,19 @@ stack_boot_top:
 main:
   li r14, stack_boot_top
   call sched_init
+
+  ; --- S, le statistiche (livello 6) ---
+  li r1, stackS_top
+  li r2, stat
+  call ctx_init
+  li r3, tcbS
+  sw r1, TCB.sp(r3)
+  li r4, pcb6
+  sw r4, TCB.pcb(r3)
+  sw r0, TCB.state(r3)
+  mov r1, r4
+  mov r2, r3
+  call enqueue_tail
 
   ; --- l'idle (livello 7) ---
   li r1, stackI_top
@@ -69,23 +130,27 @@ main:
   j altimetro_parti              ; non torna
 
 ; ==========================================================================
-;  L'idle: il testimone dei frame
+;  S: il testimone dei frame. alt_statistiche sporca r1..r10: lo stato di S
+;  sta in r11..r13.
 ; ==========================================================================
-idle:
-  li r9, alt_k
-  li r10, 0                      ; i frame visti
+stat:
   li r11, 0                      ; la sequenza dei modi, in cifre
-  li r12, 10
-idle_giro:
-  lw r1, 0(r9)
-  beq r1, r10, idle_giro
-  mov r10, r1
+  li r12, 0                      ; i frame visti
+  li r13, 0                      ; i ritorni che non dicono "un frame"
+stat_giro:
+  call alt_statistiche           ; r1 = i frame finiti dall'ultimo ritorno
+  add r12, r12, r1
+  li r2, 1
+  beq r1, r2, stat_uno
+  addi r13, r13, 1
+stat_uno:
   li r2, alt_modo_svolto
   lw r2, 0(r2)
-  mul r11, r11, r12
+  li r3, 10
+  mul r11, r11, r3
   add r11, r11, r2
   li r3, ALT_FRAMI
-  bne r10, r3, idle_giro
+  blt r12, r3, stat_giro
 
   dumps r11                      ; 111112222233333
   li r1, alt_sforamenti
@@ -100,7 +165,48 @@ idle_giro:
   li r1, alt_overrun
   lw r2, 0(r1)
   dumps r2                       ; 0
+  dumps r13                      ; 0: i frame sfuggiti
+  li r1, alt_stat_persi
+  lw r2, 0(r1)
+  dumps r2                       ; 0
+
+  ; --- alt_stat, le righe 1..6: i record, e le regole negative ------------
+  li r4, alt_stat
+  addi r4, r4, ALT_STAT.size     ; la riga 0 non si usa
+  li r5, ALT_P_N
+  addi r5, r5, -1                ; le righe
+  li r6, 0                       ; le regole negative
+stat_righe:
+  lw r2, ALT_STAT.conteggio(r4)
+  dumps r2                       ; 15 15 5 1 5 15
+  lw r2, ALT_STAT.regola(r4)
+  blt r2, r0, stat_regola_neg
+  j stat_regola_ok
+stat_regola_neg:
+  addi r6, r6, 1
+stat_regola_ok:
+.ifdef STAT_TABELLA
+  lw r2, ALT_STAT.ritardo(r4)    ; la tabella dei cicli: solo qui, fuori da
+  dumps r2                       ; ctest (test_altimetro0_tabella)
+  lw r2, ALT_STAT.lavoro(r4)
+  dumps r2
+  lw r2, ALT_STAT.margine(r4)
+  dumps r2
+  lw r2, ALT_STAT.regola(r4)
+  dumps r2
+.endif
+  addi r4, r4, ALT_STAT.size
+  addi r5, r5, -1
+  bne r5, r0, stat_righe
+  dumps r6                       ; 0: le regole negative
+
   li r1, fine
   li r2, 1
   sw r2, 0(r1)
   halt
+
+; ==========================================================================
+;  L'idle: un giro vuoto (il passo 4 ne fara' l'onda del cpuometro)
+; ==========================================================================
+idle:
+  j idle

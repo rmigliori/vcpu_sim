@@ -60,15 +60,22 @@
 ; -- non contano. Con le durate di §3.86 il TRACKER (126 di attivita', 304 di
 ; lavoro) stava in 500 con una ventina di cicli di margine: bastava una sonda
 ; per farlo sforare, e una trap con i vettori sporchi costa ~1800 cicli.
-;                    lavoro    durata    (§3.86)
-.equ D_FRONTE      1700        ; 1071     1500
-.equ D_TRACKER     800         ;  304      500
-.equ D_BARKER_ACC  1900        ; 1246     1800
-.equ D_BARKER_DEC  1500        ;  910     1300
-.equ D_MSG         600         ;  203      400   eco_apri, il blocco, msg
-.equ D_DECIDI      800         ;  363      400   l'ultima voce: la sua durata
-                               ;                 non arma niente, la voce dopo
-                               ;                 e' alla finestra del frame dopo
+;
+; DAL 26/10 (§3.106) il lavoro lo misura alt_stat, a ogni slot, e comprende
+; anche il record delle statistiche: la tabella di test_altimetro0_tabella.
+; Con quel lavoro BARKER_ACC e MSG stavano sotto la regola (-3 e -14) senza
+; sforare: 1900 -> 2000 e 600 -> 700, deciso dall'utente.
+;                    lavoro    lavoro     durata
+;                    25/10     26/10      (§3.86)
+.equ D_FRONTE      1700        ; 1071     1082       1500
+.equ D_TRACKER     800         ;  304      315        500
+.equ D_BARKER_ACC  2000        ; 1246     1261       1800
+.equ D_BARKER_DEC  1500        ;  910      925       1300
+.equ D_MSG         700         ;  203      230        400   eco_apri, il blocco, msg
+.equ D_DECIDI      800         ;  363      522        400   l'ultima voce: la sua
+                               ;                            durata non arma niente,
+                               ;                            la voce dopo e' alla
+                               ;                            finestra del frame dopo
 
 .equ CMP_TL        CMP_ARM0_CYC | CMP_ARM1   ; la sveglia, e il cane resta
 .equ MAGIC_HI      0x4B400000    ; i bit di 1,5 x 2^23: intero -> float

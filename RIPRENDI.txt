@@ -1,16 +1,14 @@
 leggi il §0 di docs/stato-lavori.md e segui la formula per riprendere
 
-Dove eravamo rimasti (26/10/2026):
+Dove eravamo rimasti (26/10/2026, sera):
 
-- Il tetto contro l'OOM e' FATTO, in due commit: §3.104 (un accesso fuori
-  memoria ferma la macchina, codice d'uscita 3; TIMEOUT 5 s su ogni test) e
-  §3.105 (vasm_check.cmake scrive l'uscita in due file sotto ulimit -f a
-  16 MiB). Il TIMEOUT e' 5 e non 20 perche' misurato: un ciclo di dumps
-  riempie ~94 MB/s. ctest 121/121.
-- Fatte anche la frase di semaphore.vasm (il produttore/consumatore; l'ISR
-  resta escluso) e la riga in testa a stato-lavori.md.
-- Il prossimo passo: il passo 3 delle statistiche (§3.103), il task al
-  livello 6 che chiama alt_statistiche.
+- Il tetto contro l'OOM e' FATTO (§3.104-§3.105): il bus fault ferma la
+  macchina, TIMEOUT 5 s su ogni test, vasm_check sotto ulimit -f a 16 MiB.
+- Il passo 3 delle statistiche e' FATTO (§3.106): il testimone e' il task S
+  al livello 6. S ha trovato che il contesto salvava i registri a 32 bit:
+  ora ld/sd nella macchina, in .proc e nell'HAL (frame da 132 byte). Budget:
+  BARKER_ACC 2000, MSG 700. Nessuno stack straripa (verificato). ctest 126/126.
+- Il prossimo passo: il passo 4, l'idle come onda del cpuometro (§3.88).
 - Fuori da ctest, un programma nuovo lanciato a mano: timeout 5 ... | head -c.
 - Fuori dal repo: il plugin di micro ~/.config/micro/plug/glow/glow.lua, F5
   mostra il markdown con glow.
