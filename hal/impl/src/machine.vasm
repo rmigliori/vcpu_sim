@@ -13,7 +13,9 @@
 ;
 ; --- Frame di contesto (sullo stack del task, sp = r14, CTX_FRAME_SIZE byte) ---
 ;   Push, in quest'ordine: r15(ra) [da _trap_entry, raw], poi r1..r13, poi psw e
-;   epc [da ctx_save] -> epc finisce in cima (indirizzo piu' basso). r14(sp) NON
+;   epc [da ctx_save] -> epc finisce in cima (indirizzo piu' basso). Dal
+;   26/10/2026 (§3.106) ognuno INTERO, 8 byte con sd: fino ad allora era sw, e
+;   un task ritrovava i suoi registri troncati a 32 bit. r14(sp) NON
 ;   e' nel frame: e' il puntatore-a-contesto stesso. I registri VETTORIALI (v*,
 ;   vl, vmask) sono VOLATILI attraverso la preemption (la trap arriva solo al
 ;   confine d'istruzione: nessuna corsia viva da salvare). Il layout resta
@@ -107,8 +109,8 @@ g_bersaglio:   .word 0    ; appoggio della materializzazione
 ;  ancora il valore live del task interrotto. Va salvato per primo, senza call.
 ; ==========================================================================
 _trap_entry:
-  addi r14, r14, -4
-  sw r15, 0(r14)          ; DEVE precedere ogni call: vedi nota sopra
+  addi r14, r14, -8
+  sd r15, 0(r14)          ; DEVE precedere ogni call: vedi nota sopra
   call ctx_save           ; HAL: salva r1..r13 + psw + epc; r1 = contesto opaco
   li r5, g_handler
   lw r5, 0(r5)
@@ -133,11 +135,12 @@ _trap_entry:
 ;  agli stessi posti, e se lo segna in g_pendente. La consegna all'ISR e'
 ;  quella di sempre: r1 = r14 = contesto. L'ISR non sa da che via e' arrivata.
 ;
-;  Le posizioni, da P = sp - 132: +0 flag, +68 epc, +72 psw, +124 r1. Sono quelle
+;  Le posizioni, da P = sp - 196: +0 flag, +68 epc, +76 psw, +180 r1. Sono quelle
 ;  del frame canonico con il blocco float, e servono alla materializzazione.
+;  Dal 26/10/2026 (§3.106) i registri vi stanno INTERI, 8 byte l'uno, con sd.
 ; ==========================================================================
 _trap_entry_banco:
-  sw r1, -8(r14)          ; r1 al suo posto: P + 124 (e anche nel frame canonico)
+  sd r1, -16(r14)         ; r1 al suo posto: P + 180 (e anche nel frame canonico)
   mfepsw r1
   slli r1, r1, 60         ; PSW_BANK (bit 3) nel bit del segno
   blt r1, r0, teb_canonico
@@ -152,9 +155,9 @@ _trap_entry_banco:
   bne r2, r3, teb_torna
 
   mfepc r2
-  sw r2, -64(r14)         ; epc: P + 68
+  sd r2, -128(r14)        ; epc: P + 68
   mfepsw r2
-  sw r2, -60(r14)         ; psw: P + 72
+  sd r2, -120(r14)        ; psw: P + 76
   addi r14, r14, -CTX_BANCO_SIZE
   li r2, CTX_BANCO
   sw r2, 0(r14)
@@ -174,7 +177,7 @@ teb_torna:
   slli r1, r1, 1          ; IE giu'
   mtpsw r1                ; ...e il banco dell'interrotto, che e' lo 0
 teb_canonico:
-  lw r1, -8(r14)
+  ld r1, -16(r14)
   j _trap_entry
 .endif
 
@@ -185,38 +188,38 @@ teb_canonico:
 ;  al contesto opaco (la cima dell'intero frame).
 ; ==========================================================================
 ctx_save:
-  addi r14, r14, -4
-  sw r1, 0(r14)
-  addi r14, r14, -4
-  sw r2, 0(r14)
-  addi r14, r14, -4
-  sw r3, 0(r14)
-  addi r14, r14, -4
-  sw r4, 0(r14)
-  addi r14, r14, -4
-  sw r5, 0(r14)
-  addi r14, r14, -4
-  sw r6, 0(r14)
-  addi r14, r14, -4
-  sw r7, 0(r14)
-  addi r14, r14, -4
-  sw r8, 0(r14)
-  addi r14, r14, -4
-  sw r9, 0(r14)
-  addi r14, r14, -4
-  sw r10, 0(r14)
-  addi r14, r14, -4
-  sw r11, 0(r14)
-  addi r14, r14, -4
-  sw r12, 0(r14)
-  addi r14, r14, -4
-  sw r13, 0(r14)
+  addi r14, r14, -8
+  sd r1, 0(r14)
+  addi r14, r14, -8
+  sd r2, 0(r14)
+  addi r14, r14, -8
+  sd r3, 0(r14)
+  addi r14, r14, -8
+  sd r4, 0(r14)
+  addi r14, r14, -8
+  sd r5, 0(r14)
+  addi r14, r14, -8
+  sd r6, 0(r14)
+  addi r14, r14, -8
+  sd r7, 0(r14)
+  addi r14, r14, -8
+  sd r8, 0(r14)
+  addi r14, r14, -8
+  sd r9, 0(r14)
+  addi r14, r14, -8
+  sd r10, 0(r14)
+  addi r14, r14, -8
+  sd r11, 0(r14)
+  addi r14, r14, -8
+  sd r12, 0(r14)
+  addi r14, r14, -8
+  sd r13, 0(r14)
   mfepsw r1               ; r1 e' gia' in memoria: libero come scratch
-  addi r14, r14, -4
-  sw r1, 0(r14)           ; psw del task (IE=1: girava abilitato)
+  addi r14, r14, -8
+  sd r1, 0(r14)           ; psw del task (IE=1: girava abilitato)
   mfepc r1
-  addi r14, r14, -4
-  sw r1, 0(r14)           ; epc
+  addi r14, r14, -8
+  sd r1, 0(r14)           ; epc
 
   ; ------------------------------------------------------------------------
   ;  L'ESTENSIONE -- float e vettori -- e SOLO cio' che il task ha toccato.
@@ -292,13 +295,11 @@ cs_vett:
   beq r3, r0, cs_flag
 
   ; --- vl e vmask PRIMA dei registri vettoriali: il salvataggio usa setvl, che
-  ;     vl lo distrugge. vmask e' a 64 bit e la sw ne scrive 32: due parole ---
+  ;     vl lo distrugge. vmask e' a 64 bit: una sd (fino al 26/10 erano due sw,
+  ;     e i byte sono gli stessi: little endian, la parola bassa sotto) ---
   mfvmask r1
-  srli r2, r1, 32
-  addi r14, r14, -4
-  sw r2, 0(r14)           ; vmask, parte alta
-  addi r14, r14, -4
-  sw r1, 0(r14)           ; vmask, parte bassa (la sw tronca)
+  addi r14, r14, -8
+  sd r1, 0(r14)           ; vmask
   mfvl r1
   addi r14, r14, -4
   sw r1, 0(r14)
@@ -383,7 +384,7 @@ ctx_restore:
   beq r1, r2, cr_banco
   li r2, CTX_LEGGERO
   beq r1, r2, cr_leggero
-  li r3, 8                ; la psw: dopo il flag, i blocchi e l'epc
+  li r3, 12               ; la psw: dopo il flag (4), i blocchi e l'epc (8)
   li r2, PSW_FDIRTY
   and r4, r1, r2
   beq r4, r0, crb_nof
@@ -395,7 +396,7 @@ crb_nof:
   addi r3, r3, 2060
 crb_nov:
   add r3, r3, r14
-  lw r3, 0(r3)            ; la psw del frame
+  ld r3, 0(r3)            ; la psw del frame
   mfpsw r4
   xor r4, r4, r3
   slli r4, r4, 60         ; il banco della DIFFERENZA nel bit del segno
@@ -415,19 +416,19 @@ crb_cambia:
   sw r0, 0(r3)
   mov r14, r2
   mtpsw r0                ; banco 0: i registri dell'interrotto, vivi
-  sw r2, 120(r14)         ; gli spazi del frame canonico coi float:
-  sw r3, 116(r14)         ;   r_k a 76 + (13 - k) * 4
-  sw r4, 112(r14)
-  sw r5, 108(r14)
-  sw r6, 104(r14)
-  sw r7, 100(r14)
-  sw r8, 96(r14)
-  sw r9, 92(r14)
-  sw r10, 88(r14)
-  sw r11, 84(r14)
-  sw r12, 80(r14)
-  sw r13, 76(r14)
-  sw r15, 128(r14)
+  sd r2, 172(r14)         ; gli spazi del frame canonico coi float:
+  sd r3, 164(r14)         ;   r_k a 84 + (13 - k) * 8, interi
+  sd r4, 156(r14)
+  sd r5, 148(r14)
+  sd r6, 140(r14)
+  sd r7, 132(r14)
+  sd r8, 124(r14)
+  sd r9, 116(r14)
+  sd r10, 108(r14)
+  sd r11, 100(r14)
+  sd r12, 92(r14)
+  sd r13, 84(r14)
+  sd r15, 188(r14)
   fsw f15, 4(r14)         ;   f_k a 4 + (15 - k) * 4
   fsw f14, 8(r14)
   fsw f13, 12(r14)
@@ -492,14 +493,8 @@ crb_comune:
   lw r1, 0(r14)           ; vl del task: DOPO i vload, che lo avrebbero usato
   addi r14, r14, 4
   mtvl r1
-  lw r1, 0(r14)           ; vmask, parte bassa -- la lw ESTENDE IL SEGNO,
-  addi r14, r14, 4        ; quindi va ripulita prima di comporre
-  slli r1, r1, 32
-  srli r1, r1, 32
-  lw r2, 0(r14)           ; vmask, parte alta
-  addi r14, r14, 4
-  slli r2, r2, 32
-  or r1, r1, r2
+  ld r1, 0(r14)           ; vmask, intera (fino al 26/10: due lw ricomposte)
+  addi r14, r14, 8
   mtvmask r1
 
   ; --- i FLOAT ---
@@ -545,41 +540,41 @@ cr_float:
   ; uscito.
 
 cr_scalar:
-  lw r1, 0(r14)           ; epc dal frame
-  addi r14, r14, 4
+  ld r1, 0(r14)           ; epc dal frame
+  addi r14, r14, 8
   mtepc r1
-  lw r1, 0(r14)           ; psw dal frame: il regime in cui il task riprende
-  addi r14, r14, 4
+  ld r1, 0(r14)           ; psw dal frame: il regime in cui il task riprende
+  addi r14, r14, 8
   mtepsw r1
-  lw r13, 0(r14)
-  addi r14, r14, 4
-  lw r12, 0(r14)
-  addi r14, r14, 4
-  lw r11, 0(r14)
-  addi r14, r14, 4
-  lw r10, 0(r14)
-  addi r14, r14, 4
-  lw r9, 0(r14)
-  addi r14, r14, 4
-  lw r8, 0(r14)
-  addi r14, r14, 4
-  lw r7, 0(r14)
-  addi r14, r14, 4
-  lw r6, 0(r14)
-  addi r14, r14, 4
-  lw r5, 0(r14)
-  addi r14, r14, 4
-  lw r4, 0(r14)
-  addi r14, r14, 4
-  lw r3, 0(r14)
-  addi r14, r14, 4
-  lw r2, 0(r14)
-  addi r14, r14, 4
+  ld r13, 0(r14)
+  addi r14, r14, 8
+  ld r12, 0(r14)
+  addi r14, r14, 8
+  ld r11, 0(r14)
+  addi r14, r14, 8
+  ld r10, 0(r14)
+  addi r14, r14, 8
+  ld r9, 0(r14)
+  addi r14, r14, 8
+  ld r8, 0(r14)
+  addi r14, r14, 8
+  ld r7, 0(r14)
+  addi r14, r14, 8
+  ld r6, 0(r14)
+  addi r14, r14, 8
+  ld r5, 0(r14)
+  addi r14, r14, 8
+  ld r4, 0(r14)
+  addi r14, r14, 8
+  ld r3, 0(r14)
+  addi r14, r14, 8
+  ld r2, 0(r14)
+  addi r14, r14, 8
 
-  lw r1, 0(r14)
-  addi r14, r14, 4
-  lw r15, 0(r14)
-  addi r14, r14, 4
+  ld r1, 0(r14)
+  addi r14, r14, 8
+  ld r15, 0(r14)
+  addi r14, r14, 8
 
   ; SOLO STRUMENTAZIONE: chiude la finestra del ripristino, A RIDOSSO DELLA RETI.
   ;
@@ -602,21 +597,21 @@ cr_scalar:
 cr_banco:
   li r2, g_pendente
   sw r0, 0(r2)
-  lw r1, 68(r14)
+  ld r1, 68(r14)
   mtepc r1
-  lw r1, 72(r14)
+  ld r1, 76(r14)
   mtepsw r1
-  lw r1, 124(r14)
+  ld r1, 180(r14)
   addi r14, r14, CTX_BANCO_SIZE
   reti
 
 ; --- il super task alla sua wait: niente registri, per la regola ---
 cr_leggero:
-  lw r1, 4(r14)
+  ld r1, 4(r14)
   mtepc r1
-  lw r1, 8(r14)
+  ld r1, 12(r14)
   mtepsw r1
-  addi r14, r14, 12
+  addi r14, r14, CTX_LEGGERO_SIZE
   reti
 .endif
 
@@ -658,10 +653,10 @@ cr_leggero:
 ; ==========================================================================
 .ifdef BANCO
 hal_ctx_block_super:
-  addi r14, r14, -12
-  sw r1, 4(r14)           ; epc: dove riprende
+  addi r14, r14, -CTX_LEGGERO_SIZE
+  sd r1, 4(r14)           ; epc: dove riprende
   li r2, PSW_IE_BANK
-  sw r2, 8(r14)           ; psw
+  sd r2, 12(r14)          ; psw
   li r2, CTX_LEGGERO
   sw r2, 0(r14)
   mov r1, r14
@@ -684,8 +679,8 @@ hal_ctx_block:
   li     r2, PSW_IE
   or     r2, r2, r3
   mtepsw r2
-  addi r14, r14, -4
-  sw r15, 0(r14)          ; slot r15 del frame, come _trap_entry
+  addi r14, r14, -8
+  sd r15, 0(r14)          ; slot r15 del frame, come _trap_entry
   ; --- j e non call, ed e' una semplificazione oltre che un obbligo ---
   ; Saltando, r15 NON viene distrutto: il ret di ctx_save torna direttamente al
   ; chiamante nostro, con r1 = contesto opaco gia' pronto. Prima qui c'era una
@@ -714,9 +709,9 @@ ctx_init:
   sw r0, 0(r1)            ; flag = 0: un task NASCE senza stato vettoriale, e
                           ; lo stack e' gia' azzerato -- la riga c'e' perche' il
                           ; layout si legga qui invece che dedurlo
-  sw r2, 4(r1)            ; epc = entry
+  sd r2, 4(r1)            ; epc = entry
   li r3, PSW_IE
-  sw r3, 8(r1)            ; psw = IE:1, il task parte interrompibile
+  sd r3, 12(r1)           ; psw = IE:1, il task parte interrompibile
   ret
 
 ; ==========================================================================

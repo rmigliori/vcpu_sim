@@ -68,27 +68,34 @@
 ;      non li copre
 ;
 ;  Il frame del banco riserva sullo stack dell'interrotto un frame canonico
-;  intero con i float (132 byte), ma scrive solo flag, epc, psw e r1: se prima
+;  intero con i float (196 byte), ma scrive solo flag, epc, psw e r1: se prima
 ;  che l'interrotto riparta va ripristinato un altro contesto del banco 0,
 ;  ctx_restore lo MATERIALIZZA al suo posto, e il puntatore non cambia.
 ; --------------------------------------------------------------------------
 .equ CTX_BANCO      -1    ; il flag del frame del banco
 .equ CTX_LEGGERO    -2    ; il flag del frame leggero del super task
-.equ CTX_BANCO_SIZE 132   ; 68 + i 64 byte dei float
+.equ CTX_BANCO_SIZE 196   ; 132 + i 64 byte dei float
+.equ CTX_LEGGERO_SIZE 20  ; flag 4, epc 8, psw 8
 
 ; --------------------------------------------------------------------------
-;  Il frame di contesto: 16 parole, 64 byte.
+;  Il frame di contesto. I REGISTRI CI STANNO INTERI, ciascuno con la sua
+;  misura (26/10/2026, §3.106): gli scalari, epc e psw sono a 64 bit e si
+;  salvano con sd, 8 byte; i float sono a 32 e vl e' un intero piccolo, e
+;  restano a 4. Fino al 26/10 tutto passava da sw, e un task ritrovava i suoi
+;  registri troncati a 32 bit, in silenzio: lo ha visto il task delle
+;  statistiche, la cui sequenza di 15 cifre usciva modulo 2^32.
 ;
 ;  Layout, dall'indirizzo piu' basso (= il puntatore opaco consegnato al
 ;  kernel) verso l'alto:
 ;
-;      +0   epc          dove riprende il task
-;      +4   psw          IN CHE REGIME riprende: e' questa la parola che
-;                        rende esprimibili i tre ritorni di §12.4
-;      +8   r13
+;      +0   epc          dove riprende il task                   (8 byte)
+;      +8   psw          IN CHE REGIME riprende: e' questa la parola che
+;                        rende esprimibili i tre ritorni di §12.4 (8)
+;      +16  r13                                                     (8)
 ;      ...  r12..r2
-;      +56  r1
-;      +60  r15          salvato per primo, quindi il piu' in alto
+;      +112 r1
+;      +120 r15          salvato per primo, quindi il piu' in alto
+;  (dalla parte fissa: sotto c'e' la parola di flag, qui sotto)
 ;
 ;  r14 (sp) NON e' nel frame: e' il puntatore-a-contesto stesso. I registri
 ;  VETTORIALI (v*, vl, vmask) sono VOLATILI attraverso la preemption — la trap
@@ -101,7 +108,7 @@
 ;  che ctx_save cambia quei frame resterebbero validi e sbagliati. Con la
 ;  taglia pubblicata la duplicazione si riduce a una costante sola.
 ; --------------------------------------------------------------------------
-; La parte FISSA del frame: 17 parole — flag, epc, psw, r13..r1, r15.
+; La parte FISSA del frame — flag (4), epc e psw (8 + 8), r13..r1 e r15 (14 x 8).
 ; Non e' piu' la taglia del frame, ed e' il motivo per cui il nome andra' rivisto:
 ; dal 12/09/2026 il frame e' a TAGLIA VARIABILE. Dall'08/10/2026 i blocchi
 ; facoltativi sono DUE, e la parola di flag all'offset 0 e' la maschera
@@ -109,13 +116,13 @@
 ; di sapere quanto grande sia cio' che sta ripristinando.
 ;
 ;     bit PSW_FDIRTY   f0..f15                       64 byte
-;     bit PSW_VDIRTY   v0..v7, vl, vmask             8*VLMAX*4 + 12 = 2060 byte
+;     bit PSW_VDIRTY   v0..v7, vl, vmask             8*VLMAX*4 + 4 + 8 = 2060 byte
 ;
-; Chi dimensiona uno stack deve sapere QUALE caso: 68 byte per un task che
-; lavora sugli interi, 132 se usa i float, 2128 se usa i vettori, 2192 se usa
-; tutti e due. E' la ragione per cui gli stack smettono di essere un numero che
-; si copia da un test all'altro.
-.equ CTX_FRAME_SIZE  68
+; Chi dimensiona uno stack deve sapere QUALE caso: 132 byte per un task che
+; lavora sugli interi, 196 se usa i float, 2192 se usa i vettori, 2256 se usa
+; tutti e due (fino al 26/10: 68, 132, 2128, 2192). E' la ragione per cui gli
+; stack smettono di essere un numero che si copia da un test all'altro.
+.equ CTX_FRAME_SIZE  132
 
 ; --- CHI HA INTERROTTO (14/09/2026, §3.67) ---
 ; Con due sorgenti il vettore deve saperlo, e questa macchina segue RISC-V: una

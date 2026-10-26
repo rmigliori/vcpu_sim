@@ -116,7 +116,7 @@ tcbI:   .res TCB
 stackA: .space 64      ; parole, non byte: 256 byte a testa. La receive di un
 stackA_top:            ; task che si blocca tiene sullo stack il proprio frame
 stackB: .space 64      ; (12 byte) E il contesto costruito da hal_ctx_block
-stackB_top:            ; (CTX_FRAME_SIZE = 64), piu' cio' che serve alla send
+stackB_top:            ; (CTX_FRAME_SIZE = 132 dal 26/10), piu' la send
 stackC: .space 64
 stackC_top:
 stackI: .space 64

@@ -16,13 +16,16 @@
 ; e poi SPORCA float e vettori, f1 e v0: cio' che il task ritrova l'ha salvato
 ; il frame, e nient'altro.
 ;
-;   68    interi: solo la parte fissa (hal.vinc, CTX_FRAME_SIZE)
-;  132    float:  68 + 16 * 4
+;  132    interi: solo la parte fissa (hal.vinc, CTX_FRAME_SIZE): flag 4,
+;         epc e psw 8 + 8, r13..r1 e r15 14 * 8
+;  196    float:  132 + 16 * 4
 ;    1    ...e f1 e' ancora 1.5
-; 2128    vettori: 68 + 8 * 64 * 4 + 12
+; 2192    vettori: 132 + 8 * 64 * 4 + 12
 ;    1    ...e v0[0] e' ancora 2.5
-; 2192    tutti e due: 68 + 64 + 2060
+; 2256    tutti e due: 132 + 64 + 2060
 ;    1 1  ...e li ritrova tutti e due
+; Fino al 26/10 la parte fissa era 68 (§3.106): i registri si salvavano con sw,
+; a 32 bit, e tornavano troncati.
 ;
 ; Nessun numero dipende dai cicli: le taglie le dice il layout, i valori li
 ; dice il frame.

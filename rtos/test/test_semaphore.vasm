@@ -110,8 +110,9 @@ tcbC:    .res TCB        ; id 6 — livello 4
 tcbI:    .res TCB        ; l'idle: non entra mai nel semaforo, quindi sta fuori
                          ; dalla numerazione ed e' dichiarato per ultimo
 
-; 256 byte a testa: il contesto salvato da hal_ctx_block e' 64 (CTX_FRAME_SIZE)
-; e ci va sopra il frame di sem_wait piu' le call annidate.
+; 1 KiB a testa (256 parole): il contesto salvato da hal_ctx_block e' 132
+; (CTX_FRAME_SIZE, dal 26/10) e ci va sopra il frame di sem_wait piu' le call
+; annidate.
 stackH:  .space 256
 stackH_top:
 stackA:  .space 256
