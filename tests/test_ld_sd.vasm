@@ -1,0 +1,54 @@
+; tests/test_ld_sd.vasm — ld e sd, gli accessi a 64 bit (26/10/2026, §3.106).
+;
+; I registri scalari sono a 64 bit, e fino al 26/10 nessuna istruzione sapeva
+; salvarne uno intero: lw/sw portano 32 bit. Il contesto e il prologo di .proc
+; salvavano con sw, e un valore oltre i 32 bit tornava troncato. ld/sd sono il
+; modello di RV64: little endian, la parola bassa all'indirizzo e l'alta a +4,
+; nessun allineamento richiesto.
+;
+; Gira due volte (CMakeLists di primo livello): a file singolo e linkato.
+;
+; --- GLI OTTO NUMERI (calcolati con Python, non a mano) ---
+;   1311768467463790320    sd poi ld di 0x123456789ABCDEF0: 64 bit interi
+;   -1698898192            lw della parola bassa, 0x9ABCDEF0 col segno
+;   305419896              lw della parola alta, 0x12345678
+;   2459565876208275729    ld di due .word 0x11111111, 0x22222222: l'ordine
+;   1311768467463790320    sd e ld a un indirizzo allineato a 4 e non a 8
+;   -2                     un negativo: sd poi ld
+;   -2 -1                  le sue due parole, lette con lw
+;
+; Visto rosso con l'assembler di prima: "unknown mnemonic 'sd'".
+
+  .data
+a:  .word 0, 0
+b:  .word 0x11111111, 0x22222222
+c:  .word 0, 0, 0
+
+  .text
+  .global main
+main:
+  li r1, 0x123456789ABCDEF0
+  li r2, a
+  sd r1, 0(r2)
+  ld r3, 0(r2)
+  dumps r3                       ; 1311768467463790320
+  lw r4, 0(r2)
+  dumps r4                       ; -1698898192
+  lw r4, 4(r2)
+  dumps r4                       ; 305419896
+  li r2, b
+  ld r3, 0(r2)
+  dumps r3                       ; 2459565876208275729
+  li r2, c
+  sd r1, 4(r2)
+  ld r3, 4(r2)
+  dumps r3                       ; 1311768467463790320
+  li r1, -2
+  sd r1, 0(r2)
+  ld r3, r2
+  dumps r3                       ; -2
+  lw r4, 0(r2)
+  dumps r4                       ; -2
+  lw r4, 4(r2)
+  dumps r4                       ; -1
+  halt

@@ -303,7 +303,16 @@ typedef enum
   // multipli esatti (-64>>3 == -64/8 == -8) e non sugli altri (-65>>3 e' -9,
   // -65/8 e' -8). Chi vuole il troncamento usa `div`; chi vuole il floor --
   // che per un tempo e' quasi sempre la cosa giusta -- usa questa.
-  OP_SRAI    // a=rd, b=rs1, imm=n            -> r[rd] = r[rs1] >> n, col segno
+  OP_SRAI,   // a=rd, b=rs1, imm=n            -> r[rd] = r[rs1] >> n, col segno
+
+  // ld e sd (26/10/2026, §3.106): gli accessi a 64 bit, che mancavano. I
+  // registri scalari sono a 64 bit e lw/sw ne portano 32: il contesto e il
+  // prologo di .proc salvavano con sw, e un valore oltre i 32 bit tornava
+  // troncato da un blocco o da una chiamata. E' il modello di RV64. In coda,
+  // come srai: gli opcode di prima non si spostano, e i .vo nemmeno. Costano
+  // quanto lw/sw, e il bus resta quello: nessun allineamento richiesto.
+  OP_LD,     // a=rd, b=rs1, imm=disp         -> r[rd] = mem_int64[r[rs1] + disp]
+  OP_SD      // a=rs, b=rs1, imm=disp         -> mem_int64[r[rs1] + disp] = r[rs]
 } OpCode;
 
 typedef struct

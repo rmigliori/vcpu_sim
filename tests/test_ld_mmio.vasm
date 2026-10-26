@@ -1,0 +1,17 @@
+; tests/test_ld_mmio.vasm — ld nell'MMIO ferma la macchina (26/10/2026, §3.106).
+; I registri dei device sono a 32 bit: un accesso a 64 bit li' e' un bus
+; fault, come un accesso fuori memoria (§3.104). Il test `ld_mmio` vuole il
+; messaggio, e niente "r1 = 2" dopo.
+
+.include "hal/clock.vinc"
+
+  .text
+  .global main
+main:
+  li r1, 1
+  dumps r1
+  li r2, CLOCK_CYCLES
+  ld r3, 0(r2)                   ; l'istruzione 3
+  li r1, 2
+  dumps r1                       ; non deve uscire
+  halt

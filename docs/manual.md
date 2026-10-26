@@ -1480,6 +1480,8 @@ segno, `sw` tronca a 32 bit. I dati interi si inizializzano con la direttiva
 |---|---|---|---|
 | `lw` | `rd, rs1` &nbsp;/&nbsp; `rd, disp(rs1)` | `rd = mem_int32[rs1 + disp]` (esteso in segno) | 4 |
 | `sw` | `rs, rs1` &nbsp;/&nbsp; `rs, disp(rs1)` | `mem_int32[rs1 + disp] = (int32) rs` | 4 |
+| `ld` | `rd, rs1` &nbsp;/&nbsp; `rd, disp(rs1)` | `rd = mem_int64[rs1 + disp]`: il registro **intero**, 64 bit. Little endian: la parola bassa all'indirizzo, l'alta a `+4`. Nessun allineamento richiesto. Nell'MMIO è un errore che ferma la macchina: i registri dei device sono a 32 bit | 4 |
+| `sd` | `rs, rs1` &nbsp;/&nbsp; `rs, disp(rs1)` | `mem_int64[rs1 + disp] = rs`, come `ld` all'incontrario. Dal 26/10/2026 (§3.106): prima nessuna istruzione salvava un registro intero, e il contesto e `.proc` troncavano a 32 bit | 4 |
 
 **Indirizzamento base+displacement.** Le quattro load/store scalari (`lw`, `sw`,
 `flw`, `fsw`) accettano un operando di memoria in due forme:

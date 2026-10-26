@@ -499,6 +499,25 @@ add_test(NAME guasto_amp COMMAND vcpu_sim run ${_guasto_vx} ${_amp1g_vx})
 set_tests_properties(guasto_amp PROPERTIES
   PASS_REGULAR_EXPRESSION "\\[cpu0\\] runtime error: float load out of bounds at 0x400000")
 
+# test_ld_sd — GLI ACCESSI A 64 BIT (26/10/2026, §3.106). I registri scalari
+# sono a 64 bit e lw/sw ne portano 32: il contesto e .proc salvavano con sw, e
+# un valore oltre i 32 bit tornava troncato. Otto numeri calcolati con Python
+# nel sorgente; due volte, come test_costanti. Visto rosso con l'assembler di
+# prima: "unknown mnemonic 'sd'". E ld nell'MMIO, dove i registri sono a 32
+# bit: ferma la macchina come un bus fault.
+set(_ld_sd "1311768467463790320 -1698898192 305419896 2459565876208275729 1311768467463790320 -2 -2 -1")
+vasm_check(ld_sd     MODE DUMPS EXPECT "${_ld_sd}"
+           SOURCE ${CMAKE_SOURCE_DIR}/tests/test_ld_sd.vasm)
+vasm_object(t_ld_sd SOURCE ${CMAKE_SOURCE_DIR}/tests/test_ld_sd.vasm)
+vasm_program(test_ld_sd OBJECTS t_ld_sd)
+vasm_check(ld_sd_obj MODE DUMPS EXPECT "${_ld_sd}"
+           PROGRAM test_ld_sd)
+add_test(NAME ld_mmio COMMAND vcpu_sim -I ${CMAKE_SOURCE_DIR}/hal/interface
+                              ${CMAKE_SOURCE_DIR}/tests/test_ld_mmio.vasm)
+set_tests_properties(ld_mmio PROPERTIES
+  PASS_REGULAR_EXPRESSION "doubleword load nell'MMIO a 0x100030, istruzione 3"
+  FAIL_REGULAR_EXPRESSION "r1 = 2")
+
 # test_tetto — IL TETTO DI BYTE DI vasm_check (26/10/2026, §3.105). Un programma
 # che stampa per sempre, dentro il vero vasm_check.cmake: deve fermarsi a
 # 16 MiB col messaggio, in ~1,4 s e ~20 MB. Visto rosso con vasm_check di

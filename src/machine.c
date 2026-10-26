@@ -273,6 +273,22 @@ int32_t machine_load32(VMachine* m, VCpu* cpu, int64_t addr)
   return value;
 }
 
+// Il canale MARK_EXEC: il possesso della CPU letto invece che dedotto.
+// Si annota il CAMBIO e non la scrittura, perche' il dispatcher riscrive
+// `current` a ogni uscita da ISR anche senza commutare -- la scrittura e'
+// dichiaratamente idempotente (scheduler.vasm), e annotarla darebbe una
+// marca per tick che non significa niente. Costa un confronto per store, e
+// zero istruzioni nel kernel. `current` e' quello del programma di QUESTA
+// CPU: il guardiano e' per CPU. Una parola: sd lo chiama per le sue due meta'.
+static void guarda_current(VMachine* m, VCpu* cpu, int64_t addr, int32_t value)
+{
+  if (m->marker[cpu->id].on && addr == cpu->mark_current_addr && value != cpu->mark_current)
+  {
+    cpu->mark_current = value;
+    marker_mark(&m->marker[cpu->id], cpu, machine_now(m, cpu), MARK_EXEC, value);
+  }
+}
+
 void machine_store32(VMachine* m, VCpu* cpu, int64_t addr, int32_t value)
 {
   if (is_mmio(addr)) { mmio_store(m, cpu, addr, value); return; }
@@ -284,19 +300,55 @@ void machine_store32(VMachine* m, VCpu* cpu, int64_t addr, int32_t value)
     return;
   }
   memcpy(p, &value, sizeof(value));
+  guarda_current(m, cpu, addr, value);
+}
 
-  // Il canale MARK_EXEC: il possesso della CPU letto invece che dedotto.
-  // Si annota il CAMBIO e non la scrittura, perche' il dispatcher riscrive
-  // `current` a ogni uscita da ISR anche senza commutare -- la scrittura e'
-  // dichiaratamente idempotente (scheduler.vasm), e annotarla darebbe una
-  // marca per tick che non significa niente. Costa un confronto per store, e
-  // zero istruzioni nel kernel. `current` e' quello del programma di QUESTA
-  // CPU: il guardiano e' per CPU.
-  if (m->marker[cpu->id].on && addr == cpu->mark_current_addr && value != cpu->mark_current)
+// LD e SD, gli accessi a 64 bit (26/10/2026, §3.106). I registri scalari sono a
+// 64 bit e fino a oggi nessuna istruzione sapeva salvarne uno intero: il
+// contesto e il prologo di .proc passavano da sw, e un task che teneva un
+// valore oltre i 32 bit attraverso un blocco lo ritrovava troncato, in
+// silenzio. E' il modello di RV64 (ld/sd). Little endian come il resto: la
+// parola bassa all'indirizzo, l'alta a +4. Nessun allineamento richiesto, come
+// per lw: uno stack allineato a 4 resta valido. I registri dei device sono a
+// 32 bit: un accesso a 64 bit nell'MMIO ferma la macchina, come un bus fault.
+static int mmio_a_64(VMachine* m, const VCpu* cpu, const char* cosa, int64_t addr)
+{
+  if (!is_mmio(addr) && !is_mmio(addr + 4)) return 0;
+  if (!m->guasto)
+    fprintf(stderr, "%sruntime error: %s nell'MMIO a 0x%llx, istruzione %lld: i "
+                    "registri dei device sono a 32 bit, la macchina si ferma\n",
+            cpu->tag, cosa, (unsigned long long) addr, (long long) (cpu->pc - 1));
+  m->guasto = 1;
+  return 1;
+}
+
+int64_t machine_load64(VMachine* m, VCpu* cpu, int64_t addr)
+{
+  int64_t value = 0;
+  if (mmio_a_64(m, cpu, "doubleword load", addr)) return 0;
+  const uint8_t* p = read_ptr(m, cpu, addr, sizeof(value));
+  if (!p)
   {
-    cpu->mark_current = value;
-    marker_mark(&m->marker[cpu->id], cpu, machine_now(m, cpu), MARK_EXEC, value);
+    fuori_memoria(m, cpu, "doubleword load", addr);
+    return 0;
   }
+  memcpy(&value, p, sizeof(value));
+  return value;
+}
+
+void machine_store64(VMachine* m, VCpu* cpu, int64_t addr, int64_t value)
+{
+  if (mmio_a_64(m, cpu, "doubleword store", addr)) return;
+  if (adc_buf_scritto(m, addr, sizeof(value))) return;
+  uint8_t* p = ram_ptr(m, cpu, addr, sizeof(value));
+  if (!p)
+  {
+    fuori_memoria(m, cpu, "doubleword store", addr);
+    return;
+  }
+  memcpy(p, &value, sizeof(value));
+  guarda_current(m, cpu, addr, (int32_t) (uint32_t) value);
+  guarda_current(m, cpu, addr + 4, (int32_t) (uint32_t) ((uint64_t) value >> 32));
 }
 
 // LA SONDA (`mark`). Il porto e' un indirizzo, lo stesso che la sw usava.

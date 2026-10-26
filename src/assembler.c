@@ -942,13 +942,15 @@ static int encode(char** toks, int n, Instr* out, char* err, size_t errsz)
     R('f', NUM_FLOAT); out->b = reg;
     out->op = (strcmp(mn, "fneg") == 0) ? OP_FNEG : OP_FSQRT;
   }
-  else if (strcmp(mn, "lw") == 0 || strcmp(mn, "sw") == 0)
+  else if (strcmp(mn, "lw") == 0 || strcmp(mn, "sw") == 0 ||
+           strcmp(mn, "ld") == 0 || strcmp(mn, "sd") == 0)
   {
     if (need(ARGS, 2, mn, err, errsz)) return -1;
     R('r', NUM_SCALAR); out->a = reg;
     if (parse_mem(toks[k++], &imm, &reg, err, errsz)) return -1;
     out->b = reg; out->imm = imm;
-    out->op = (strcmp(mn, "lw") == 0) ? OP_LW : OP_SW;
+    out->op = (mn[0] == 'l') ? ((mn[1] == 'w') ? OP_LW : OP_LD)
+                             : ((mn[1] == 'w') ? OP_SW : OP_SD);
   }
   else if (strcmp(mn, "setvl") == 0)
   {
@@ -1514,7 +1516,7 @@ static int scalar_dest_reg(char** toks, int n)
 {
   static const char* dest1[] = {
     "li", "mov", "add", "sub", "mul", "addi", "slli", "srli", "srai",
-    "and", "or", "xor", "div", "rem", "lw", "setvl", "mfpsw", "mfepc",
+    "and", "or", "xor", "div", "rem", "lw", "ld", "setvl", "mfpsw", "mfepc",
     "mfepsw", "mfvl", "mfvmask", NULL
   };
   if (n < 2) return -1;

@@ -83,6 +83,8 @@ uint64_t machine_now(const VMachine* m, const VCpu* cpu);
 // --- il bus: ogni accesso di una CPU alla memoria o ai device passa di qui --
 int32_t machine_load32(VMachine* m, VCpu* cpu, int64_t addr);
 void    machine_store32(VMachine* m, VCpu* cpu, int64_t addr, int32_t value);
+int64_t machine_load64(VMachine* m, VCpu* cpu, int64_t addr);    // ld/sd (§3.106)
+void    machine_store64(VMachine* m, VCpu* cpu, int64_t addr, int64_t value);
 float   machine_loadf(const VMachine* m, const VCpu* cpu, int64_t addr);
 void    machine_storef(VMachine* m, const VCpu* cpu, int64_t addr, float value);
 

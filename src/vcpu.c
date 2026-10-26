@@ -163,7 +163,7 @@ static uint64_t instr_cost(const Instr* in, int vl)
     case OP_JAL: case OP_JALR: case OP_RETI: case OP_HALT:
       return CYC_SCALAR_BR;
 
-    case OP_FLW: case OP_FSW: case OP_LW: case OP_SW:
+    case OP_FLW: case OP_FSW: case OP_LW: case OP_SW: case OP_LD: case OP_SD:
       return CYC_SCALAR_MEM;
     case OP_FADD: case OP_FMUL: case OP_FMACC: case OP_FMOV:
     case OP_FMIN: case OP_FMAX: case OP_FSUB: case OP_FDIV:
@@ -260,6 +260,8 @@ static void execute(VCpu* cpu, const Instr* in)
 
       case OP_LW:   set_scalar(cpu, in->a, load_i32(cpu, cpu->r[in->b] + in->imm));  break;
       case OP_SW:   store_i32(cpu, cpu->r[in->b] + in->imm, (int32_t) cpu->r[in->a]); break;
+      case OP_LD:   set_scalar(cpu, in->a, machine_load64(cpu->m, cpu, cpu->r[in->b] + in->imm)); break;
+      case OP_SD:   machine_store64(cpu->m, cpu, cpu->r[in->b] + in->imm, cpu->r[in->a]);       break;
 
       case OP_SETVL:
       {
@@ -615,6 +617,14 @@ const char* vcpu_disasm(const Instr* in, char* buf, size_t bufsz)
     case OP_SW:
       if (in->imm) snprintf(buf, bufsz, "sw r%d, %lld(r%d)", in->a, (long long) in->imm, in->b);
       else         snprintf(buf, bufsz, "sw r%d, r%d", in->a, in->b);
+      break;
+    case OP_LD:
+      if (in->imm) snprintf(buf, bufsz, "ld r%d, %lld(r%d)", in->a, (long long) in->imm, in->b);
+      else         snprintf(buf, bufsz, "ld r%d, r%d", in->a, in->b);
+      break;
+    case OP_SD:
+      if (in->imm) snprintf(buf, bufsz, "sd r%d, %lld(r%d)", in->a, (long long) in->imm, in->b);
+      else         snprintf(buf, bufsz, "sd r%d, r%d", in->a, in->b);
       break;
     case OP_SETVL:  snprintf(buf, bufsz, "setvl r%d, r%d", in->a, in->b); break;
     case OP_BEQ:    snprintf(buf, bufsz, "beq r%d, r%d, %d", in->b, in->c, in->target); break;
