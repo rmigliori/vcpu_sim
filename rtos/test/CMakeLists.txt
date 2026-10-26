@@ -583,6 +583,7 @@ add_test(NAME cpuometro
          COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/cpuometro.py
                  $<TARGET_FILE:vcpu_sim> ${VASM_BINARY_DIR}/test_mondo_cpuometro.vx
                  --h 23 -- --kbd "24000:a,64000:b")
+set_tests_properties(cpuometro PROPERTIES TIMEOUT ${VASM_TEST_TIMEOUT})
 
 # ---------------------------------------------------------------------------
 #  test_wait — IL MECCANISMO DEL FOREGROUND: `.interrupt`, il dispatch

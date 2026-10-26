@@ -64,6 +64,7 @@ typedef struct VMachine
   VTx      tx;                       // e il trasmettitore che lo acceca
   VMondo   mondo;                    // fuori dalla scheda: --eco-cmd (§3.84)
   int      ncpu;                     // quante CPU hanno un programma
+  int      guasto;                   // un accesso fuori memoria: si ferma tutto
 } VMachine;
 
 // Azzera tutto, collega le CPU alla scheda, e accende il clock: master a

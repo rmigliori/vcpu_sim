@@ -270,9 +270,13 @@ static int apply_eco(VMachine* m)
 }
 
 // Alla fine della corsa: un mondo guasto, o uscito male, la invalida.
+// Il codice d'uscita di una corsa: 3 se la macchina si e' fermata per un
+// accesso fuori memoria (§3.104), 1 se il mondo esterno non si e' chiuso bene.
+// Il mondo si chiude comunque.
 static int close_eco(VMachine* m)
 {
-  return mondo_chiudi(&m->mondo) != 0 ? 1 : 0;
+  int rc = mondo_chiudi(&m->mondo) != 0 ? 1 : 0;
+  return m->guasto ? 3 : rc;
 }
 
 static int cmd_legacy(const char* path, RunMode mode)

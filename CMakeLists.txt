@@ -475,6 +475,30 @@ add_test(NAME locator_disaccordo COMMAND vcpu_sim run ${_amp0_vx} ${_amp1l_vx})
 set_tests_properties(locator_disaccordo PROPERTIES
                      PASS_REGULAR_EXPRESSION "variabile condivisa 'contatore' e' a 2097152 \\(4 byte\\).*e a 2097152 \\(8 byte\\)")
 
+# test_guasto — UN ACCESSO FUORI MEMORIA FERMA LA MACCHINA (26/10/2026, §3.104).
+# Prima si stampava e si proseguiva, e il 25/10 un ciclo che stampava senza
+# fine ha mandato il VPS in OOM (§3.103). Tre test sullo stesso sorgente:
+#   guasto       il messaggio, una volta sola (la prima corsia del vload) e
+#                con l'istruzione; niente dopo
+#   guasto_rc    il codice d'uscita non e' zero (e' 3)
+#   guasto_amp   si ferma TUTTA la scheda: la CPU 1 e' test_amp1, che aspetta
+#                per sempre quattro parole in mailbox che non arrivano
+# Visti rossi col simulatore di prima: quattro messaggi e "r1 = 2", codice 0,
+# e guasto_amp appeso fino al TIMEOUT.
+add_test(NAME guasto    COMMAND vcpu_sim ${CMAKE_SOURCE_DIR}/tests/test_guasto.vasm)
+add_test(NAME guasto_rc COMMAND vcpu_sim ${CMAKE_SOURCE_DIR}/tests/test_guasto.vasm)
+set_tests_properties(guasto PROPERTIES
+  PASS_REGULAR_EXPRESSION "float load out of bounds at 0x400000, istruzione 5: la macchina si ferma"
+  FAIL_REGULAR_EXPRESSION "r1 = 2;0x400004")
+set_tests_properties(guasto_rc PROPERTIES WILL_FAIL TRUE)
+vasm_object(t_guasto SOURCE ${CMAKE_SOURCE_DIR}/tests/test_guasto.vasm)
+vasm_program(test_guasto OBJECTS t_guasto t_amp_shared)
+get_target_property(_guasto_vx test_guasto VASM_OUTPUT)
+get_target_property(_amp1g_vx  test_amp1   VASM_OUTPUT)
+add_test(NAME guasto_amp COMMAND vcpu_sim run ${_guasto_vx} ${_amp1g_vx})
+set_tests_properties(guasto_amp PROPERTIES
+  PASS_REGULAR_EXPRESSION "\\[cpu0\\] runtime error: float load out of bounds at 0x400000")
+
 # test_intd — IL DISTRIBUTORE DELLE INTERRUZIONI (29/09/2026, §3.79). La CPU 0
 # manda la linea della tastiera alla CPU 1, e un tasto a 500 cicli arriva la'.
 #   cpu0:1    la destinazione, riletta
@@ -802,3 +826,14 @@ endif()
 # In FONDO, dopo ogni vasm_program: la proprieta' globale che raccoglie le
 # righe si legge quando e' piena.
 vasm_write_manifest(${VASM_BINARY_DIR}/configs.txt)
+
+# IL TETTO anche per gli add_test scritti a mano in QUESTA cartella (errori,
+# posizioni, locator, trace...): quelli di vasm_check ce l'hanno gia'
+# (cmake/vasm.cmake, VASM_TEST_TIMEOUT). In fondo, quando ci sono tutti.
+get_property(_tutti DIRECTORY PROPERTY TESTS)
+foreach(t ${_tutti})
+  get_test_property(${t} TIMEOUT _to)
+  if(NOT _to)
+    set_tests_properties(${t} PROPERTIES TIMEOUT ${VASM_TEST_TIMEOUT})
+  endif()
+endforeach()

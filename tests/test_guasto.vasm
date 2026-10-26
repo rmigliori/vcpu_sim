@@ -1,0 +1,40 @@
+; tests/test_guasto.vasm — un accesso fuori memoria FERMA la macchina
+; (26/10/2026, §3.104).
+;
+; Fino al 26/10 il simulatore stampava "out of bounds" e proseguiva: un load
+; dava 0, una store non scriveva. Un puntatore sbagliato dentro un ciclo
+; stampava allora per sempre, e il 25/10 quell'uscita ha mandato il VPS in OOM
+; (§3.103). Adesso il primo accesso fuori memoria si dice, con l'istruzione,
+; e la macchina si ferma con il codice d'uscita 3.
+;
+; Il programma finisce da solo anche col simulatore di prima, di proposito:
+; il rosso si vede senza un'altra corsa infinita.
+;
+; --- COSA SI GUARDA (CMakeLists di primo livello) ---
+;   "r1 = 1"                       prima del guasto si gira
+;   "float load out of bounds at 0x400000, istruzione 5: la macchina si ferma"
+;                                  la PRIMA corsia del vload, e l'istruzione
+;                                  giusta: vcpu_step avanza pc prima di eseguire
+;   NIENTE "0x400004"              le altre tre corsie non si dicono
+;   NIENTE "r1 = 2"                dopo il guasto non si gira
+;   il codice d'uscita, non zero   guasto_rc
+;
+; Visto rosso col simulatore di prima: quattro righe, una per corsia, poi
+; "r1 = 2" e il codice d'uscita 0.
+;
+; 0x400000 non e' niente: la RAM locale e' da 0 a 1 MiB, l'MMIO a 0x100000,
+; la RAM condivisa da 0x200000 a 0x210000 (hal/amp.vinc), la finestra in sola
+; lettura del ping-pong dell'ADC da 0x300000 (hal/adc.vinc).
+
+  .text
+  .global main
+main:
+  li r1, 1
+  dumps r1                       ; 1
+  li r2, 0x400000
+  li r3, 4
+  setvl r3, r3
+  vload v0, r2                   ; l'istruzione 5
+  li r1, 2
+  dumps r1                       ; non deve uscire
+  halt

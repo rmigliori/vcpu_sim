@@ -214,14 +214,33 @@ static const uint8_t* read_ptr(VMachine* m, const VCpu* cpu, int64_t addr, int64
   return p ? p : ram_ptr(m, cpu, addr, len);
 }
 
+// UN ACCESSO FUORI MEMORIA FERMA LA MACCHINA (26/10/2026, §3.104). Fino a oggi
+// si stampava e si proseguiva: un load dava 0, una store non scriveva. Un
+// puntatore sbagliato dentro un ciclo stampava allora per sempre, e il 25/10
+// quell'uscita, raccolta in memoria da vasm_check.cmake, ha mandato il VPS in
+// OOM (§3.103). Su un processore vero e' un bus fault: il Cortex-M va in
+// HardFault, non avanti. Qui non c'e' una trap di fault -- nessuno saprebbe
+// che farne -- e si ferma TUTTA la scheda: fermando una CPU sola, l'altra
+// potrebbe aspettare per sempre un flag che nessuno scrivera'. Il primo
+// accesso si dice, gli altri della stessa istruzione (le corsie di un vload)
+// no. L'istruzione e' pc - 1, perche' vcpu_step avanza pc prima di eseguire.
+// main esce con 3.
+static void fuori_memoria(VMachine* m, const VCpu* cpu, const char* cosa, int64_t addr)
+{
+  if (!m->guasto)
+    fprintf(stderr, "%sruntime error: %s out of bounds at 0x%llx, istruzione %lld: "
+                    "la macchina si ferma\n", cpu->tag, cosa,
+            (unsigned long long) addr, (long long) (cpu->pc - 1));
+  m->guasto = 1;
+}
+
 float machine_loadf(const VMachine* m, const VCpu* cpu, int64_t addr)
 {
   float value = 0.0f;
   const uint8_t* p = read_ptr((VMachine*) m, cpu, addr, sizeof(value));
   if (!p)
   {
-    fprintf(stderr, "runtime error: float load out of bounds at 0x%llx\n",
-            (unsigned long long) addr);
+    fuori_memoria((VMachine*) m, cpu, "float load", addr);
     return 0.0f;
   }
   memcpy(&value, p, sizeof(value));
@@ -234,8 +253,7 @@ void machine_storef(VMachine* m, const VCpu* cpu, int64_t addr, float value)
   uint8_t* p = ram_ptr(m, cpu, addr, sizeof(value));
   if (!p)
   {
-    fprintf(stderr, "runtime error: float store out of bounds at 0x%llx\n",
-            (unsigned long long) addr);
+    fuori_memoria(m, cpu, "float store", addr);
     return;
   }
   memcpy(p, &value, sizeof(value));
@@ -248,8 +266,7 @@ int32_t machine_load32(VMachine* m, VCpu* cpu, int64_t addr)
   const uint8_t* p = read_ptr(m, cpu, addr, sizeof(value));
   if (!p)
   {
-    fprintf(stderr, "runtime error: word load out of bounds at 0x%llx\n",
-            (unsigned long long) addr);
+    fuori_memoria(m, cpu, "word load", addr);
     return 0;
   }
   memcpy(&value, p, sizeof(value));
@@ -263,8 +280,7 @@ void machine_store32(VMachine* m, VCpu* cpu, int64_t addr, int32_t value)
   uint8_t* p = ram_ptr(m, cpu, addr, sizeof(value));
   if (!p)
   {
-    fprintf(stderr, "runtime error: word store out of bounds at 0x%llx\n",
-            (unsigned long long) addr);
+    fuori_memoria(m, cpu, "word store", addr);
     return;
   }
   memcpy(p, &value, sizeof(value));
@@ -546,7 +562,7 @@ void machine_run(VMachine* m, RunMode mode)
     printf("vcpu debugger: 'h' for help, 's' to step, 'c' to continue.\n");
 
   VCpu* cpu;
-  while ((cpu = next_cpu(m)) != NULL)
+  while (!m->guasto && (cpu = next_cpu(m)) != NULL)
   {
     uint64_t t = machine_now(m, cpu);
     VMarker* mk = &m->marker[cpu->id];

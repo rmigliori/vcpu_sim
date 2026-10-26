@@ -499,4 +499,20 @@ function(vasm_check name)
            COMMAND ${CMAKE_COMMAND}
                    -P ${CMAKE_SOURCE_DIR}/cmake/vasm_check.cmake
                    -- ${A_MODE} ${A_EXPECT} ${cmd})
+  set_tests_properties(${name} PROPERTIES TIMEOUT ${VASM_TEST_TIMEOUT})
 endfunction()
+
+# IL TETTO DEI TEST (26/10/2026, §3.104). vasm_check.cmake raccoglie l'uscita
+# in memoria, e senza TIMEOUT ctest aspetta 1500 s: il 25/10 un programma che
+# stampava senza fine ha riempito la RAM del VPS in 8 minuti (§3.103). Ma
+# quello stampava errori; un ciclo `dumps` / `j` va molto piu' svelto:
+# MISURATO, 281 MB in 3 s (~94 MB/s), e in 20 s sarebbe tutta la RAM. Quindi
+# 5 s: il test piu' lento ne prende 0,5, e il caso peggiore e' STIMATO ~470
+# MB, sotto i ~900 disponibili del 26/10. E' un tetto di tempo, non di byte:
+# quello vero sarebbe in vasm_check.cmake (§3.104, aperto). Un accesso fuori
+# memoria ferma gia' la macchina (machine.c, fuori_memoria): questo resta per
+# il programma che gira per sempre senza sbagliare niente. Vale per ogni
+# vasm_check; gli add_test scritti a mano lo prendono in fondo al CMakeLists
+# della loro cartella (set_tests_properties su una cartella altrui vuole CMake
+# 3.28).
+set(VASM_TEST_TIMEOUT 5)

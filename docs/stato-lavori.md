@@ -178,11 +178,15 @@
 >
 > **Pushato il 25/10 notte** su `origin` e su `pi`, fino a §3.103 compreso.
 >
+> **E il 26/10 (§3.104) IL TETTO CONTRO L'OOM**: un accesso fuori memoria
+> ferma la macchina (bus fault, codice d'uscita 3), e ogni test ha un
+> `TIMEOUT` di **5 s**. Non 20: misurato, un ciclo di `dumps` riempie ~94 MB/s.
+> `ctest` **120/120**. Aperto: un tetto di BYTE in `vasm_check.cmake`.
+> Lanciare a mano un programma nuovo resta `timeout 5 ... | head -c`.
+>
 > **Il prossimo passo** (§3.103, «Aperti»): il **passo 3**, il task al livello
 > 6 che chiama `alt_statistiche` e diventa il testimone; prima la frase di
-> `semaphore.vasm` sul post che «restituisce», promessa e non fatta. **Prima
-> di ogni test nuovo il tetto contro l'OOM non c'è ancora**: lanciarlo a mano
-> con `timeout 5 ... | head -c`, e `ctest --timeout 20`. Poi il passo 4 (l'idle
+> `semaphore.vasm` sul post che «restituisce», promessa e non fatta. Poi il passo 4 (l'idle
 > onda del cpuometro), e il punto 4 di §3.101: la scena vera e i rami di
 > fallimento. Il kernel sulla CPU 1 (multi-look, telemetria) è aperto, non
 > deciso (§3.102).
@@ -190,10 +194,10 @@
 > **LA FORMULA PER RIPRENDERE (25/10, notte):**
 >
 > ```
-> Leggi docs/stato-lavori.md, §0 e poi §3.103, §3.102, §3.101 e §3.99, e
-> quanto serve di §3.88 (il cpuometro e il task delle statistiche) e
-> §3.74-§3.75. Poi il passo 3 delle statistiche, dopo il tetto contro l'OOM
-> o con i test lanciati a mano.
+> Leggi docs/stato-lavori.md, §0 e poi §3.104, §3.103, §3.102, §3.101 e
+> §3.99, e quanto serve di §3.88 (il cpuometro e il task delle statistiche)
+> e §3.74-§3.75. Prima la frase di semaphore.vasm, poi il passo 3 delle
+> statistiche.
 > ```
 
 > ### Il 24/10 (superato dal 25/10 qui sopra)
@@ -4167,6 +4171,73 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.104 IL TETTO CONTRO L'OOM: il bus fault ferma la macchina, e un TIMEOUT di 5 s (26/10/2026)
+
+Il primo aperto di §3.103. **Una causa che §3.103 non nominava**, trovata
+leggendo `machine.c`: un load o una store fuori memoria stampava `out of
+bounds` e **proseguiva** (il load dava 0, la store non scriveva). È stato per
+questo che il 25/10 un puntatore sbagliato dentro un ciclo ha stampato senza
+fine. Su un processore vero è un bus fault, e il Cortex-M va in HardFault.
+**Deciso dall'utente («vai»):**
+
+```
+1  un accesso fuori memoria FERMA LA MACCHINA, tutta: fuori_memoria() in
+   machine.c, il campo `guasto` in VMachine, il ciclo che si ferma, main che
+   esce con 3. Il messaggio dice l'istruzione (pc - 1: vcpu_step avanza pc
+   prima di eseguire), una volta sola (un vload ne darebbe una per corsia).
+   Tutta la scheda e non una CPU: l'altra potrebbe aspettare per sempre un
+   flag che nessuno scrive. Niente trap di fault: nessuno saprebbe che farne
+2  un TIMEOUT su ogni test: in vasm_check (VASM_TEST_TIMEOUT, cmake/vasm.cmake),
+   in fondo al CMakeLists di primo livello per i suoi add_test, a mano in
+   rtos/test per `cpuometro`. Verificato con ctest --show-only: 120 test su
+   120 hanno TIMEOUT 5
+```
+
+**Una mia stima smentita dalla misura, ed è per questo che il numero è 5 e
+non 20.** Avevo detto all'utente che il `TIMEOUT` da solo non bastava, poi che
+bastava (~4 MB/s ricavati da §3.103, quindi 20 s ≈ 80 MB). Prima di scriverlo
+ho misurato: un progetto CMake nello scratchpad, `vasm_check.cmake` vero, un
+ciclo `dumps` / `j`, `TIMEOUT 3`. **281 MB in 3 s, ~94 MB/s**: §3.103 stampava
+errori, molto più lenti. Con 20 s sarebbe tutta la RAM. Il test più lento ne
+prende 0,5 (`trace_vectors`), quindi 5 s danno un margine di dieci volte, e il
+caso peggiore è **stimato** ~470 MB contro i ~900 disponibili del 26/10. È una
+stima lineare dai 3 s: farla girare 5 s avrebbe voluto dire metà della RAM
+libera. La stessa prova dice che ctest uccide anche il `vcpu_sim` figlio di
+`cmake -P`: dopo il timeout non ne resta nessuno.
+
+```
+tests/test_guasto.vasm   un dumps, un vload di 4 corsie a 0x400000 (che non e'
+                         niente: 0x300000, la prima scelta, e' la finestra
+                         dell'ADC in lettura), un dumps. Finisce da solo anche
+                         col simulatore di prima, di proposito
+guasto                   il messaggio con "istruzione 5", e NIENTE "0x400004"
+                         ne' "r1 = 2" (FAIL_REGULAR_EXPRESSION)
+guasto_rc                WILL_FAIL: il codice d'uscita non e' zero
+guasto_amp               la CPU 1 e' test_amp1, che aspetta per sempre quattro
+                         parole in mailbox: si ferma tutta la scheda
+```
+
+| cosa | risultato |
+|---|---|
+| `guasto` col simulatore di `HEAD` (worktree nello scratchpad) | **rosso**: quattro messaggi, uno per corsia, poi `r1 = 2` e codice 0 |
+| `guasto_amp` col simulatore di `HEAD` | **appeso**, ucciso da `timeout 5` |
+| `ctest` | **120/120** (117 + 3), in 2,9 s |
+
+**Fuori, e di proposito:** gli altri `runtime error` della macchina (lo
+spinlock usato male, `MBOX_RECV` vuota, la store nella finestra dell'ADC…)
+stampano e proseguono come prima: non sono accessi a memoria che non esiste,
+e la decisione era sul bus fault. Le misure di `misure/` non le ho rifatte
+girare: l'assemblatore non è cambiato, e un programma che non sbaglia gira
+uguale.
+
+**Aperto:** il tetto vero è di **byte**, non di tempo. `vasm_check.cmake`
+potrebbe far scrivere l'uscita in un file con `ulimit -f`, o passarla da
+`head -c`. Lo stderr va tenuto separato dallo stdout, perché uno stdout
+bufferizzato si spezzerebbe a metà di una riga di `dumps`. Il `TIMEOUT` di 5 s
+regge finché la RAM disponibile resta intorno ai 900 MB. Decide l'utente.
 
 ---
 

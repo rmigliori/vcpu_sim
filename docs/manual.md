@@ -320,7 +320,7 @@ Errori a runtime (su `stderr`):
 
 | Messaggio | Causa |
 |---|---|
-| `float load/store out of bounds` | accesso in memoria fuori dai 1 MiB |
+| `word/float load/store out of bounds at 0x…, istruzione N: la macchina si ferma` | un accesso a un indirizzo che non è niente: né la RAM locale (1 MiB da 0), né l'MMIO, né la RAM condivisa, né (in lettura) la finestra dell'ADC. È un **bus fault**: la macchina si ferma **tutta**, su ogni CPU, e `vcpu_sim` esce con **3**. `N` è l'indice dell'istruzione che ha fatto l'accesso; di un `vload` si dice solo la prima corsia. Fino al 26/10/2026 si stampava e si proseguiva (un load dava 0), e un puntatore sbagliato in un ciclo stampava per sempre |
 
 ---
 
