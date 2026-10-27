@@ -14,9 +14,11 @@ Dove eravamo rimasti (27/10/2026):
   l'1,2%. Il secondo strumento e' il canale 0 del marcatore, non trace.py.
   ctest 127/127.
 - Il 26/10 (§3.106): il contesto salva i registri interi, con ld/sd.
-- PUSH: GitHub e la Pi erano a 6e9a38b il 27/10 mattina; il commit del
-  passo 4 va pushato (GitHub lo fa Roberto, la Pi Claude). Verificare col
-  fetch.
+- PUSH: GitHub e la Pi sono a ce8418f (il passo 4), verificato col fetch il
+  27/10. Questo aggiornamento di RIPRENDI.txt e del §0 e' un commit dopo.
+  GitHub lo fa Roberto DAL VPS (rmigliori@...): il 27/10 il primo tentativo
+  e' partito dal Lenovo, il cui clone e' vecchio, e GitHub l'ha rifiutato.
+  Sul Lenovo niente pull e niente force.
 - Fuori da ctest, un programma nuovo lanciato a mano: timeout 5 ... | head -c.
 - Fuori dal repo: il plugin di micro ~/.config/micro/plug/glow/glow.lua, F5
   mostra il markdown con glow.

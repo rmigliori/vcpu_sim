@@ -205,7 +205,9 @@
 > conta per frame e per proprietario. La CPU0 è libera al **94,8%**, il
 > frame peggiore è ACQ5 al **92,5%**, e S prende l'1,2%. Niente `trace.py`:
 > il secondo strumento è il canale 0. `ctest` **127/127**. Tutto pushato su
-> GitHub e sulla Pi fino a `6e9a38b` (verificato il 27/10).
+> GitHub e sulla Pi fino a `ce8418f` (verificato col fetch il 27/10); questo
+> aggiornamento del §0 è un commit dopo. Il push su GitHub si fa dal VPS: il
+> clone del Lenovo è vecchio, e un push da lì viene rifiutato.
 >
 > **Il prossimo passo:** le statistiche sono finite. Si riprende dal punto
 > 4 del piano di §3.89 (il §3.101 in fondo dice cosa ci aspetta): la scena
