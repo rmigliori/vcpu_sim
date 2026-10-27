@@ -200,19 +200,25 @@
 > MSG 700. Nessuno stack straripa (verificato con uno strumento provvisorio).
 > `ctest` **126/126**.
 >
-> **Il prossimo passo** (§3.103, «Aperti»): il **passo 4**, l'idle come
-> onda del cpuometro (prescaler N≈100, §3.88) con una categoria di marche
-> per S in `tools/marks.py`. Poi il punto 4 di §3.101: la scena vera e i rami di
-> fallimento. Il kernel sulla CPU 1 (multi-look, telemetria) è aperto, non
-> deciso (§3.102).
+> **E (§3.107) il PASSO 4 è FATTO**: l'idle dell'altimetro è l'onda del
+> cpuometro (N = 128, H = 259) nella variante `-D CPUOMETRO`, e il lettore
+> conta per frame e per proprietario. La CPU0 è libera al **94,8%**, il
+> frame peggiore è ACQ5 al **92,5%**, e S prende l'1,2%. Niente `trace.py`:
+> il secondo strumento è il canale 0. `ctest` **127/127**. Tutto pushato su
+> GitHub e sulla Pi fino a `6e9a38b` (verificato il 27/10).
 >
-> **LA FORMULA PER RIPRENDERE (dopo il 26/10):**
+> **Il prossimo passo:** le statistiche sono finite. Si riprende dal punto
+> 4 del piano di §3.89 (il §3.101 in fondo dice cosa ci aspetta): la scena
+> vera e i rami di fallimento. Il kernel sulla CPU 1 (multi-look,
+> telemetria) è aperto, non deciso (§3.102).
+>
+> **LA FORMULA PER RIPRENDERE (dopo il 27/10):**
 >
 > ```
-> Leggi docs/stato-lavori.md, §0 e poi §3.106, §3.103 e §3.88 (il
-> cpuometro), e quanto serve di §3.101-§3.102; §3.104-§3.105 se tocchi i
-> test. Riprendiamo dal passo 4 delle statistiche: l'idle come onda del
-> cpuometro. Proponi prima la forma.
+> Leggi docs/stato-lavori.md, §0 e poi §3.107, §3.89 (il punto 4 del
+> piano), §3.101 (in fondo: cosa vuole il punto 4), §3.82 (i modi e i
+> fallimenti) e quanto serve di §3.102-§3.106. Riprendiamo dalla scena
+> vera e dai rami di fallimento: proponi prima la forma.
 > ```
 
 > ### Il 24/10 (superato dal 25/10 qui sopra)
@@ -4186,6 +4192,82 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.107 IL PASSO 4: il cpuometro dell'altimetro, per frame (27/10/2026)
+
+**La forma, proposta e approvata dall'utente** («ok»), con due scostamenti da
+§3.88 detti prima di scrivere: **N = 128** e non ~100 (H = 259, ~5.600 marche
+contro le 8.192 del registratore, un terzo di margine; con N = 100 si
+arrivava al 90%), e **niente `trace.py`**, che qui vorrebbe la traccia di ~1,5
+milioni di istruzioni per due CPU (dopo l'OOM del 25/10 no). Al suo posto c'è
+il canale 0 del marcatore.
+
+```
+test_altimetro0.vasm    l'idle: un giro vuoto, o con -D CPUOMETRO l'onda di
+                        §3.88 (le due meta' identiche di test_mondo). tcbS e
+                        tcbI .global, perche' il lettore li nomini; il super
+                        task e' gia' super_tcb. Il test pulito non cambia
+test_altimetro0_cpuometro   la variante: -D CPUOMETRO, CONFIG banco
+tools/marks.py          --frame PERIODO T0: la CPU libera per frame, t0 + k *
+                        periodo, solo per i frame misurati per intero; e il
+                        POSSESSO per proprietario nel tratto misurato, dal
+                        canale 0
+tools/cpuometro.py      --frame P T0 --idle TCB: senza trace.py. Controlla
+                        l'onda (alterna, H come dichiarato, nessuna marca
+                        persa), che nessun frame resti senza CPU libera, e che
+                        la CPU libera non superi il possesso dell'idle. Con due
+                        CPU legge rec.cpu0.txt
+cpuometro_altimetro     il test in ctest: D'ACCORDO
+```
+
+**I numeri, misurati** (non sono nell'atteso: sono misure):
+
+```
+H = 259, 5.424 semiperiodi, dal ciclo 1.817 al 1.483.243: 5.554 marche
+CPU libera   1.404.816 cicli   94,8%
+per frame    CAL   95,6%   (95.571 su 100.000, tutti e cinque)
+             ACQ   93,8 - 94,3%
+             ACQ5  92,5%   il minimo: 92.463, il frame dal ciclo 920.000
+             TRACK 94,8 - 95,1%: meno di ACQ, da quando la FFT e' sulla CPU 1
+possesso     idle 1.416.066 (95,6%)   super task 47.740 (3,2%)   S 17.620 (1,2%)
+```
+
+È **«libera X, di cui statistiche Y»** del §3.88: la CPU0 resta libera per il
+94,8%, e S ne prende l'1,2%. Le trap mentre l'idle viene interrotto costano
+1.416.066 − 1.404.816 = **11.250** cicli: il canale 0 li attribuisce ancora
+all'idle, l'onda glieli toglie. I valori per frame sono multipli di H, ed è la
+granularità del prescaler. L'ultimo frame, parziale, è escluso.
+
+**Rossi, previsti prima** (su una copia nello scratchpad):
+
+```
+idle asimmetrico (senza il primo j)   "dichiara H = 259 e il piu' corto e' 258"
+H dichiarato 260                      "dichiara H = 260 e il piu' corto e' 259"
+lettore che conta H + 3               libera 1.421.088 > possesso dell'idle
+                                      1.416.066: "SUPERA", NON D'ACCORDO
+```
+
+L'ultimo, al primo tentativo, era **rosso per il motivo sbagliato**: nella copia
+`marks.py` non trovava il simulatore in `out/`, quindi non leggeva la tabella
+dei simboli e i proprietari uscivano senza nome («l'idle 'tcbI' non possiede
+mai la CPU»). Rifatto con `out` che punta al build della copia: rosso per il
+confronto. **Visto per strada, non cambiato:** `marks.py` cerca il simulatore
+solo in `out/` e `build/`. Altrove il test del cpuometro dell'altimetro
+fallisce (rumorosamente, non in silenzio).
+
+**Non coperto:** la CPU 1 non ha un'onda (il suo idle è il ciclo di attesa del
+programma di test). Nessun mutante produce un frame senza CPU libera.
+
+| cosa | risultato |
+|---|---|
+| `ctest` | **127/127** (126 + `cpuometro_altimetro`) |
+| `cpuometro` (test_mondo) | verde: il lettore cambiato non lo tocca |
+
+**Le statistiche della time line sono finite** (§3.103, passi 1–4). Si riprende
+dal **punto 4 di §3.101**: la scena vera e i rami di fallimento. Il kernel sulla
+CPU 1 resta aperto (§3.102).
 
 ---
 

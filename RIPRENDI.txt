@@ -1,27 +1,22 @@
-LA FRASE PER RIPRENDERE (dopo il 26/10/2026):
+LA FRASE PER RIPRENDERE (dopo il 27/10/2026):
 
-  Leggi docs/stato-lavori.md, §0 e poi §3.106, §3.103 e §3.88 (il
-  cpuometro), e quanto serve di §3.101-§3.102; §3.104-§3.105 se tocchi i
-  test. Prima verifica i push (vedi sotto). Riprendiamo dal passo 4 delle
-  statistiche: l'idle come onda del cpuometro. Proponi prima la forma.
+  Leggi docs/stato-lavori.md, §0 e poi §3.107, §3.89 (il punto 4 del
+  piano), §3.101 (in fondo: cosa vuole il punto 4), §3.82 (i modi e i
+  fallimenti) e quanto serve di §3.102-§3.106. Riprendiamo dalla scena
+  vera e dai rami di fallimento: proponi prima la forma.
 
-Dove eravamo rimasti (26/10/2026, sera):
+Dove eravamo rimasti (27/10/2026):
 
-- PUSH: GitHub e la Pi sono a 91a5677 (§3.105). I quattro commit di §3.106
-  (d459d46, 2df3262, 658212b, 658278f) e quello di questo file NON sono
-  pushati: GitHub lo fa Roberto (git push origin master dal terminale di VS
-  Code), la Pi la fa Claude.
-- Il tetto contro l'OOM e' FATTO (§3.104-§3.105): il bus fault ferma la
-  macchina, TIMEOUT 5 s su ogni test, vasm_check sotto ulimit -f a 16 MiB.
-- Il passo 3 delle statistiche e' FATTO (§3.106): il testimone e' il task S
-  al livello 6. S ha trovato che il contesto salvava i registri a 32 bit
-  (l'ISA aveva solo lw/sw). Roberto: "il contesto e' contesto e va salvato
-  rispettando le size". Ora ld/sd nella macchina, in .proc e nell'HAL (frame
-  da 132 / 196 / 2192 / 2256 byte). Budget: BARKER_ACC 2000, MSG 700.
-  Nessuno stack straripa (verificato con uno strumento provvisorio, non in
-  git). ctest 126/126.
-- Il prossimo passo: il passo 4, l'idle come onda del cpuometro (prescaler
-  N~100, §3.88), con una categoria di marche per S in tools/marks.py.
+- Le statistiche della time line sono FINITE (§3.103-§3.107). Il passo 4
+  (§3.107): l'idle dell'altimetro e' l'onda del cpuometro nella variante
+  -D CPUOMETRO (N = 128, H = 259), il lettore conta per frame e per
+  proprietario. CPU0 libera al 94,8%, il frame peggiore ACQ5 al 92,5%, S
+  l'1,2%. Il secondo strumento e' il canale 0 del marcatore, non trace.py.
+  ctest 127/127.
+- Il 26/10 (§3.106): il contesto salva i registri interi, con ld/sd.
+- PUSH: GitHub e la Pi erano a 6e9a38b il 27/10 mattina; il commit del
+  passo 4 va pushato (GitHub lo fa Roberto, la Pi Claude). Verificare col
+  fetch.
 - Fuori da ctest, un programma nuovo lanciato a mano: timeout 5 ... | head -c.
 - Fuori dal repo: il plugin di micro ~/.config/micro/plug/glow/glow.lua, F5
   mostra il markdown con glow.

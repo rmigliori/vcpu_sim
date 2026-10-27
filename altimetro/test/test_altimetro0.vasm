@@ -66,6 +66,14 @@
 .include "tcb/tcb.vinc"
 .include "queue/queue_api.vinc"
 .include "altimetro/altimetro.vinc"
+.ifdef CPUOMETRO
+.include "hal/marker.vinc"
+.include "marks/marks.vinc"
+; H = 2 * 128 + 3 = 259 cicli. La corsa e' ~1,5 milioni di cicli liberi al 95%:
+; ~5.600 marche dell'onda, piu' quelle del canale EXEC, e il registratore ne
+; tiene 8192. Ai confini di un frame l'errore e' sotto H su 100.000: 0,26%.
+.equ CPU_N  128
+.endif
 
 .equ ALT_FRAMI  15               ; 5 CAL + 5 ACQ + 5 TRACK
 
@@ -81,6 +89,8 @@ stack_boot_top:
 
   .text
   .global main
+  .global tcbS                   ; globali per dare un nome ai proprietari nel
+  .global tcbI                   ; marcatore; il super task e' super_tcb
   .extern altimetro_parti
   .extern alt_k
   .extern alt_modo_svolto
@@ -206,7 +216,30 @@ stat_regola_ok:
   halt
 
 ; ==========================================================================
-;  L'idle: un giro vuoto (il passo 4 ne fara' l'onda del cpuometro)
+;  L'idle: un giro vuoto, o l'onda del CPUOMETRO (27/10/2026, §3.107)
+;
+;  Con -D CPUOMETRO genera l'onda quadra di §3.88: un semiperiodo dura
+;  ESATTAMENTE H = 2 * CPU_N + 3 cicli -- li, CPU_N volte addi+bne, mark, j --
+;  e uno piu' lungo contiene i cicli tolti all'idle. Due meta' IDENTICHE, ognuna
+;  chiusa da un salto, come in test_mondo. Usa solo r2: gira nel banco 0, e non
+;  tocca i vettori (la regola della via veloce). La legge tools/cpuometro.py.
 ; ==========================================================================
 idle:
+.ifdef CPUOMETRO
+cpu_alto:
+  li r2, CPU_N
+cpu_a:
+  addi r2, r2, -1
+  bne r2, r0, cpu_a
+  mark MARK_CPUOMETRO, M_CPUOMETRO_ALTO
+  j cpu_basso
+cpu_basso:
+  li r2, CPU_N
+cpu_b:
+  addi r2, r2, -1
+  bne r2, r0, cpu_b
+  mark MARK_CPUOMETRO, 0
+  j cpu_alto
+.else
   j idle
+.endif

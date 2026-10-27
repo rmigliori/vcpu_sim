@@ -362,7 +362,7 @@ def cpuometro(onda, tick, h, errori):
     }
 
 
-def analizza(cat, by_channel, recording, vx, nomi=None, hz=None, h_cpu=None):
+def analizza(cat, by_channel, recording, vx, nomi=None, hz=None, h_cpu=None, frame=None):
     """La registrazione, letta e decomposta. Ritorna DATI, non testo.
 
     E' separata dalla stampa perche' ha due consumatori: `read` qui sotto, che
@@ -607,7 +607,28 @@ def analizza(cat, by_channel, recording, vx, nomi=None, hz=None, h_cpu=None):
                     "fuori": (r - c) if r is not None else None})
 
     tick = [c for c, ch, v, _, _, _, _ in ev if ch == 2 and ch in riservati]
+    # PER FRAME invece che per tick (27/10/2026, §3.107): un programma senza
+    # timer -- l'altimetro, la cui unita' e' il frame -- dice periodo e origine,
+    # e le finestre sono t0 + k * periodo. Solo quelle misurate PER INTERO, fra
+    # la prima e l'ultima marca dell'onda: una finestra a meta' direbbe poca CPU
+    # libera perche' non e' stata guardata, non perche' non c'era.
+    if frame and onda:
+        periodo, t0 = frame
+        da, a_ = onda[0][0], onda[-1][0]
+        k0 = max(0, -(-(da - t0) // periodo))
+        tick = []
+        b = t0 + k0 * periodo
+        while b <= a_:
+            tick.append(b)
+            b += periodo
     cpu = cpuometro(onda, tick, h_cpu, errori) if onda else None
+    if cpu:
+        cpu["unita"] = "frame" if frame else "tick"
+        # Chi ha avuto la CPU nel tratto misurato, LETTO dal canale 0. La CPU
+        # libera secondo l'onda non puo' superare il possesso dell'idle: la
+        # differenza e' il costo delle trap mentre l'idle viene interrotto, che
+        # il canale 0 attribuisce ancora all'idle e l'onda gli toglie.
+        cpu["possesso"] = [[chi(o), n] for o, n in possesso(cpu["da"], cpu["a"]).most_common()]
 
     return {
         "recording": recording,
@@ -702,16 +723,20 @@ def report(a):
         print(f"  CPU libera   {k['libera']:>9} cicli  {pc(k['libera'], k['span'])}")
         print(f"  CPU tolta    {k['rubata']:>9} cicli  {pc(k['rubata'], k['span'])}"
               f"   (il semiperiodo peggiore: {k['rubato_max']} tolti)")
+        u = k.get("unita", "tick")
         if k["tick"]:
             lib = [x["libera"] for x in k["tick"]]
             w = min(k["tick"], key=lambda x: x["libera"])
-            print(f"  per tick ({len(lib)}): minimo {w['libera']} cicli liberi "
-                  f"su {w['durata']} ({pc(w['libera'], w['durata'])}), al tick "
+            print(f"  per {u} ({len(lib)}): minimo {w['libera']} cicli liberi "
+                  f"su {w['durata']} ({pc(w['libera'], w['durata'])}), al {u} "
                   f"che parte dal ciclo {w['a']}; massimo {max(lib)}")
             zeri = [x["a"] for x in k["tick"] if x["libera"] == 0]
             if zeri:
-                print(f"  tick SENZA CPU libera: {len(zeri)}, dai cicli "
+                print(f"  {u} SENZA CPU libera: {len(zeri)}, dai cicli "
                       + ", ".join(str(z) for z in zeri))
+        if k.get("possesso"):
+            print("  possesso nel tratto misurato (canale 0): "
+                  + "  ".join(f"{o} {n} ({pc(n, k['span'])})" for o, n in k["possesso"]))
 
     if a["errori"]:
         print("\n--- ERRORI ---")
@@ -740,6 +765,8 @@ def main():
     # lettore lo confronta col piu' corto misurato invece di crederci.
     l.add_argument("--h", type=int,
                    help="il semiperiodo dichiarato del CPUOMETRO, in cicli")
+    l.add_argument("--frame", type=int, nargs=2, metavar=("PERIODO", "T0"),
+                   help="la CPU libera per frame, t0 + k * periodo, invece che per tick")
     a = ap.parse_args()
 
     cat, by_channel, nomi = read_catalogue(a.catalogue)
@@ -747,7 +774,8 @@ def main():
         generate(a.catalogue, cat, a.out, nomi)
         return
     dati = analizza(cat, by_channel, a.recording, a.vx, nomi,
-                    hz=int(a.mhz * 1e6) if a.mhz else None, h_cpu=a.h)
+                    hz=int(a.mhz * 1e6) if a.mhz else None, h_cpu=a.h,
+                    frame=tuple(a.frame) if a.frame else None)
     if a.json:
         import json
         json.dump(dati, open(a.json, "w"))

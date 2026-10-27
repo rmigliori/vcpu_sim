@@ -42,3 +42,31 @@ vasm_object(t_alt0_tabella SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_altimetro0.va
                            DEFINES STAT_TABELLA)
 vasm_program(test_altimetro0_tabella OBJECTS t_alt0_tabella alt_shared t_alt_shared
                                      LINK lib_altimetro CONFIG banco)
+
+# IL CPUOMETRO DELL'ALTIMETRO (27/10/2026, §3.107): lo stesso programma con
+# -D CPUOMETRO, in cui l'idle genera l'onda quadra di §3.88 (N = 128, H = 259).
+# Il kernel e la libreria sono quelli puliti; cambia solo l'idle.
+vasm_object(t_alt0_cpuometro SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_altimetro0.vasm
+                             INTERFACES vinc_altimetro vinc_tcb vinc_queue vinc_hal vinc_marks
+                             DEFINES CPUOMETRO)
+vasm_program(test_altimetro0_cpuometro OBJECTS t_alt0_cpuometro alt_shared t_alt_shared
+                                       LINK lib_altimetro CONFIG banco)
+
+# Il test: tools/cpuometro.py per frame (100000 cicli da ALT_T0 = 20000,
+# altimetro.vinc), col possesso del canale 0 come secondo strumento al posto di
+# trace.py, che qui vorrebbe centinaia di MB di traccia. Controlla l'onda
+# (alterna, H = 259 come dichiarato, nessuna marca persa), che nessun frame
+# resti senza CPU libera, e che la CPU libera non superi il possesso dell'idle.
+# I numeri -- la libera per frame, il minimo, la quota di S -- non sono qui:
+# sono misure, e stanno in §3.107. Visto rosso: l'idle asimmetrico (H 258), un
+# H dichiarato sbagliato, un lettore che conta 3 cicli in piu' a semiperiodo.
+get_target_property(_alt0c_vx test_altimetro0_cpuometro VASM_OUTPUT)
+add_test(NAME cpuometro_altimetro
+         COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/cpuometro.py
+                 $<TARGET_FILE:vcpu_sim> ${_alt0c_vx} --h 259
+                 --frame 100000 20000 --idle tcbI
+                 -- ${_alt1_vx} --eco-cmd "python3 ${CMAKE_SOURCE_DIR}/tools/mare.py ${CMAKE_CURRENT_SOURCE_DIR}/nominale.scena")
+set_tests_properties(cpuometro_altimetro PROPERTIES
+                     PASS_REGULAR_EXPRESSION "D'ACCORDO"
+                     FAIL_REGULAR_EXPRESSION "NON D'ACCORDO"
+                     TIMEOUT ${VASM_TEST_TIMEOUT})
