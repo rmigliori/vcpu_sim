@@ -1,0 +1,10 @@
+# altimetro/test/track.scena -- TRACK FALLISCE, e prima non fallisce
+# (29/10/2026, §3.108). TRACK va dal TX 11 al 15. Al TX 12 una perdita
+# ISOLATA: il TX 13 e' buono e azzera il conto, quindi non si riparte. Al TX 14
+# un clutter e al 15 una perdita: due sweep non nominali DI FILA, di specie
+# diverse, e si ricomincia da capo con la finestra a priori.
+quota 90000   velocita 375   ampiezza 1000   fronte 4.5   coda 1000
+fase 0.785    rumore 20      seme 1
+perdita 12 12
+clutter 14 -6 1500
+perdita 15 15

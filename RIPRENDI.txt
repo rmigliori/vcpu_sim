@@ -1,24 +1,22 @@
-LA FRASE PER RIPRENDERE (dopo il 27/10/2026):
+LA FRASE PER RIPRENDERE (dopo il 29/10/2026):
 
-  Leggi docs/stato-lavori.md, §0 e poi §3.107, §3.89 (il punto 4 del
-  piano), §3.101 (in fondo: cosa vuole il punto 4), §3.82 (i modi e i
-  fallimenti) e quanto serve di §3.102-§3.106. Riprendiamo dalla scena
-  vera e dai rami di fallimento: proponi prima la forma.
+  Leggi docs/stato-lavori.md, §0 e poi §3.108, §3.89 (le direzioni dopo lo
+  scheduler) e §3.102 (il kernel sulla CPU 1). Il piano della tappa 4 e'
+  finito: ragioniamo insieme su cosa viene dopo, prima di scegliere.
 
-Dove eravamo rimasti (27/10/2026):
+Dove eravamo rimasti (29/10/2026):
 
-- Le statistiche della time line sono FINITE (§3.103-§3.107). Il passo 4
-  (§3.107): l'idle dell'altimetro e' l'onda del cpuometro nella variante
-  -D CPUOMETRO (N = 128, H = 259), il lettore conta per frame e per
-  proprietario. CPU0 libera al 94,8%, il frame peggiore ACQ5 al 92,5%, S
-  l'1,2%. Il secondo strumento e' il canale 0 del marcatore, non trace.py.
-  ctest 127/127.
-- Il 26/10 (§3.106): il contesto salva i registri interi, con ld/sd.
-- PUSH: GitHub e la Pi sono a ce8418f (il passo 4), verificato col fetch il
-  27/10. Questo aggiornamento di RIPRENDI.txt e del §0 e' un commit dopo.
-  GitHub lo fa Roberto DAL VPS (rmigliori@...): il 27/10 il primo tentativo
-  e' partito dal Lenovo, il cui clone e' vecchio, e GitHub l'ha rifiutato.
-  Sul Lenovo niente pull e niente force.
+- La scena vera e i rami di fallimento sono FATTI (§3.108): quattro scene in
+  altimetro/test (cal, acq, track, vera), una per ramo di DECIDI piu' quella
+  di §3.82 intera, 30 frame, la sequenza dei modi a gruppi di 5. Tutte come
+  previste; rossi con quattro mutanti (due previsioni sbagliate, spiegate).
+  ctest 131/131.
+- Con questo il piano di §3.89 e' finito. Aperti: il segno del Barker e
+  "dov'e' / a priori" (§3.108), il kernel sulla CPU 1 (§3.102), le
+  direzioni dopo lo scheduler (§3.89).
+- PUSH: GitHub e la Pi erano a 84d0ba2 il 29/10 mattina; il commit di
+  §3.108 va pushato. GitHub lo fa Roberto DAL VPS (rmigliori@...), la Pi
+  Claude. Verificare col fetch.
 - Fuori da ctest, un programma nuovo lanciato a mano: timeout 5 ... | head -c.
 - Fuori dal repo: il plugin di micro ~/.config/micro/plug/glow/glow.lua, F5
   mostra il markdown con glow.

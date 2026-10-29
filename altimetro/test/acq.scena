@@ -1,0 +1,7 @@
+# altimetro/test/acq.scena -- ACQ FALLISCE (29/10/2026, §3.108). La scena
+# nominale con l'eco perso per tutta l'ACQ, dal TX 6 al 10: BARKER_DEC somma
+# solo rumore e non trova. Torna in CAL con la finestra dov'e' (il tracker e'
+# andato per inerzia), e al secondo giro passa tutto.
+quota 90000   velocita 375   ampiezza 1000   fronte 4.5   coda 1000
+fase 0.785    rumore 20      seme 1
+perdita 6 10

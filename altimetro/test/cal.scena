@@ -1,0 +1,9 @@
+# altimetro/test/cal.scena -- CAL FALLISCE (29/10/2026, §3.108). La scena
+# nominale piu' un clutter al TX 3, cioe' al terzo sweep di CAL: un falso
+# fronte 6 m prima dell'eco, ampiezza 1500. Il suo picco (~1.590 con l'eco
+# sotto) supera il plateau (1.000), quindi FRONTE misura il fronte del clutter,
+# ~4,7 gate prima: residuo oltre 3 gate, CLUTTER, e CAL non passa. Resta in CAL
+# con la finestra dov'e', e al secondo giro passa.
+quota 90000   velocita 375   ampiezza 1000   fronte 4.5   coda 1000
+fase 0.785    rumore 20      seme 1
+clutter 3 -6 1500

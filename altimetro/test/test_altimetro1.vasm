@@ -45,6 +45,12 @@
 ;
 ; --- ROSSO: le mutazioni, e le uscite previste PRIMA ---
 ; In fondo al file.
+;
+; --- LA VARIANTE -D SOLO_TESTE (29/10/2026, §3.108) ---
+; Per le scene dei fallimenti: conta le teste e basta -- buone, altre, l'ultimo
+; n buono -- senza il tau dello sweep 14 ne' lo sweep 12 letto tardi, che sono
+; tarati sul nominale. Una perdita o un clutter in TRACK arrivano come teste
+; intatte con l'esito non nominale: "altre". Tre numeri invece di sei.
 
 .include "eco/eco.vinc"
 .include "hal/amp.vinc"
@@ -93,6 +99,7 @@ ricevi:
   li r1, ultimo
   lw r2, 0(r1)
   dumps r2                       ; 14
+.ifndef SOLO_TESTE
   li r1, vicino
   lw r2, 0(r1)
   dumps r2                       ; 1
@@ -102,6 +109,7 @@ ricevi:
   li r1, superati
   lw r2, 0(r1)
   dumps r2                       ; 1
+.endif
   halt
 
 ; --- la testa, col seqlock: r9 = n, r10 = la testa ----------------------------
@@ -129,6 +137,9 @@ leggi:
   sw r2, 0(r1)
   li r1, ultimo
   sw r9, 0(r1)
+.ifdef SOLO_TESTE
+  j ricevi                       ; solo le teste: niente tau, niente FFT
+.endif
   li r1, N_ULTIMO
   bne r9, r1, prodotto
 

@@ -209,18 +209,23 @@
 > aggiornamento del §0 è un commit dopo. Il push su GitHub si fa dal VPS: il
 > clone del Lenovo è vecchio, e un push da lì viene rifiutato.
 >
-> **Il prossimo passo:** le statistiche sono finite. Si riprende dal punto
-> 4 del piano di §3.89 (il §3.101 in fondo dice cosa ci aspetta): la scena
-> vera e i rami di fallimento. Il kernel sulla CPU 1 (multi-look,
-> telemetria) è aperto, non deciso (§3.102).
+> **E (§3.108) LA SCENA VERA E I RAMI DI FALLIMENTO sono FATTI**: quattro
+> scene (`cal`, `acq`, `track`, `vera`), una per ramo di DECIDI più quella
+> di §3.82 intera, 30 frame, la sequenza a gruppi di 5. Tutte come previste;
+> rossi con quattro mutanti. `ctest` **131/131**.
 >
-> **LA FORMULA PER RIPRENDERE (dopo il 27/10):**
+> **Il prossimo passo: da decidere con l'utente.** Il piano di §3.89 è
+> finito. Aperti: il segno del Barker e «dov'è / a priori», che le scene non
+> vedono (§3.108); il kernel sulla CPU 1 (multi-look, telemetria, §3.102); e
+> le direzioni dopo lo scheduler (§3.89: VC, forse il C per ND Satcom, il
+> port M4, l'FPGA).
+>
+> **LA FORMULA PER RIPRENDERE (dopo il 29/10):**
 >
 > ```
-> Leggi docs/stato-lavori.md, §0 e poi §3.107, §3.89 (il punto 4 del
-> piano), §3.101 (in fondo: cosa vuole il punto 4), §3.82 (i modi e i
-> fallimenti) e quanto serve di §3.102-§3.106. Riprendiamo dalla scena
-> vera e dai rami di fallimento: proponi prima la forma.
+> Leggi docs/stato-lavori.md, §0 e poi §3.108, §3.89 (le direzioni dopo lo
+> scheduler) e §3.102 (il kernel sulla CPU 1). Il piano della tappa 4 e'
+> finito: ragioniamo insieme su cosa viene dopo, prima di scegliere.
 > ```
 
 > ### Il 24/10 (superato dal 25/10 qui sopra)
@@ -4194,6 +4199,89 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.108 LA SCENA VERA E I RAMI DI FALLIMENTO (29/10/2026)
+
+Il punto 4 del piano di §3.89. **La forma, proposta e approvata dall'utente**
+(«sì»). DECIDI aveva già i tre rami di §3.82: CAL resta in CAL con la
+finestra dov'è, ACQ torna in CAL, TRACK dopo due sweep non nominali di fila
+riparte da capo con la finestra a priori. Finora però li aveva attraversati
+solo il percorso nominale. `mare.py` numera i TX **da 1**, quindi il TX k è il
+frame k − 1. Nel nominale CAL va dal TX 1 al 5, ACQ dal 6 al 10, TRACK
+dall'11 al 15.
+
+```
+scena    cosa contiene                          la sequenza, a gruppi di 5
+cal      clutter al TX 3 (-6 m, 1500)           11111 11111 22222 33333 33333 33333
+acq      perdita dal TX 6 al 10                 11111 22222 11111 22222 33333 33333
+track    perdita al TX 12; clutter al 14;       11111 22222 33333 11111 22222 33333
+         perdita al 15
+vera     §3.82 intera: clutter al 3,            11111 11111 22222 33333 33333 33333
+         perdita dal 14 al 16
+```
+
+- **`cal`:** il picco del clutter (~1.590 con l'eco sotto) supera il plateau
+  (1.000), quindi FRONTE misura il fronte del clutter, ~4,7 gate prima. Il
+  residuo supera i 3 gate, ed è CLUTTER.
+- **`acq`:** BARKER_DEC somma solo rumore e non trova.
+- **`track`:** prova i due lati del «due di fila». La perdita isolata al TX 12
+  NON fa ripartire, perché il TX 13 azzera il conto; il clutter e la perdita
+  di fila, che sono di specie diverse, sì.
+- **`vera`:** CAL fallisce una volta, e la perdita cade nel 4° e 5° sweep di ACQ.
+  La somma con tre blocchi buoni su cinque basta, e il TX 16 è una perdita
+  isolata, la prima di TRACK.
+
+**Cosa cambia nel test:**
+- la sequenza esce **a gruppi di 5 cifre**, perché 30 cifre non stanno in 64
+  bit. L'atteso nominale ora è `11111 22222 33333`;
+- per le scene di fallimento c'è una variante da **30 frame** (`-D FRAMI_30`,
+  una sola per tutte, invece di 20/25/30: nelle scene più corte TRACK continua
+  fino in fondo);
+- la CPU 1 delle scene gira con `-D SOLO_TESTE`: conta le teste buone, le
+  altre e l'ultimo n buono, e salta il tau e lo sweep letto tardi, che sono
+  tarati sul nominale. Le perdite e i clutter in TRACK arrivano come teste con
+  esito non nominale.
+
+Nell'atteso entrano solo numeri che si ricavano a mano: i sei contatori a
+zero, i record per procedura (FRONTE, TRACKER e DECIDI uno per frame,
+BARKER_ACC uno per frame di ACQ, BARKER_DEC uno per ACQ5, MSG uno per frame di
+TRACK) e 0 regole negative.
+
+**Tutte e quattro le scene sono uscite come previste, CPU 1 compresa**: `15 0
+29`, `10 0 29`, `7 3 29`, `14 1 29`.
+
+**I rossi, quattro mutanti di DECIDI** su una copia nello scratchpad:
+
+```
+CAL passa sempre        cal   11111 22222 33333 33333 33333 33333   previsto
+                        vera  11111 22222 33333 11111 22222 33333   SBAGLIATO
+ACQ passa sempre        acq   11111 22222 33333 33333 33333 33333   previsto
+TRACK riparte al primo  track 11111 22222 33111 11111 11222 22333   SBAGLIATO
+                        vera  11111 11111 22222 31111 12222 23333   previsto
+TRACK non riparte mai   track 11111 22222 33333 33333 33333 33333   previsto
+```
+
+Rossi tutti; **due previsioni su sei erano sbagliate, e per lo stesso motivo**:
+le scene contano gli eventi in TX, e io non avevo spostato gli eventi quando la
+sequenza si spostava. In `vera` con CAL che passa sempre la perdita dal TX 14
+al 16 cade in TRACK, ed è un «due di fila». In `track` con la ripartenza
+anticipata il clutter al TX 14 e la perdita al 15 cadono nel CAL nuovo, che
+fallisce una volta. Le uscite sono giuste.
+
+**Fuori, e detto all'utente prima di scrivere:**
+- il **segno del Barker** (§3.101): una scena povera non basta. CAL vuole che
+  FRONTE trovi l'eco a ogni sweep, quindi il rapporto di uno sweep supera già
+  K = 20, e ignorando il segno la somma di 3 blocchi su 5 passa lo stesso.
+  Serve un altro criterio, forse la precisione sulla posizione;
+- **«la finestra dov'è» contro «a priori»**: la sequenza non le distingue.
+  Servirebbe guardare la finestra.
+
+| cosa | risultato |
+|---|---|
+| `ctest` | **131/131** (127 + 4 scene) |
+| il nominale | verde col formato a gruppi; `cpuometro_altimetro` verde |
 
 ---
 

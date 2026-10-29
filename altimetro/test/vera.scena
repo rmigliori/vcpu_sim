@@ -1,0 +1,9 @@
+# altimetro/test/vera.scena -- LA SCENA DI §3.82, intera (29/10/2026, §3.108):
+# il clutter al TX 3 e la perdita dal TX 14 al 16. Col clutter CAL fallisce una
+# volta, quindi l'ACQ va dal TX 11 al 15 e la perdita ne prende il quarto e il
+# quinto sweep: la somma di BARKER_DEC ha tre blocchi buoni su cinque. Il TX
+# 16 e' il primo di TRACK: una perdita isolata, che non fa ripartire.
+quota 90000   velocita 375   ampiezza 1000   fronte 4.5   coda 1000
+fase 0.785    rumore 20      seme 1
+clutter 3 -6 1500
+perdita 14 16
