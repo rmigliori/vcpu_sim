@@ -1,7 +1,7 @@
 # Stato dei lavori — `vcpu_sim`
 
-> Ultimo aggiornamento: **26 ottobre 2026** (§3.104–§3.105: il tetto contro
-> l'OOM). **Lo stato corrente e da dove si riprende è il §0.** Nel §3 le
+> Ultimo aggiornamento: **31 ottobre 2026** (§3.109: dopo la tappa 4, VC
+> come sottoinsieme del C). **Lo stato corrente e da dove si riprende è il §0.** Nel §3 le
 > sezioni dalla 3.1 alla 3.26 sono in ordine; dopo viene la più recente, e si
 > scende fino alla 3.27. Questo riquadro, da qui in giù, è la cronologia fino
 > all'8 ottobre e non è stato più tenuto: **8 ottobre 2026** (§3.86: misure, FDIRTY, il banco, i budget accettati, ADC_AT deciso); prima: **7 ottobre 2026, sera** (la ripresa riscritta in §0; §3.85 **`equiv.py` oltre il
@@ -164,7 +164,36 @@
 >   sezioni vecchie e le formule di prima del 21/10 dicono `out/misure/`:
 >   sono storia, il sorgente adesso è `misure/`.
 
-> ### ▶ RIPRENDI DA QUI (dopo il 25/10/2026, sera)
+> ### ▶ RIPRENDI DA QUI (dopo il 31/10/2026)
+>
+> **Il 31/10 (§3.109), sola discussione, nessun codice: cosa viene dopo la
+> tappa 4.** Il processore di ND Satcom è un **NXP VSPA 3**: ha un «C» e un
+> event scheduler, e lì il nostro scheduler non serve. **Il progetto è di
+> studio**, e l'ordine è: **VC**, poi lo scheduler in C su una **Pi Pico 2 W**
+> vera (RP2350), poi forse la macchina in VHDL su una FPGA. Verificato che il
+> kernel tocca il ferro solo attraverso l'HAL.
+>
+> **VC è un sottoinsieme stretto del C** (tutto ciò che VC accetta è C valido),
+> con i tipi di AUTOSAR (`uint8`…`sint64`, `float32`, `boolean`, `char` =
+> `uint8`) e `int`/`long`… rifiutati per nome; `vc --check` su ogni build di
+> ogni bersaglio. **Deciso di estendere l'ISA** con gli accessi a byte (`lb lbu
+> lh lhu lwu sb sh`): la forma è proposta, non approvata. Proposti e non decisi
+> i confronti senza segno, `slt`/`sltu`, `divu`/`remu`, gli shift per registro.
+> **Trovato:** `INT64_MIN / -1` fa morire il simulatore di SIGFPE.
+>
+> **Pushato:** GitHub e la Pi a `eae2561` (verificato col fetch il 31/10); il
+> commit di §3.109 va pushato (GitHub dal VPS lo fa l'utente).
+>
+> **LA FORMULA PER RIPRENDERE (dopo il 31/10):**
+>
+> ```
+> Leggi docs/stato-lavori.md, §0 e poi §3.109 (tutta). Riprendiamo dagli
+> aperti di §3.109: la forma degli accessi a byte, la famiglia dei confronti
+> e degli shift, la divisione per zero, char e boolean. Poi il primo commit
+> della serie: div/rem/overflow su uint64_t, con un test visto rosso.
+> ```
+
+> ### Dal 25/10 al 29/10 (superato dal 31/10 qui sopra)
 >
 > **Il 25/10: la proposta di §3.99 APPROVATA; `hal/tx.vinc` e TX_AT FATTI
 > (§3.100); IL PERCORSO NOMINALE FATTO (§3.101); e (§3.102) LA CPU 1 È IL
@@ -4199,6 +4228,182 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.109 DOPO LA TAPPA 4: VC come sottoinsieme del C, e l'ISA per i suoi tipi (31/10/2026)
+
+**Sessione di sola discussione, nessun codice.** Il piano di §3.89 era finito;
+si è ragionato su cosa viene dopo. Molto di quello che segue l'utente l'aveva
+già detto in sessioni che non l'avevano scritto: ora è scritto.
+
+#### Il VSPA, e lo scopo del progetto
+
+**Il processore di ND Satcom è un NXP VSPA 3**, con un compilatore «C» (le
+virgolette sono dell'utente). L'utente: lì uno scheduler preemptivo a priorità
+**non serve**. Il VSPA ha già un *event scheduler*, è signal processing con un
+real time molto spinto, e uno strato in più «sarebbe una follia». L'assunto
+di settembre (`vcpu_sim` come surrogato di quella macchina) era stato fatto
+prima di lavorarci: **il progetto è di studio**, e l'utente lo vuole finire.
+
+**Il mio errore, detto all'utente:** ho fatto dipendere VC da ND Satcom («se il
+VSPA ha un C, VC perde il motivo»), e l'utente ha dovuto correggermi. Scopo e
+ordine sono suoi.
+
+```
+l'ordine (31/10)   1  lo scheduler in assembly          FATTO (§3.108)
+                   2  VC
+                   3  lo scheduler in C su una Raspberry Pi PICO 2 W vera
+                      (RP2350: due Cortex-M33, o due RISC-V Hazard3)
+                   4  forse: una scheda FPGA con la macchina in VHDL,
+                      scritto da Claude
+```
+
+#### Il taglio: lo scheduler non sa nulla del ferro (verificato)
+
+L'utente: «algoritmi di scheduling completamente disaccoppiati dall'hw».
+**Verificato nel codice:** in `rtos/` (tolti test e demo) nessuna istruzione
+privilegiata (`mfpsw`, `mtpsw`, `settimer`, `reti`); il ferro passa solo da
+`irq_save`/`irq_restore`, `irq_enable`, `irq_install`, `irq_arm`,
+`timer_init`, `ctx_init`, `ctx_restore`, `hal_ctx_block`,
+`hal_ctx_block_super`, `cpu_alto`/`cpu_basso`. Il contesto è **opaco**
+(`TCB.sp`); `tcb.vinc` non ha campi per vettori, float o banco. VDIRTY,
+FDIRTY, la via veloce e il banco sono dell'HAL. L'unica traccia nel kernel è
+`hal_ctx_block_super`, ed è un **contratto** («attraverso questa wait niente
+di vivo»), non un dettaglio: sulla Pico resta uguale.
+
+Detto all'utente, perché il disaccoppiamento non lo copre:
+- l'algoritmo è portabile, **il codice no**: è nell'assembly nostro (per
+  questo VC, poi C);
+- il simulatore dà gratis la **coerenza sequenziale** della memoria (sui due
+  M33 servono le `DMB`: il seqlock di MSG, il flag `fine`) e i **tempi
+  esatti** (lì pipeline, XIP, contesa sul bus): i budget si rimisurano;
+- da verificare nell'interfaccia: la commutazione all'uscita dall'ISR
+  (`sched_isr_exit_to` + `ctx_restore`) contro il PendSV del Cortex-M.
+
+Sul **Hazard3** (a memoria, da verificare): RV32, niente FPU, niente
+estensione V, pipeline a 3 stadi. Somiglia alla nostra CPU nell'ossatura
+scalare e nella trap (`epc`/`epsw`/`reti` come `mepc`/`mstatus`/`mret`), non
+nel resto. Il parente della nostra unità vettoriale è l'estensione V di
+RISC-V, che la Pico non ha.
+
+#### VC: un sottoinsieme stretto del C
+
+**La direzione, su cui l'utente si è detto «quasi convinto» e poi ha
+proseguito:** VC non è un linguaggio «stile C» ma **C vero con meno roba**.
+Il vincolo è a **senso unico**: tutto ciò che VC accetta è C valido con lo
+stesso significato; non il contrario. Pascal e Fortran esclusi dall'utente
+(«da sw embedded engineer non userei mai il pascal per uno scheduler»).
+
+I motivi dati: (1) un **oracolo**, `gcc` sullo stesso sorgente (il
+*differential testing* di McKeeman, 1998; Csmith); (2) la semantica è già
+decisa, il sottoinsieme vieta invece di ridecidere; (3) il «C embedded» esiste
+già, è **MISRA C**; (4) la simulazione sotto Linux quasi gratis (HAL POSIX);
+(5) gli strumenti (`gcc -Wall`, `cppcheck`); (6) si porta al lavoro. I costi:
+i difetti del C restano (al più si vietano), i dichiaratori e `typedef`, i
+vettori come intrinseche, e **la deriva** verso il C intero: il confine si
+scrive prima, ed è ciò che il kernel usa.
+
+```
+un sorgente, tanti compilatori:
+  semaphore.c ─┬─ vc (nostro) → .vasm → asm → .vo → ld → .vx → vcpu_sim  + HAL nostro
+  (VC)         ├─ arm-none-eabi-gcc → .elf → la Pico                     + HAL dell'M33
+               └─ gcc → eseguibile Linux                                  + HAL POSIX
+build          cmake -B out / -B out-pico --toolchain cmake/pico.cmake / -B out-linux
+il guardiano   vc --check (solo sintassi e tipi) su OGNI build e OGNI bersaglio, prima
+               del compilatore del bersaglio: un costrutto non VC ferma anche la build
+               per Linux. Due liste di sorgenti: PORTABILI (kernel, applicazione: VC)
+               e DELLA MACCHINA (HAL, driver: C intero o assembly, vc non li vede)
+```
+
+«Prima VC, poi C» è **l'ordine del lavoro, non una catena di compilazione**.
+Anche l'applicazione è in VC (l'altimetro): ha bisogno dei float e delle
+intrinseche (la seconda fase del linguaggio) e di un'interfaccia di driver per
+TX/ADC; un ciclo caldo resta in `.vasm` solo per un motivo misurato (FRONTE:
+891 cicli scritti a mano).
+
+**Proposto, non discusso:** le strutture hanno una sorgente sola, l'header C,
+e `vc` **genera i `.vinc`** con gli offset; i vettori come **intrinseche**
+(`v_load`, `v_macc`…) con un header di ripiego scalare per `gcc`; il primo
+traguardo **`semaphore` in VC** linkato col resto, con gli stessi `dumps`.
+
+#### I tipi: quelli di AUTOSAR, deciso dall'utente
+
+**Deciso:** in VC solo `uint8`…`uint64`, `sint8`…`sint64`, `float32`,
+`boolean`, `char`; `int`, `long`, `short`, `unsigned`, `signed`, `int32_t`
+**rifiutati per nome**. Sono i nomi di `Platform_Types.h` di AUTOSAR (MISRA
+chiede il principio, direttiva 4.6, non i nomi). Per `gcc` un header di
+`typedef`, uno per bersaglio, nella lista della macchina. **`char` è un
+`uint8`**: per il `gcc` x86 serve `-funsigned-char` (su ARM e RISC-V l'ABI lo
+vuole già senza segno, a memoria).
+
+**Da confermare:** l'utente ha risposto «ok, per tipo boolean e carattere».
+L'ho inteso come **due tipi distinti, rappresentati come `uint8`**, alla
+MISRA (niente aritmetica sui caratteri, condizioni `boolean`). `float64`
+proposto **rifiutato per nome** finché la macchina non lo ha (in hardware c'è
+solo `flw`/`fsw`): non discusso.
+
+#### L'ISA: gli accessi a byte, decisi; il resto proposto
+
+La macchina **indirizza già i byte** (memoria a byte, offset in byte, `ld`/`sd`
+senza allineamento); mancano le **larghezze**. Oggi ci sono solo `lw` (che
+estende il segno), `sw`, `ld`, `sd`.
+
+**Deciso dall'utente («estendiamo l'ISA»), forma PROPOSTA e non ancora
+approvata:**
+
+```
+lb lbu lh lhu lwu   lettura di 1/2/4 byte, estensione del segno / dello zero
+sb sh               scrittura degli 8/16 bit bassi (sw e sd ci sono gia')
+                    nessuna store con/senza segno: stringere e' uguale per
+                    tutti e due, il segno conta solo allargando
+come ld/sd          little endian, senza allineamento, costo di lw, in coda
+                    all'enum (le immagini di oggi identiche, equiv.py)
+MMIO                lb lh sb sh fermano la macchina; lwu ammessa (e' a 32 bit)
+current             una sb/sh nella parola di `current` -> guarda_current
+                    sulla parola ricomposta, se no MARK_EXEC perde il cambio
+test                test_byte (numeri da Python), byte_mmio; rossi con lbu
+                    che estende il segno e sb che scrive 4 byte
+```
+
+**Proposto, non deciso** (servono ai tipi senza segno, in commit per
+famiglia): `bge bltu bgeu` (salti), `slt sltu` (il confronto come valore: un
+`boolean` in un'istruzione, il carry dopo una somma, `x != 0`, l'intervallo
+con un confronto solo), `divu remu`, `sll srl sra` per registro. **Il carry:**
+discusso e proposto di **restare senza flag** (la famiglia MIPS/RISC-V, che è
+già la nostra); per VC non serve con registri a 64 bit. **`mul`:** basta
+quella che c'è (i 64 bit bassi sono uguali con e senza segno); `mulh`/`mulhu`
+fuori (servirebbero al Q63 e alla divisione per costante).
+
+#### Un difetto trovato, verificato
+
+```
+li r1, -9223372036854775808 ; li r2, -1 ; div r3, r1, r2
+-> il simulatore muore di SIGFPE, rc = 136, senza messaggio (provato)
+```
+
+`vcpu.c:234` divide in C su `int64_t`: `INT64_MIN / -1` è comportamento
+indefinito, su x86 un'eccezione. `rem` (`vcpu.c:235`) ha lo stesso problema:
+**dedotto, non provato**. Della stessa famiglia, senza crash: l'overflow con
+segno di `mul`/`add`/`sub` su `int64_t` (`vcpu.c:222`), indefinito in C.
+**Proposto** come primo commit della serie: i conti su `uint64_t`, e i casi
+limite come RV64 (`INT64_MIN / -1` = `INT64_MIN`, resto 0). **Da decidere:** la
+divisione per zero, che oggi dà 0 (scritto in `vcpu.h:167`) e in RV64 dà −1
+col resto uguale al dividendo.
+
+#### Aperti, per la prossima sessione
+
+- la forma degli accessi a byte (sopra): approvarla o correggerla;
+- la famiglia `bge bltu bgeu slt sltu divu remu sll srl sra`, e il carry;
+- la divisione per zero;
+- `char` e `boolean` distinti o alias di `uint8`; `float64`;
+- la proposta di VC nuova al posto di `docs/proposta-linguaggio-alto-livello.md`
+  (25/08, prima del kernel: array, `where`, il ritorno in `r0` che da noi è
+  cablato a zero): **non ancora scritta**;
+- restano quelli di §3.108 (il segno del Barker, «dov'è / a priori») e il
+  kernel sulla CPU 1 (§3.102).
+
+**Nessun codice cambiato.** `ctest` non rifatto girare: è 131/131 dal 29/10.
 
 ---
 
