@@ -15,9 +15,9 @@ Dove eravamo rimasti (01/11/2026):
 - Aperti nuovi: le promozioni intere del C (uint8+uint8 e' un int), fdiv per 0.
 - La proposta di VC nuova (al posto di docs/proposta-linguaggio-alto-
   livello.md) non e' ancora scritta.
-- PUSH: GitHub e la Pi a eae2561 il 31/10 (fetch); i commit di §3.109 e
-  §3.110 vanno pushati. GitHub lo fa Roberto DAL VPS, la Pi Claude quando gli
-  e' chiesto.
+- PUSH: la Pi aggiornata il 01/11 fino a §3.110 (ls-remote). GitHub a
+  eae2561 il 31/10 (fetch): §3.109 e §3.110 vanno pushati. GitHub lo fa
+  Roberto DAL VPS, la Pi Claude quando gli e' chiesto.
 - Fuori da ctest, un programma nuovo lanciato a mano: timeout 5 ... | head -c.
 - Fuori dal repo: il plugin di micro ~/.config/micro/plug/glow/glow.lua, F5
   mostra il markdown con glow.
