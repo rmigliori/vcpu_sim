@@ -164,7 +164,23 @@
 >   sezioni vecchie e le formule di prima del 21/10 dicono `out/misure/`:
 >   sono storia, il sorgente adesso è `misure/`.
 
-> ### ▶ RIPRENDI DA QUI (dopo il 31/10/2026)
+> ### ▶ RIPRENDI DA QUI (dopo il 01/11/2026)
+>
+> **Il 01/11 (§3.110), breve, nessun codice:** Claude ha proposto una
+> risposta a ogni aperto di §3.109; **l'utente non ha ancora risposto**. La
+> proposta chiave è il principio per l'aritmetica intera: il risultato
+> modulo 2⁶⁴ dove esiste, e la macchina che si ferma sulla divisione per
+> zero. **Trovato e verificato:** l'assemblatore accetta `slli r1, r1, 64` e
+> `srai r1, r1, -1`, e il simulatore li calcola con comportamento indefinito.
+> Aperte nuove: le promozioni intere del C, e `fdiv` per zero.
+>
+> **LA FORMULA PER RIPRENDERE (dopo il 01/11):**
+>
+> ```
+> Leggi docs/stato-lavori.md, §0 e poi §3.110 e §3.109. Rispondo alle tue
+> proposte di §3.110 (prima la divisione per zero), poi il primo commit
+> della serie: aritmetica su uint64_t, div/rem, shift, con un test visto rosso.
+> ```
 >
 > **Il 31/10 (§3.109), sola discussione, nessun codice: cosa viene dopo la
 > tappa 4.** Il processore di ND Satcom è un **NXP VSPA 3**: ha un «C» e un
@@ -4228,6 +4244,67 @@ il contratto scritto.
 | ~~`messageHandling.vasm`~~ | ~~il motivo accanto ai due `li` (`count >= -1`)~~ — **FATTO in §3.27** |
 | ~~—~~ | ~~il terzo campo di `HEAD` nominato dal proprietario~~ — **DECISO e implementato in §3.27**, e non come `.struct` propria |
 | — | estendere gli `_api` a `pool`, `timeout`, `messaggio`, `hal`: l'utente ha detto che il modello convince. L'HAL è quello che rende di più — oggi «`irq_save` restituisce la psw in `r5`» si scopre solo leggendo `machine.vasm` |
+
+---
+
+### 3.110 GLI APERTI DI §3.109: le proposte di Claude, e gli shift indefiniti (01/11/2026)
+
+**Sessione breve, nessun codice cambiato; l'utente non ha ancora risposto.**
+Tutto quello che segue è **proposto da Claude**, salvo il difetto, che è
+verificato.
+
+#### Un difetto nuovo, verificato
+
+```
+li r1, 1 ; slli r2, r1, 64   -> r2 = 1   (indefinito in C; x86 usa i 6 bit bassi)
+           srai r3, r1, -1   -> r3 = 0   (floor_shift calcola 1 << -1)
+```
+
+L'assemblatore controlla 0..63 solo nelle espressioni costanti
+(`assembler.c:419`), non nell'immediato di `slli`/`srli`/`srai`
+(`assembler.c:857-873`): accetta tutti e due. E `slli` su un negativo è
+indefinito in C (`vcpu.c:224`, su `int64_t`).
+
+#### Le proposte
+
+- **Accessi a byte:** la forma di §3.109 approvabile così com'è; nel test,
+  `lb` di 0x80 = −128 e `lbu` = 128.
+- **Salti:** `bge` non si ottiene da `blt` scambiando gli operandi (lo
+  scambio dà `bgt`); il minimo completo è `blt bge bltu bgeu`, come RISC-V;
+  `bgt`/`ble` pseudo-istruzioni. `slt`/`sltu` sì. Gli immediati (`slti`,
+  `andi`…) dopo una misura. **Shift per registro:** i 6 bit bassi, come
+  RV64 (≥ 64 è indefinito in C, nessun programma VC corretto lo vede).
+  Carry senza flag.
+- **Il principio per l'aritmetica intera:** dove il risultato modulo 2⁶⁴
+  esiste, la macchina lo dà (`add`/`mul` che traboccano, `INT64_MIN / -1` =
+  `INT64_MIN` con resto 0); dove non esiste (**divisione per zero**) la
+  macchina si ferma con un suo codice d'uscita, come il bus fault (§3.104).
+  Lo 0 di oggi lo fa anche il Cortex-M33 con `CCR.DIV_0_TRP` spento (a
+  memoria, da verificare): sulla Pico va acceso. Nessun test verifica il
+  divisore zero di proposito; se un programma ci conta, lo dirà ctest.
+- **`char` e `boolean` distinti.** `char` è il `char` del C (le stringhe
+  letterali sono `char[]`, che è un tipo distinto da `unsigned char` anche
+  con `-funsigned-char`), non si mescola con `uint8` senza cast. `boolean`
+  è `typedef uint8` (AUTOSAR), non `_Bool`; le due coincidono se `vc --check`
+  ammette in un `boolean` solo confronti, logiche, `TRUE`/`FALSE`.
+  `float64` rifiutato per nome.
+- **Il primo commit:** l'aritmetica intera su `uint64_t` in `vcpu.c`,
+  `div`/`rem` coi casi limite, la divisione per zero come decide l'utente,
+  l'assemblatore che rifiuta gli shift fuori da 0..63; il test rosso sui tre
+  punti prima della correzione.
+
+#### Aperti nuovi, per la proposta di VC
+
+- **Le promozioni intere del C:** `uint8 a = 200, b = 100;` → `a + b == 300`
+  (in C il conto si fa in `int`); `uint32 * uint32` va modulo 2³², mentre i
+  registri sono a 64 bit. O il compilatore tronca dopo ogni operazione sui
+  tipi stretti, o `vc --check` vieta i casi in cui la promozione cambia il
+  risultato (il *modello dei tipi essenziali* di MISRA, regole 10.x). Mette
+  alla prova il senso unico di VC.
+- **`fdiv` per zero dà 0** (`vcpu.h:180`), il `gcc` con IEEE dà ±inf/NaN:
+  su `x / 0.0f` l'oracolo vedrebbe una differenza vera. Per la seconda fase.
+
+**Nessun codice cambiato.** `ctest` non rifatto girare: è 131/131 dal 29/10.
 
 ---
 

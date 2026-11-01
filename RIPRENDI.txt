@@ -1,24 +1,23 @@
-LA FRASE PER RIPRENDERE (dopo il 31/10/2026):
+LA FRASE PER RIPRENDERE (dopo il 01/11/2026):
 
-  Leggi docs/stato-lavori.md, §0 e poi §3.109 (tutta). Riprendiamo dagli
-  aperti di §3.109: la forma degli accessi a byte, la famiglia dei confronti
-  e degli shift, la divisione per zero, char e boolean. Poi il primo commit
-  della serie: div/rem/overflow su uint64_t, con un test visto rosso.
+  Leggi docs/stato-lavori.md, §0 e poi §3.110 e §3.109. Rispondo alle tue
+  proposte di §3.110 (prima la divisione per zero), poi il primo commit
+  della serie: aritmetica su uint64_t, div/rem, shift, con un test visto rosso.
 
-Dove eravamo rimasti (31/10/2026):
+Dove eravamo rimasti (01/11/2026):
 
-- Sola discussione, nessun codice (§3.109). Il VSPA 3 di ND Satcom non
-  vuole il nostro scheduler: il progetto e' di studio. L'ordine: VC, poi lo
-  scheduler in C su una Pi Pico 2 W vera, poi forse l'FPGA in VHDL.
-- VC = sottoinsieme stretto del C, tipi AUTOSAR (uint8..sint64, float32,
-  boolean, char = uint8), vc --check su ogni build e ogni bersaglio.
-- ISA: gli accessi a byte decisi (lb lbu lh lhu lwu sb sh), la forma da
-  approvare; proposti bge bltu bgeu slt sltu divu remu sll srl sra.
-- Trovato: INT64_MIN / -1 manda il simulatore in SIGFPE (rc 136).
+- Sola discussione, nessun codice (§3.110). Claude ha proposto una
+  risposta a ogni aperto di §3.109; Roberto non ha ancora risposto.
+- Il principio proposto: risultato modulo 2^64 dove esiste
+  (INT64_MIN / -1 = INT64_MIN), la macchina si ferma sulla divisione per zero.
+- Trovato: l'assemblatore accetta slli r1,r1,64 e srai r1,r1,-1 (comportamento
+  indefinito nel simulatore). Ancora vivo: INT64_MIN / -1 -> SIGFPE (rc 136).
+- Aperti nuovi: le promozioni intere del C (uint8+uint8 e' un int), fdiv per 0.
 - La proposta di VC nuova (al posto di docs/proposta-linguaggio-alto-
   livello.md) non e' ancora scritta.
-- PUSH: GitHub e la Pi a eae2561 il 31/10 (fetch); il commit di §3.109 va
-  pushato. GitHub lo fa Roberto DAL VPS, la Pi Claude quando gli e' chiesto.
+- PUSH: GitHub e la Pi a eae2561 il 31/10 (fetch); i commit di §3.109 e
+  §3.110 vanno pushati. GitHub lo fa Roberto DAL VPS, la Pi Claude quando gli
+  e' chiesto.
 - Fuori da ctest, un programma nuovo lanciato a mano: timeout 5 ... | head -c.
 - Fuori dal repo: il plugin di micro ~/.config/micro/plug/glow/glow.lua, F5
   mostra il markdown con glow.
